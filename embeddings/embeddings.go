@@ -142,6 +142,14 @@ const (
 	MaxReindexBatchSize     = 1000
 )
 
+// HNSW m (graph connections per row). pgvector accepts 2–100; 8 is a
+// lower-RAM default than pgvector's own 16.
+const (
+	DefaultHNSWM = 8
+	MinHNSWM     = 2
+	MaxHNSWM     = 100
+)
+
 // ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
 const (
 	ReindexIndexStrategyMaintain = "maintain"
@@ -155,6 +163,7 @@ type EmbeddingSearchConfig struct {
 	EmbeddingProvider    UpstreamConfig   `json:"embeddingProvider"`
 	Parameters           json.RawMessage  `json:"parameters"`
 	Dimensions           int              `json:"dimensions"`
+	HNSWM                int              `json:"hnswM,omitempty"`
 	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
 	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
@@ -168,6 +177,18 @@ func (c *EmbeddingSearchConfig) GetReindexWorkers() int {
 		return DefaultReindexWorkers
 	}
 	return min(c.ReindexWorkers, MaxReindexWorkers)
+}
+
+// GetHNSWM returns the configured HNSW m, clamped to pgvector's [2, 100]
+// range, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetHNSWM() int {
+	if c.HNSWM <= 0 {
+		return DefaultHNSWM
+	}
+	if c.HNSWM < MinHNSWM {
+		return MinHNSWM
+	}
+	return min(c.HNSWM, MaxHNSWM)
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

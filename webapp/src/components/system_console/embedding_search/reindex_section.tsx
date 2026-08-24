@@ -232,10 +232,12 @@ interface ReindexSectionProps {
     healthCheckLoading: boolean;
     hasLocalModelMismatch: boolean;
     localMismatchReason: string;
+    hasLocalHNSWMismatch: boolean;
     isJobStale: boolean;
     onReindexClick: () => void;
     onCancelJob: () => void;
     onCatchUpClick: () => void;
+    onRebuildVectorIndexClick: () => void;
     onHealthCheck: () => void;
     onResumeClick: () => void;
 }
@@ -247,10 +249,12 @@ export const ReindexSection = ({
     healthCheckLoading,
     hasLocalModelMismatch,
     localMismatchReason,
+    hasLocalHNSWMismatch,
     isJobStale,
     onReindexClick,
     onCancelJob,
     onCatchUpClick,
+    onRebuildVectorIndexClick,
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
@@ -259,10 +263,13 @@ export const ReindexSection = ({
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
 
     const hasProgress = (jobStatus?.processed_rows ?? 0) > 0;
+    const isRebuildJob = jobStatus?.operation === 'rebuild_vector_index';
+    const embeddingIdentityMismatch = hasLocalModelMismatch || healthCheckResult?.model_compatible === false;
 
-    // Check if job can be resumed (failed or canceled with progress)
-    const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
-        jobStatus?.processed_rows > 0;
+    // Resume is for embed reindex jobs with progress. Rebuilds are not resumable.
+    const canResume = !isRebuildJob &&
+        (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
+        (jobStatus?.processed_rows ?? 0) > 0;
 
     // Check if catch-up is relevant (only show when there's an existing index that needs updating)
     const showCatchUp = healthCheckResult &&
@@ -308,9 +315,17 @@ export const ReindexSection = ({
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                         <StaleActions>
-                            {hasProgress && (
+                            {!isRebuildJob && hasProgress && (
                                 <SecondaryButton onClick={onResumeClick}>
                                     <FormattedMessage defaultMessage='Resume from checkpoint'/>
+                                </SecondaryButton>
+                            )}
+                            {isRebuildJob && (
+                                <SecondaryButton
+                                    onClick={onRebuildVectorIndexClick}
+                                    disabled={embeddingIdentityMismatch}
+                                >
+                                    <FormattedMessage defaultMessage='Rebuild vector index'/>
                                 </SecondaryButton>
                             )}
                             <SecondaryButton onClick={onReindexClick}>
@@ -332,6 +347,17 @@ export const ReindexSection = ({
                             defaultMessage='The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.'
                             values={{reason: localMismatchReason}}
                         />
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasLocalHNSWMismatch && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='HNSW M Changed'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>
                     </WarningText>
                 </WarningBanner>
             )}
@@ -432,7 +458,7 @@ export const ReindexSection = ({
                         </>
                     )}
 
-                    {/* Show default buttons when no job running and not resumable */}
+                    {/* Show default buttons when no job is running and resume is not available */}
                     {!isReindexing && !canResume && (
                         <ButtonGroup>
                             <PrimaryButton onClick={onReindexClick}>
@@ -443,6 +469,12 @@ export const ReindexSection = ({
                                     <FormattedMessage defaultMessage='Catch Up'/>
                                 </TertiaryButton>
                             )}
+                            <TertiaryButton
+                                onClick={onRebuildVectorIndexClick}
+                                disabled={embeddingIdentityMismatch}
+                            >
+                                <FormattedMessage defaultMessage='Rebuild vector index'/>
+                            </TertiaryButton>
                         </ButtonGroup>
                     )}
 
@@ -459,7 +491,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index.'/>
+                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index. Rebuild vector index rebuilds the HNSW graph without re-embedding posts.'/>
                     </HelpText>
                 </div>
             </ActionContainer>

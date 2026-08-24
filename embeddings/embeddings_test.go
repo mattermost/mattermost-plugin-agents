@@ -137,6 +137,29 @@ func TestEmbeddingSearchConfig_ReindexThroughputSettings(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSearchConfig_GetHNSWM(t *testing.T) {
+	tests := []struct {
+		name  string
+		hnswM int
+		want  int
+	}{
+		{name: "unset falls back to default", hnswM: 0, want: DefaultHNSWM},
+		{name: "negative falls back to default", hnswM: -1, want: DefaultHNSWM},
+		{name: "configured default is kept", hnswM: 8, want: 8},
+		{name: "legacy pgvector default is kept", hnswM: 16, want: 16},
+		{name: "maximum is kept", hnswM: 100, want: MaxHNSWM},
+		{name: "above maximum is clamped", hnswM: 101, want: MaxHNSWM},
+		{name: "below minimum is clamped", hnswM: 1, want: MinHNSWM},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := EmbeddingSearchConfig{HNSWM: tt.hnswM}
+			assert.Equal(t, tt.want, config.GetHNSWM())
+		})
+	}
+}
+
 func TestEmbeddingSearchConfig_EffectiveReindexIndexStrategy(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -4,7 +4,7 @@
 import {useState, useEffect, useCallback} from 'react';
 import {useIntl} from 'react-intl';
 
-import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth} from '../../../client';
+import {doReindexPosts, getReindexStatus, cancelReindex, catchUpIndex, checkIndexHealth, rebuildVectorIndex} from '../../../client';
 
 import {JobStatusType, StatusMessageType, HealthCheckResultType} from './types';
 
@@ -14,6 +14,7 @@ export const useJobStatus = () => {
     const [statusMessage, setStatusMessage] = useState<StatusMessageType>({});
     const [polling, setPolling] = useState(false);
     const [showReindexConfirmation, setShowReindexConfirmation] = useState(false);
+    const [showRebuildConfirmation, setShowRebuildConfirmation] = useState(false);
     const [healthCheckResult, setHealthCheckResult] = useState<HealthCheckResultType | null>(null);
     const [healthCheckLoading, setHealthCheckLoading] = useState(false);
 
@@ -164,6 +165,30 @@ export const useJobStatus = () => {
         }
     };
 
+    const handleRebuildVectorIndexClick = () => {
+        setShowRebuildConfirmation(true);
+    };
+
+    const handleConfirmRebuildVectorIndex = async () => {
+        setShowRebuildConfirmation(false);
+        setStatusMessage({});
+
+        try {
+            const response = await rebuildVectorIndex();
+            setJobStatus(response);
+            setPolling(true);
+        } catch (error) {
+            setStatusMessage({
+                success: false,
+                message: intl.formatMessage({defaultMessage: 'Failed to start vector index rebuild. Please try again.'}),
+            });
+        }
+    };
+
+    const handleCancelRebuildVectorIndex = () => {
+        setShowRebuildConfirmation(false);
+    };
+
     const handleHealthCheck = async () => {
         setHealthCheckLoading(true);
         setHealthCheckResult(null);
@@ -205,15 +230,21 @@ export const useJobStatus = () => {
             compatible: healthCheckResult.model_compatible,
             needs_reindex: healthCheckResult.model_needs_reindex,
             reason: healthCheckResult.model_compat_reason,
+            stored_provider_type: healthCheckResult.stored_provider_type,
             stored_dimensions: healthCheckResult.stored_dimensions,
             stored_model_name: healthCheckResult.stored_model_name,
+            stored_hnsw_m: healthCheckResult.stored_hnsw_m,
         } : null,
         isJobStale: jobStatus?.is_stale || false,
+        showRebuildConfirmation,
         handleReindexClick,
         handleConfirmReindex,
         handleCancelReindex,
         handleCancelJob,
         handleCatchUpClick,
+        handleRebuildVectorIndexClick,
+        handleConfirmRebuildVectorIndex,
+        handleCancelRebuildVectorIndex,
         handleHealthCheck,
         handleResumeClick,
     };

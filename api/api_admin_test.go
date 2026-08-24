@@ -244,6 +244,47 @@ func TestHandleIndexHealthCheck(t *testing.T) {
 	}
 }
 
+func TestHandleRebuildVectorIndex(t *testing.T) {
+	tests := []struct {
+		name           string
+		indexerNil     bool
+		expectedStatus int
+	}{
+		{
+			name:           "returns 400 when search is not configured",
+			indexerNil:     true,
+			expectedStatus: http.StatusBadRequest,
+		},
+		{
+			name:           "returns 500 when indexer has no search backend",
+			indexerNil:     false,
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api, mockAPI, _ := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true)
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+			if !tt.indexerNil {
+				api.indexerService = createMockIndexer(t, &mockIndexerService{})
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/rebuild-vector-index", nil)
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+		})
+	}
+}
+
 // TestHandleFetchModelsVertexAndGeminiValidation covers the switch in
 // handleFetchModels (POST /admin/models/fetch): Vertex requires project + region;
 // other supported types require an API key unless they are openaicompatible/Vertex.

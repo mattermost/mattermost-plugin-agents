@@ -151,6 +151,31 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 	c.JSON(http.StatusOK, jobStatus)
 }
 
+// handleRebuildVectorIndex drops and rebuilds the HNSW index without re-embedding.
+func (a *API) handleRebuildVectorIndex(c *gin.Context) {
+	if a.indexerService == nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		return
+	}
+
+	jobStatus, err := a.indexerService.StartRebuildVectorIndex(c.Request.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
+			c.JSON(http.StatusConflict, jobStatus)
+			return
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, jobStatus)
+}
+
 // handleIndexHealthCheck performs a health check on the search index,
 // including model compatibility information.
 func (a *API) handleIndexHealthCheck(c *gin.Context) {
@@ -171,13 +196,19 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
-	compat := a.indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName())
+	compat := a.indexerService.CheckModelCompatibility(indexer.ModelInfo{
+		ProviderType: cfg.GetProviderType(),
+		Dimensions:   cfg.Dimensions,
+		ModelName:    cfg.GetModelName(),
+		HNSWM:        cfg.GetHNSWM(),
+	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
 	result.ModelCompatReason = compat.Reason
 	result.StoredProviderType = compat.StoredProviderType
 	result.StoredDimensions = compat.StoredDimensions
 	result.StoredModelName = compat.StoredModelName
+	result.StoredHNSWM = compat.StoredHNSWM
 
 	c.JSON(http.StatusOK, result)
 }
