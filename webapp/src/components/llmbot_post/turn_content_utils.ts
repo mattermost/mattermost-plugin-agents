@@ -299,6 +299,162 @@ export function computeRenderedRounds(params: {
     return out;
 }
 
+/**
+ * A round under construction, plus where its text starts within the turn's
+ * full concatenated text. The offset is needed to rebase citation indices,
+ * which the server reports against the whole message.
+ */
+interface RoundDraft {
+    reasoning: {summary: string; signature: string};
+    serverTools: ServerToolUse[];
+    text: string;
+    textStart: number;
+}
+
+function emptyDraft(textStart: number): RoundDraft {
+    return {reasoning: {summary: '', signature: ''}, serverTools: [], text: '', textStart};
+}
+
+function draftIsEmpty(draft: RoundDraft): boolean {
+    return draft.text === '' && draft.serverTools.length === 0 && draft.reasoning.summary === '';
+}
+
+/**
+ * Split one assistant turn's content blocks into the rounds to render.
+ *
+ * A round renders as `reasoning → activity → text → tool calls`, so a block
+ * whose slot is already filled has to start a new round or it would appear
+ * above content that arrived before it. Concretely: provider-executed activity
+ * arriving after the round already has text begins a new round, which is what
+ * keeps narration written between two sandbox runs below the first and above
+ * the second.
+ *
+ * Client tool calls need no equivalent split — the toolrunner already persists
+ * each of their rounds as its own turn — so every tool_use block in a turn
+ * belongs to that turn's final round, which is where the turn ended.
+ */
+function splitTurnIntoRounds(
+    turn: Turn,
+    resultMap: Map<string, ContentBlock>,
+): Round[] {
+    const drafts: RoundDraft[] = [];
+    let draft = emptyDraft(0);
+    let textConsumed = 0;
+
+    const startNewDraft = () => {
+        drafts.push(draft);
+        draft = emptyDraft(textConsumed);
+    };
+
+    for (const block of turn.content) {
+        switch (block.type) {
+        case BlockTypeThinking: {
+            const text = block.text ?? '';
+            if (text === '') {
+                break;
+            }
+            if (draft.text !== '' || draft.serverTools.length > 0) {
+                startNewDraft();
+            }
+            draft.reasoning.summary = draft.reasoning.summary === '' ? text : `${draft.reasoning.summary}\n${text}`;
+            draft.reasoning.signature = block.signature ?? draft.reasoning.signature;
+            break;
+        }
+        case BlockTypeServerToolUse: {
+            if (!block.server_tool) {
+                break;
+            }
+
+            // Consecutive invocations stay in one round so a burst of searches
+            // renders as a single activity group.
+            if (draft.text !== '') {
+                startNewDraft();
+            }
+            draft.serverTools.push(block.server_tool);
+            break;
+        }
+        case BlockTypeText: {
+            const text = block.text ?? '';
+            draft.text += text;
+            textConsumed += text.length;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    drafts.push(draft);
+
+    const toolCalls = turn.content.
+        filter((b) => b.type === BlockTypeToolUse).
+        map((block) => toolUseBlockToToolCall(block, resultMap));
+
+    const kept = drafts.filter((d) => !draftIsEmpty(d));
+    if (kept.length === 0) {
+        // A round can be tool calls alone (the model called a tool without
+        // narrating), and dropping it would lose the approval UI with it.
+        if (toolCalls.length === 0) {
+            return [];
+        }
+        kept.push(emptyDraft(0));
+    }
+
+    const annotationsByDraft = distributeAnnotations(kept, extractAnnotationsFromTurn(turn));
+
+    return kept.map((d, i) => ({
+
+        // The first round keeps the turn id so single-round turns are
+        // unchanged; later ones are suffixed to stay unique as React keys.
+        id: i === 0 ? turn.id : `${turn.id}-${i}`,
+        text: d.text,
+        toolCalls: i === kept.length - 1 ? toolCalls : [],
+        reasoning: d.reasoning,
+        annotations: annotationsByDraft[i],
+        serverTools: d.serverTools,
+    }));
+}
+
+/**
+ * Assign each annotation to the round holding the text it points into, with its
+ * indices rebased onto that round's text. Citation offsets are reported against
+ * the turn's whole message, but each round renders only its own slice, and
+ * citation_processor slices by index — so unrebased offsets would drop markers
+ * in the wrong place.
+ */
+function distributeAnnotations(drafts: RoundDraft[], annotations: Annotation[]): Annotation[][] {
+    const out: Annotation[][] = drafts.map(() => []);
+    if (annotations.length === 0) {
+        return out;
+    }
+
+    const textBearing = drafts.
+        map((draft, index) => ({draft, index})).
+        filter(({draft}) => draft.text !== '');
+    if (textBearing.length === 0) {
+        return out;
+    }
+
+    // Single text run: the offsets already line up, so leave them untouched.
+    if (textBearing.length === 1) {
+        out[textBearing[0].index] = annotations;
+        return out;
+    }
+
+    for (const annotation of annotations) {
+        const target = textBearing.find(({draft}) =>
+            annotation.end_index >= draft.textStart &&
+            annotation.end_index <= draft.textStart + draft.text.length,
+        ) ?? textBearing[textBearing.length - 1];
+
+        out[target.index].push({
+            ...annotation,
+            start_index: Math.max(annotation.start_index - target.draft.textStart, 0),
+            end_index: Math.max(annotation.end_index - target.draft.textStart, 0),
+        });
+    }
+    return out;
+}
+
 export function buildRoundsFromTurns(
     conversation: ConversationResponse,
     postId: string,
@@ -314,21 +470,7 @@ export function buildRoundsFromTurns(
         if (turn.role !== 'assistant') {
             continue;
         }
-        const text = turn.content.
-            filter((b) => b.type === BlockTypeText).
-            map((b) => b.text ?? '').
-            join('');
-        const toolCalls = turn.content.
-            filter((b) => b.type === BlockTypeToolUse).
-            map((block) => toolUseBlockToToolCall(block, resultMap));
-        rounds.push({
-            id: turn.id,
-            text,
-            toolCalls,
-            reasoning: extractReasoningFromTurn(turn),
-            annotations: extractAnnotationsFromTurn(turn),
-            serverTools: extractServerToolsFromTurn(turn),
-        });
+        rounds.push(...splitTurnIntoRounds(turn, resultMap));
     }
     return rounds;
 }

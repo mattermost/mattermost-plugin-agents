@@ -129,6 +129,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
     liveRef.current = {message, toolCalls, reasoningSummary, annotations, serverTools};
 
+    // Provider activity snapshots are cumulative for the whole round, so the
+    // handler tracks which invocations it has already placed (assignedActivityIds)
+    // and which belong to the round currently being built (roundActivityIds).
+    const assignedActivityIds = useRef<Set<string>>(new Set());
+    const roundActivityIds = useRef<Set<string>>(new Set());
+    const resetActivityTracking = () => {
+        assignedActivityIds.current = new Set();
+        roundActivityIds.current = new Set();
+    };
+
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
@@ -169,6 +179,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setIsReasoningLoading(false);
         setRegenerating(false);
         setPendingRefetch(false);
+        resetActivityTracking();
     }, [conversation, pendingRefetch]);
 
     useEffect(() => {
@@ -223,6 +234,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         setIsReasoningLoading(false);
                         setAnnotations([]);
                         setServerTools([]);
+                        resetActivityTracking();
                     } else {
                         setToolCalls(parsedToolCalls);
                     }
@@ -249,7 +261,43 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 // each event replaces the prior snapshot.
                 try {
                     const parsedServerTools = JSON.parse(data.server_tool) as ServerToolUse[];
-                    setServerTools(parsedServerTools);
+                    const fresh = parsedServerTools.filter(
+                        (use) => use.id !== '' && !assignedActivityIds.current.has(use.id),
+                    );
+
+                    // An invocation starting after the round already has text
+                    // closes that round, the same way a resolved tool call does.
+                    // A round renders activity above its text, so without the
+                    // split the whole turn's narration collapses into one block
+                    // with every activity card hoisted above it.
+                    if (fresh.length > 0 && liveRef.current.message !== '') {
+                        const live = liveRef.current;
+                        setLiveRounds((prev) => [
+                            ...prev,
+                            {
+                                id: `live-${prev.length}-${Date.now()}`,
+                                text: live.message,
+                                toolCalls: [],
+                                reasoning: {summary: live.reasoningSummary, signature: ''},
+                                annotations: live.annotations,
+                                serverTools: live.serverTools,
+                            },
+                        ]);
+                        setMessage('');
+                        setReasoningSummary('');
+                        setIsReasoningLoading(false);
+                        setAnnotations([]);
+                        roundActivityIds.current = new Set();
+                    }
+
+                    for (const use of fresh) {
+                        assignedActivityIds.current.add(use.id);
+                        roundActivityIds.current.add(use.id);
+                    }
+
+                    // Show only this round's invocations; the snapshot still
+                    // carries earlier ones, which their own round already holds.
+                    setServerTools(parsedServerTools.filter((use) => roundActivityIds.current.has(use.id)));
                     setPrecontent(false);
                 } catch {
                     setError(intl.formatMessage({defaultMessage: 'Error parsing server tool data'}));
@@ -295,6 +343,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setAnnotations([]);
                 setServerTools([]);
                 setLiveRounds([]);
+                resetActivityTracking();
                 if (!message) {
                     setMessage('');
                 }

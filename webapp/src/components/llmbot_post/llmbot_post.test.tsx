@@ -270,6 +270,122 @@ describe('LLMBotPost server tool activity rendering', () => {
     });
 });
 
+describe('LLMBotPost live activity ordering', () => {
+    // Provider activity that starts after the round already has text closes that
+    // round, so narration written between two sandbox runs renders between them
+    // instead of collapsing into one block above both activity cards.
+    test('narration between two sandbox runs renders in arrival order', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+        expect(listener).toBeDefined();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: "I'll write the script."}));
+        });
+        await expect(screen.findByText("I'll write the script.")).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'That found nothing. Retrying.'}));
+        });
+        await expect(screen.findByText('That found nothing. Retrying.')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                    {id: 'srv2', tool: 'web_search', status: 'success', query: 'second'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Done.'}));
+        });
+        await expect(screen.findByText('Done.')).resolves.toBeTruthy();
+
+        // Assert real DOM order, not just presence — the bug was purely ordering.
+        const rendered = container.textContent ?? '';
+        const positions = [
+            "I'll write the script.",
+            'Searched the web for "first"',
+            'That found nothing. Retrying.',
+            'Searched the web for "second"',
+            'Done.',
+        ].map((needle) => rendered.indexOf(needle));
+
+        expect(positions.every((pos) => pos >= 0)).toBe(true);
+        expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    });
+
+    // The first narration must not be repeated into the round the split creates.
+    test('splitting does not duplicate the text it closed a round on', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Only once.'}));
+        });
+        await expect(screen.findByText('Only once.')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'q'},
+                ]),
+            }));
+        });
+        await expect(screen.findByText('Searched the web for "q"')).resolves.toBeTruthy();
+
+        expect(screen.getAllByText('Only once.')).toHaveLength(1);
+        expect((container.textContent ?? '').split('Only once.').length - 1).toBe(1);
+    });
+
+    // Activity arriving before any narration must not create an empty round.
+    test('activity before any text keeps a single round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'q'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Here you go.'}));
+        });
+
+        await expect(screen.findByText('Here you go.')).resolves.toBeTruthy();
+
+        const rendered = container.textContent ?? '';
+        expect(rendered.indexOf('Searched the web for "q"')).toBeLessThan(rendered.indexOf('Here you go.'));
+    });
+});
+
 describe('LLMBotPost conversation_id prop handling', () => {
     // Keep call assertions scoped to each test; the file-level beforeEach only
     // re-stubs the return value.
