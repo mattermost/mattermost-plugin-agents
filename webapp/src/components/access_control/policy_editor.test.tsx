@@ -545,6 +545,20 @@ describe('PolicyEditor', () => {
         expect(screen.getByTestId('table-editor')).toBeTruthy();
     });
 
+    it('surfaces a self-exclusion message when save is forbidden with an empty body', async () => {
+        const err = new Error('');
+        (err as Error & {status_code: number}).status_code = 403;
+        client.putAgentAccessPolicy.mockRejectedValue(err);
+        renderEditor();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('table-edit'));
+        fireEvent.click(screen.getByText('Save policy'));
+
+        expect(await screen.findByText('You do not satisfy one or more conditions in this policy. Adjust the rules to include your attributes, or ask a system admin.')).toBeTruthy();
+        expect(screen.getByTestId('table-editor')).toBeTruthy();
+    });
+
     it('routes service resources through the service policy client', async () => {
         client.getServiceAccessPolicy.mockResolvedValue(null);
         render(
