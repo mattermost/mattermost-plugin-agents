@@ -20,6 +20,7 @@ import {ReindexSection} from './reindex_section';
 import {ReindexConfirmation, RebuildVectorIndexConfirmation} from './reindex_confirmation';
 import {useJobStatus} from './use_job_status';
 import {embeddingIdentityMismatchKind} from './local_identity_mismatch';
+import {retentionWindowTightened, retentionWindowWidened} from './retention_window';
 
 const Horizontal = styled.div`
     display: flex;
@@ -116,6 +117,14 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const storedHNSWM = modelCompatibility?.stored_hnsw_m ?? 0;
     const currentHNSWM = normalizeHNSWM(value.hnswM);
     const hasLocalHNSWMismatch = storedHNSWM !== 0 && storedHNSWM !== currentHNSWM;
+    const currentRetentionDays = value.indexRetentionDays ?? 0;
+    const storedRetentionDays = modelCompatibility?.stored_index_retention_days;
+    const savedRetentionWiden = Boolean(modelCompatibility?.needs_catch_up);
+    const formRetentionWidened = retentionWindowWidened(currentRetentionDays, storedRetentionDays);
+    const hasUnsavedRetentionWiden = formRetentionWidened && !savedRetentionWiden;
+    const hasLocalRetentionWiden = savedRetentionWiden || formRetentionWidened;
+    const hasLocalRetentionTighten = retentionWindowTightened(currentRetentionDays, storedRetentionDays) &&
+        !hasLocalRetentionWiden;
 
     const mismatchKind = embeddingIdentityMismatchKind(modelCompatibility, {
         providerType: value.embeddingProvider.type,
@@ -209,6 +218,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
                                 hnswM: HNSW_DEFAULTS.m,
                                 vectorElementType: VECTOR_ELEMENT_TYPE.vector,
+                                indexRetentionDays: 0,
                             });
                         } else {
                             onChange({
@@ -325,6 +335,14 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                     {intl.formatMessage({defaultMessage: 'Half precision (halfvec)'})}
                                 </SelectionItemOption>
                             </SelectionItem>
+                            <IntItem
+                                label={intl.formatMessage({defaultMessage: 'Index posts from the last N days'})}
+                                placeholder='0'
+                                value={value.indexRetentionDays ?? 0}
+                                onChange={(indexRetentionDays) => onChange({...value, indexRetentionDays})}
+                                min={0}
+                                helptext={intl.formatMessage({defaultMessage: '0 indexes all posts. A positive value limits how far back indexing looks. Raise it and run Catch Up to add older posts without re-embedding what is already indexed. Lowering it does not remove posts already in the index.'})}
+                            />
                         </IndexStorageGroup>
 
                         <ChunkingOptionsConfig
@@ -407,6 +425,9 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         hasLocalModelMismatch={hasLocalModelMismatch}
                         localMismatchReason={localMismatchReason}
                         hasLocalHNSWMismatch={hasLocalHNSWMismatch}
+                        hasLocalRetentionWiden={hasLocalRetentionWiden}
+                        hasUnsavedRetentionWiden={hasUnsavedRetentionWiden}
+                        hasLocalRetentionTighten={hasLocalRetentionTighten}
                         isJobStale={isJobStale}
                         onReindexClick={handleReindexClick}
                         onCancelJob={handleCancelJob}

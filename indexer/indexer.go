@@ -32,6 +32,11 @@ type Indexer struct {
 	storeRetryAttempts  int
 	storeRetryBaseDelay time.Duration
 	heartbeatInterval   time.Duration
+
+	// beforePersistModelInfo, if set, runs after the job is marked complete
+	// and before model metadata is written. Tests use it to change live
+	// config while the worker is still in persist.
+	beforePersistModelInfo func()
 }
 
 func New(
@@ -147,13 +152,6 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 
 	cutoffTimestamp := time.Now().UnixMilli()
 
-	var count int64
-	dbErr := s.db.Get(&count, `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`, cutoffTimestamp)
-	if dbErr != nil {
-		s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
-		count = 0
-	}
-
 	newJobStatus := JobStatus{
 		JobID:     model.NewId(),
 		Status:    JobStatusRunning,
@@ -168,10 +166,26 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		newJobStatus.CutoffAt = sess.existing.CutoffAt
 		newJobStatus.ProcessedRows = sess.existing.ProcessedRows
 		newJobStatus.ModelInfo = sess.existing.ModelInfo
+		newJobStatus.RetentionFloor = sess.existing.RetentionFloor
+		newJobStatus.IndexRetentionDays = sess.existing.IndexRetentionDays
+		if sess.existing.isCatchUp() {
+			newJobStatus.Operation = JobOperationCatchUp
+			if identErr := s.errIfCatchUpIncompatible(s.getModelInfoFromConfig()); identErr != nil {
+				return JobStatus{}, identErr
+			}
+		}
 	} else {
+		snap := s.snapshotRetention(cutoffTimestamp)
+		count, dbErr := s.countIndexablePosts(cutoffTimestamp, snap.floor, false)
+		if dbErr != nil {
+			s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
+			count = 0
+		}
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
-		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
+		newJobStatus.ModelInfo = snap.model
+		newJobStatus.RetentionFloor = snap.floor
+		newJobStatus.IndexRetentionDays = snap.days
 	}
 
 	if err := sess.commit(s, newJobStatus); err != nil {
@@ -182,6 +196,12 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		if err := s.pluginAPI.KVDelete(IndexerCursorKey); err != nil {
 			return JobStatus{}, fmt.Errorf("failed to clear reindex cursor: %w", err)
 		}
+	}
+
+	if newJobStatus.isCatchUp() {
+		returnStatus := newJobStatus
+		go s.runCatchUpJob(&newJobStatus)
+		return returnStatus, nil
 	}
 
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
@@ -267,6 +287,10 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 
 // shouldIndexPost returns whether a post should be indexed based on consistent criteria
 func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool {
+	return s.shouldIndexPostWithFloor(post, channel, s.retentionFloorNow())
+}
+
+func (s *Indexer) shouldIndexPostWithFloor(post *model.Post, channel *model.Channel, floor int64) bool {
 	// Skip posts that don't have content (message or attachments)
 	if post.Message == "" && len(post.Attachments()) == 0 {
 		return false
@@ -292,6 +316,10 @@ func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool
 		return false
 	}
 
+	if floor > 0 && post.CreateAt < floor {
+		return false
+	}
+
 	return true
 }
 
@@ -313,35 +341,37 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	defer sess.Unlock()
 
 	cutoffTimestamp := time.Now().UnixMilli()
+	snap := s.snapshotRetention(cutoffTimestamp)
+	if identErr := s.errIfCatchUpIncompatible(snap.model); identErr != nil {
+		return JobStatus{}, identErr
+	}
 
-	var count int64
-	err = s.db.Get(&count, `
-		SELECT COUNT(*) FROM Posts
-		WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''
-		AND CreateAt > $1`, lastIndexed)
+	count, err := s.countIndexablePosts(cutoffTimestamp, snap.floor, true)
 	if err != nil {
 		s.pluginAPI.LogWarn("Failed to get catch-up post count", "error", err)
 	}
 
 	newJobStatus := JobStatus{
-		JobID:     model.NewId(),
-		Status:    JobStatusRunning,
-		StartedAt: time.Now(),
-		TotalRows: count,
-		Resumable: true,
-		NodeID:    s.getNodeID(),
-		CutoffAt:  cutoffTimestamp,
-		Operation: JobOperationReindex,
+		JobID:              model.NewId(),
+		Status:             JobStatusRunning,
+		StartedAt:          time.Now(),
+		TotalRows:          count,
+		Resumable:          true,
+		NodeID:             s.getNodeID(),
+		CutoffAt:           cutoffTimestamp,
+		Operation:          JobOperationCatchUp,
+		RetentionFloor:     snap.floor,
+		IndexRetentionDays: snap.days,
 	}
 
 	if err := sess.commit(s, newJobStatus); err != nil {
 		return s.exclusiveJobConflict(err)
 	}
 
-	s.saveCursor(Cursor{LastCreateAt: lastIndexed, LastID: ""})
+	s.saveCursor(Cursor{LastCreateAt: snap.floor, LastID: ""})
 
 	returnStatus := newJobStatus
-	go s.runReindexJob(&newJobStatus, false, nil)
+	go s.runCatchUpJob(&newJobStatus)
 
 	return returnStatus, nil
 }
@@ -355,6 +385,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	result := HealthCheckResult{
 		CheckedAt: time.Now(),
 	}
+	floor := s.retentionFloorAt(result.CheckedAt.UnixMilli())
 
 	// Surface deferred-index ownership (explains search unavailability).
 	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
@@ -391,6 +422,10 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 			args = append(args, "%"+botID+"%")
 		}
 		query += " AND NOT (c.Type = 'D' AND (" + strings.Join(likeConditions, " OR ") + "))"
+		if floor > 0 {
+			query += " AND p.CreateAt >= ?"
+			args = append(args, floor)
+		}
 
 		query = s.db.Rebind(query)
 		err = s.db.GetContext(ctx, &result.DBPostCount, query, args...)
@@ -400,9 +435,15 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 			return result, err
 		}
 	} else {
-		err := s.db.GetContext(ctx, &result.DBPostCount, `
+		query := `
 			SELECT COUNT(*) FROM Posts
-			WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''`)
+			WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''`
+		var args []any
+		if floor > 0 {
+			query += " AND CreateAt >= $1"
+			args = append(args, floor)
+		}
+		err := s.db.GetContext(ctx, &result.DBPostCount, query, args...)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to count DB posts: %v", err)
 			result.Status = "error"
@@ -411,7 +452,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	}
 
 	// Count posts in index
-	indexedCount, err := s.countIndexedPosts(ctx)
+	indexedCount, err := s.countIndexedPosts(ctx, floor)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to count indexed posts: %v", err)
 		result.Status = "error"
@@ -443,14 +484,31 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 }
 
 // countIndexedPosts counts unique posts in the vector store
-func (s *Indexer) countIndexedPosts(ctx context.Context) (int64, error) {
+func (s *Indexer) countIndexedPosts(ctx context.Context, floor int64) (int64, error) {
+	query := `SELECT COUNT(DISTINCT post_id) FROM llm_posts_embeddings`
+	var args []any
+	if floor > 0 {
+		query += ` WHERE created_at >= $1`
+		args = append(args, floor)
+	}
 	var count int64
-	err := s.db.GetContext(ctx, &count, `
-		SELECT COUNT(DISTINCT post_id) FROM llm_posts_embeddings`)
+	err := s.db.GetContext(ctx, &count, query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (s *Indexer) countIndexablePosts(cutoff, floor int64, skipExisting bool) (int64, error) {
+	query := `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`
+	args := []any{cutoff}
+	if skipExisting {
+		query += ` AND NOT EXISTS (SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id)`
+	}
+	query, args = appendCreateAtFloor(query, args, floor, "CreateAt")
+	var count int64
+	err := s.db.Get(&count, query, args...)
+	return count, err
 }
 
 // SaveModelInfo stores the current model configuration
@@ -467,12 +525,14 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 }
 
 // CheckModelCompatibility checks if current config matches the indexed model.
-// Missing stored fields (including hnsw_m == 0 and empty vector element type)
-// are treated as compatible so upgrades do not nag. An HNSW m change needs an
-// index rebuild but search stays compatible — it is an index-shape change, not
-// a vector-width or column-type change. A stored vector element type that
-// differs from current is the same class as a dimension mismatch: search is
-// incompatible and a Full Reindex is required.
+// Missing stored fields (including hnsw_m == 0, empty vector element type,
+// and a missing index-retention window) are treated as compatible so upgrades
+// do not nag. An HNSW m change needs an index rebuild but search stays
+// compatible. A stored vector element type that differs from current is the
+// same class as a dimension mismatch: search is incompatible and a Full
+// Reindex is required. Widening the retention window needs Catch Up (search
+// stays on); tightening is write-only, so already-indexed posts stay
+// searchable and no Catch Up is required.
 func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
@@ -485,11 +545,12 @@ func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility 
 
 	// Always include stored values so frontend can do client-side comparison
 	result := ModelCompatibility{
-		StoredProviderType:      storedInfo.ProviderType,
-		StoredDimensions:        storedInfo.Dimensions,
-		StoredModelName:         storedInfo.ModelName,
-		StoredHNSWM:             storedInfo.HNSWM,
-		StoredVectorElementType: storedInfo.VectorElementType,
+		StoredProviderType:       storedInfo.ProviderType,
+		StoredDimensions:         storedInfo.Dimensions,
+		StoredModelName:          storedInfo.ModelName,
+		StoredHNSWM:              storedInfo.HNSWM,
+		StoredVectorElementType:  storedInfo.VectorElementType,
+		StoredIndexRetentionDays: storedInfo.IndexRetentionDays,
 	}
 
 	if storedInfo.ProviderType != "" && current.ProviderType != "" && storedInfo.ProviderType != current.ProviderType {
@@ -527,7 +588,26 @@ func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility 
 		result.NeedsReindex = true
 		result.Reason = fmt.Sprintf("hnsw m changed: stored=%d, current=%d", storedInfo.HNSWM, current.HNSWM)
 	}
+	applyRetentionCompatibility(&result, storedInfo.IndexRetentionDays, retentionDaysValue(current.IndexRetentionDays))
 	return result
+}
+
+func applyRetentionCompatibility(result *ModelCompatibility, storedDays *int, currentDays int) {
+	if storedDays == nil {
+		return
+	}
+	stored := *storedDays
+	switch {
+	case retentionWindowWider(currentDays, stored):
+		result.NeedsCatchUp = true
+		if result.Reason == "" {
+			result.Reason = fmt.Sprintf("index retention increased: stored=%d, current=%d", stored, currentDays)
+		}
+	case retentionWindowNarrower(currentDays, stored):
+		if result.Reason == "" {
+			result.Reason = "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM."
+		}
+	}
 }
 
 // StaleJobThreshold is the duration after which a running job is considered stale
@@ -593,18 +673,18 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	return nil
 }
 
-// getModelInfoFromConfig builds ModelInfo from the current configuration
+// getModelInfoFromConfig builds ModelInfo from a single config read.
 func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
-	if s.configGetter == nil {
+	return s.snapshotRetention(time.Now().UnixMilli()).model
+}
+
+func (s *Indexer) errIfCatchUpIncompatible(current *ModelInfo) error {
+	if current == nil {
 		return nil
 	}
-
-	cfg := s.configGetter()
-	return &ModelInfo{
-		ProviderType:      cfg.GetProviderType(),
-		ModelName:         cfg.GetModelName(),
-		Dimensions:        cfg.Dimensions,
-		HNSWM:             cfg.GetHNSWM(),
-		VectorElementType: cfg.GetVectorElementType(),
+	compat := s.CheckModelCompatibility(*current)
+	if !compat.Compatible {
+		return fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
 	}
+	return nil
 }

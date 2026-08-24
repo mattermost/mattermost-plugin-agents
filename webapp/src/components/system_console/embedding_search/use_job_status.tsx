@@ -235,6 +235,8 @@ export const useJobStatus = () => {
             stored_model_name: healthCheckResult.stored_model_name,
             stored_hnsw_m: healthCheckResult.stored_hnsw_m,
             stored_vector_element_type: healthCheckResult.stored_vector_element_type,
+            stored_index_retention_days: healthCheckResult.stored_index_retention_days,
+            needs_catch_up: healthCheckResult.needs_catch_up,
         } : null,
         isJobStale: jobStatus?.is_stale || false,
         showRebuildConfirmation,

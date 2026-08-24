@@ -303,10 +303,11 @@ Bulk reindexing throughput can be tuned for large datasets:
 | **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
 | **HNSW M** | 8 (range 2–100) | Graph connections per row in the HNSW vector index. Lower values use less RAM and are slightly less accurate. Changing M rebuilds the vector index; it does **not** re-embed posts. Existing indexes created before this setting stay at pgvector's default `m=16` until you run **Rebuild vector index**. |
 | **Vector precision** | Standard (`vector`) | Storage type for embedding values. Standard uses 4-byte `vector`; half precision uses 2-byte `halfvec` (pgvector 0.7+, including Amazon RDS). Half precision uses less RAM and disk. Changing this **drops the embeddings table** — run **Full Reindex**, not Resume and not Rebuild vector index. Default is standard so existing indexes keep working. |
+| **Index posts from the last N days** | 0 (all posts) | Limits how far back indexing looks. `0` indexes all posts. A positive value indexes only posts created in the last N days. Raising N and running **Catch Up** embeds older posts that are not already in the index without disabling search. Lowering N does **not** delete already-indexed posts; search still returns rows already in the index. RAM does not drop until a later Full Reindex. |
 
 The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
 
-Run the initial indexing process after configuration.
+Run the initial indexing process after configuration. For a large historical corpus, set **Index posts from the last N days** first, then run **Full Reindex**. That Full Reindex is the historical cut — for example `N=365` indexes only the last year instead of hundreds of millions of older posts.
 
 #### Large database reindexing
 
@@ -319,6 +320,7 @@ Notes on deferred reindex:
 - **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + graph)` bytes for standard `vector`, or `rows × (2 × dimensions + graph)` for `halfvec`. Graph overhead shrinks with **HNSW M** (about `2 × m` integer links per layer; at the default `m=8` this is well under the older ~300-byte-per-row rule of thumb used at `m=16`). Example: ~1.4 KB/element at 256 dims with `m=8`, or ~28 GB for 20M posts. Half precision at 256 dimensions is **not** a 2× RAM cut — graph edges still use integer links, so only the vector payload shrinks. Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`. `halfvec` requires pgvector 0.7+ (Amazon RDS includes it on supported engine versions).
 - **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
 - Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
+- **Index retention window.** Catch Up after increasing N (for example 365 → 730, or 365 → all posts) can take a long time because it maintains the HNSW index as it inserts. A jump from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down until the rebuild finishes). Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
 
 ### Permission configuration
 
@@ -375,11 +377,19 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, **dimensions**, or **vector precision** (`vector` vs `halfvec`) requires a **Full Reindex** (do not use Resume for a dimension or type change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions or vector precision change so new vectors match the configured column. Changing **HNSW M** requires **Rebuild vector index**, not Full Reindex — existing embeddings are reused and only the HNSW graph is rebuilt. After upgrading, existing indexes stay at `m=16` until you rebuild. Rebuild vector index cannot change the column type.
 
+**Index posts from the last N days** controls how far back indexing looks. `0` (the default) indexes all posts. A positive N is the historical cut for the first Full Reindex on a large corpus.
+
+- **Increase N** (365 → 730, or 365 → 0/all posts): search stays available. Run **Catch Up** to embed posts now in-window that are not already in the index. Catch Up does not re-embed rows that already exist. Do not Full Reindex just to widen the window. Catch Up after a large increase can take a long time and maintains HNSW as it inserts; jumping from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down).
+- **Decrease N**: live indexing and later reindexes use the tighter floor. Rows already in the index are **not** deleted, and search still returns them. RAM and table size do not drop until a later Full Reindex. Catch Up still indexes in-window posts that have no embedding row (`NOT EXISTS`); after a complete index that is usually no extra work.
+- Saving N does **not** start Catch Up or Full Reindex automatically. Use the banner and the Catch Up button.
+- Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
+
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger a Full Reindex when changing embedding providers, models, dimensions, or vector precision.
+   - Trigger a Full Reindex when changing embedding providers, models, dimensions, or vector precision, or when you want the first historical cut for N.
+   - Trigger Catch Up after increasing N, or to index posts created since the last successful index that are not already stored.
    - Trigger Rebuild vector index when changing HNSW M (search is unavailable during the build).
    - Check indexing status.
 

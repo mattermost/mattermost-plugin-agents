@@ -17,6 +17,11 @@ var (
 	// ErrRebuildIncompatible is returned when rebuild is requested after a
 	// provider/model/dimension change. Search over mixed vectors is unsafe.
 	ErrRebuildIncompatible = errors.New("cannot rebuild vector index while the embedding model is incompatible")
+	// ErrCatchUpIncompatible is returned when catch-up is requested after a
+	// provider/model/dimension/vector-precision change. Catch-up embeds with
+	// the current model but does not rewrite stored identity, so mixed
+	// vectors would be searchable after a config revert.
+	ErrCatchUpIncompatible = errors.New("cannot catch up while the embedding model is incompatible")
 	// ErrCannotResumeRebuild is returned when StartReindexJob(false) is
 	// asked to resume a rebuild-vector-index job.
 	ErrCannotResumeRebuild = errors.New("cannot resume a vector index rebuild; use rebuild vector index")

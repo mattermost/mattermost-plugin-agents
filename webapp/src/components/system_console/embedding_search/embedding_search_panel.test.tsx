@@ -168,4 +168,160 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
         expect(screen.getByText(/Search functionality is disabled until you run a full reindex/)).toBeTruthy();
     });
+
+    it('shows Catch Up banner when index retention is widened', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            healthCheckResult: {
+                ...idleJobStatus.healthCheckResult,
+                indexed_post_count: 10,
+                needs_catch_up: true,
+                stored_index_retention_days: 365,
+            },
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+                needs_catch_up: true,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Index retention increased')).toBeTruthy();
+        expect(screen.getByText(/Run Catch Up to embed older posts/)).toBeTruthy();
+        expect(screen.getByRole('button', {name: 'Catch Up'})).toBeTruthy();
+        expect(screen.queryByText('Embedding Model Changed')).toBeNull();
+    });
+
+    it('does not offer Catch Up for an unsaved retention widen', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Index retention increased')).toBeTruthy();
+        expect(screen.getByText(/Save the configuration before running Catch Up/)).toBeTruthy();
+        expect(screen.queryByRole('button', {name: 'Catch Up'})).toBeNull();
+    });
+
+    it('disables Catch Up when embedding identity differs', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            healthCheckResult: {
+                ...idleJobStatus.healthCheckResult,
+                indexed_post_count: 10,
+                missing_posts: 4,
+                status: 'mismatch',
+                needs_catch_up: true,
+                stored_index_retention_days: 365,
+            },
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+                needs_catch_up: true,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('anthropic'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const catchUp = screen.getByRole('button', {name: 'Catch Up'}) as HTMLButtonElement;
+        expect(catchUp.disabled).toBe(true);
+        expect(screen.getByText('Embedding Model Changed')).toBeTruthy();
+        const rebuild = screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement;
+        expect(rebuild.disabled).toBe(true);
+    });
+
+    it('shows Catch Up when needs_catch_up even if indexed count is zero', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            healthCheckResult: {
+                ...idleJobStatus.healthCheckResult,
+                db_post_count: 0,
+                indexed_post_count: 0,
+                missing_posts: 0,
+                status: 'healthy',
+                needs_catch_up: true,
+                stored_index_retention_days: 365,
+            },
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 365,
+                needs_catch_up: true,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 730}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByRole('button', {name: 'Catch Up'})).toBeTruthy();
+        expect(screen.getByText('Index retention increased')).toBeTruthy();
+    });
+
+    it('shows a soft note when index retention is tightened', () => {
+        mockUseJobStatus.mockReturnValue({
+            ...idleJobStatus,
+            modelCompatibility: {
+                ...idleJobStatus.modelCompatibility,
+                stored_index_retention_days: 730,
+            },
+        });
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), indexRetentionDays: 365}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.')).toBeTruthy();
+        expect(screen.queryByText('Embedding Model Changed')).toBeNull();
+        expect(screen.queryByText('Index retention increased')).toBeNull();
+    });
+
+    it('renders the index retention control', () => {
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={enabledConfig('openai')}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Index posts from the last N days')).toBeTruthy();
+    });
 });

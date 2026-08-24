@@ -5,6 +5,7 @@ package embeddings
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -177,6 +178,49 @@ func TestEmbeddingSearchConfig_GetVectorElementType(t *testing.T) {
 			assert.Equal(t, tt.want, NormalizeVectorElementType(tt.value))
 			config := EmbeddingSearchConfig{VectorElementType: tt.value}
 			assert.Equal(t, tt.want, config.GetVectorElementType())
+		})
+	}
+}
+
+func TestEmbeddingSearchConfig_GetIndexRetentionDays(t *testing.T) {
+	tests := []struct {
+		name string
+		days int
+		want int
+	}{
+		{name: "unset indexes all posts", days: 0, want: 0},
+		{name: "negative is treated as all posts", days: -1, want: 0},
+		{name: "positive window is kept", days: 365, want: 365},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := EmbeddingSearchConfig{IndexRetentionDays: tt.days}
+			assert.Equal(t, tt.want, config.GetIndexRetentionDays())
+		})
+	}
+}
+
+func TestEmbeddingSearchConfig_IndexRetentionFloor(t *testing.T) {
+	const now = int64(1_000_000_000_000)
+
+	tests := []struct {
+		name string
+		days int
+		now  int64
+		want int64
+	}{
+		{name: "zero days has no floor", days: 0, now: now, want: 0},
+		{name: "negative days has no floor", days: -5, now: now, want: 0},
+		{name: "365 days subtracts one year of millis", days: 365, now: now, want: now - 365*MillisPerDay},
+		{name: "floor does not go negative", days: 365, now: 1000, want: 0},
+		{name: "maximum-sized days does not overflow to a future floor", days: math.MaxInt, now: now, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := EmbeddingSearchConfig{IndexRetentionDays: tt.days}
+			assert.Equal(t, tt.want, config.IndexRetentionFloor(tt.now))
 		})
 	}
 }

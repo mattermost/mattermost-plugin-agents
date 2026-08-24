@@ -36,6 +36,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -284,11 +285,12 @@ func (p *Plugin) OnActivate() error {
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
 		return indexerService.CheckModelCompatibility(indexer.ModelInfo{
-			ProviderType:      cfg.GetProviderType(),
-			Dimensions:        cfg.Dimensions,
-			ModelName:         cfg.GetModelName(),
-			HNSWM:             cfg.GetHNSWM(),
-			VectorElementType: cfg.GetVectorElementType(),
+			ProviderType:       cfg.GetProviderType(),
+			Dimensions:         cfg.Dimensions,
+			ModelName:          cfg.GetModelName(),
+			HNSWM:              cfg.GetHNSWM(),
+			VectorElementType:  cfg.GetVectorElementType(),
+			IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
 		}).Compatible
 	})
 

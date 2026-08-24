@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -33,9 +34,11 @@ const (
 	IndexerLastIndexedKey = "indexer_last_indexed_ts"
 
 	// JobOperationReindex embeds posts. JobOperationRebuildVectorIndex
-	// drops and recreates HNSW without re-embedding.
+	// drops and recreates HNSW without re-embedding. JobOperationCatchUp
+	// fills holes (NOT EXISTS) without re-embedding rows already stored.
 	JobOperationReindex            = "reindex"
 	JobOperationRebuildVectorIndex = "rebuild_vector_index"
+	JobOperationCatchUp            = "catch_up"
 )
 
 // PostRecord represents a post record from the database
@@ -75,12 +78,20 @@ type JobStatus struct {
 	IsStale       bool      `json:"is_stale"`
 	// Phase is a short-lived UI hint (e.g. JobPhaseBuildingIndex); empty otherwise.
 	Phase string `json:"phase,omitempty"`
-	// Operation is JobOperationReindex or JobOperationRebuildVectorIndex.
+	// Operation is JobOperationReindex, JobOperationRebuildVectorIndex, or JobOperationCatchUp.
 	Operation string `json:"operation,omitempty"`
 	// ModelInfo is captured at job start and written to IndexerModelKey on
 	// successful completion so a resumed run unlocks compatibility for the
 	// model it actually indexed with (not whatever is configured at finish).
 	ModelInfo *ModelInfo `json:"model_info,omitempty"`
+	// RetentionFloor is the inclusive CreateAt lower bound snapshotted at
+	// job start. Mid-job config changes do not alter this run; abort and
+	// start a new job if the window should change.
+	RetentionFloor int64 `json:"retention_floor,omitempty"`
+	// IndexRetentionDays is the retention window this job actually covered.
+	// Catch-up success writes this value onto stored ModelInfo without
+	// rewriting provider, model, or dimensions.
+	IndexRetentionDays int `json:"index_retention_days,omitempty"`
 }
 
 func (js *JobStatus) isRebuild() bool {
@@ -99,6 +110,10 @@ func (js *JobStatus) isUnfinishedFullReindex() bool {
 	return js.Status == JobStatusFailed || js.Status == JobStatusCanceled
 }
 
+func (js *JobStatus) isCatchUp() bool {
+	return js != nil && js.Operation == JobOperationCatchUp
+}
+
 // Cursor stores the cursor position for resumable indexing
 type Cursor struct {
 	LastCreateAt int64  `json:"last_create_at"`
@@ -107,12 +122,13 @@ type Cursor struct {
 
 // ModelInfo stores the model configuration used when indexing
 type ModelInfo struct {
-	ProviderType      string `json:"provider_type"`
-	ModelName         string `json:"model_name"`
-	Dimensions        int    `json:"dimensions"`
-	HNSWM             int    `json:"hnsw_m,omitempty"`
-	VectorElementType string `json:"vector_element_type,omitempty"`
-	IndexedAt         int64  `json:"indexed_at"`
+	ProviderType       string `json:"provider_type"`
+	ModelName          string `json:"model_name"`
+	Dimensions         int    `json:"dimensions"`
+	HNSWM              int    `json:"hnsw_m,omitempty"`
+	VectorElementType  string `json:"vector_element_type,omitempty"`
+	IndexRetentionDays *int   `json:"index_retention_days,omitempty"`
+	IndexedAt          int64  `json:"indexed_at"`
 }
 
 // HealthCheckResult represents the result of an index health check
@@ -125,14 +141,16 @@ type HealthCheckResult struct {
 	Error            string    `json:"error,omitempty"`
 
 	// Model compatibility fields
-	ModelCompatible         bool   `json:"model_compatible"`
-	ModelNeedsReindex       bool   `json:"model_needs_reindex"`
-	ModelCompatReason       string `json:"model_compat_reason,omitempty"`
-	StoredProviderType      string `json:"stored_provider_type,omitempty"`
-	StoredDimensions        int    `json:"stored_dimensions,omitempty"`
-	StoredModelName         string `json:"stored_model_name,omitempty"`
-	StoredHNSWM             int    `json:"stored_hnsw_m,omitempty"`
-	StoredVectorElementType string `json:"stored_vector_element_type,omitempty"`
+	ModelCompatible          bool   `json:"model_compatible"`
+	ModelNeedsReindex        bool   `json:"model_needs_reindex"`
+	ModelCompatReason        string `json:"model_compat_reason,omitempty"`
+	StoredProviderType       string `json:"stored_provider_type,omitempty"`
+	StoredDimensions         int    `json:"stored_dimensions,omitempty"`
+	StoredModelName          string `json:"stored_model_name,omitempty"`
+	StoredHNSWM              int    `json:"stored_hnsw_m,omitempty"`
+	StoredVectorElementType  string `json:"stored_vector_element_type,omitempty"`
+	StoredIndexRetentionDays *int   `json:"stored_index_retention_days,omitempty"`
+	NeedsCatchUp             bool   `json:"needs_catch_up,omitempty"`
 
 	// Present while a deferred reindex owns the ANN index lifecycle.
 	VectorIndexState *VectorIndexState `json:"vector_index_state,omitempty"`
@@ -140,14 +158,16 @@ type HealthCheckResult struct {
 
 // ModelCompatibility represents the result of checking model compatibility
 type ModelCompatibility struct {
-	Compatible              bool   `json:"compatible"`
-	NeedsReindex            bool   `json:"needs_reindex"`
-	Reason                  string `json:"reason,omitempty"`
-	StoredProviderType      string `json:"stored_provider_type,omitempty"`
-	StoredDimensions        int    `json:"stored_dimensions,omitempty"`
-	StoredModelName         string `json:"stored_model_name,omitempty"`
-	StoredHNSWM             int    `json:"stored_hnsw_m,omitempty"`
-	StoredVectorElementType string `json:"stored_vector_element_type,omitempty"`
+	Compatible               bool   `json:"compatible"`
+	NeedsReindex             bool   `json:"needs_reindex"`
+	Reason                   string `json:"reason,omitempty"`
+	StoredProviderType       string `json:"stored_provider_type,omitempty"`
+	StoredDimensions         int    `json:"stored_dimensions,omitempty"`
+	StoredModelName          string `json:"stored_model_name,omitempty"`
+	StoredHNSWM              int    `json:"stored_hnsw_m,omitempty"`
+	StoredVectorElementType  string `json:"stored_vector_element_type,omitempty"`
+	StoredIndexRetentionDays *int   `json:"stored_index_retention_days,omitempty"`
+	NeedsCatchUp             bool   `json:"needs_catch_up,omitempty"`
 }
 
 // Keyset pagination of indexable posts, bounded above by a cutoff timestamp
@@ -175,14 +195,6 @@ const (
 	ORDER BY Posts.CreateAt ASC, Posts.Id ASC
 	LIMIT $4`
 
-	reindexFetchQuery = postFetchBase + postFetchTail
-
-	// The catch-up pass skips posts the live hook has already indexed.
-	catchUpFetchQuery = postFetchBase + `
-		AND NOT EXISTS (
-			SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id
-		)` + postFetchTail
-
 	// Repair fetch: gated-window edits, keyset on (UpdateAt, Id). Store
 	// overwrites in-place (delete+insert in one txn) — no pre-delete.
 	// indexableContentSQL mirrors shouldIndexPost with jsonb (not LIKE), so
@@ -193,7 +205,7 @@ const (
 		THEN jsonb_array_length(NULLIF(Posts.Props::text, '')::jsonb -> 'attachments') > 0
 		ELSE FALSE END)`
 
-	editedPostsFetchQuery = `SELECT
+	editedPostsFetchBase = `SELECT
 		Posts.Id as id,
 		Posts.Message as message,
 		Posts.Props as props,
@@ -210,7 +222,9 @@ const (
 		AND ` + indexableContentSQL + `
 		AND Posts.Type = ''
 		AND (Posts.UpdateAt, Posts.Id) > ($1, $2)
-		AND Posts.UpdateAt <= $3
+		AND Posts.UpdateAt <= $3`
+
+	editedPostsFetchTail = `
 	ORDER BY Posts.UpdateAt ASC, Posts.Id ASC
 	LIMIT $4`
 
@@ -226,10 +240,15 @@ const (
 )
 
 // postFetcher builds a fetchFunc paging the given query up to cutoff.
-func (s *Indexer) postFetcher(query string, cutoff int64) fetchFunc {
+// When floor > 0 the query must include $5 as Posts.CreateAt >= $5.
+func (s *Indexer) postFetcher(query string, cutoff, floor int64) fetchFunc {
 	return func(ctx context.Context, cursor Cursor, limit int) ([]PostRecord, error) {
 		var posts []PostRecord
-		err := s.db.SelectContext(ctx, &posts, query, cursor.LastCreateAt, cursor.LastID, cutoff, limit)
+		args := []any{cursor.LastCreateAt, cursor.LastID, cutoff, limit}
+		if floor > 0 {
+			args = append(args, floor)
+		}
+		err := s.db.SelectContext(ctx, &posts, query, args...)
 		return posts, err
 	}
 }
@@ -239,9 +258,21 @@ type indexJobSpec struct {
 	completeLog           string
 	clearIndex            bool
 	runMainPass           bool
+	skipExisting          bool
 	saveLastIndexed       bool
 	deleteCursorOnSuccess bool
 	persistHNSWMOnly      bool
+}
+
+func (s *Indexer) runCatchUpJob(jobStatus *JobStatus) {
+	s.runIndexJob(context.Background(), jobStatus, nil, indexJobSpec{
+		panicLog:              "Catch-up job panicked",
+		completeLog:           "Catch-up completed",
+		runMainPass:           true,
+		skipExisting:          true,
+		saveLastIndexed:       true,
+		deleteCursorOnSuccess: true,
+	})
 }
 
 func (s *Indexer) runReindexJob(jobStatus *JobStatus, clearIndex bool, deferRun *deferredRun) {
@@ -359,9 +390,9 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 			}
 		}
 
-		cursor := s.loadCursor()
+		cursor := bumpCursorToFloor(s.loadCursor(), jobStatus.RetentionFloor)
 		workers, batchSize := s.reindexSettings()
-		mainFetch := s.postFetcher(reindexFetchQuery, jobStatus.CutoffAt)
+		mainFetch := s.postFetcher(indexablePostsFetchSQL(jobStatus.RetentionFloor, spec.skipExisting), jobStatus.CutoffAt, jobStatus.RetentionFloor)
 		var err error
 		_, watermark, err = s.runIndexPass(ctx, jobStatus, search, mainFetch, cursor, passOptions{workers: workers, batchSize: batchSize})
 		if errors.Is(err, errCancelRequested) {
@@ -442,13 +473,20 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 	if spec.saveLastIndexed {
 		s.saveLastIndexedTimestamp(time.Now().UnixMilli())
 	}
-	s.persistModelInfoAfterJob(jobStatus, spec.persistHNSWMOnly)
+	if s.beforePersistModelInfo != nil {
+		s.beforePersistModelInfo()
+	}
+	s.persistModelInfoAfterJob(jobStatus, spec)
 
 	s.pluginAPI.LogWarn(spec.completeLog, "processed_posts", jobStatus.ProcessedRows)
 }
 
 // filterAndCreateDocs filters posts and creates PostDocuments
 func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocument {
+	return s.filterAndCreateDocsWithFloor(posts, 0)
+}
+
+func (s *Indexer) filterAndCreateDocsWithFloor(posts []PostRecord, floor int64) []embeddings.PostDocument {
 	docs := make([]embeddings.PostDocument, 0, len(posts))
 	for _, post := range posts {
 		modelPost := &model.Post{
@@ -458,6 +496,7 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 			Message:   post.Message,
 			Type:      model.PostTypeDefault,
 			DeleteAt:  0,
+			CreateAt:  post.CreateAt,
 		}
 
 		// Parse Props JSON to populate attachments
@@ -475,7 +514,7 @@ func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocum
 			Type:   model.ChannelType(post.ChannelType),
 		}
 
-		if !s.shouldIndexPost(modelPost, channel) {
+		if !s.shouldIndexPostWithFloor(modelPost, channel, floor) {
 			continue
 		}
 
@@ -506,15 +545,34 @@ func (s *Indexer) handleJobError(jobStatus *JobStatus, errMsg string, lastCreate
 	s.saveJobStatus(jobStatus)
 }
 
-func (s *Indexer) persistModelInfoAfterJob(jobStatus *JobStatus, hnswMOnly bool) {
-	if hnswMOnly {
+func (s *Indexer) persistModelInfoAfterJob(jobStatus *JobStatus, spec indexJobSpec) {
+	if spec.persistHNSWMOnly {
 		s.saveHNSWMAfterRebuild(jobStatus)
+		return
+	}
+	if jobStatus.isCatchUp() {
+		s.persistProvenIndexRetentionDays(jobStatus.IndexRetentionDays)
 		return
 	}
 	if jobStatus.ModelInfo != nil {
 		if err := s.SaveModelInfo(*jobStatus.ModelInfo); err != nil {
 			s.pluginAPI.LogError("Failed to save model info after reindex", "error", err)
 		}
+	}
+}
+
+func (s *Indexer) persistProvenIndexRetentionDays(days int) {
+	stored, err := s.GetModelInfo()
+	if err != nil && !mmapi.IsKVNotFound(err) {
+		s.pluginAPI.LogError("Failed to read model info after catch-up", "error", err)
+		return
+	}
+	if err != nil {
+		stored = ModelInfo{}
+	}
+	stored.IndexRetentionDays = utils.Ptr(days)
+	if saveErr := s.SaveModelInfo(stored); saveErr != nil {
+		s.pluginAPI.LogError("Failed to save index retention days after catch-up", "error", saveErr)
 	}
 }
 
@@ -724,7 +782,8 @@ func (s *Indexer) runCatchUpPass(ctx context.Context, jobStatus *JobStatus, sear
 	// a failed run had stored past its checkpoint. Catch-up covers only the
 	// reindex window, so main-pass concurrency isn't needed here.
 	_, batchSize := s.reindexSettings()
-	catchUpFetch := s.postFetcher(catchUpFetchQuery, catchUpCutoff)
+	floor := jobStatus.RetentionFloor
+	catchUpFetch := s.postFetcher(indexablePostsFetchSQL(floor, true), catchUpCutoff, floor)
 	startCursor := Cursor{LastCreateAt: jobStatus.CutoffAt, LastID: ""}
 	return s.runIndexPass(ctx, jobStatus, search, catchUpFetch, startCursor, passOptions{workers: 1, batchSize: batchSize})
 }
@@ -749,6 +808,7 @@ func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, 
 	}
 
 	_, batchSize := s.reindexSettings()
+	floor := jobStatus.RetentionFloor
 	lastUpdateAt, lastID := since, ""
 	for {
 		// Heartbeat only (never cursor); also polls cancel.
@@ -756,14 +816,17 @@ func (s *Indexer) reindexEditedPosts(ctx context.Context, jobStatus *JobStatus, 
 			return errCancelRequested
 		}
 		var posts []PostRecord
-		if err := s.db.SelectContext(ctx, &posts, editedPostsFetchQuery,
-			lastUpdateAt, lastID, upperBound, batchSize); err != nil {
+		args := []any{lastUpdateAt, lastID, upperBound, batchSize}
+		if floor > 0 {
+			args = append(args, floor)
+		}
+		if err := s.db.SelectContext(ctx, &posts, editedPostsFetchSQL(floor), args...); err != nil {
 			return fmt.Errorf("failed to fetch edited posts: %w", err)
 		}
 		if len(posts) == 0 {
 			return nil
 		}
-		if err := s.safeStoreBatch(ctx, search, posts); err != nil {
+		if err := s.safeStoreBatch(ctx, search, posts, floor); err != nil {
 			return err
 		}
 		last := posts[len(posts)-1]

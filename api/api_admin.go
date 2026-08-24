@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -51,8 +52,11 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -143,13 +147,16 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartCatchUpJob()
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case "no previous index found, run a full reindex first":
+		case err.Error() == "no previous index found, run a full reindex first":
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:
@@ -210,11 +217,12 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
 	compat := a.indexerService.CheckModelCompatibility(indexer.ModelInfo{
-		ProviderType:      cfg.GetProviderType(),
-		Dimensions:        cfg.Dimensions,
-		ModelName:         cfg.GetModelName(),
-		HNSWM:             cfg.GetHNSWM(),
-		VectorElementType: cfg.GetVectorElementType(),
+		ProviderType:       cfg.GetProviderType(),
+		Dimensions:         cfg.Dimensions,
+		ModelName:          cfg.GetModelName(),
+		HNSWM:              cfg.GetHNSWM(),
+		VectorElementType:  cfg.GetVectorElementType(),
+		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -224,6 +232,8 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 	result.StoredModelName = compat.StoredModelName
 	result.StoredHNSWM = compat.StoredHNSWM
 	result.StoredVectorElementType = compat.StoredVectorElementType
+	result.StoredIndexRetentionDays = compat.StoredIndexRetentionDays
+	result.NeedsCatchUp = compat.NeedsCatchUp
 
 	c.JSON(http.StatusOK, result)
 }
