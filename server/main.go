@@ -323,7 +323,6 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 		nil, // conversation service wired in a later step
 	)
-	searchService.SetConfigGetter(configGetter)
 
 	// Register update listener for embedding search config changes
 	p.configuration.RegisterUpdateListener(func() {

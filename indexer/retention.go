@@ -43,14 +43,13 @@ func (s *Indexer) snapshotRetention(nowMillis int64) retentionSnapshot {
 }
 
 func modelInfoFromConfig(cfg embeddings.EmbeddingSearchConfig) *ModelInfo {
-	days := cfg.GetIndexRetentionDays()
 	return &ModelInfo{
 		ProviderType:       cfg.GetProviderType(),
 		ModelName:          cfg.GetModelName(),
 		Dimensions:         cfg.Dimensions,
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: &days,
+		IndexRetentionDays: retentionDaysPtr(cfg.GetIndexRetentionDays()),
 	}
 }
 

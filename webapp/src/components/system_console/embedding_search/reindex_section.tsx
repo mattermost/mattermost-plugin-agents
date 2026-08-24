@@ -411,7 +411,7 @@ export const ReindexSection = ({
             {hasLocalRetentionTighten && !hasLocalModelMismatch && !hasLocalRetentionWiden && (
                 <NoteBanner>
                     <NoteText>
-                        <FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search can hide older rows. Full Reindex if you want the index smaller.'/>
+                        <FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.'/>
                     </NoteText>
                 </NoteBanner>
             )}

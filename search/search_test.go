@@ -452,59 +452,7 @@ func (s *createdAfterSearch) Search(_ context.Context, _ string, opts embeddings
 	return out, nil
 }
 
-func TestExecuteSearchAppliesRetentionFloor(t *testing.T) {
-	tests := []struct {
-		name         string
-		days         int
-		wantAfterSet bool
-	}{
-		{name: "N=0 does not set CreatedAfter", days: 0, wantAfterSet: false},
-		{name: "positive N sets exclusive CreatedAfter below the floor", days: 365, wantAfterSet: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			mockClient := mmapimocks.NewMockClient(t)
-			allowVectorIndexStateRead(mockClient)
-
-			var gotOpts embeddings.SearchOptions
-			before := time.Now().UnixMilli()
-			mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).
-				Run(func(args mock.Arguments) {
-					gotOpts = args.Get(2).(embeddings.SearchOptions)
-				}).
-				Return([]embeddings.SearchResult{}, nil)
-
-			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
-			s.SetConfigGetter(func() embeddings.EmbeddingSearchConfig {
-				return embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
-			})
-
-			_, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
-			require.NoError(t, err)
-			after := time.Now().UnixMilli()
-
-			if !tt.wantAfterSet {
-				require.Zero(t, gotOpts.CreatedAfter)
-				return
-			}
-			cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: tt.days}
-			minExclusive := cfg.IndexRetentionFloor(before) - 1
-			maxExclusive := cfg.IndexRetentionFloor(after) - 1
-			if minExclusive < 1 {
-				minExclusive = 1
-			}
-			if maxExclusive < 1 {
-				maxExclusive = 1
-			}
-			require.GreaterOrEqual(t, gotOpts.CreatedAfter, minExclusive)
-			require.LessOrEqual(t, gotOpts.CreatedAfter, maxExclusive)
-		})
-	}
-}
-
-func TestExecuteSearchExcludesStaleOutOfWindowRows(t *testing.T) {
+func TestExecuteSearchReturnsIndexedRowsOutsideWriteWindow(t *testing.T) {
 	now := time.Now().UnixMilli()
 	cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: 365}
 	floor := cfg.IndexRetentionFloor(now)
@@ -537,12 +485,12 @@ func TestExecuteSearchExcludesStaleOutOfWindowRows(t *testing.T) {
 
 	store := &createdAfterSearch{docs: []embeddings.PostDocument{stale, fresh}}
 	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, nil, nil, nil, nil)
-	s.SetConfigGetter(func() embeddings.EmbeddingSearchConfig { return cfg })
 
 	results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
 	require.NoError(t, err)
-	require.Len(t, results, 1)
-	require.Equal(t, "fresh", results[0].PostID)
+	require.Len(t, results, 2)
+	require.Equal(t, "stale", results[0].PostID)
+	require.Equal(t, "fresh", results[1].PostID)
 }
 
 func TestBuildPrompt(t *testing.T) {

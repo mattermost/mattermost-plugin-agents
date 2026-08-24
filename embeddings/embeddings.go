@@ -241,8 +241,8 @@ func (c *EmbeddingSearchConfig) GetIndexRetentionDays() int {
 	return c.IndexRetentionDays
 }
 
-// IndexRetentionFloor is the inclusive CreateAt lower bound for indexing and
-// search. 0 days (all posts) returns 0, meaning no lower bound. The result is
+// IndexRetentionFloor is the inclusive CreateAt lower bound for indexing
+// writes. 0 days (all posts) returns 0, meaning no lower bound. The result is
 // never negative.
 func (c *EmbeddingSearchConfig) IndexRetentionFloor(nowMillis int64) int64 {
 	days := c.GetIndexRetentionDays()

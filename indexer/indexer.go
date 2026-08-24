@@ -531,7 +531,8 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 // compatible. A stored vector element type that differs from current is the
 // same class as a dimension mismatch: search is incompatible and a Full
 // Reindex is required. Widening the retention window needs Catch Up (search
-// stays on); tightening does not disable search and does not require Catch Up.
+// stays on); tightening is write-only, so already-indexed posts stay
+// searchable and no Catch Up is required.
 func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
@@ -604,7 +605,7 @@ func applyRetentionCompatibility(result *ModelCompatibility, storedDays *int, cu
 		}
 	case retentionWindowNarrower(currentDays, stored):
 		if result.Reason == "" {
-			result.Reason = "Lowering this does not remove already-indexed posts. Full Reindex if you want the index smaller."
+			result.Reason = "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM."
 		}
 	}
 }

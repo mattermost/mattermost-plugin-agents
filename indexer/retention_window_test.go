@@ -131,7 +131,7 @@ func TestCheckModelCompatibilityRetention(t *testing.T) {
 			current:        currentOf(365),
 			wantCompat:     true,
 			wantCatchUp:    false,
-			wantReason:     "Lowering this does not remove already-indexed posts. Full Reindex if you want the index smaller.",
+			wantReason:     "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM.",
 			wantStoredDays: retentionDaysPtr(730),
 		},
 		{
@@ -140,7 +140,7 @@ func TestCheckModelCompatibilityRetention(t *testing.T) {
 			current:        currentOf(365),
 			wantCompat:     true,
 			wantCatchUp:    false,
-			wantReason:     "Lowering this does not remove already-indexed posts. Full Reindex if you want the index smaller.",
+			wantReason:     "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM.",
 			wantStoredDays: retentionDaysPtr(0),
 		},
 	}

@@ -307,7 +307,7 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
             </IntlProvider>,
         );
 
-        expect(screen.getByText(/Lowering this does not remove already-indexed posts/)).toBeTruthy();
+        expect(screen.getByText('Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.')).toBeTruthy();
         expect(screen.queryByText('Embedding Model Changed')).toBeNull();
         expect(screen.queryByText('Index retention increased')).toBeNull();
     });
