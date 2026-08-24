@@ -425,6 +425,15 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 			expectedSvcID: "svc-dup",
 		},
 		{
+			name: "entry shadowed by a duplicate id is not reachable by its unique name",
+			services: []llm.ServiceConfig{
+				bridgeServiceConfig("svc-dup", "First", llm.ServiceTypeOpenAI, "gpt-4o"),
+				bridgeServiceConfig("svc-dup", "Second", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"),
+			},
+			service:     "Second",
+			expectedErr: "service not found: Second",
+		},
+		{
 			name: "duplicate names resolve to the first configured entry",
 			services: []llm.ServiceConfig{
 				bridgeServiceConfig("svc-first", "Shared", llm.ServiceTypeOpenAI, "gpt-4o"),
@@ -690,11 +699,14 @@ var bridgeJSONSchema = map[string]interface{}{
 	},
 }
 
-// systemPostContainsJSONInstruction reports whether the request carries the
-// prompt-level JSON instruction the structured-output fallback injects.
-func systemPostContainsJSONInstruction(request llm.CompletionRequest) bool {
+// promptInstructionInjected reports whether the structured-output fallback
+// rewrote the request. The requests in these tests carry no system post, so any
+// non-empty system post present at the provider was injected by the fallback;
+// the native path forwards the request untouched. Asserting on the post's role
+// rather than its wording keeps the tests stable across instruction rewords.
+func promptInstructionInjected(request llm.CompletionRequest) bool {
 	for _, post := range request.Posts {
-		if post.Role == llm.PostRoleSystem && strings.Contains(post.Message, "Respond with a single valid JSON") {
+		if post.Role == llm.PostRoleSystem && post.Message != "" {
 			return true
 		}
 	}
@@ -811,12 +823,12 @@ func TestBridgeServiceCompletionStructuredOutputPolicy(t *testing.T) {
 				request := fake.LastRequest()
 				if tc.wantNative {
 					require.NotNil(t, fake.LastConfig.JSONOutputFormat, "the native schema must reach the provider")
-					require.False(t, systemPostContainsJSONInstruction(request), "no prompt instruction is needed on the native path")
+					require.False(t, promptInstructionInjected(request), "no prompt instruction is needed on the native path")
 					return
 				}
 
 				require.Nil(t, fake.LastConfig.JSONOutputFormat, "the schema must be stripped on the prompt fallback path")
-				require.True(t, systemPostContainsJSONInstruction(request), "the prompt fallback must inject a JSON instruction")
+				require.True(t, promptInstructionInjected(request), "the prompt fallback must inject a JSON instruction")
 			})
 		}
 	}
@@ -975,6 +987,10 @@ func TestResolveBridgeService(t *testing.T) {
 		bridgeServiceConfig("svc-a", "Shared", llm.ServiceTypeOpenAI, "gpt-4o"),
 		bridgeServiceConfig("svc-c", "Shared", llm.ServiceTypeOpenAI, "gpt-4o"),
 		bridgeServiceConfig("svc-blank", "", llm.ServiceTypeOpenAI, "gpt-4o"),
+		// Shadowed by the earlier svc-a entry: unreachable by ID, and its
+		// unique name must not resolve either — everything else (discovery,
+		// fallback resolution, the LLM registry) only sees the first entry.
+		bridgeServiceConfig("svc-a", "Shadowed", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"),
 	}
 
 	tests := []struct {
@@ -986,6 +1002,7 @@ func TestResolveBridgeService(t *testing.T) {
 		{name: "id match", value: "svc-c", expectedID: "svc-c", expectFind: true},
 		{name: "id match beats an earlier name match", value: "svc-a", expectedID: "svc-a", expectFind: true},
 		{name: "name match", value: "Shared", expectedID: "svc-a", expectFind: true},
+		{name: "shadowed duplicate id is not reachable by its unique name", value: "Shadowed"},
 		{name: "unknown value", value: "nope"},
 		{name: "blank value never matches a blank name", value: ""},
 	}

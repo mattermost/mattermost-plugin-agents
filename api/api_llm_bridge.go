@@ -490,16 +490,34 @@ func (a *API) getBotByAgent(agent string) (*bots.Bot, error) {
 // service's name happens to equal that ID. Within each pass the first entry in
 // configuration order wins, which is how duplicate IDs and duplicate names
 // resolve. A service stored with a blank name is only ever reachable by ID.
+//
+// Both passes see only the effective configuration: for duplicate IDs the
+// first entry wins everywhere else (discovery, fallback resolution, the LLM
+// registry, config lookup), so a later entry shadowed by ID is not reachable
+// through its otherwise-unique name either. Resolving it would execute a
+// configuration callers cannot discover and combine it with the first entry's
+// fallback chain.
 func resolveBridgeService(services []llm.ServiceConfig, value string) (llm.ServiceConfig, bool) {
 	if value == "" {
 		return llm.ServiceConfig{}, false
 	}
+
+	effective := make([]llm.ServiceConfig, 0, len(services))
+	seenIDs := make(map[string]struct{}, len(services))
 	for _, svc := range services {
+		if _, shadowed := seenIDs[svc.ID]; shadowed {
+			continue
+		}
+		seenIDs[svc.ID] = struct{}{}
+		effective = append(effective, svc)
+	}
+
+	for _, svc := range effective {
 		if svc.ID == value {
 			return svc, true
 		}
 	}
-	for _, svc := range services {
+	for _, svc := range effective {
 		if svc.Name == value {
 			return svc, true
 		}
