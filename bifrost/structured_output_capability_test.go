@@ -37,9 +37,33 @@ func TestResolveStructuredOutputCapability(t *testing.T) {
 			want:  llm.StructuredOutputCapabilitySupported,
 		},
 		{
+			name:  "openai o1 snapshot with structured outputs is supported",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+			model: "o1-2024-12-17",
+			want:  llm.StructuredOutputCapabilitySupported,
+		},
+		{
 			name:  "openai gpt-4o snapshot predating structured outputs is unknown",
 			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
 			model: "gpt-4o-2024-05-13",
+			want:  llm.StructuredOutputCapabilityUnknown,
+		},
+		{
+			name:  "openai o1-mini has no structured outputs and is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+			model: "o1-mini",
+			want:  llm.StructuredOutputCapabilityUnknown,
+		},
+		{
+			name:  "openai o1-preview predates structured outputs and is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+			model: "o1-preview-2024-09-12",
+			want:  llm.StructuredOutputCapabilityUnknown,
+		},
+		{
+			name:  "openai chatgpt-serving alias is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+			model: "chatgpt-4o-latest",
 			want:  llm.StructuredOutputCapabilityUnknown,
 		},
 		{
@@ -89,6 +113,30 @@ func TestResolveStructuredOutputCapability(t *testing.T) {
 			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeGemini, APIKey: "key"},
 			model: "gemini-2.5-pro",
 			want:  llm.StructuredOutputCapabilitySupported,
+		},
+		{
+			name:  "gemini 1.5 model is supported",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeGemini, APIKey: "key"},
+			model: "gemini-1.5-flash",
+			want:  llm.StructuredOutputCapabilitySupported,
+		},
+		{
+			name:  "gemini 1.0 generation predates response schemas and is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeGemini, APIKey: "key"},
+			model: "gemini-1.0-pro",
+			want:  llm.StructuredOutputCapabilityUnknown,
+		},
+		{
+			name:  "legacy gemini-pro alias is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeGemini, APIKey: "key"},
+			model: "gemini-pro",
+			want:  llm.StructuredOutputCapabilityUnknown,
+		},
+		{
+			name:  "legacy gemini-pro-vision alias is unknown",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeGemini, APIKey: "key"},
+			model: "gemini-pro-vision",
+			want:  llm.StructuredOutputCapabilityUnknown,
 		},
 		{
 			name:  "gemma on the gemini endpoint is unknown",

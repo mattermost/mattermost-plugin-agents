@@ -46,10 +46,12 @@ import (
 //	                  exists only on recent Claude models; older ones reject
 //	                  it. Sending a schema also disables extended thinking
 //	                  (thinkingBlockedBySchema), so guessing here is costly.
-//	gemini            supported for gemini-* models (response_schema is part of
-//	                  the Gemini API for the 1.5+ families); unknown for
-//	                  anything else served by the same endpoint (Gemma models
-//	                  in particular do not support response schemas).
+//	gemini            supported for gemini-* models of the 1.5+ generations
+//	                  (response_schema is part of the Gemini API from 1.5 on);
+//	                  unknown for the retired 1.0 generation, its legacy
+//	                  gemini-pro / gemini-ultra aliases, and anything else
+//	                  served by the same endpoint (Gemma models in particular
+//	                  do not support response schemas).
 //	vertex            unknown. The same endpoint serves Gemini, Anthropic and
 //	                  partner models, and Bifrost downgrades Anthropic-on-Vertex
 //	                  structured output to a forced tool call.
@@ -79,7 +81,7 @@ func ResolveStructuredOutputCapability(svc llm.ServiceConfig, model string) llm.
 		return llm.StructuredOutputCapabilityUnknown
 
 	case llm.ServiceTypeGemini:
-		if isGeminiModel(model) {
+		if geminiModelSupportsResponseSchema(model) {
 			return llm.StructuredOutputCapabilitySupported
 		}
 		return llm.StructuredOutputCapabilityUnknown
@@ -106,21 +108,34 @@ func ResolveStructuredOutputCapability(svc llm.ServiceConfig, model string) llm.
 // family prefix so new dated snapshots of a supported family keep working
 // without a code change; unrecognized names stay unknown so a private or
 // future model never silently starts receiving native schemas.
+//
+// Exclusions within otherwise-supported families, per OpenAI's Structured
+// Outputs guide (which gates support at o1-2024-12-17 / gpt-4o-2024-08-06 and
+// later):
+//   - gpt-4o-2024-05-13 predates Structured Outputs.
+//   - o1-mini and o1-preview predate the full o1 release and are not listed as
+//     supporting strict json_schema; only the o1 (2024-12-17+) snapshots are.
+//   - chatgpt-4o-latest is a ChatGPT-serving alias that is not listed in the
+//     Structured Outputs guide, so it stays unknown.
 func openAIModelSupportsStrictJSONSchema(model string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(model))
 	if normalized == "" {
 		return false
 	}
 
-	// gpt-4o's first snapshot predates Structured Outputs; only 2024-08-06 and
-	// later support strict json_schema.
-	if normalized == "gpt-4o-2024-05-13" {
-		return false
+	unsupportedExceptions := []string{
+		"gpt-4o-2024-05-13",
+		"o1-mini",
+		"o1-preview",
+	}
+	for _, exception := range unsupportedExceptions {
+		if normalized == exception || strings.HasPrefix(normalized, exception+"-") {
+			return false
+		}
 	}
 
 	supportedFamilies := []string{
 		"gpt-4o",
-		"chatgpt-4o",
 		"gpt-4.1",
 		"gpt-4.5",
 		"gpt-5",
@@ -136,9 +151,26 @@ func openAIModelSupportsStrictJSONSchema(model string) bool {
 	return false
 }
 
-// isGeminiModel reports whether the model name identifies a Gemini model. The
-// Gemini API also serves Gemma models, which do not support response schemas.
-func isGeminiModel(model string) bool {
+// geminiModelSupportsResponseSchema reports whether the model name identifies a
+// Gemini model generation with response_schema support (1.5 and later). The
+// Gemini API also serves Gemma models, which do not support response schemas,
+// and the retired 1.0 generation (including its legacy gemini-pro /
+// gemini-ultra aliases) predates them.
+func geminiModelSupportsResponseSchema(model string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(model))
-	return normalized == "gemini" || strings.HasPrefix(normalized, "gemini-")
+	if !strings.HasPrefix(normalized, "gemini-") {
+		return false
+	}
+
+	legacyGenerations := []string{
+		"gemini-1.0",
+		"gemini-pro",
+		"gemini-ultra",
+	}
+	for _, legacy := range legacyGenerations {
+		if normalized == legacy || strings.HasPrefix(normalized, legacy+"-") {
+			return false
+		}
+	}
+	return true
 }
