@@ -336,14 +336,15 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 func TestCheckModelCompatibility(t *testing.T) {
 	tests := []struct {
-		name            string
-		storedInfo      ModelInfo
-		storedInfoErr   error
-		current         ModelInfo
-		expectedCompat  bool
-		expectedReindex bool
-		expectedReason  string
-		expectedStoredM int
+		name               string
+		storedInfo         ModelInfo
+		storedInfoErr      error
+		current            ModelInfo
+		expectedCompat     bool
+		expectedReindex    bool
+		expectedReason     string
+		expectedStoredM    int
+		expectedStoredType string
 	}{
 		{
 			name:          "fresh install with no stored info returns compatible",
@@ -480,6 +481,80 @@ func TestCheckModelCompatibility(t *testing.T) {
 			expectedReason:  "hnsw m changed: stored=16, current=8",
 			expectedStoredM: 16,
 		},
+		{
+			name: "stored missing vector element type is compatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "vector vs halfvec is search incompatible and needs full reindex",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			expectedCompat:     false,
+			expectedReindex:    true,
+			expectedReason:     "vector element type changed: stored=vector, current=halfvec",
+			expectedStoredType: embeddings.VectorElementTypeVector,
+		},
+		{
+			name: "matching halfvec is compatible",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			expectedCompat:     true,
+			expectedReindex:    false,
+			expectedStoredType: embeddings.VectorElementTypeHalfvec,
+		},
+		{
+			name: "stored vector vs empty current type is compatible",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:     true,
+			expectedReindex:    false,
+			expectedStoredType: embeddings.VectorElementTypeVector,
+		},
 	}
 
 	for _, tt := range tests {
@@ -502,6 +577,7 @@ func TestCheckModelCompatibility(t *testing.T) {
 			assert.Equal(t, tt.expectedReindex, result.NeedsReindex)
 			assert.Equal(t, tt.expectedReason, result.Reason)
 			assert.Equal(t, tt.expectedStoredM, result.StoredHNSWM)
+			assert.Equal(t, tt.expectedStoredType, result.StoredVectorElementType)
 		})
 	}
 }
@@ -1326,6 +1402,7 @@ func TestConfigGetter(t *testing.T) {
 		assert.Equal(t, "text-embedding-3-small", result.ModelName)
 		assert.Equal(t, 1536, result.Dimensions)
 		assert.Equal(t, embeddings.DefaultHNSWM, result.HNSWM)
+		assert.Equal(t, embeddings.VectorElementTypeVector, result.VectorElementType)
 	})
 }
 
@@ -3585,10 +3662,11 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				}
 			},
 			expected: &ModelInfo{
-				ProviderType: "openai",
-				ModelName:    "text-embedding-3-small",
-				Dimensions:   1536,
-				HNSWM:        embeddings.DefaultHNSWM,
+				ProviderType:      "openai",
+				ModelName:         "text-embedding-3-small",
+				Dimensions:        1536,
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
 			},
 		},
 		{
@@ -3602,10 +3680,11 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				}
 			},
 			expected: &ModelInfo{
-				ProviderType: "bedrock",
-				ModelName:    "",
-				Dimensions:   768,
-				HNSWM:        embeddings.DefaultHNSWM,
+				ProviderType:      "bedrock",
+				ModelName:         "",
+				Dimensions:        768,
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
 			},
 		},
 	}
@@ -3623,6 +3702,7 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				assert.Equal(t, tc.expected.ModelName, result.ModelName)
 				assert.Equal(t, tc.expected.Dimensions, result.Dimensions)
 				assert.Equal(t, tc.expected.HNSWM, result.HNSWM)
+				assert.Equal(t, tc.expected.VectorElementType, result.VectorElementType)
 			}
 		})
 	}

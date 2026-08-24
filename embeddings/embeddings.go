@@ -103,6 +103,13 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
+// SchemaChecker is an optional VectorStore preflight. CompositeSearch calls it
+// before generating embeddings so a column-type mismatch does not bill the
+// provider. Clear must still succeed so Full Reindex can repair the schema.
+type SchemaChecker interface {
+	CheckSchema(ctx context.Context) error
+}
+
 // BulkIndexer drops/rebuilds the ANN index around bulk loads.
 type BulkIndexer interface {
 	PrepareBulkIndex(ctx context.Context) error
@@ -154,6 +161,13 @@ const (
 	MaxHNSWM     = 100
 )
 
+// Embedding column element types. "vector" is float32; "halfvec" is float16
+// (pgvector 0.7+). Unset or unknown values normalize to vector.
+const (
+	VectorElementTypeVector  = "vector"
+	VectorElementTypeHalfvec = "halfvec"
+)
+
 // ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
 const (
 	ReindexIndexStrategyMaintain = "maintain"
@@ -168,6 +182,7 @@ type EmbeddingSearchConfig struct {
 	Parameters           json.RawMessage  `json:"parameters"`
 	Dimensions           int              `json:"dimensions"`
 	HNSWM                int              `json:"hnswM,omitempty"`
+	VectorElementType    string           `json:"vectorElementType,omitempty"`
 	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
 	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
@@ -196,6 +211,20 @@ func (c *EmbeddingSearchConfig) GetHNSWM() int {
 		return MinHNSWM
 	}
 	return min(c.HNSWM, MaxHNSWM)
+}
+
+// NormalizeVectorElementType keeps only "halfvec"; anything else (including
+// unset) is "vector".
+func NormalizeVectorElementType(elementType string) string {
+	if elementType == VectorElementTypeHalfvec {
+		return VectorElementTypeHalfvec
+	}
+	return VectorElementTypeVector
+}
+
+// GetVectorElementType returns the configured embedding column type.
+func (c *EmbeddingSearchConfig) GetVectorElementType() string {
+	return NormalizeVectorElementType(c.VectorElementType)
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

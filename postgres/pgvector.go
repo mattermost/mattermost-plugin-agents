@@ -6,12 +6,14 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	sq "github.com/Masterminds/squirrel"
@@ -54,18 +56,28 @@ type PGVector struct {
 	db              *sqlx.DB
 	dimensions      int
 	hnswM           int
+	elementType     string
 	skipVectorIndex bool
+	// schemaMismatch is true when the existing table's type or dimensions
+	// differ from this instance. NewPGVector skips CREATE TABLE IF NOT EXISTS
+	// so it does not assume the catalog matches; Store/Search refuse to bind
+	// the wrong type. Clear() (Full Reindex) drops and recreates the table.
+	// atomic: live Store/Search can race Full Reindex Clear().
+	schemaMismatch atomic.Bool
 }
 
 // Compile-time check that PGVector supports deferred bulk indexing.
 var _ embeddings.BulkIndexer = (*PGVector)(nil)
+var _ embeddings.SchemaChecker = (*PGVector)(nil)
 
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
 
-	// HNSWM is applied after unmarshalling vectorStore.parameters so a stale
-	// parameters blob cannot override the top-level config field.
-	HNSWM int `json:"-"`
+	// HNSWM and VectorElementType are applied after unmarshalling
+	// vectorStore.parameters so a stale parameters blob cannot override the
+	// top-level config fields.
+	HNSWM             int    `json:"-"`
+	VectorElementType string `json:"-"`
 
 	// SkipVectorIndex: skip constructor CREATE while a deferred reindex owns
 	// the lifecycle (avoids sync rebuild of an intentionally dropped index).
@@ -96,16 +108,32 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 		db:              db,
 		dimensions:      config.Dimensions,
 		hnswM:           clampHNSWM(config.HNSWM),
+		elementType:     embeddings.NormalizeVectorElementType(config.VectorElementType),
 		skipVectorIndex: config.SkipVectorIndex,
 	}
-	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
+
+	ctx := context.Background()
+	existingType, existingDims, err := pv.embeddingColumnTypmod(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if existingDims > 0 && (existingType != pv.elementType || existingDims != pv.dimensions) {
+		// Do not CREATE TABLE IF NOT EXISTS — that would no-op and look like
+		// the configured type/width were applied. Schema changes go through
+		// Clear() on Full Reindex. Construction still succeeds so Clear() can
+		// run; Store/Search refuse to write the wrong type.
+		pv.schemaMismatch.Store(true)
+		return pv, nil
+	}
+
+	if err := pv.ensureSchema(ctx, !config.SkipVectorIndex, pv.db); err != nil {
 		return nil, err
 	}
 
 	return pv, nil
 }
 
-func createEmbeddingsTableQuery(dimensions int) string {
+func createEmbeddingsTableQuery(dimensions int, elementType string) string {
 	return `
 		CREATE TABLE IF NOT EXISTS llm_posts_embeddings (
 			id TEXT PRIMARY KEY,             								-- Post ID or chunk ID (post_id_chunk_N)
@@ -114,7 +142,7 @@ func createEmbeddingsTableQuery(dimensions int) string {
 			channel_id TEXT NOT NULL,
 			user_id TEXT NOT NULL,
 			content TEXT NOT NULL,
-			embedding vector(` + strconv.Itoa(dimensions) + `),
+			embedding ` + embeddings.NormalizeVectorElementType(elementType) + `(` + strconv.Itoa(dimensions) + `),
 			created_at BIGINT NOT NULL,
 			is_chunk BOOLEAN NOT NULL DEFAULT FALSE,
 			chunk_index INTEGER,              -- NULL for non-chunks
@@ -128,7 +156,7 @@ type execContexter interface {
 
 // ensureSchema creates the embeddings table and supporting indexes when missing.
 func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex execContexter) error {
-	if _, err := ex.ExecContext(ctx, createEmbeddingsTableQuery(pv.dimensions)); err != nil {
+	if _, err := ex.ExecContext(ctx, createEmbeddingsTableQuery(pv.dimensions, pv.elementType)); err != nil {
 		return fmt.Errorf("failed to create llm_posts_embeddings table: %w", err)
 	}
 
@@ -148,9 +176,9 @@ func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex e
 	return nil
 }
 
-// embeddingColumnDimensions returns the typmod dimensions of the embedding
-// column, or 0 if the table/column does not exist.
-func (pv *PGVector) embeddingColumnDimensions(ctx context.Context) (int, error) {
+// embeddingColumnTypmod returns the embedding column's element type and
+// typmod dimensions, or ("", 0) if the table/column does not exist.
+func (pv *PGVector) embeddingColumnTypmod(ctx context.Context) (string, int, error) {
 	var typeName string
 	err := pv.db.GetContext(ctx, &typeName, `
 		SELECT format_type(a.atttypid, a.atttypmod)
@@ -163,28 +191,49 @@ func (pv *PGVector) embeddingColumnDimensions(ctx context.Context) (int, error) 
 			AND NOT a.attisdropped`)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, nil
+			return "", 0, nil
 		}
-		return 0, fmt.Errorf("failed to read embedding column type: %w", err)
+		return "", 0, fmt.Errorf("failed to read embedding column type: %w", err)
 	}
 
-	dims, err := parseVectorTypmod(typeName)
+	elementType, dims, err := parseVectorTypmod(typeName)
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
-	return dims, nil
+	return elementType, dims, nil
 }
 
-func parseVectorTypmod(typeName string) (int, error) {
-	const prefix = "vector("
-	if !strings.HasPrefix(typeName, prefix) || !strings.HasSuffix(typeName, ")") {
-		return 0, fmt.Errorf("unexpected embedding column type %q", typeName)
+func parseVectorTypmod(typeName string) (string, int, error) {
+	open := strings.IndexByte(typeName, '(')
+	if open <= 0 || !strings.HasSuffix(typeName, ")") {
+		return "", 0, fmt.Errorf("unexpected embedding column type %q", typeName)
 	}
-	dims, err := strconv.Atoi(typeName[len(prefix) : len(typeName)-1])
+	elementType := typeName[:open]
+	if elementType != embeddings.VectorElementTypeVector && elementType != embeddings.VectorElementTypeHalfvec {
+		return "", 0, fmt.Errorf("unexpected embedding column type %q", typeName)
+	}
+	dims, err := strconv.Atoi(typeName[open+1 : len(typeName)-1])
 	if err != nil || dims <= 0 {
-		return 0, fmt.Errorf("unexpected embedding column type %q", typeName)
+		return "", 0, fmt.Errorf("unexpected embedding column type %q", typeName)
 	}
-	return dims, nil
+	return elementType, dims, nil
+}
+
+func (pv *PGVector) bindEmbedding(vec []float32) driver.Valuer {
+	if pv.elementType == embeddings.VectorElementTypeHalfvec {
+		return pgvector.NewHalfVector(vec)
+	}
+	return pgvector.NewVector(vec)
+}
+
+func (pv *PGVector) CheckSchema(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !pv.schemaMismatch.Load() {
+		return nil
+	}
+	return fmt.Errorf("embedding column type or dimensions do not match configuration; run Full Reindex to recreate the table")
 }
 
 func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
@@ -205,6 +254,10 @@ func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
 }
 
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
+	if err := pv.CheckSchema(ctx); err != nil {
+		return err
+	}
+
 	if len(docs) != len(embeddings) {
 		return fmt.Errorf("mismatched input lengths: got %d documents but %d embeddings", len(docs), len(embeddings))
 	}
@@ -260,7 +313,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 				doc.ChannelID,
 				doc.UserID,
 				doc.Content,
-				pgvector.NewVector(embeddings[i]),
+				pv.bindEmbedding(embeddings[i]),
 				doc.CreateAt,
 				doc.IsChunk,
 				sqlNullInt(doc.IsChunk, doc.ChunkIndex),
@@ -295,6 +348,10 @@ func sqlNullInt(condition bool, val int) interface{} {
 }
 
 func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	if err := pv.CheckSchema(ctx); err != nil {
+		return nil, err
+	}
+
 	if opts.UserID == "" {
 		return nil, fmt.Errorf("user ID is required to validate permissions")
 	}
@@ -342,7 +399,7 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		maxDistanceSquared := 2 * (1 - opts.MinScore)
 		if maxDistanceSquared > 0 {
 			maxDistance := float32(math.Sqrt(float64(maxDistanceSquared)))
-			queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pgvector.NewVector(embedding), maxDistance)
+			queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pv.bindEmbedding(embedding), maxDistance)
 		}
 	}
 
@@ -365,7 +422,7 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	}
 
 	// Need to append the embedding to the args slice from the select
-	args = append([]interface{}{pgvector.NewVector(embedding)}, args...)
+	args = append([]interface{}{pv.bindEmbedding(embedding)}, args...)
 
 	rows, err := pv.db.QueryxContext(ctx, query, args...)
 	if err != nil {
@@ -460,29 +517,36 @@ func (pv *PGVector) Delete(ctx context.Context, postIDs []string) error {
 }
 
 func (pv *PGVector) Clear(ctx context.Context) error {
-	tableDims, err := pv.embeddingColumnDimensions(ctx)
+	tableType, tableDims, err := pv.embeddingColumnTypmod(ctx)
 	if err != nil {
 		return err
 	}
 
-	// Missing table: create at configured dimensions.
+	// Missing table: create at configured type and dimensions.
 	if tableDims == 0 {
-		return pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db)
+		if schemaErr := pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db); schemaErr != nil {
+			return schemaErr
+		}
+		pv.schemaMismatch.Store(false)
+		return nil
 	}
 
-	// Same dimensions: truncate keeps typmod. Replace a leftover wrong-shape
-	// HNSW index while the table is empty so ModelInfo after a maintain-mode
-	// full reindex matches the catalog. Leave a missing index dropped —
-	// deferred reindex Prepare already dropped it for FinalizeBulkIndex.
-	if tableDims == pv.dimensions {
+	// Same type and dimensions: truncate keeps typmod. Replace a leftover
+	// wrong-shape HNSW index while the table is empty so ModelInfo after a
+	// maintain-mode full reindex matches the catalog. Leave a missing index
+	// dropped — deferred reindex Prepare already dropped it for
+	// FinalizeBulkIndex.
+	if tableType == pv.elementType && tableDims == pv.dimensions {
 		if _, truncErr := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings"); truncErr != nil {
 			return fmt.Errorf("failed to clear vectors: %w", truncErr)
 		}
+		pv.schemaMismatch.Store(false)
 		return pv.replaceMismatchedVectorIndex(ctx)
 	}
 
-	// Dimension change: DROP + recreate. Recreate HNSW if any same-named
-	// index existed (including wrong m); deferred reindex drops it first.
+	// Type or dimension change: DROP + recreate. Recreate HNSW if any
+	// same-named index existed (including wrong m/opclass); deferred reindex
+	// drops it first.
 	status, err := pv.vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return err
@@ -491,19 +555,20 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 
 	tx, err := pv.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to begin transaction for dimension change: %w", err)
+		return fmt.Errorf("failed to begin transaction for embedding schema change: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
 	if _, err := tx.ExecContext(ctx, "DROP TABLE IF EXISTS llm_posts_embeddings"); err != nil {
-		return fmt.Errorf("failed to drop embeddings table for dimension change: %w", err)
+		return fmt.Errorf("failed to drop embeddings table for type or dimension change: %w", err)
 	}
 	if err := pv.ensureSchema(ctx, hadVectorIndex && !pv.skipVectorIndex, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit dimension change: %w", err)
+		return fmt.Errorf("failed to commit embedding schema change: %w", err)
 	}
+	pv.schemaMismatch.Store(false)
 	return nil
 }
 
@@ -597,7 +662,7 @@ func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 type indexStatus struct {
 	exists bool
 	valid  bool
-	// definitionOK: full-table HNSW on embedding with vector_l2_ops and m.
+	// definitionOK: full-table HNSW on embedding with the expected opclass and m.
 	definitionOK bool
 }
 
@@ -626,7 +691,7 @@ func (pv *PGVector) vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext
 	return indexStatus{
 		exists:       true,
 		valid:        rows[0].Valid,
-		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM),
+		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM, pv.elementType),
 	}, nil
 }
 

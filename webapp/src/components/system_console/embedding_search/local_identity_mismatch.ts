@@ -5,18 +5,21 @@ export type StoredEmbeddingIdentity = {
     stored_provider_type?: string;
     stored_dimensions?: number;
     stored_model_name?: string;
+    stored_vector_element_type?: string;
 };
 
 export type CurrentEmbeddingIdentity = {
     providerType: string;
     dimensions: number;
     modelName: string;
+    vectorElementType: string;
 };
 
-export type EmbeddingIdentityMismatchKind = 'provider' | 'dimensions' | 'model';
+export type EmbeddingIdentityMismatchKind = 'provider' | 'dimensions' | 'vectorElementType' | 'model';
 
-// Mirrors indexer.CheckModelCompatibility field order: provider, dimensions, model.
-// Missing stored fields are not a mismatch (upgrade / partial ModelInfo).
+// Mirrors indexer.CheckModelCompatibility field order: provider, dimensions,
+// vector element type, model. Missing stored fields are not a mismatch
+// (upgrade / partial ModelInfo).
 export function embeddingIdentityMismatchKind(
     stored: StoredEmbeddingIdentity | null | undefined,
     current: CurrentEmbeddingIdentity,
@@ -33,6 +36,11 @@ export function embeddingIdentityMismatchKind(
     const storedDimensions = stored.stored_dimensions ?? 0;
     if (storedDimensions > 0 && current.dimensions !== storedDimensions) {
         return 'dimensions';
+    }
+
+    const storedElementType = stored.stored_vector_element_type ?? '';
+    if (storedElementType && current.vectorElementType && storedElementType !== current.vectorElementType) {
+        return 'vectorElementType';
     }
 
     const storedModelName = stored.stored_model_name ?? '';

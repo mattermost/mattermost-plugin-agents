@@ -160,6 +160,27 @@ func TestEmbeddingSearchConfig_GetHNSWM(t *testing.T) {
 	}
 }
 
+func TestEmbeddingSearchConfig_GetVectorElementType(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "unset falls back to vector", value: "", want: VectorElementTypeVector},
+		{name: "vector is kept", value: VectorElementTypeVector, want: VectorElementTypeVector},
+		{name: "halfvec is kept", value: VectorElementTypeHalfvec, want: VectorElementTypeHalfvec},
+		{name: "unknown falls back to vector", value: "int8", want: VectorElementTypeVector},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, NormalizeVectorElementType(tt.value))
+			config := EmbeddingSearchConfig{VectorElementType: tt.value}
+			assert.Equal(t, tt.want, config.GetVectorElementType())
+		})
+	}
+}
+
 func TestEmbeddingSearchConfig_EffectiveReindexIndexStrategy(t *testing.T) {
 	tests := []struct {
 		name     string

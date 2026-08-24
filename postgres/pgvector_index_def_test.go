@@ -14,13 +14,15 @@ import (
 
 func TestCreateVectorIndexSQL(t *testing.T) {
 	tests := []struct {
-		name string
-		m    int
-		want []string
+		name        string
+		m           int
+		elementType string
+		want        []string
 	}{
 		{
-			name: "default m is emitted explicitly",
-			m:    embeddings.DefaultHNSWM,
+			name:        "default m is emitted explicitly",
+			m:           embeddings.DefaultHNSWM,
+			elementType: embeddings.VectorElementTypeVector,
 			want: []string{
 				"CREATE INDEX IF NOT EXISTS " + vectorIndexName,
 				"USING hnsw (embedding vector_l2_ops)",
@@ -28,15 +30,22 @@ func TestCreateVectorIndexSQL(t *testing.T) {
 			},
 		},
 		{
-			name: "configured m is emitted explicitly",
-			m:    16,
-			want: []string{"WITH (m = 16)", "vector_l2_ops"},
+			name:        "configured m is emitted explicitly",
+			m:           16,
+			elementType: embeddings.VectorElementTypeVector,
+			want:        []string{"WITH (m = 16)", "vector_l2_ops"},
+		},
+		{
+			name:        "halfvec uses halfvec_l2_ops",
+			m:           embeddings.DefaultHNSWM,
+			elementType: embeddings.VectorElementTypeHalfvec,
+			want:        []string{"USING hnsw (embedding halfvec_l2_ops)", "WITH (m = 8)"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := createVectorIndexSQL(tt.m)
+			got := createVectorIndexSQL(tt.m, tt.elementType)
 			for _, fragment := range tt.want {
 				assert.Contains(t, got, fragment)
 			}
@@ -116,9 +125,16 @@ func TestVectorIndexDefinitionOK(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, vectorIndexDefinitionOK(tt.def, tt.wantM))
+			assert.Equal(t, tt.want, vectorIndexDefinitionOK(tt.def, tt.wantM, embeddings.VectorElementTypeVector))
 		})
 	}
+
+	t.Run("halfvec opclass matches only halfvec", func(t *testing.T) {
+		half := "CREATE INDEX llm_posts_embeddings_embedding_idx ON public.llm_posts_embeddings USING hnsw (embedding halfvec_l2_ops) WITH (m='8')"
+		assert.True(t, vectorIndexDefinitionOK(half, 8, embeddings.VectorElementTypeHalfvec))
+		assert.False(t, vectorIndexDefinitionOK(half, 8, embeddings.VectorElementTypeVector))
+		assert.False(t, vectorIndexDefinitionOK(l2m8, 8, embeddings.VectorElementTypeHalfvec))
+	})
 }
 
 func TestPGVectorConfigHNSWMNotUnmarshaledFromParameters(t *testing.T) {
@@ -127,4 +143,12 @@ func TestPGVectorConfigHNSWMNotUnmarshaledFromParameters(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 768, cfg.Dimensions)
 	assert.Equal(t, 0, cfg.HNSWM, "HNSWM must not be taken from vectorStore.parameters")
+}
+
+func TestPGVectorConfigVectorElementTypeNotUnmarshaledFromParameters(t *testing.T) {
+	var cfg PGVectorConfig
+	err := json.Unmarshal([]byte(`{"dimensions": 768, "vectorElementType": "halfvec", "VectorElementType": "halfvec"}`), &cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 768, cfg.Dimensions)
+	assert.Equal(t, "", cfg.VectorElementType, "VectorElementType must not be taken from vectorStore.parameters")
 }
