@@ -55,7 +55,7 @@ func toolUseBlockJSONMap(t *testing.T, block ContentBlock) map[string]any {
 // (toolUseBlocks) emits every persisted tool_use identity/metadata field for a
 // fully-populated call, so an auto-run round renders the same as a live one.
 func TestToolUseBlocksPersistsPolicyFields(t *testing.T) {
-	blocks := toolUseBlocks("", llm.ReasoningData{}, []llm.ToolCall{parityToolCall()}, true)
+	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, []llm.ToolCall{parityToolCall()}, true)
 	require.Len(t, blocks, 1)
 	require.Equal(t, BlockTypeToolUse, blocks[0].Type)
 
