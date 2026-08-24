@@ -166,7 +166,10 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, model)
 			require.NotNil(t, shutdown)
-			shutdown()
+			// Release only after the model has been exercised: today the
+			// primary is always the load-test mock so shutdown is a no-op,
+			// but a future Bifrost-backed case must not call a released client.
+			defer shutdown()
 
 			assert.Equal(t, tt.wantPromptFallback, promptFallbackApplied(t, model))
 		})

@@ -36,7 +36,8 @@ func (f *fakeLLMForFallback) ChatCompletionNoStream(_ context.Context, request C
 	return f.response, nil
 }
 
-func (f *fakeLLMForFallback) CountTokens(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (int, error) {
+func (f *fakeLLMForFallback) CountTokens(_ context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
+	f.capture(request, opts)
 	return 0, ErrUnsupportedTokenCount
 }
 func (f *fakeLLMForFallback) InputTokenLimit() int  { return 4096 }
@@ -417,6 +418,13 @@ func TestStructuredOutputFallbackWrapperCountTokensAppliesTransformation(t *test
 		cfg.JSONOutputFormat = jsonSchema
 	})
 	require.ErrorIs(t, err, ErrUnsupportedTokenCount)
+
+	// The count must reflect the request actually sent: schema stripped and
+	// the prompt instruction injected as a leading system post.
+	assert.Nil(t, fake.capturedConfig.JSONOutputFormat, "schema must be stripped before the token count")
+	require.Len(t, fake.capturedPosts, 2)
+	assert.Equal(t, PostRoleSystem, fake.capturedPosts[0].Role, "the injected prompt instruction must be counted")
+	assert.Equal(t, PostRoleUser, fake.capturedPosts[1].Role)
 
 	assert.Equal(t, 4096, wrapper.InputTokenLimit())
 	assert.Equal(t, 4096, wrapper.OutputTokenLimit())
