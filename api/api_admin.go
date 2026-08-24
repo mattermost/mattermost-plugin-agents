@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -215,14 +216,13 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
-	days := cfg.GetIndexRetentionDays()
 	compat := a.indexerService.CheckModelCompatibility(indexer.ModelInfo{
 		ProviderType:       cfg.GetProviderType(),
 		Dimensions:         cfg.Dimensions,
 		ModelName:          cfg.GetModelName(),
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: &days,
+		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex

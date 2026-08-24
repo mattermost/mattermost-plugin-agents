@@ -17,6 +17,7 @@ import (
 	embeddingsmocks "github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/stretchr/testify/assert"
@@ -84,7 +85,7 @@ func TestCheckModelCompatibilityRetention(t *testing.T) {
 	}
 	currentOf := func(days int) ModelInfo {
 		c := baseStored
-		c.IndexRetentionDays = retentionDaysPtr(days)
+		c.IndexRetentionDays = utils.Ptr(days)
 		return c
 	}
 
@@ -108,40 +109,40 @@ func TestCheckModelCompatibilityRetention(t *testing.T) {
 		},
 		{
 			name:           "365 to 730 needs catch-up and search stays compatible",
-			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = retentionDaysPtr(365); return s }(),
+			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = utils.Ptr(365); return s }(),
 			current:        currentOf(730),
 			wantCompat:     true,
 			wantReindex:    false,
 			wantCatchUp:    true,
 			wantReason:     "index retention increased: stored=365, current=730",
-			wantStoredDays: retentionDaysPtr(365),
+			wantStoredDays: utils.Ptr(365),
 		},
 		{
 			name:           "365 to all posts needs catch-up",
-			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = retentionDaysPtr(365); return s }(),
+			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = utils.Ptr(365); return s }(),
 			current:        currentOf(0),
 			wantCompat:     true,
 			wantCatchUp:    true,
 			wantReason:     "index retention increased: stored=365, current=0",
-			wantStoredDays: retentionDaysPtr(365),
+			wantStoredDays: utils.Ptr(365),
 		},
 		{
 			name:           "730 to 365 stays compatible with no catch-up",
-			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = retentionDaysPtr(730); return s }(),
+			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = utils.Ptr(730); return s }(),
 			current:        currentOf(365),
 			wantCompat:     true,
 			wantCatchUp:    false,
 			wantReason:     "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM.",
-			wantStoredDays: retentionDaysPtr(730),
+			wantStoredDays: utils.Ptr(730),
 		},
 		{
 			name:           "all posts to 365 stays compatible with no catch-up",
-			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = retentionDaysPtr(0); return s }(),
+			stored:         func() ModelInfo { s := baseStored; s.IndexRetentionDays = utils.Ptr(0); return s }(),
 			current:        currentOf(365),
 			wantCompat:     true,
 			wantCatchUp:    false,
 			wantReason:     "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM.",
-			wantStoredDays: retentionDaysPtr(0),
+			wantStoredDays: utils.Ptr(0),
 		},
 	}
 
@@ -246,7 +247,7 @@ func TestCatchUpAfterWideningIndexesOnlyTheGap(t *testing.T) {
 		ModelName:          "text-embedding-3-small",
 		Dimensions:         1536,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(365),
+		IndexRetentionDays: utils.Ptr(365),
 	}
 
 	mockClient := mocks.NewMockClient(t)
@@ -400,7 +401,7 @@ func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
 		ModelName:          "text-embedding-3-small",
 		Dimensions:         1536,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(365),
+		IndexRetentionDays: utils.Ptr(365),
 	}
 
 	mockClient := mocks.NewMockClient(t)
@@ -435,7 +436,7 @@ func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
 		ModelName:          "text-embedding-3-small",
 		Dimensions:         1536,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(730),
+		IndexRetentionDays: utils.Ptr(730),
 	})
 	assert.True(t, compat.Compatible)
 	assert.False(t, compat.NeedsReindex)
@@ -455,7 +456,7 @@ func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
 		ModelName:          "text-embedding-3-small",
 		Dimensions:         1536,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(730),
+		IndexRetentionDays: utils.Ptr(730),
 	})
 	assert.True(t, compat.Compatible)
 	assert.False(t, compat.NeedsCatchUp)
@@ -519,7 +520,7 @@ func TestCatchUpResumeKeepsSkipExistingAndSnapshottedWindow(t *testing.T) {
 		ModelName:          "text-embedding-3-small",
 		Dimensions:         1536,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(365),
+		IndexRetentionDays: utils.Ptr(365),
 	}
 
 	mockClient := mocks.NewMockClient(t)
@@ -604,7 +605,7 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 		ModelName:          "old-model",
 		Dimensions:         768,
 		HNSWM:              embeddings.DefaultHNSWM,
-		IndexRetentionDays: retentionDaysPtr(365),
+		IndexRetentionDays: utils.Ptr(365),
 	}
 
 	mockClient := mocks.NewMockClient(t)
@@ -722,7 +723,7 @@ func TestJobStartUsesSingleConfigSnapshot(t *testing.T) {
 				ModelName:          "text-embedding-3-small",
 				Dimensions:         1536,
 				HNSWM:              embeddings.DefaultHNSWM,
-				IndexRetentionDays: retentionDaysPtr(180),
+				IndexRetentionDays: utils.Ptr(180),
 			}
 
 			mockClient := mocks.NewMockClient(t)

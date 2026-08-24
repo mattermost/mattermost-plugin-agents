@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -977,7 +978,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		store := &jobKVStore{}
 		lastIndexed := now - 5000
 		store.lastIdx = &lastIndexed
-		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: retentionDaysPtr(365)}
+		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: utils.Ptr(365)}
 
 		mockClient := mocks.NewMockClient(t)
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)

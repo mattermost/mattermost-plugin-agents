@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -569,7 +570,7 @@ func (s *Indexer) persistProvenIndexRetentionDays(days int) {
 	if err != nil {
 		stored = ModelInfo{}
 	}
-	stored.IndexRetentionDays = retentionDaysPtr(days)
+	stored.IndexRetentionDays = utils.Ptr(days)
 	if saveErr := s.SaveModelInfo(stored); saveErr != nil {
 		s.pluginAPI.LogError("Failed to save index retention days after catch-up", "error", saveErr)
 	}
