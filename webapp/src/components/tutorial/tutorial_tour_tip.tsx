@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef} from 'react';
+import React, {useEffect, useState} from 'react';
 import ReactDOM from 'react-dom';
 import Tippy from '@tippyjs/react';
 import styled, {createGlobalStyle} from 'styled-components';
@@ -164,7 +164,8 @@ const TutorialTourTip: React.FC<Props> = ({
     offset = [0, 12],
     onFinish,
 }) => {
-    const triggerRef = useRef<HTMLDivElement>(null);
+    // Held in state rather than a ref so Tippy re-renders once the dot mounts.
+    const [triggerElement, setTriggerElement] = useState<HTMLDivElement | null>(null);
     const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
         onFinish,
@@ -211,7 +212,7 @@ const TutorialTourTip: React.FC<Props> = ({
         <>
             <TippyStyles/>
             <DotContainer
-                ref={triggerRef}
+                ref={setTriggerElement}
                 data-testid='agents-tour-dot'
                 onClick={handleOpen}
                 $placement={pulsatingDotPlacement}
@@ -237,7 +238,7 @@ const TutorialTourTip: React.FC<Props> = ({
                     duration={[250, 150]}
                     maxWidth={width}
                     zIndex={9999}
-                    reference={triggerRef}
+                    reference={triggerElement}
                     interactive={true}
                     appendTo={rootPortal}
                     onClickOutside={() => {

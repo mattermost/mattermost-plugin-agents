@@ -2,23 +2,29 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
-import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
 import {PostMessagePreview} from '@/mm_webapp';
 
+import {isValidId} from '@/utils/ids';
+
+import {ServerToolUse} from '@/types/conversation';
+
 import PostText from '../post_text';
-import {SearchSources} from '../search_sources';
+import {SearchSources, parseSearchSources} from '../search_sources';
 import ToolApprovalSet from '../tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
+
+import ServerToolSet from './server_tool_set';
 
 import {
     Round,
@@ -42,11 +48,12 @@ export interface PostUpdateWebsocketMessage {
     tool_call?: string
     reasoning?: string
     annotations?: string
+    server_tool?: string
 }
 
 interface LLMBotPostProps {
     post: any;
-    websocketRegister?: (postID: string, listenerID: string, handler: (msg: WebSocketMessage<any>) => void) => void;
+    websocketRegister?: (postID: string, listenerID: string, handler: (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => void) => void;
     websocketUnregister?: (postID: string, listenerID: string) => void;
 }
 
@@ -65,9 +72,14 @@ function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
+    const intl = useIntl();
     const selectPost = useSelectNotAIPost();
 
-    const conversationId: string | undefined = props.post.props?.conversation_id;
+    // Post props are free-form JSON; a conversation_id that is not a
+    // well-formed id is treated as absent so no request is built from it and
+    // the component falls back to its no-conversation rendering path.
+    const rawConversationId: unknown = props.post.props?.conversation_id;
+    const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
     // Meeting summarization posts have no conversation entity yet; fall back to
@@ -89,6 +101,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [generating, setGenerating] = useState(false);
     const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
+    const [serverTools, setServerTools] = useState<ServerToolUse[]>([]);
     const [precontent, setPrecontent] = useState(props.post.message === '');
     const [error, setError] = useState('');
 
@@ -113,13 +126,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [regenerating, setRegenerating] = useState(false);
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
-    const liveRef = useRef({message, toolCalls, reasoningSummary, annotations});
-    liveRef.current = {message, toolCalls, reasoningSummary, annotations};
+    const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
+    liveRef.current = {message, toolCalls, reasoningSummary, annotations, serverTools};
 
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             setMessage(props.post.message);
+            setPrecontent(false);
         }
     }, [props.post.message]);
 
@@ -149,6 +163,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setLiveRounds((prev: Round[]) => (prev.length === 0 ? prev : []));
         setToolCalls((prev: ToolCall[]) => (prev.length === 0 ? prev : []));
         setAnnotations((prev: Annotation[]) => (prev.length === 0 ? prev : []));
+        setServerTools((prev: ServerToolUse[]) => (prev.length === 0 ? prev : []));
         setMessage((prev: string) => (prev === '' ? prev : ''));
         setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
         setIsReasoningLoading(false);
@@ -163,7 +178,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
         const listenerID = Math.random().toString(36).substring(7);
 
-        props.websocketRegister(props.post.id, listenerID, (msg: WebSocketMessage<PostUpdateWebsocketMessage>) => {
+        props.websocketRegister(props.post.id, listenerID, (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
             const data = msg.data;
 
             if (data.post_id !== props.post.id) {
@@ -199,6 +214,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                                 toolCalls: parsedToolCalls,
                                 reasoning: {summary: live.reasoningSummary, signature: ''},
                                 annotations: live.annotations,
+                                serverTools: live.serverTools,
                             },
                         ]);
                         setMessage('');
@@ -206,6 +222,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         setReasoningSummary('');
                         setIsReasoningLoading(false);
                         setAnnotations([]);
+                        setServerTools([]);
                     } else {
                         setToolCalls(parsedToolCalls);
                     }
@@ -223,6 +240,19 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     setPrecontent(false);
                 } catch {
                     setError('Error parsing annotation data');
+                }
+                return;
+            }
+
+            if (data.control === 'server_tool' && data.server_tool) {
+                // Cumulative provider-executed tool activity for the round;
+                // each event replaces the prior snapshot.
+                try {
+                    const parsedServerTools = JSON.parse(data.server_tool) as ServerToolUse[];
+                    setServerTools(parsedServerTools);
+                    setPrecontent(false);
+                } catch {
+                    setError(intl.formatMessage({defaultMessage: 'Error parsing server tool data'}));
                 }
                 return;
             }
@@ -263,6 +293,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setIsReasoningLoading(false);
                 setToolCalls([]);
                 setAnnotations([]);
+                setServerTools([]);
                 setLiveRounds([]);
                 if (!message) {
                     setMessage('');
@@ -281,6 +312,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setIsReasoningLoading(false);
                 setAnnotations([]);
                 setToolCalls([]);
+                setServerTools([]);
                 setLiveRounds([]);
                 if (conversationId) {
                     invalidateConversation(conversationId);
@@ -299,7 +331,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         const hasContent = message !== '' ||
             toolCalls.length > 0 ||
             reasoningSummary !== '' ||
-            annotations.length > 0;
+            annotations.length > 0 ||
+            serverTools.length > 0;
         if (!hasContent) {
             return null;
         }
@@ -309,8 +342,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             toolCalls,
             reasoning: {summary: reasoningSummary, signature: ''},
             annotations,
+            serverTools,
         };
-    }, [message, toolCalls, reasoningSummary, annotations]);
+    }, [message, toolCalls, reasoningSummary, annotations, serverTools]);
 
     const renderedRounds = useMemo(() => computeRenderedRounds({
         regenerating,
@@ -318,8 +352,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         persistedRounds: stablePersisted,
         liveRounds,
         generating,
+        pendingRefetch,
         currentRound,
-    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, currentRound]);
+    }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
         setMessage('');
@@ -330,6 +365,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setIsReasoningLoading(false);
         setAnnotations([]);
         setToolCalls([]);
+        setServerTools([]);
         setLiveRounds([]);
         setRegenerating(true);
         doRegenerate(props.post.id);
@@ -384,6 +420,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         return 'done';
     };
 
+    // Parsed defensively: search_results is a free-form post prop, so a
+    // malformed value yields an empty list instead of throwing during render.
+    const searchSources = useMemo(
+        () => parseSearchSources(props.post.props?.[SearchResultsPropKey]),
+        [props.post.props],
+    );
+
     const isReasoningCollapsed = (roundId: string): boolean => !expandedReasoning[roundId];
     const toggleReasoning = (roundId: string, collapsed: boolean) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
@@ -433,9 +476,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     />
                 );
             })}
-            {props.post.props?.[SearchResultsPropKey] && (
+            {searchSources.length > 0 && (
                 <SearchSources
-                    sources={JSON.parse(props.post.props[SearchResultsPropKey])}
+                    sources={searchSources}
                 />
             )}
             { showPostbackButton &&
@@ -484,6 +527,9 @@ function RoundView(props: RoundViewProps) {
                     isReasoningLoading={props.reasoningLoading}
                     onToggleCollapse={props.onToggleReasoning}
                 />
+            )}
+            {round.serverTools.length > 0 && (
+                <ServerToolSet serverTools={round.serverTools}/>
             )}
             {round.text !== '' && (
                 <PostText

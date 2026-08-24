@@ -6,7 +6,6 @@ import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
 import {FormattedMessage, createIntl} from 'react-intl';
 
-import {WebSocketMessage} from '@mattermost/client';
 import {GlobalState} from '@mattermost/types/store';
 import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 
@@ -14,6 +13,7 @@ import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 import aiIcon from '../../assets/bot_icon.png';
 
 import manifest from '@/manifest';
+import {PluginWebSocketMessage} from '@/types';
 
 import {LLMBotPost} from './components/llmbot_post/llmbot_post';
 import PostMenu from './components/post_menu';
@@ -193,7 +193,7 @@ export default class Plugin {
         // Invalidate conversation cache when backend publishes conversation updates
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_conversation_updated',
-            (msg: WebSocketMessage<{conversation_id: string}>) => {
+            (msg: PluginWebSocketMessage<{conversation_id: string}>) => {
                 invalidateConversation(msg.data.conversation_id);
             },
         );
@@ -201,7 +201,7 @@ export default class Plugin {
         // MCP OAuth connect/disconnect: refresh cached tool lists in open UI.
         registry.registerWebSocketEventHandler(
             'custom_mattermost-ai_mcp_connection_updated',
-            (msg: WebSocketMessage<MCPConnectionEvent>) => {
+            (msg: PluginWebSocketMessage<MCPConnectionEvent>) => {
                 notifyMCPConnectionUpdated(msg.data);
             },
         );

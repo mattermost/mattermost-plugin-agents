@@ -7,6 +7,7 @@ import {
     BlockTypeToolResult,
     BlockTypeAnnotations,
     BlockTypeText,
+    BlockTypeServerToolUse,
     StatusPending,
     StatusAccepted,
     StatusRejected,
@@ -15,6 +16,7 @@ import {
     StatusAutoApproved,
     type ConversationResponse,
     type ContentBlock,
+    type ServerToolUse,
     type Turn,
     type ToolCallStatus as ConvToolCallStatus,
 } from '@/types/conversation';
@@ -244,6 +246,22 @@ export interface Round {
     toolCalls: ToolCall[];
     reasoning: {summary: string; signature: string};
     annotations: Annotation[];
+
+    // Provider-executed (server) tool activity for the round: web searches,
+    // page fetches, sandbox code runs. Rendered before the text since the
+    // activity precedes the final answer.
+    serverTools: ServerToolUse[];
+}
+
+/** Extract ServerToolUse[] from server_tool_use content blocks. */
+export function extractServerToolsFromTurn(turn: Turn): ServerToolUse[] {
+    const serverTools: ServerToolUse[] = [];
+    for (const block of turn.content) {
+        if (block.type === BlockTypeServerToolUse && block.server_tool) {
+            serverTools.push(block.server_tool);
+        }
+    }
+    return serverTools;
 }
 
 /**
@@ -254,6 +272,8 @@ export interface Round {
  * content never lands in `persistedRounds` — it lives only in the live round.
  * For those posts the live round must stay rendered after streaming ends;
  * otherwise the summary vanishes the moment `generating` flips to false.
+ * Conversation posts also keep the live current round visible while refetching
+ * or waiting for persisted rounds, preventing content from disappearing.
  */
 export function computeRenderedRounds(params: {
     regenerating: boolean;
@@ -261,9 +281,10 @@ export function computeRenderedRounds(params: {
     persistedRounds: Round[];
     liveRounds: Round[];
     generating: boolean;
+    pendingRefetch?: boolean;
     currentRound: Round | null;
 }): Round[] {
-    const {regenerating, hasConversation, persistedRounds, liveRounds, generating, currentRound} = params;
+    const {regenerating, hasConversation, persistedRounds, liveRounds, generating, pendingRefetch = false, currentRound} = params;
 
     if (regenerating) {
         // Suppress persistedRounds (still the pre-regen turn) but keep
@@ -276,7 +297,7 @@ export function computeRenderedRounds(params: {
     }
 
     const out: Round[] = [...persistedRounds, ...liveRounds];
-    if ((generating || !hasConversation) && currentRound) {
+    if ((generating || pendingRefetch || !hasConversation || persistedRounds.length === 0) && currentRound) {
         out.push(currentRound);
     }
     return out;
@@ -310,6 +331,7 @@ export function buildRoundsFromTurns(
             toolCalls,
             reasoning: extractReasoningFromTurn(turn),
             annotations: extractAnnotationsFromTurn(turn),
+            serverTools: extractServerToolsFromTurn(turn),
         });
     }
     return rounds;

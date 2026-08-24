@@ -375,6 +375,53 @@ func TestStore(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, 2, chunkCount)
 	})
+
+	t.Run("stores batches larger than one multi-row insert statement", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		config := PGVectorConfig{
+			Dimensions: 3, // Small dimensions for test
+		}
+		pgVector, err := NewPGVector(db, config)
+		require.NoError(t, err)
+
+		// More docs than insertBatchRows (500) forces multiple insert statements
+		const docCount = 1101
+		now := model.GetMillis()
+		postIDs := make([]string, docCount)
+		createAts := make([]int64, docCount)
+		docs := make([]embeddings.PostDocument, docCount)
+		embedVectors := make([][]float32, docCount)
+		for i := range docs {
+			postIDs[i] = fmt.Sprintf("bulk-post%04d", i)
+			createAts[i] = now
+			docs[i] = embeddings.PostDocument{
+				PostID:    postIDs[i],
+				CreateAt:  now,
+				TeamID:    "team1",
+				ChannelID: "channel1",
+				UserID:    "user1",
+				Content:   fmt.Sprintf("bulk content %d", i),
+			}
+			embedVectors[i] = []float32{float32(i), 0, 0}
+		}
+		addTestPosts(t, db, postIDs, createAts)
+
+		err = pgVector.Store(context.Background(), docs, embedVectors)
+		require.NoError(t, err)
+
+		var count int
+		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
+		require.NoError(t, err)
+		assert.Equal(t, docCount, count)
+
+		// Spot-check a row past the first insert statement kept its embedding aligned
+		var content string
+		err = db.Get(&content, "SELECT content FROM llm_posts_embeddings WHERE id = 'bulk-post0700'")
+		require.NoError(t, err)
+		assert.Equal(t, "bulk content 700", content)
+	})
 }
 
 func TestStoreUpdate(t *testing.T) {
@@ -1267,7 +1314,107 @@ func TestClear(t *testing.T) {
 		err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
 		require.NoError(t, err)
 		assert.Equal(t, 0, count)
+
+		// Same-dim Clear keeps the vector typmod
+		dims, dimErr := pgVector.embeddingColumnDimensions(ctx)
+		require.NoError(t, dimErr)
+		assert.Equal(t, 3, dims)
 	})
+
+	t.Run("recreates table when configured dimensions change", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		oldStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+		require.NoError(t, err)
+
+		now := model.GetMillis()
+		addTestPosts(t, db, []string{"post1"}, []int64{now})
+		require.NoError(t, oldStore.Store(ctx, []embeddings.PostDocument{{
+			PostID: "post1", CreateAt: now, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "old",
+		}}, [][]float32{{0.1, 0.2, 0.3}}))
+
+		newStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 5})
+		require.NoError(t, err)
+
+		// CREATE TABLE IF NOT EXISTS leaves the old typmod until Clear.
+		dims, err := newStore.embeddingColumnDimensions(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 3, dims)
+
+		require.NoError(t, newStore.Clear(ctx))
+
+		dims, err = newStore.embeddingColumnDimensions(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 5, dims)
+
+		hadIndex, err := newStore.vectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, hadIndex, "maintain-style Clear should recreate HNSW when it existed")
+
+		addTestPosts(t, db, []string{"post2"}, []int64{now + 1})
+		require.NoError(t, newStore.Store(ctx, []embeddings.PostDocument{{
+			PostID: "post2", CreateAt: now + 1, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: "new",
+		}}, [][]float32{{0.1, 0.2, 0.3, 0.4, 0.5}}))
+
+		var storedDim int
+		require.NoError(t, db.Get(&storedDim, "SELECT vector_dims(embedding) FROM llm_posts_embeddings WHERE post_id = 'post2'"))
+		assert.Equal(t, 5, storedDim)
+	})
+
+	t.Run("does not recreate HNSW after PrepareBulkIndex on dimension change", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		_, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+		require.NoError(t, err)
+
+		newStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 5})
+		require.NoError(t, err)
+
+		require.NoError(t, newStore.PrepareBulkIndex(ctx))
+		exists, err := newStore.vectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists)
+
+		require.NoError(t, newStore.Clear(ctx))
+
+		dims, err := newStore.embeddingColumnDimensions(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, 5, dims)
+
+		exists, err = newStore.vectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists, "deferred Clear must leave HNSW dropped for FinalizeBulkIndex")
+	})
+}
+
+func TestParseVectorTypmod(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    int
+		wantErr bool
+	}{
+		{name: "standard", input: "vector(1536)", want: 1536},
+		{name: "small", input: "vector(3)", want: 3},
+		{name: "missing dims", input: "vector", wantErr: true},
+		{name: "empty", input: "vector()", wantErr: true},
+		{name: "wrong type", input: "text", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseVectorTypmod(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestSearchExcludesDeletedPosts(t *testing.T) {

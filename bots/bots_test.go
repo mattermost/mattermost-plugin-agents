@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -314,7 +315,7 @@ func TestBotConfigsEqual(t *testing.T) {
 			UserIDs:            []string{"u1"},
 			TeamIDs:            []string{"t1"},
 			MaxFileSize:        1024,
-			EnabledNativeTools: []string{"web_search"},
+			EnabledNativeTools: []string{llm.NativeToolWebSearch},
 			ReasoningEnabled:   true,
 			ReasoningEffort:    "medium",
 			ThinkingBudget:     4096,
@@ -684,9 +685,10 @@ func TestEnsureBots(t *testing.T) {
 			},
 			cfgServices: []llm.ServiceConfig{
 				{
-					ID:     "service1",
-					Type:   llm.ServiceTypeOpenAI,
-					APIKey: "test-api-key",
+					ID:           "service1",
+					Type:         llm.ServiceTypeOpenAI,
+					APIKey:       "test-api-key",
+					DefaultModel: "gpt-4o",
 				},
 			},
 			isMultiLLMLicensed: false,
@@ -783,6 +785,22 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 			if tc.numCreatedBots > 0 {
 				mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot {
+					for _, botCfg := range tc.cfgBots {
+						if botCfg.Name != bot.Username {
+							continue
+						}
+						for _, svc := range tc.cfgServices {
+							if svc.ID != botCfg.ServiceID {
+								continue
+							}
+							model := botCfg.Model
+							if model == "" {
+								model = svc.DefaultModel
+							}
+							assert.Equal(t, poweredByDescription(svc.Type, model), bot.Description)
+							return bot
+						}
+					}
 					return bot
 				}, nil).Times(tc.numCreatedBots)
 				mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Times(tc.numCreatedBots)
@@ -1062,7 +1080,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 // native tools through Bifrost, even if the bot config lists web_search.
 func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
 	b := NewBot(
-		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
 		llm.ServiceConfig{Type: llm.ServiceTypeCohere},
 		&model.Bot{UserId: "b1"},
 		nil,
@@ -1072,10 +1090,107 @@ func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
 
 func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 	b := NewBot(
-		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
 		llm.ServiceConfig{Type: llm.ServiceTypeGemini},
 		&model.Bot{UserId: "b1"},
 		nil,
 	)
 	require.True(t, b.HasNativeWebSearchEnabled())
+}
+
+func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleServices(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name:     "OpenAI-compatible disabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible},
+			expected: false,
+		},
+		{
+			name: "OpenAI-compatible enabled",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeOpenAICompatible,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "Azure disabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeAzure},
+			expected: false,
+		},
+		{
+			name: "Azure enabled",
+			service: llm.ServiceConfig{
+				Type:            llm.ServiceTypeAzure,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+		{
+			name:     "direct OpenAI always enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
+				tt.service,
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.expected, b.HasNativeWebSearchEnabled())
+		})
+	}
+}
+
+func TestPoweredByDescription(t *testing.T) {
+	prefix := "Powered by openai - "
+	longModel := strings.Repeat("m", model.BotDescriptionMaxRunes)
+
+	tests := []struct {
+		name        string
+		serviceType string
+		model       string
+		want        string
+	}{
+		{
+			name:        "service type and model",
+			serviceType: "openai",
+			model:       "gpt-4o",
+			want:        "Powered by openai - gpt-4o",
+		},
+		{
+			name:        "service type only when model empty",
+			serviceType: "anthropic",
+			model:       "",
+			want:        "Powered by anthropic",
+		},
+		{
+			name:        "azure with deployment model",
+			serviceType: "azure",
+			model:       "gpt-4",
+			want:        "Powered by azure - gpt-4",
+		},
+		{
+			name:        "truncates to Mattermost bot description limit",
+			serviceType: "openai",
+			model:       longModel,
+			want:        string([]rune(prefix + longModel)[:model.BotDescriptionMaxRunes]),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := poweredByDescription(tt.serviceType, tt.model)
+			assert.Equal(t, tt.want, got)
+			assert.LessOrEqual(t, utf8.RuneCountInString(got), model.BotDescriptionMaxRunes)
+		})
+	}
 }

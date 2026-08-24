@@ -11,9 +11,9 @@ import (
 	"unicode/utf8"
 )
 
-// MaxCustomInstructionsRunes caps BotConfig.CustomInstructions at a length that keeps
-// the system prompt bounded on every conversation turn.
-const MaxCustomInstructionsRunes = 16384
+// MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
+// request. Custom instructions are sent only to the LLM, not as Mattermost posts.
+const MaxCustomInstructionsRunes = 100000
 
 // DefaultMaxToolTurns is the default tool-call-execute-recall ceiling per LLM turn.
 // Agents that store 0 (legacy config bots, freshly-migrated rows before the column
@@ -129,14 +129,11 @@ type BotConfig struct {
 	TeamIDs            []string           `json:"teamIDs"`
 	MaxFileSize        int64              `json:"maxFileSize"`
 
-	// EnabledNativeTools contains the list of enabled native tools for this bot.
-	// Supported values by provider:
-	//   - OpenAI / Azure: ["web_search", "file_search", "code_interpreter"]
-	//     (only works when UseResponsesAPI is true for OpenAI-compatible and Azure)
-	//   - Anthropic: ["web_search"]
-	//   - Gemini / Vertex AI: ["web_search"] (mapped to Google Search / grounding
-	//     via Bifrost's Responses API)
-	// For other providers these values are filtered out at request time.
+	// EnabledNativeTools contains the list of enabled native tools for this bot
+	// (see the NativeTool* constants). Which ids a provider actually supports is
+	// defined by bifrost.SupportedNativeToolsForServiceType; unsupported values
+	// are filtered out at request time. For OpenAI-compatible and Azure services,
+	// native tools additionally require UseResponsesAPI.
 	EnabledNativeTools []string `json:"enabledNativeTools"`
 
 	// EnabledMCPTools is the per-agent allowlist of MCP tools:
@@ -171,10 +168,10 @@ type BotConfig struct {
 	//   takes priority over ReasoningEffort.
 	ThinkingBudget int `json:"thinkingBudget"`
 
-	// StructuredOutputEnabled enables structured JSON output for providers that support it.
-	// When enabled, the provider will use the JSONOutputFormat schema from the request config
-	// to constrain the model's output to valid JSON matching the schema.
-	// Only applicable to Anthropic (Claude 4.5/4.6+ models)
+	// StructuredOutputEnabled controls how a requested JSONOutputFormat schema is handled.
+	// When enabled, the schema is sent natively to the provider to constrain the model's
+	// output. When disabled, the schema is converted into prompt instructions and stripped
+	// from the provider request, for models/APIs without native structured output support.
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations

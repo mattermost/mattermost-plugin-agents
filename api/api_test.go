@@ -109,23 +109,25 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager        *mcp.OAuthManager
-	tools               []llm.Tool
-	mcpErrors           *mcp.Errors
-	config              mcp.Config
-	embeddedServer      mcp.EmbeddedMCPServer
-	processOAuthSession *mcp.OAuthSession
-	processOAuthErr     error
-	disconnectCalls     []mcpDisconnectCall
-	disconnectErr       error
-	oauthNeededCalls    []mcpDisconnectCall
-	refreshErr          error
-	refreshCalls        []string
-	getContexts         []context.Context
-	refreshContexts     []context.Context
-	ensureSessionErr    error
+	oauthManager         *mcp.OAuthManager
+	tools                []llm.Tool
+	mcpErrors            *mcp.Errors
+	config               mcp.Config
+	embeddedServer       mcp.EmbeddedMCPServer
+	processOAuthSession  *mcp.OAuthSession
+	processOAuthErr      error
+	disconnectCalls      []mcpDisconnectCall
+	disconnectErr        error
+	oauthNeededCalls     []mcpDisconnectCall
+	refreshErr           error
+	refreshCalls         []string
+	getContexts          []context.Context
+	refreshContexts      []context.Context
+	ensureSessionErr     error
+	ensureSessionCreated bool
 
 	registerCalls   []mcp.PluginServerConfig
+	updateCalls     []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
@@ -154,11 +156,11 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 	return nil
 }
 
-func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
+func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error) {
 	return m.processOAuthSession, m.processOAuthErr
 }
 
-func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+func (m *mockMCPClientManager) DisconnectUserOAuth(_ context.Context, userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
@@ -178,11 +180,11 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return m.embeddedServer
 }
 
-func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, error) {
 	if m.ensureSessionErr != nil {
-		return "", m.ensureSessionErr
+		return "", false, m.ensureSessionErr
 	}
-	return "mock-session-id", nil
+	return "mock-session-id", m.ensureSessionCreated, nil
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
@@ -206,7 +208,16 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
-	// Mirror real ClientManager: same PluginID replaces existing entry.
+	delete(m.orphanPluginIDs, cfg.PluginID)
+	m.storePluginServer(cfg)
+}
+
+func (m *mockMCPClientManager) UpdatePluginServer(cfg mcp.PluginServerConfig) {
+	m.updateCalls = append(m.updateCalls, cfg)
+	m.storePluginServer(cfg)
+}
+
+func (m *mockMCPClientManager) storePluginServer(cfg mcp.PluginServerConfig) {
 	for i, existing := range m.pluginServers {
 		if existing.PluginID == cfg.PluginID {
 			m.pluginServers[i] = cfg
@@ -468,6 +479,29 @@ func (e *TestEnvironment) OverrideLicense(license *model.License) {
 	e.mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
+// CaptureAuditRecords replaces the default LogAuditRec mock registered by
+// SetupTestEnvironment with one that appends every logged record to the
+// returned slice, so tests can assert on emitted audit record contents.
+// The returned pointer must only be dereferenced after the request completes.
+func (e *TestEnvironment) CaptureAuditRecords() *[]*model.AuditRecord {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "LogAuditRec" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+
+	records := &[]*model.AuditRecord{}
+	e.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		rec, ok := args.Get(0).(*model.AuditRecord)
+		if ok {
+			*records = append(*records, rec)
+		}
+	}).Maybe()
+	return records
+}
+
 // OverrideConfig replaces the default GetConfig mock registered by
 // SetupTestEnvironment so that tests can control the config value.
 func (e *TestEnvironment) OverrideConfig(config *model.Config) {
@@ -569,9 +603,17 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockAPI.On("LogError", args...).Maybe()
 	}
 
-	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo and the
+	// context builder's remote-MCP license gate. Default to a licensed
+	// server so remote MCP tools are supplied; tests asserting unlicensed
+	// behavior override via OverrideLicense.
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+
+	// The audit middleware logs a record for every audited route; accept them
+	// by default so unrelated tests don't have to care. Tests asserting audit
+	// behavior replace this with CaptureAuditRecords.
+	mockAPI.On("LogAuditRec", mock.Anything).Maybe()
 
 	conversationsService := conversations.New(
 		llmPrompts,

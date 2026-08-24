@@ -114,6 +114,10 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{
 	return true, nil
 }
 
+func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, _ time.Duration) (bool, error) {
+	return c.KVCompareAndSet(key, oldValue, newValue)
+}
+
 func (c *fakeMMClient) KVDelete(key string) error {
 	delete(c.kv, key)
 	c.kvDeletes = append(c.kvDeletes, key)
@@ -208,6 +212,10 @@ func (c *fakeMMClient) GetFileInfo(string) (*model.FileInfo, error) {
 }
 
 func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (c *fakeMMClient) UploadFile(io.Reader, string, string) (*model.FileInfo, error) {
 	return nil, errors.New("not implemented")
 }
 

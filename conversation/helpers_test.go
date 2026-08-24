@@ -48,7 +48,7 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			blocks := toolUseBlocks("", llm.ReasoningData{}, tt.toolCalls, true)
+			blocks := toolUseBlocks("", llm.ReasoningData{}, nil, tt.toolCalls, true)
 			var got []string
 			for _, b := range blocks {
 				if b.Type == BlockTypeToolUse {
@@ -61,7 +61,7 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 }
 
 func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
-	blocks := toolUseBlocks("", llm.ReasoningData{}, []llm.ToolCall{{
+	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, []llm.ToolCall{{
 		ID:           "tc1",
 		Name:         "jira__get_issue",
 		Description:  "Get a Jira issue",
@@ -79,6 +79,32 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
 	assert.Equal(t, "Get Issue", blocks[0].Title)
 	assert.Equal(t, "Get a Jira issue", blocks[0].Description)
+}
+
+// TestToolUseBlocksIncludesServerToolActivity pins the fix for server-tool
+// activity being lost from intermediate tool rounds: a round that mixed
+// provider-executed tools with client tool calls must persist the activity
+// as server_tool_use blocks placed before the round's text.
+func TestToolUseBlocksIncludesServerToolActivity(t *testing.T) {
+	serverTools := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "release notes"},
+		{ID: "srv2", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, SubTool: "bash", Command: "ls"},
+	}
+	blocks := toolUseBlocks("Checking the channel too.", llm.ReasoningData{}, serverTools, []llm.ToolCall{{
+		ID:     "tc1",
+		Name:   "read_channel",
+		Status: llm.ToolCallStatusAutoApproved,
+	}}, true)
+
+	require.Len(t, blocks, 4)
+	require.Equal(t, BlockTypeServerToolUse, blocks[0].Type)
+	require.NotNil(t, blocks[0].ServerTool)
+	assert.Equal(t, "srv1", blocks[0].ServerTool.ID)
+	require.Equal(t, BlockTypeServerToolUse, blocks[1].Type)
+	require.NotNil(t, blocks[1].ServerTool)
+	assert.Equal(t, "srv2", blocks[1].ServerTool.ID)
+	assert.Equal(t, BlockTypeText, blocks[2].Type, "server tool activity must precede the text block")
+	assert.Equal(t, BlockTypeToolUse, blocks[3].Type)
 }
 
 func TestUnmarshalBlocks(t *testing.T) {

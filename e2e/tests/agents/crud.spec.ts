@@ -156,7 +156,7 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName('Delete Me')).not.toBeVisible({ timeout: 10000 });
     });
 
-    test('should surface actionable server error when custom instructions exceed limit', async ({ page }) => {
+    test('should block saving with actionable error when custom instructions exceed limit', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);
         const agentPage = new AgentPageHelper(page);
@@ -167,8 +167,9 @@ test.describe('Agent CRUD', () => {
         await agentPage.getCreateButton().click();
         await agentPage.waitForModal();
 
-        // 16384 is llm.MaxCustomInstructionsRunes; one extra char trips Validate().
-        const oversizedInstructions = 'a'.repeat(16385);
+        // 100000 is llm.MaxCustomInstructionsRunes (mirrored by the webapp's
+        // MaxCustomInstructionsRunes); one extra char trips validation.
+        const oversizedInstructions = 'a'.repeat(100001);
 
         await agentPage.fillConfigTab({
             displayName: 'Oversized Prompt Agent',
@@ -179,9 +180,8 @@ test.describe('Agent CRUD', () => {
 
         await agentPage.getModalSaveButton().click();
 
-        // The fix surfaces the server-provided message verbatim. The generic
-        // "Please try again." hint was misleading because retrying never helps.
-        await expect(page.getByText(/customInstructions exceeds maximum length/i)).toBeVisible({ timeout: 15000 });
+        // Client-side validation blocks the save with a field-scoped error.
+        await expect(page.getByText('Custom instructions must be 100,000 characters or fewer')).toBeVisible({ timeout: 15000 });
         await expect(page.getByText('Failed to save agent. Please try again.')).not.toBeVisible();
     });
 
@@ -312,6 +312,8 @@ test.describe('Agent CRUD', () => {
             username: 'mcptabtest',
             serviceLabel: 'Mock Service',
         });
+
+        await agentPage.expandAdvancedConfiguration();
 
         const enableToolsLabel = page.getByText('Enable Tools').first();
         await expect(enableToolsLabel).toBeVisible({ timeout: 10000 });

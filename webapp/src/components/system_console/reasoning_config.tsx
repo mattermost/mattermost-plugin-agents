@@ -5,12 +5,39 @@ import React from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
-import {ItemLabel, HelpText} from './item';
+import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectField} from './item';
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
 const maxReasoningBudget = 8192;
 const minReasoningBudget = 1024;
+
+// Anthropic models where budget-based extended thinking was removed and the
+// thinking budget is ignored (adaptive thinking is the only thinking-on mode).
+// Classified by family and version threshold rather than an enumerated model
+// list, so future versions classify correctly without maintenance: Opus
+// dropped the budget at 4.7 and Sonnet at 5, and every Fable/Mythos model is
+// adaptive-only. Unrecognized models are treated as budget-based, which keeps
+// the budget validation visible.
+export const usesAdaptiveThinking = (model: string): boolean => {
+    const m = model.toLowerCase();
+    if (m.includes('fable') || m.includes('mythos')) {
+        return true;
+    }
+    const match = (/claude-(opus|sonnet)-(\d+)(?:[.-](\d+))?/).exec(m);
+    if (!match) {
+        return false;
+    }
+    const major = parseInt(match[2], 10);
+
+    // A long trailing number is a date suffix (e.g. claude-opus-4-20250514),
+    // not a minor version.
+    const minor = match[3] && match[3].length <= 2 ? parseInt(match[3], 10) : 0;
+    if (match[1] === 'opus') {
+        return major > 4 || (major === 4 && minor >= 7);
+    }
+    return major >= 5;
+};
 
 type ReasoningConfigItemProps = {
     bot: LLMBotConfig
@@ -44,6 +71,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
     const reasoningEffort = props.bot.reasoningEffort || 'medium';
 
+    // The agent's effective model decides whether the thinking budget applies:
+    // adaptive-thinking Anthropic models ignore it entirely.
+    const effectiveModel = props.bot.model || props.service.defaultModel || '';
+    const adaptiveThinking = isAnthropic && usesAdaptiveThinking(effectiveModel);
+
     // For thinking budget, use the value from the bot config, or empty string if 0/undefined
     const thinkingBudgetValue = (props.bot.thinkingBudget && props.bot.thinkingBudget > 0) ? props.bot.thinkingBudget.toString() : '';
 
@@ -69,23 +101,21 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         intl.formatMessage({defaultMessage: 'Reasoning'});
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>
                 <Horizontal>
                     {headerLabel}
                 </Horizontal>
             </ItemLabel>
             <ReasoningContainer>
-                <BooleanToggle>
-                    <StyledCheckbox
-                        type='checkbox'
+                <FieldControlRow>
+                    <InlineCheckbox
+                        testId='reasoning-enable'
+                        label={intl.formatMessage({defaultMessage: 'Enable'})}
                         checked={reasoningEnabled}
-                        onChange={(e) => props.onChange({...props.bot, reasoningEnabled: e.target.checked})}
+                        onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
-                    <ToggleLabel>
-                        {intl.formatMessage({defaultMessage: 'Enable'})}
-                    </ToggleLabel>
-                </BooleanToggle>
+                </FieldControlRow>
 
                 {reasoningEnabled && (
                     <>
@@ -103,19 +133,21 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     placeholder={getDefaultThinkingBudget().toString()}
                                 />
                                 <HelpText>
-                                    {intl.formatMessage({
+                                    {adaptiveThinking ? intl.formatMessage({
+                                        defaultMessage: 'This model uses adaptive thinking and decides how much to reason on its own. The token budget is ignored.',
+                                    }) : intl.formatMessage({
                                         defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
                                     }, {
                                         maxTokens: props.maxTokens,
                                         defaultBudget: getDefaultThinkingBudget(),
                                     })}
                                 </HelpText>
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
                                     <ErrorText>
                                         {intl.formatMessage({defaultMessage: 'Thinking budget must be at least 1024 tokens.'})}
                                     </ErrorText>
                                 )}
-                                {typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
+                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
                                     <ErrorText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Thinking budget cannot exceed max tokens ({maxTokens}).',
@@ -149,7 +181,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <FieldLabel>
                                         {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                     </FieldLabel>
-                                    <FieldSelect
+                                    <SelectField
+                                        maxWidth='200px'
                                         value={reasoningEffort}
                                         onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
                                     >
@@ -165,7 +198,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                         <option value='high'>
                                             {intl.formatMessage({defaultMessage: 'High'})}
                                         </option>
-                                    </FieldSelect>
+                                    </SelectField>
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
@@ -180,7 +213,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <FieldLabel>
                                     {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                 </FieldLabel>
-                                <FieldSelect
+                                <SelectField
+                                    maxWidth='200px'
                                     value={reasoningEffort}
                                     onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
                                 >
@@ -196,7 +230,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <option value='high'>
                                         {intl.formatMessage({defaultMessage: 'High'})}
                                     </option>
-                                </FieldSelect>
+                                </SelectField>
                                 <HelpText>
                                     {intl.formatMessage({
                                         defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',
@@ -207,7 +241,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                     </>
                 )}
             </ReasoningContainer>
-        </>
+        </FormRow>
     );
 };
 
@@ -224,25 +258,10 @@ const ReasoningContainer = styled.div`
     gap: 16px;
 `;
 
-const BooleanToggle = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 8px;
-`;
-
-const ToggleLabel = styled.label`
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    cursor: pointer;
-`;
-
 const ConfigField = styled.div`
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding-left: 28px;
 `;
 
 const FieldLabel = styled.label`
@@ -276,38 +295,11 @@ const FieldInput = styled.input`
     }
 `;
 
-const FieldSelect = styled.select`
-    appearance: none;
-    padding: 7px 12px;
-    border-radius: 2px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    box-shadow: 0px 1px 1px rgba(0, 0, 0, 0.075) inset;
-    height: 35px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    max-width: 200px;
-    cursor: pointer;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-        box-shadow: none;
-    }
-`;
-
 const ErrorText = styled.div`
     font-size: 12px;
     font-weight: 400;
     line-height: 16px;
     color: var(--dnd-indicator, #D24B4E);
-`;
-
-const StyledCheckbox = styled.input`
-    cursor: pointer;
-    margin: 0;
 `;
 
 export default ReasoningConfigItem;

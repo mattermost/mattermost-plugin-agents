@@ -140,13 +140,22 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 
 | Setting | Description |
 |---------|-------------|
-| **Enable Web Search** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. |
+| **Web Search** (native tool) | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. Capabilities and pricing are documented by the provider — see Anthropic's [web search tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) docs. |
+| **Web Fetch** (native tool) | Available for Anthropic. Lets the agent retrieve the full content of specific web pages and PDFs during a response. See Anthropic's [web fetch tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) docs for capabilities and pricing. |
+| **Code Execution / Code Interpreter** (native tool) | Available for Anthropic, OpenAI, and (with **Use Responses API**) OpenAI Compatible and Azure. Lets the agent run code in the provider's managed sandbox. For Anthropic, enabling this also permits web search and web fetch to post-process results inside that sandbox (Anthropic's [dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering)); when it is **not** enabled, the plugin pins those tools' `allowed_callers` to `direct` so no sandbox is ever provisioned. Refer to Anthropic's [code execution tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) docs for pricing, data-retention, and ZDR implications. |
 | **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the model returns structured JSON matching that schema. Compatible model support is still required. |
+| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the schema is sent natively to the provider so the model returns structured JSON matching it. Compatible model support is still required. When disabled, the schema is converted into prompt instructions instead of being sent to the provider, so requests still work with models that lack native structured output support. |
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
 
-For Anthropic services, **Structured Output** and extended thinking can't be used at the same time.
+Native tool activity (searches performed, pages fetched, code runs) is shown on the agent's response as it streams and is preserved with the conversation. Known limitations of the native tool integration:
+
+- Very long provider-side tool loops that Anthropic pauses (`pause_turn`) are not resumed; the response ends with what was produced so far.
+- On Claude models older than 4.6 (which have no dynamic filtering), enabling web search or web fetch alongside code execution leaves the sandbox unavailable: the LLM gateway omits the explicit code execution tool whenever web tools are present, to avoid conflicting with the auto-injection newer models perform.
+- Files created by provider code execution are referenced by name only; they are not downloadable from Mattermost.
+- Native tool activity is display-only context: it is not replayed to the model in later conversation turns.
+
+For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
@@ -285,7 +294,29 @@ Configure chunking options based on your needs:
 | **Chunk Size** | 512-1024 tokens | Varies by strategy |
 | **Chunk Overlap** | 20-50 tokens | For better context continuity |
 
+Bulk reindexing throughput can be tuned for large datasets:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
+| **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
+| **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
+
+The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
+
 Run the initial indexing process after configuration.
+
+#### Large database reindexing
+
+For large installations (tens of millions of posts), set **Reindex Index Strategy** to `defer` before a full reindex. Maintaining the HNSW index on every insert dominates cost at scale (especially once it no longer fits in memory); dropping it for the bulk load and rebuilding once afterwards is typically an order of magnitude faster.
+
+Notes on deferred reindex:
+
+- **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
+- **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
+- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + 300)` bytes (~1.7 KB/element at 256 dims, ~34 GB for 20M posts). Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
+- **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
+- Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
 
 ### Permission configuration
 
@@ -340,13 +371,13 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup and when changing embedding providers:
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger reindexing when changing embedding providers.
+   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
    - Check indexing status.
 
 ### OpenTelemetry tracing
@@ -451,6 +482,14 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 | `agents.post.id` | Post ID | `abc123def456` |
 | `agents.thread.root_post.id` | Root post ID for thread correlation | `abc123def456` |
 
+### Audit logging
+
+The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and custom prompt CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
+
+Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
+
+There is no plugin-side toggle: records are always handed to the server, and persistence is governed entirely by the server's [audit logging configuration](https://docs.mattermost.com/administration-guide/manage/logging.html) (System Console → Compliance, or `ExperimentalAuditSettings`).
+
 ### Backup and restore
 
 The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
@@ -518,11 +557,17 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
 
+### File creation by agents
+
+The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
+
 ## Model Context Protocol (MCP) Integration
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.
 
 The MCP client and the embedded Mattermost MCP server are always enabled. Admins manage remote MCP servers and connection timeout from the MCP UI in the System Console. The **Tools** tab also shows plugin-registered MCP servers, where admins can enable or disable each plugin server and set per-tool enabled state and approval policies. Agent-level MCP access is configured separately on each agent's **MCPs** tab.
+
+Remote and external MCP servers require a license (see [license requirements](#license-requirements)). Without one, the remote server configuration UI is not shown and tools from remote servers are not made available to agents; the embedded Mattermost MCP tools remain available on all plans.
 
 ### Configuration
 
@@ -782,11 +827,11 @@ The following table outlines which features require a license:
 | Basic agent configuration (single agent) | No license required |
 | Chat with agents in DMs and channels | No license required |
 | Image analysis (vision capabilities) | No license required |
-| Basic tool integrations | No license required |
+| Basic tool integrations (built-in tools and the embedded Mattermost MCP server) | No license required |
 | Multiple agent configurations | Entry, Enterprise, and Enterprise Advanced |
 | Fine-grained access controls | Entry, Enterprise, and Enterprise Advanced |
 | Embedding search (semantic AI search) | Entry, Enterprise, and Enterprise Advanced |
-| MCP Support | Entry, Enterprise, and Enterprise Advanced |
+| MCP Support (remote and external MCP servers) | Entry, Enterprise, and Enterprise Advanced |
 | Usage analytics and token tracking | Entry, Enterprise, and Enterprise Advanced |
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |

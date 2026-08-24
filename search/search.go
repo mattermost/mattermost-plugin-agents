@@ -6,6 +6,7 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,12 +14,16 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// ErrSearchUnavailable: deferred reindex owns the vector index (no ANN yet).
+var ErrSearchUnavailable = errors.New("semantic search is temporarily unavailable during reindexing")
 
 // Request represents a search query request
 type Request struct {
@@ -47,6 +52,7 @@ type RAGResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"createAt"` // Post creation timestamp (Unix millis)
 }
 
 // Options configures a search operation
@@ -97,6 +103,14 @@ func (s *Search) SetConversationService(svc *conversation.Service) {
 // Enabled returns true if the search service is enabled and functional
 func (s *Search) Enabled() bool {
 	return s != nil && s.getSearch != nil && s.getSearch() != nil
+}
+
+// checkAvailability gates search while the ANN index is dropped/building.
+func (s *Search) checkAvailability() error {
+	if s.mmclient != nil && indexer.DeferredIndexRebuildActive(s.mmclient) {
+		return ErrSearchUnavailable
+	}
+	return nil
 }
 
 // Search performs a semantic search and returns enriched results with channel/user metadata.
@@ -161,6 +175,7 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 			Username:    username,
 			Content:     content,
 			Score:       result.Score,
+			CreateAt:    result.Document.CreateAt,
 		})
 	}
 
@@ -178,6 +193,10 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 	search := s.getSearch()
 	if search == nil {
 		return nil, fmt.Errorf("embedding search not configured")
+	}
+
+	if err := s.checkAvailability(); err != nil {
+		return nil, err
 	}
 
 	limit := opts.Limit
@@ -273,6 +292,11 @@ func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, qu
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
+	}
+
+	// Fail before posting; async path would otherwise DM an opaque error.
+	if err := s.checkAvailability(); err != nil {
+		return nil, err
 	}
 
 	// Create the initial question post

@@ -80,6 +80,7 @@ func TestSearchCitationFormat(t *testing.T) {
 
 			// Mock mmapi.Client for enrichment and prompt context
 			mockClient := mmapimocks.NewMockClient(t.T)
+			allowVectorIndexStateRead(mockClient)
 			mockClient.On("GetChannel", channelID).Return(&model.Channel{
 				Id:          channelID,
 				DisplayName: "General",

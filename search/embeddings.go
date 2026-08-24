@@ -18,7 +18,7 @@ import (
 )
 
 // newVectorStore creates a new vector store based on the provided configuration
-func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions int) (embeddings.VectorStore, error) {
+func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions int, skipVectorIndex bool) (embeddings.VectorStore, error) {
 	switch config.Type { //nolint:gocritic
 	case embeddings.VectorStoreTypePGVector:
 		pgVectorConfig := postgres.PGVectorConfig{
@@ -27,6 +27,7 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions in
 		if err := json.Unmarshal(config.Parameters, &pgVectorConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal pgvector config: %w", err)
 		}
+		pgVectorConfig.SkipVectorIndex = skipVectorIndex
 		return postgres.NewPGVector(db, pgVectorConfig)
 	}
 
@@ -116,8 +117,9 @@ func mapEmbeddingProvider(provider string) (schemas.ModelProvider, error) {
 	}
 }
 
-// InitEmbeddingsSearch creates and initializes the embedding search system
-func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker) (embeddings.EmbeddingSearch, error) {
+// InitEmbeddingsSearch initializes embedding search. skipVectorIndex must be
+// true while a deferred reindex owns the ANN index (see DeferredIndexRebuildActive).
+func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker, skipVectorIndex bool) (embeddings.EmbeddingSearch, error) {
 	if cfg.Type == "" {
 		// Search is intentionally disabled, not an error
 		return nil, nil
@@ -133,7 +135,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 
 	switch cfg.Type { //nolint:gocritic
 	case embeddings.SearchTypeComposite:
-		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions)
+		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions, skipVectorIndex)
 		if err != nil {
 			return nil, err
 		}
@@ -148,7 +150,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 			chunkingOpts = chunking.DefaultOptions()
 		}
 
-		return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts), nil
+		return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts, cfg.GetRecencyBiasSettings()), nil
 	}
 
 	return nil, fmt.Errorf("unsupported search type: %s", cfg.Type)

@@ -6,7 +6,7 @@ import {render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import ToolCard from './tool_card';
-import {ToolCall, ToolCallStatus} from './tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 jest.mock('react-bootstrap', () => ({
     OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
@@ -23,7 +23,15 @@ function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     };
 }
 
-function renderComponent(tool: ToolCall, showResults = false) {
+function renderComponent(
+    tool: ToolCall,
+    extra: {
+        showResults?: boolean;
+        onApprove?: () => void;
+        onReject?: () => void;
+        approvalStage?: ToolApprovalStage;
+    } = {},
+) {
     return render(
         <IntlProvider locale='en'>
             <ToolCard
@@ -33,7 +41,8 @@ function renderComponent(tool: ToolCall, showResults = false) {
                 onToggleCollapse={jest.fn()}
                 canExpand={false}
                 showArguments={true}
-                showResults={showResults}
+                showResults={extra.showResults ?? false}
+                {...extra}
             />
         </IntlProvider>,
     );
@@ -74,7 +83,7 @@ describe('ToolCard result rendering', () => {
                 arguments: {q: 'x'},
                 result: 'line one\n![img](http://evil.example/x.png)',
             }),
-            true,
+            {showResults: true},
         );
 
         expect(screen.getByText('Response')).not.toBeNull();
@@ -89,12 +98,39 @@ describe('ToolCard result rendering', () => {
                 arguments: {q: 'x'},
                 result: JSON.stringify({total: 2, note: 'ok'}),
             }),
-            true,
+            {showResults: true},
         );
 
         expect(screen.getByText('Total')).not.toBeNull();
         expect(screen.getByText('2')).not.toBeNull();
         expect(screen.getByText('Note')).not.toBeNull();
         expect(screen.getByText('ok')).not.toBeNull();
+    });
+});
+
+describe('ToolCard pending state', () => {
+    test('shows a spinner without buttons for a live auto-executing tool', () => {
+        const {container} = renderComponent(
+            makeTool({would_auto_execute: true}),
+            {approvalStage: 'done'},
+        );
+
+        expect(container.querySelector('svg')).not.toBeNull();
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
+    });
+
+    test('never shows accept or reject for a policy-approved pending tool', () => {
+        renderComponent(
+            makeTool({would_auto_execute: true}),
+            {
+                approvalStage: 'call',
+                onApprove: jest.fn(),
+                onReject: jest.fn(),
+            },
+        );
+
+        expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
     });
 });

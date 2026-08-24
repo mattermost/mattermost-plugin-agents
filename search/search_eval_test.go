@@ -172,7 +172,7 @@ func createRealEmbeddingSearch(t *testing.T, db *sqlx.DB, apiKey string) embeddi
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts)
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, embeddings.RecencyBiasSettings{})
 }
 
 // TestSemanticSearchRelevance tests that semantically similar content ranks higher

@@ -79,7 +79,7 @@ func recordBifrostError(span trace.Span, bifrostErr *schemas.BifrostError) {
 	if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code != "" {
 		attrs = append(attrs, telemetry.LLMBifrostErrorCode.String(*bifrostErr.Error.Code))
 	}
-	if provider := string(bifrostErr.ExtraFields.Provider); provider != "" {
+	if provider := string(bifrostErr.ExtraFields.RoutingInfo.Provider); provider != "" {
 		attrs = append(attrs, telemetry.LLMBifrostErrorProvider.String(provider))
 	}
 	span.SetAttributes(attrs...)

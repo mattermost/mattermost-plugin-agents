@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -47,6 +48,25 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 // 400 Bad Request.
 var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool call")
 
+// ErrRemoteMCPNotLicensed is returned when a tool decision would execute, or
+// share the output of, a tool served by a remote/external MCP server on a
+// server whose license does not include MCP support. Built-in tools (empty
+// ServerOrigin) and embedded Mattermost MCP tools (mcp.EmbeddedClientKey) are
+// basic tool integrations and never require a license. The HTTP layer maps
+// this to 403 Forbidden.
+//
+// This gate is the decision-time backstop for pending remote tool calls
+// persisted before a license change; the primary enforcement is at supply
+// time, where llmcontext.Builder drops remote MCP tools from the LLM context
+// entirely on unlicensed servers.
+var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
+
+// isRemoteMCPLicensed reports whether the server license covers remote MCP
+// servers. A nil license checker fails closed.
+func (c *Conversations) isRemoteMCPLicensed() bool {
+	return c.licenseChecker != nil && c.licenseChecker.IsBasicsLicensed()
+}
+
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
@@ -69,6 +89,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
 	}
+
+	// Enrich the request's audit record (nil outside an audited request) with
+	// which agent's tool calls this human decision resolves. Tool names are
+	// added below where the accept/reject resolution happens; arguments,
+	// results, and answers never enter the record.
+	auditRec := audit.RecordFromContext(ctx)
+	audit.AddParam(auditRec, audit.KeyAgentID, bot.GetMMBot().UserId)
 
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
@@ -100,6 +127,26 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
+	// Accepting tools from remote/external MCP servers is part of the
+	// licensed "MCP Support" feature. Built-in and embedded Mattermost MCP
+	// tools are basic tool integrations with no license requirement.
+	// Rejections are always allowed — they execute nothing. Blocks marked
+	// WouldAutoExecute are not gated here: their resume re-checks the policy
+	// via shouldAutoExecuteTool, which already refuses remote tools on an
+	// unlicensed server, so they resolve to a rejection instead of blocking
+	// the whole submission on a possibly stale marker.
+	for _, b := range pendingBlocks {
+		if b.Type != conversation.BlockTypeToolUse || !mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+			continue
+		}
+		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
+			continue
+		}
+		if slices.Contains(acceptedToolIDs, b.ID) && !c.isRemoteMCPLicensed() {
+			return ErrRemoteMCPNotLicensed
+		}
+	}
+
 	user, err := c.mmClient.GetUser(userID)
 	if err != nil {
 		return fmt.Errorf("unable to get user: %w", err)
@@ -108,13 +155,18 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
 	// Build the execution context bound to this conversation. A tool-approval
-	// click is by definition an interactive user action.
+	// click is by definition an interactive user action. ResponseFiles keeps
+	// CreateFile in the catalog so approved/auto-resumed CreateFile blocks
+	// can resolve and record their created files.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
 		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
+	// The clicked post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
 	conversation.RestoreLoadedMCPToolsFromTurns(llmContext.Tools, turns)
 
@@ -126,10 +178,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Execute approved tools and build results.
+	// Execute approved tools and build results. Blocks resolved in a prior
+	// call keep their status and are not part of this decision, so they enter
+	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
 	autoExecutedNow := make(map[string]bool)
 	executedAny := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
 	for i := range pendingBlocks {
 		block := &pendingBlocks[i]
@@ -143,6 +199,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 		switch {
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = conversation.BoolPtr(true)
@@ -154,6 +211,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    false,
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			executedAny = true
 			if resolveErr != nil {
@@ -174,6 +232,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		case block.UserInteraction != "":
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			// Skipped question: record the decline as the result and stream a
 			// follow-up so the model can proceed without the answer, per the
 			// tool contract. Shared because the decline is user-authored, not
@@ -188,6 +247,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    true,
 			})
 		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Runs on resume without a click. Requiring both the marker and a
 			// fresh policy check means a mid-turn policy flip can neither
 			// auto-run a tool the user was asked to approve (or rejected) nor
@@ -215,6 +275,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		default:
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
@@ -224,6 +285,13 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			})
 		}
 	}
+
+	// Unlike HandleToolResult (which defers these until after its idempotency
+	// gate), the names here describe tools that already executed above — real
+	// side effects, not persisted state — so they stay on the record even if
+	// persisting the resolved turn below fails.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
 	// Update the assistant turn with resolved statuses.
 	updatedContent, err := json.Marshal(pendingBlocks)
@@ -344,6 +412,13 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return fmt.Errorf("unable to get bot")
 	}
 
+	// Enrich the request's audit record (nil outside an audited request) with
+	// which agent's tool results this human decision covers. Tool names are
+	// added below once the share/keep-private resolution is known; result
+	// content never enters the record.
+	auditRec := audit.RecordFromContext(ctx)
+	audit.AddParam(auditRec, audit.KeyAgentID, bot.GetMMBot().UserId)
+
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
 		return ErrPostMissingConversationID
@@ -379,6 +454,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
+	acceptedRemoteMCPTool := false
 	for _, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
 			continue
@@ -392,10 +470,18 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				continue
 			}
 			clickedPostToolUseIDs[b.ID] = struct{}{}
+			if acceptedSet[b.ID] {
+				acceptedToolNames = append(acceptedToolNames, b.Name)
+			} else {
+				rejectedToolNames = append(rejectedToolNames, b.Name)
+			}
 			if b.Status == conversation.StatusSuccess ||
 				b.Status == conversation.StatusError ||
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
+			}
+			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+				acceptedRemoteMCPTool = true
 			}
 		}
 	}
@@ -427,6 +513,20 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	}
 	if sawMatchingResult && alreadyDecided {
 		return nil
+	}
+
+	// Audit the decision only after the idempotency gate: a repeat click
+	// changes nothing, so its record must not claim a share resolution. The
+	// license gate below may still deny the share — that record then carries
+	// the attempted names with a fail status, which is the point.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
+
+	// Sharing output from remote/external MCP tools is part of the licensed
+	// "MCP Support" feature (see HandleToolCall). Keep-private decisions are
+	// always allowed — they disclose nothing.
+	if acceptedRemoteMCPTool && !c.isRemoteMCPLicensed() {
+		return ErrRemoteMCPNotLicensed
 	}
 
 	now := model.GetMillis()
@@ -520,6 +620,7 @@ func (c *Conversations) streamToolFollowUp(
 	if !channelToolsAutoRunEverywhereOnly {
 		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
+	channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextResponseFiles())
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -527,6 +628,8 @@ func (c *Conversations) streamToolFollowUp(
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)
+	// The continuation post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
 	toolsDisabled := !isDM
 	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
@@ -569,6 +672,14 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(runResult.Stream, approvalContext)
+
+	// Recover files created in earlier requests of this run (e.g. an
+	// approved CreateFile whose share decision arrives in a later request,
+	// where the in-memory registry is gone) from the persisted turns.
+	// approvalContext is nil on the HandleToolResult path; the decorator
+	// tolerates nil contexts.
+	extraFileIDs := c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)
+	stream = c.decorateStreamWithCreatedFiles(stream, post, extraFileIDs, llmContext, approvalContext)
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.

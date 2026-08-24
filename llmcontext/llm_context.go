@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -42,6 +43,7 @@ type Builder struct {
 	toolProvider    ToolProvider
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
+	licenseChecker  *enterprise.LicenseChecker
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -58,6 +60,7 @@ func NewLLMContextBuilder(
 		toolProvider:    toolProvider,
 		mcpToolProvider: mcpToolProvider,
 		configProvider:  configProvider,
+		licenseChecker:  enterprise.NewLicenseChecker(pluginAPI),
 	}
 }
 
@@ -189,6 +192,16 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 	}
 }
 
+// WithLLMContextResponseFiles marks the context as supporting response-post
+// file attachments (ToolRuntime.CreatedFiles are attached to the streamed
+// response post at end of turn). Must be configured before default tools
+// are built so CreateFile is cataloged.
+func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.ResponseFilesSupported = true
+	}
+}
+
 // sanitizeUserProfileField strips characters that could be used for prompt injection
 // in user profile fields rendered into the system prompt. It collapses newlines, carriage
 // returns, and tabs to spaces, removes other control characters, and trims the result.
@@ -250,6 +263,19 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// Get tools from all connected servers
 		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
 
+		// Remote/external MCP servers are the licensed "MCP Support" feature.
+		// Without a license their tools are never supplied to the LLM: they
+		// are dropped before full-schema insertion and before the dynamic
+		// loading registry is built, so the model cannot see, load, or call
+		// them. Embedded Mattermost MCP tools are basic tool integrations
+		// and are not filtered.
+		remoteMCPLicensed := b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+		if !remoteMCPLicensed {
+			mcpTools = filterMCPToolsByPredicate(mcpTools, func(tool llm.Tool) bool {
+				return !mcp.IsRemoteServerOrigin(tool.ServerOrigin)
+			})
+		}
+
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
 		// every MCP tool automatically, retain only tools listed in its allowlist.
 		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
@@ -266,6 +292,12 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, botCfg.EnabledMCPTools)
 			}
 			for _, authError := range authErrors {
+				// Auth errors from remote servers are dropped with the tools
+				// so users are not prompted to authenticate to servers whose
+				// tools cannot be used without a license.
+				if !remoteMCPLicensed && mcp.IsRemoteServerOrigin(authError.ServerOrigin) {
+					continue
+				}
 				store.AddAuthError(authError)
 			}
 		}

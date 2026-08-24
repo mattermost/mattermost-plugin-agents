@@ -23,7 +23,7 @@ Access AI features in one of the following ways:
 
 ### Mobile
 
-Start or open a direct message with the Agent bot. If your system admin has configured multiple bots, switch between them by starting or opening each bot by name.
+Start or open a direct message with an agent. If your system admin has configured multiple agents, select one from any agent picker on web or desktop — that choice syncs to mobile. You can also switch agents on mobile by starting or opening a direct message with each agent by name.
 
 ## Conversational AI features
 
@@ -43,7 +43,9 @@ When you attach files in the Agents pane, direct messages, or channel @mentions,
 
 ### Select an agent
 
-If multiple agents are configured for your Mattermost workspace, select your preferred agent in the Agents pane or @mention a specific agent by name in channels.
+If multiple agents are configured for your Mattermost workspace, select your preferred agent from any agent picker — such as the Agents pane, **Custom prompts**, or semantic search. Your choice is saved to your account and syncs across web, desktop, and mobile. Until you choose an agent, Mattermost uses the workspace default configured by your system administrator.
+
+You can also @mention a specific agent by name in channels.
 
 ### Use custom prompt templates
 
@@ -103,6 +105,14 @@ Depending on your workspace configuration, available tools in direct messages, a
 Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
+
+### Ask agents to create files
+
+You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.
+
+File creation supports text-based formats — the file name's extension determines the file type (such as `.md`, `.csv`, `.py`, or `.html`) — and an agent can attach up to 10 files to a single reply, with each file's content limited by the server's maximum file size setting. In direct messages, file creation is always available. In channels, it follows the same admin setting as other channel tool calling (see [Use tools](#use-tools)).
+
+Agents can also attach created files to posts they make on your behalf. When you ask an agent to post a message for you using the create-post tooling, it can include files it generates inline, and those files are attached to the new post.
 
 ## Analyze threads and channels
 

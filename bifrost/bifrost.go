@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -173,7 +174,7 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	}
 
 	key := schemas.Key{
-		Value:  schemas.EnvVar{Val: a.APIKey},
+		Value:  schemas.SecretVar{Val: a.APIKey},
 		Weight: 1.0,
 		// Bifrost v1.5+ requires keys to declare which models they support;
 		// "*" allows any model the configured provider can serve.
@@ -183,16 +184,16 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Azure config
 	if a.Provider == schemas.Azure && a.APIURL != "" {
 		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.EnvVar{Val: a.APIURL},
+			Endpoint: schemas.SecretVar{Val: a.APIURL},
 		}
 	}
 
 	// Handle Bedrock config
 	if a.Provider == schemas.Bedrock {
-		region := schemas.EnvVar{Val: a.Region}
+		region := schemas.SecretVar{Val: a.Region}
 		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.EnvVar{Val: a.AWSAccessKeyID},
-			SecretKey: schemas.EnvVar{Val: a.AWSSecretAccessKey},
+			AccessKey: schemas.SecretVar{Val: a.AWSAccessKeyID},
+			SecretKey: schemas.SecretVar{Val: a.AWSSecretAccessKey},
 			Region:    &region,
 		}
 	}
@@ -200,10 +201,10 @@ func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schem
 	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
 	if a.Provider == schemas.Vertex {
 		key.VertexKeyConfig = &schemas.VertexKeyConfig{
-			ProjectID:       schemas.EnvVar{Val: a.VertexProjectID},
-			ProjectNumber:   schemas.EnvVar{Val: a.VertexProjectNumber},
-			Region:          schemas.EnvVar{Val: a.Region},
-			AuthCredentials: schemas.EnvVar{Val: a.VertexAuthCredentials},
+			ProjectID:       schemas.SecretVar{Val: a.VertexProjectID},
+			ProjectNumber:   schemas.SecretVar{Val: a.VertexProjectNumber},
+			Region:          schemas.SecretVar{Val: a.Region},
+			AuthCredentials: schemas.SecretVar{Val: a.VertexAuthCredentials},
 		}
 	}
 
@@ -474,6 +475,8 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	modelOutputLimit := providerutils.GetMaxOutputTokensOrDefault(cfg.Model, cfg.MaxGeneratedTokens)
+	cfg.MaxGeneratedTokens = min(cfg.MaxGeneratedTokens, modelOutputLimit)
 	return cfg
 }
 
@@ -483,20 +486,20 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 	if typeVal, ok := schemaMap["type"].(string); ok {
 		responseSchema.Type = Ptr(typeVal)
 	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
-		anyOf := make([]map[string]any, 0, len(typeList))
+		anyOf := make([]schemas.OrderedMap, 0, len(typeList))
 		for i, item := range typeList {
 			typeName, ok := item.(string)
 			if !ok {
 				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
 			}
-			anyOf = append(anyOf, map[string]any{"type": typeName})
+			anyOf = append(anyOf, *schemas.NewOrderedMapFromPairs(schemas.KV("type", typeName)))
 		}
 		if len(anyOf) > 0 {
 			responseSchema.AnyOf = anyOf
 		}
 	}
 	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		responseSchema.Properties = &properties
+		responseSchema.Properties = schemas.OrderedMapFromMap(properties)
 	}
 	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
 		responseSchema.Required = required
@@ -519,16 +522,16 @@ func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.Respon
 		responseSchema.Name = Ptr(title)
 	}
 	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
-		responseSchema.Defs = &defs
+		responseSchema.Defs = schemas.OrderedMapFromMap(defs)
 	}
 	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
-		responseSchema.Definitions = &definitions
+		responseSchema.Definitions = schemas.OrderedMapFromMap(definitions)
 	}
 	if ref, ok := schemaMap["$ref"].(string); ok {
 		responseSchema.Ref = Ptr(ref)
 	}
 	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
-		responseSchema.Items = &items
+		responseSchema.Items = schemas.OrderedMapFromMap(items)
 	}
 	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
 		responseSchema.MinItems = &minItems
@@ -636,19 +639,19 @@ func extractStringEnum(value interface{}) ([]string, error) {
 	}
 }
 
-func extractSchemaList(value interface{}) []map[string]any {
+func extractSchemaList(value interface{}) []schemas.OrderedMap {
 	items, ok := value.([]interface{})
 	if !ok {
 		return nil
 	}
 
-	result := make([]map[string]any, 0, len(items))
+	result := make([]schemas.OrderedMap, 0, len(items))
 	for _, item := range items {
 		schemaMap, ok := item.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		result = append(result, schemaMap)
+		result = append(result, *schemas.OrderedMapFromMap(schemaMap))
 	}
 	if len(result) == 0 {
 		return nil
@@ -1124,17 +1127,23 @@ type toolCallBuffer struct {
 	arguments strings.Builder
 }
 
+// thinkingBlockedBySchema reports whether extended thinking must be dropped
+// for this request: Anthropic rejects thinking combined with structured output.
+func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
+	return b.provider == schemas.Anthropic && cfg.JSONOutputFormat != nil
+}
+
 // buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
 func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
+			return nil
 		}
 		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
@@ -1159,19 +1168,44 @@ func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReaso
 	}
 }
 
+// Anthropic budget-based extended thinking requires
+// minThinkingBudget <= budget < max_tokens.
+const (
+	minThinkingBudget        = 1024
+	defaultMaxThinkingBudget = 8192
+)
+
 // calculateThinkingBudget computes the thinking budget for Anthropic models.
 func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
-	const minBudget, maxBudget = 1024, 8192
 	if b.thinkingBudget > 0 {
-		return max(b.thinkingBudget, minBudget)
+		return max(b.thinkingBudget, minThinkingBudget)
 	}
 	budget := maxGeneratedTokens / 4
-	return max(min(budget, maxBudget), minBudget)
+	return max(min(budget, defaultMaxThinkingBudget), minThinkingBudget)
+}
+
+// anthropicThinkingBudget returns the thinking budget to send for an Anthropic
+// request, clamped into the provider's valid range (minThinkingBudget <=
+// budget < max_tokens). Clamping — rather than gating on the primary model's
+// capabilities — keeps the value valid for every Anthropic model that may see
+// it: models that only support adaptive thinking ignore the budget entirely,
+// while budget-based models (including any Anthropic fallback in the request's
+// fallback chain) reject an out-of-range value with a 400. Returns ok=false
+// when no valid budget exists, in which case thinking must be omitted.
+func (b *LLM) anthropicThinkingBudget(maxGeneratedTokens int) (int, bool) {
+	budget := b.calculateThinkingBudget(maxGeneratedTokens)
+	if budget >= maxGeneratedTokens {
+		budget = maxGeneratedTokens - 1
+	}
+	if budget < minThinkingBudget {
+		return 0, false
+	}
+	return budget, true
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
 func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
-	messages := b.convertMessages(request.Posts)
+	messages := b.convertMessages(request.Posts, cfg)
 	tools := b.convertTools(request, cfg)
 
 	req := &schemas.BifrostChatRequest{
@@ -1198,6 +1232,9 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	if cfg.JSONOutputFormat != nil {
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
+	if b.promptCachingEnabled() {
+		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
+	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
@@ -1207,7 +1244,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 }
 
 // convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
+func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []schemas.ChatMessage {
 	messages := make([]schemas.ChatMessage, 0, len(posts))
 
 	for _, post := range posts {
@@ -1255,7 +1292,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			// signature arrived, we persist partial reasoning for display only; do
 			// not replay it to Anthropic as an unsigned thinking block. Other
 			// providers may accept unsigned reasoning, so preserve it for them.
-			if post.Reasoning != "" && (b.provider != schemas.Anthropic || post.ReasoningSignature != "") {
+			// Also skip replay when thinking is disabled for this request:
+			// Anthropic rejects input thinking blocks when thinking is off.
+			if post.Reasoning != "" &&
+				(b.provider != schemas.Anthropic || post.ReasoningSignature != "") &&
+				!b.thinkingBlockedBySchema(cfg) {
 				if msg.ChatAssistantMessage == nil {
 					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
 				}
@@ -1590,6 +1631,15 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.useResponsesAPI {
 		return true
 	}
+
+	// Direct OpenAI always sets useResponsesAPI during service construction.
+	// A false value for OpenAI-base or Azure providers therefore represents an
+	// explicit operator choice to use Chat Completions and must not be overridden
+	// by native tool configuration.
+	if b.provider == schemas.OpenAI || b.provider == schemas.Azure {
+		return false
+	}
+
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
@@ -1597,6 +1647,27 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 		return true
 	}
 	return false
+}
+
+// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// caching (top-level cache_control). Anthropic caches nothing unless asked,
+// so without this every turn re-bills the full system prompt, tool schemas,
+// and history at the base input rate. OpenAI-family and Gemini cache prompt
+// prefixes automatically and need no marker. Bifrost forwards the field
+// unstripped to non-Anthropic providers, so it is only attached when the
+// primary and every fallback are Anthropic; a mixed chain would 400 the
+// fallback request.
+func (b *LLM) promptCachingEnabled() bool {
+	if b.provider != schemas.Anthropic {
+		return false
+	}
+	for _, fb := range b.fallbacks {
+		if fb.Provider != schemas.Anthropic &&
+			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
+			return false
+		}
+	}
+	return true
 }
 
 // isNativeToolEnabled checks if a native tool is enabled by name.
@@ -1735,6 +1806,34 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 	return parts
 }
 
+// anthropicDirectToolCaller is the allowed_callers value that restricts a
+// server tool to direct model invocation. See webToolResponsesTool.
+const anthropicDirectToolCaller = "direct"
+
+// sandboxEnabled reports whether the agent explicitly enabled the provider code
+// sandbox (the code_interpreter native tool — Anthropic's code_execution).
+func (b *LLM) sandboxEnabled() bool {
+	return b.isNativeToolEnabled(llm.NativeToolCodeInterpreter)
+}
+
+// webToolResponsesTool builds a native web_search / web_fetch tool definition.
+//
+// Unless the agent explicitly enabled the code sandbox (code_interpreter),
+// AllowedCallers is pinned to "direct" — Anthropic's documented opt-out from
+// dynamic filtering, which would otherwise auto-provision the code-execution
+// sandbox on newer Claude models:
+// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
+// Bifrost strips the field for providers that don't accept it; pinned by
+// TestWebSearchAllowedCallersStrippedForOpenAI and
+// TestAnthropicOnlyWebFetchDroppedForOpenAI.
+func (b *LLM) webToolResponsesTool(toolType schemas.ResponsesToolType) schemas.ResponsesTool {
+	tool := schemas.ResponsesTool{Type: toolType}
+	if !b.sandboxEnabled() {
+		tool.AllowedCallers = []string{anthropicDirectToolCaller}
+	}
+	return tool
+}
+
 // convertToResponsesTools creates Responses API tools including native tools and function tools.
 func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
 	var result []schemas.ResponsesTool
@@ -1742,15 +1841,18 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	// Add native tools (always add when configured, regardless of ToolsDisabled)
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
-		case "web_search":
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeWebSearch,
-			})
-		case "file_search":
+		case llm.NativeToolWebSearch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
+		case llm.NativeToolWebFetch:
+			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
+		case llm.NativeToolFileSearch:
+			// Currently unreachable: SupportedNativeToolsForServiceType
+			// withholds file_search until the plugin can configure the
+			// vector_store_ids OpenAI requires on the tool definition.
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeFileSearch,
 			})
-		case "code_interpreter":
+		case llm.NativeToolCodeInterpreter:
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeCodeInterpreter,
 			})
@@ -1759,10 +1861,8 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
 	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled("web_search") {
-		result = append(result, schemas.ResponsesTool{
-			Type: schemas.ResponsesToolTypeWebSearch,
-		})
+	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
+		result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 	}
 
 	// Keep function tools defined when the history has tool_use blocks; the
@@ -1810,15 +1910,15 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 
 // buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
 func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled {
+	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
 		return nil
 	}
 
 	switch b.provider {
 	case schemas.Anthropic:
-		budget := b.calculateThinkingBudget(cfg.MaxGeneratedTokens)
-		if budget >= cfg.MaxGeneratedTokens {
-			return nil // Anthropic requires budget < max_tokens
+		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
+		if !ok {
+			return nil
 		}
 		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
 	case schemas.Gemini, schemas.Vertex:
@@ -1889,6 +1989,13 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 		}
 		params.Text = textConfig
 	}
+	// The Anthropic provider reads cache_control from ExtraParams on the
+	// Responses path (there is no typed field on ResponsesParameters).
+	if b.promptCachingEnabled() {
+		params.ExtraParams = map[string]interface{}{
+			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
+		}
+	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
@@ -1946,6 +2053,17 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// bifrost does not surface as OutputItemAdded events) do not bleed into
 	// an unrelated function call's argument buffer.
 	outputIndexToFuncCallID := make(map[int]string)
+
+	// serverTools accumulates provider-executed tool activity (web search /
+	// web fetch / code execution). Every state change re-emits the cumulative
+	// snapshot so receivers can replace prior state.
+	serverTools := newServerToolTracker()
+	emitServerTools := func() {
+		output <- llm.TextStreamEvent{
+			Type:  llm.EventTypeServerToolUse,
+			Value: serverTools.snapshot(),
+		}
+	}
 
 	// Reasoning buffers
 	var reasoningBuffer strings.Builder
@@ -2155,7 +2273,19 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 					}
 				}
 
+			case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
+				// Sandbox code/command finalized before execution starts —
+				// surface it so the activity card can show what is running.
+				if resp.ItemID != nil && resp.Code != nil && serverTools.setCommand(*resp.ItemID, *resp.Code) {
+					emitServerTools()
+				}
+
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
+				// Server tool started (web_search_call / web_fetch_call /
+				// code_interpreter_call) — track and surface the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// New output item added - register function calls so their
 				// argument deltas can be routed back to the right buffer by
 				// OutputIndex.
@@ -2185,6 +2315,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 			case schemas.ResponsesStreamResponseTypeOutputItemDone:
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
+				// Server tool finished — fold the final payload (query,
+				// resolved URL/title, stdout/stderr, error) into the activity.
+				if serverTools.observeItem(resp.Item) {
+					emitServerTools()
+				}
 				// Output item completed - finalize function call if any
 				if resp.Item != nil && resp.Item.Type != nil {
 					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {

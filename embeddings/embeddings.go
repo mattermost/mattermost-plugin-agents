@@ -47,6 +47,10 @@ type SearchResult struct {
 	Score    float32
 }
 
+// MaxSearchResults is the hard cap on rows a vector store returns for a
+// single search; stores clamp unset (<=0) or larger limits to this value.
+const MaxSearchResults = 1000
+
 // SearchOptions contains parameters for search operations
 type SearchOptions struct {
 	Limit         int
@@ -99,12 +103,27 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
+// BulkIndexer drops/rebuilds the ANN index around bulk loads.
+type BulkIndexer interface {
+	PrepareBulkIndex(ctx context.Context) error
+	FinalizeBulkIndex(ctx context.Context) error
+	VectorIndexExists(ctx context.Context) (bool, error)
+}
+
+// BulkIndexerProvider exposes bulk index control from a search service.
+type BulkIndexerProvider interface {
+	// BulkIndexer returns control, or nil if unsupported.
+	BulkIndexer() BulkIndexer
+}
+
 // EmbeddingProvider defines the interface for embedding generation
 type EmbeddingProvider interface {
 	// CreateEmbedding generates embedding for the given text
 	CreateEmbedding(ctx context.Context, text string) ([]float32, error)
 
-	// BatchCreateEmbeddings generates embeddings for multiple texts
+	// BatchCreateEmbeddings generates embeddings for any number of texts;
+	// implementations are responsible for splitting the batch to respect
+	// their provider's per-request limits
 	BatchCreateEmbeddings(ctx context.Context, texts []string) ([][]float32, error)
 
 	// Dimensions returns the dimensionality of the embeddings
@@ -117,14 +136,83 @@ type UpstreamConfig struct {
 	Parameters json.RawMessage `json:"parameters"`
 }
 
+// Reindex throughput defaults and bounds. Workers are concurrent embedding
+// pipelines; batch size is posts fetched/embedded per request. Defaults sit
+// comfortably inside OpenAI Tier 1 rate limits.
+const (
+	DefaultReindexWorkers   = 4
+	MaxReindexWorkers       = 32
+	DefaultReindexBatchSize = 200
+	MaxReindexBatchSize     = 1000
+)
+
+// ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
+const (
+	ReindexIndexStrategyMaintain = "maintain"
+	ReindexIndexStrategyDefer    = "defer"
+)
+
 // ServiceConfig holds configuration for the embedding search service
 type EmbeddingSearchConfig struct {
-	Type              string           `json:"type"`
-	VectorStore       UpstreamConfig   `json:"vectorStore"`
-	EmbeddingProvider UpstreamConfig   `json:"embeddingProvider"`
-	Parameters        json.RawMessage  `json:"parameters"`
-	Dimensions        int              `json:"dimensions"`
-	ChunkingOptions   chunking.Options `json:"chunkingOptions"`
+	Type                 string           `json:"type"`
+	VectorStore          UpstreamConfig   `json:"vectorStore"`
+	EmbeddingProvider    UpstreamConfig   `json:"embeddingProvider"`
+	Parameters           json.RawMessage  `json:"parameters"`
+	Dimensions           int              `json:"dimensions"`
+	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
+	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
+	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
+	ReindexIndexStrategy string           `json:"reindexIndexStrategy,omitempty"`
+	RecencyBiasEnabled   bool             `json:"recencyBiasEnabled,omitempty"`
+	RecencyHalfLifeDays  float64          `json:"recencyHalfLifeDays,omitempty"`
+	RecencyFloor         float64          `json:"recencyFloor,omitempty"`
+}
+
+// GetReindexWorkers returns the configured reindex worker count, clamped to
+// valid bounds, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetReindexWorkers() int {
+	if c.ReindexWorkers <= 0 {
+		return DefaultReindexWorkers
+	}
+	return min(c.ReindexWorkers, MaxReindexWorkers)
+}
+
+// GetReindexBatchSize returns the configured reindex batch size, clamped to
+// valid bounds, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetReindexBatchSize() int {
+	if c.ReindexBatchSize <= 0 {
+		return DefaultReindexBatchSize
+	}
+	return min(c.ReindexBatchSize, MaxReindexBatchSize)
+}
+
+// GetRecencyBiasSettings resolves the recency bias config: unset (<=0)
+// half-life and floor fall back to defaults; the floor is clamped to [0, 1].
+// These are query-time-only settings; changing them never requires a reindex.
+func (c *EmbeddingSearchConfig) GetRecencyBiasSettings() RecencyBiasSettings {
+	settings := RecencyBiasSettings{
+		Enabled:      c.RecencyBiasEnabled,
+		HalfLifeDays: c.RecencyHalfLifeDays,
+		Floor:        c.RecencyFloor,
+	}
+	if settings.HalfLifeDays <= 0 {
+		settings.HalfLifeDays = DefaultRecencyHalfLifeDays
+	}
+	if settings.Floor <= 0 {
+		settings.Floor = DefaultRecencyFloor
+	}
+	settings.Floor = min(settings.Floor, 1)
+	return settings
+}
+
+// EffectiveReindexIndexStrategy: defer if set, otherwise maintain.
+func (c *EmbeddingSearchConfig) EffectiveReindexIndexStrategy() string {
+	switch c.ReindexIndexStrategy {
+	case ReindexIndexStrategyDefer:
+		return ReindexIndexStrategyDefer
+	default:
+		return ReindexIndexStrategyMaintain
+	}
 }
 
 // GetProviderType returns the embedding provider type

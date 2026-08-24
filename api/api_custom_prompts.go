@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -37,6 +38,12 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	// Audit that a prompt was created and whether it is shared — never its
+	// name or template, which are user content.
+	rec := auditRec(c)
+	audit.AddParam(rec, "prompt_id", created.ID)
+	audit.AddParam(rec, "is_shared", created.IsShared)
+
 	c.JSON(http.StatusCreated, created)
 }
 
@@ -58,6 +65,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
 
+	// Record the target before the ownership check so denial and not-found
+	// failures still identify which prompt was targeted.
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
+
 	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
 		return
 	}
@@ -67,6 +78,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
 		return
 	}
+
+	// Sharing state is the only body field audited — never the name or
+	// template, which are user content.
+	audit.AddParam(auditRec(c), "is_shared", prompt.IsShared)
 
 	prompt.ID = promptID
 	prompt.CreatorID = userID
@@ -88,6 +103,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 func (a *API) handleDeleteCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
+
+	// Record the target before the ownership check so denial and not-found
+	// failures still identify which prompt was targeted.
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
 
 	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
 		return

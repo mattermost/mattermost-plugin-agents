@@ -60,6 +60,13 @@ func (c *Conversations) unmarshalWebSearchContext(webSearchContextJSON string, p
 		return nil
 	}
 
+	// Unmarshaling the literal JSON "null" succeeds and leaves params nil, which
+	// would make the unconditional writes below panic ("assignment to entry in
+	// nil map"). A user can set this prop to any value, so guard against it.
+	if params == nil {
+		params = make(map[string]interface{})
+	}
+
 	// Reconstruct proper types for web search context values
 	if raw, ok := params[mmtools.WebSearchContextKey]; ok {
 		// Re-marshal and unmarshal to get proper types

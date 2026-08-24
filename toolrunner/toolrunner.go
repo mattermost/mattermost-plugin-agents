@@ -100,6 +100,12 @@ type ToolTurn struct {
 	// AssistantReasoning holds the reasoning data from the assistant response.
 	AssistantReasoning llm.ReasoningData
 
+	// AssistantServerTools holds the provider-executed (server) tool activity
+	// observed during the assistant response — the final cumulative snapshot
+	// from EventTypeServerToolUse. Without it, a round that mixed server tools
+	// with client tool calls would lose the activity when persisted.
+	AssistantServerTools []llm.ServerToolUse
+
 	// ToolResults holds the executed tool results, one per tool call.
 	// Includes both successful and errored results.
 	ToolResults []ToolResult
@@ -205,6 +211,7 @@ func (r *ToolRunner) runLoop(
 		var reasoning strings.Builder
 		var reasoningData llm.ReasoningData
 		var toolCalls []llm.ToolCall
+		var serverTools []llm.ServerToolUse
 		var usage llm.TokenUsage
 		var streamErr error
 
@@ -214,6 +221,13 @@ func (r *ToolRunner) runLoop(
 				if tcs, ok := event.Value.([]llm.ToolCall); ok {
 					toolCalls = append(toolCalls, tcs...)
 				}
+			case llm.EventTypeServerToolUse:
+				// Cumulative snapshot of provider-executed tool activity;
+				// keep the latest so a tool round persists it (see ToolTurn).
+				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
+					serverTools = uses
+				}
+				output <- event
 			case llm.EventTypeEnd:
 				// Don't forward yet — handle after consuming the full stream.
 			case llm.EventTypeText:
@@ -271,7 +285,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, toolResults, usage)
+			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -308,7 +322,13 @@ func (r *ToolRunner) runLoop(
 			return
 		}
 
-		// Forward pending tool calls so the UI can show spinners.
+		// All calls passed the policy: stamp them so the pending broadcast
+		// (and, if the stream is interrupted mid-execution, the persisted
+		// blocks) carry the auto-execute signal instead of implying an
+		// approval request, then forward so the UI can show spinners.
+		for i := range toolCalls {
+			toolCalls[i].WouldAutoExecute = true
+		}
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: toolCalls}
 
 		// Execute each tool call.
@@ -316,7 +336,7 @@ func (r *ToolRunner) runLoop(
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, text.String(), reasoningData, resolvedToolCalls, toolResults, usage)
+		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -506,17 +526,19 @@ func appendToolTurnAndPost(
 	request *llm.CompletionRequest,
 	text string,
 	reasoningData llm.ReasoningData,
+	serverTools []llm.ServerToolUse,
 	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
 ) {
 	turn := ToolTurn{
-		AssistantMessage:   text,
-		AssistantToolCalls: resolvedToolCalls,
-		AssistantReasoning: reasoningData,
-		ToolResults:        toolResults,
-		TokensIn:           usage.InputTokens,
-		TokensOut:          usage.OutputTokens,
+		AssistantMessage:     text,
+		AssistantToolCalls:   resolvedToolCalls,
+		AssistantReasoning:   reasoningData,
+		AssistantServerTools: serverTools,
+		ToolResults:          toolResults,
+		TokensIn:             usage.InputTokens,
+		TokensOut:            usage.OutputTokens,
 	}
 	result.ToolTurns = append(result.ToolTurns, turn)
 

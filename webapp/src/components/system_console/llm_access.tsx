@@ -9,7 +9,7 @@ import {SelectUser, SelectChannel} from '../select';
 
 import {ChannelAccessLevel, UserAccessLevel} from './bot';
 
-import {HelpText, ItemLabel, StyledRadio} from './item';
+import {FormRow, HelpText, ItemLabel, StyledRadio} from './item';
 
 const AllowTypes = styled.div`
 	margin-bottom: 24px;
@@ -39,7 +39,7 @@ type UserAccessLevelProps = {
 
 export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
     return (
-        <>
+        <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
                 <AllowTypes>
@@ -85,7 +85,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                     </SelectWrapper>
                 )}
             </MainContainer>
-        </>
+        </FormRow>
     );
 };
 
@@ -99,7 +99,7 @@ type ChannelAccessLevelProps = {
 
 export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
     return (
-        <>
+        <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
                 <AllowTypes>
@@ -151,7 +151,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                     </SelectWrapper>
                 )}
             </MainContainer>
-        </>
+        </FormRow>
     );
 };
 

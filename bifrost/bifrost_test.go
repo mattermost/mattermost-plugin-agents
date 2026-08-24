@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/maximhq/bifrost/core/providers/anthropic"
+	"github.com/maximhq/bifrost/core/providers/openai"
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -176,12 +177,34 @@ func TestBuildChatReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "budget >= maxTokens returns nil",
+			name:             "budget >= maxTokens is clamped below max_tokens",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			thinkingBudget:   8192,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(8191),
+		},
+		{
+			name:             "no valid budget below the minimum returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 1024},
 			expectNil:        true,
+		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "Gemini with JSON schema keeps reasoning",
+			provider:         schemas.Gemini,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
 		},
 	}
 
@@ -212,10 +235,18 @@ func TestBuildChatReasoning(t *testing.T) {
 }
 
 func TestConvertMessagesReasoningDetails(t *testing.T) {
+	signedAnthropicPosts := []llm.Post{{
+		Role:               llm.PostRoleBot,
+		Message:            "response",
+		Reasoning:          "thinking",
+		ReasoningSignature: "sig123",
+	}}
+
 	tests := []struct {
 		name              string
 		provider          schemas.ModelProvider
 		posts             []llm.Post
+		cfg               llm.LanguageModelConfig
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
@@ -244,14 +275,25 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedReasoning: "partial thinking",
 		},
 		{
-			name:     "includes signed reasoning",
-			provider: schemas.Anthropic,
-			posts: []llm.Post{{
-				Role:               llm.PostRoleBot,
-				Message:            "response",
-				Reasoning:          "thinking",
-				ReasoningSignature: "sig123",
-			}},
+			name:              "includes signed reasoning",
+			provider:          schemas.Anthropic,
+			posts:             signedAnthropicPosts,
+			expectedLen:       1,
+			expectedReasoning: "thinking",
+			expectedSignature: "sig123",
+		},
+		{
+			name:        "skips signed reasoning for Anthropic when request has JSON schema",
+			provider:    schemas.Anthropic,
+			posts:       signedAnthropicPosts,
+			cfg:         llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectedLen: 1,
+		},
+		{
+			name:              "keeps reasoning for non-Anthropic when request has JSON schema",
+			provider:          schemas.OpenAI,
+			posts:             signedAnthropicPosts,
+			cfg:               llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
 			expectedLen:       1,
 			expectedReasoning: "thinking",
 			expectedSignature: "sig123",
@@ -262,7 +304,7 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
 
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, tt.cfg)
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -336,6 +378,317 @@ func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
 		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
 }
 
+// TestPromptCaching verifies that automatic prompt caching (top-level
+// cache_control) is requested for Anthropic and reaches the Anthropic wire
+// request, but is never attached for other providers or for Anthropic with
+// non-Anthropic fallbacks (where the marker would 400 the fallback request).
+func TestPromptCaching(t *testing.T) {
+	tests := []struct {
+		name      string
+		provider  schemas.ModelProvider
+		fallbacks []schemas.Fallback
+		want      bool
+	}{
+		{
+			name:     "anthropic without fallbacks",
+			provider: schemas.Anthropic,
+			want:     true,
+		},
+		{
+			name:      "anthropic with anthropic custom-provider fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: customProviderName(schemas.Anthropic, "svc2")}},
+			want:      true,
+		},
+		{
+			name:      "anthropic with openai fallback",
+			provider:  schemas.Anthropic,
+			fallbacks: []schemas.Fallback{{Provider: schemas.OpenAI}},
+			want:      false,
+		},
+		{
+			name:     "openai",
+			provider: schemas.OpenAI,
+			want:     false,
+		},
+		{
+			name:     "bedrock",
+			provider: schemas.Bedrock,
+			want:     false,
+		},
+	}
+
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleSystem, Message: "system prompt"},
+			{Role: llm.PostRoleUser, Message: "hello"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: tt.provider, fallbacks: tt.fallbacks}
+			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
+
+			chatReq := b.convertToBifrostRequest(request, cfg)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+
+			if !tt.want {
+				assert.Nil(t, chatReq.Params.CacheControl)
+				assert.NotContains(t, respReq.Params.ExtraParams, "cache_control")
+				return
+			}
+
+			require.NotNil(t, chatReq.Params.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, chatReq.Params.CacheControl.Type)
+			require.Contains(t, respReq.Params.ExtraParams, "cache_control")
+
+			// Feed both requests through bifrost's Anthropic converters to
+			// confirm the marker survives onto the wire request.
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wireChat, err := anthropic.ToAnthropicChatRequest(ctx, chatReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireChat.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireChat.CacheControl.Type)
+
+			wireResponses, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+			require.NotNil(t, wireResponses.CacheControl)
+			assert.Equal(t, schemas.CacheControlTypeEphemeral, wireResponses.CacheControl.Type)
+		})
+	}
+}
+
+// TestAnthropicNativeToolSandboxOptInMatrix pins the sandbox opt-in contract:
+//
+//   - Without the code_interpreter native tool, web_search and web_fetch carry
+//     allowed_callers ["direct"] — Anthropic's documented opt-out from dynamic
+//     filtering, which would otherwise auto-provision the code-execution (bash)
+//     sandbox on newer Claude models (Bifrost auto-selects the *_20260209 tool
+//     versions for 4.6+/Opus 4.7+/Sonnet 5+) — and no code_execution tool may
+//     appear on the wire.
+//   - With code_interpreter enabled, the sandbox is sanctioned by the admin:
+//     the pin is omitted. Alongside web tools, Bifrost defers to Anthropic's
+//     auto-injection (no explicit code_execution tool — including one would
+//     400 with "Auto-injecting tools would conflict"); without web tools, the
+//     explicit code_execution tool must reach the wire.
+//
+// Assertions run against both the neutral Bifrost request and the Anthropic
+// wire request (anthropic.ToAnthropicResponsesRequest), so the contract holds
+// whatever tool version Bifrost picks for the model.
+func TestAnthropicNativeToolSandboxOptInMatrix(t *testing.T) {
+	tests := []struct {
+		name               string
+		model              string
+		enabledNativeTools []string
+		cfg                llm.LanguageModelConfig
+		wantPinnedWebTools bool
+		wantWireWebSearch  bool
+		wantWireWebFetch   bool
+		wantWireCodeExec   bool
+	}{
+		{
+			name:               "web_search only on a dynamic-filtering model stays pinned",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+		},
+		{
+			name:               "web_search only on a basic model stays pinned",
+			model:              "claude-sonnet-4-20250514",
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+		},
+		{
+			name:               "per-request NativeWebSearchAllowed stays pinned",
+			model:              "claude-opus-4-6",
+			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true, ToolsDisabled: true},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+		},
+		{
+			name:               "web_search and web_fetch without sandbox both pinned",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
+			wantPinnedWebTools: true,
+			wantWireWebSearch:  true,
+			wantWireWebFetch:   true,
+		},
+		{
+			name:               "web_fetch only stays pinned",
+			model:              "claude-opus-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebFetch},
+			wantPinnedWebTools: true,
+			wantWireWebFetch:   true,
+		},
+		{
+			name:               "explicit sandbox unpins web tools and defers to auto-injection",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch, llm.NativeToolCodeInterpreter},
+			wantPinnedWebTools: false,
+			wantWireWebSearch:  true,
+			wantWireWebFetch:   true,
+			wantWireCodeExec:   false, // bifrost skips it: Anthropic auto-injects alongside web tools
+		},
+		{
+			name:               "sandbox without web tools sends explicit code_execution",
+			model:              "claude-sonnet-4-6",
+			enabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+			wantWireCodeExec:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, enabledNativeTools: tt.enabledNativeTools}
+			cfg := tt.cfg
+			cfg.Model = tt.model
+			cfg.MaxGeneratedTokens = 1000
+
+			request := llm.CompletionRequest{
+				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+			}
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+
+			// Neutral request: the allowed_callers pin must match the sandbox state.
+			wantCallers := []string(nil)
+			if tt.wantPinnedWebTools {
+				wantCallers = []string{"direct"}
+			}
+			for i := range respReq.Params.Tools {
+				tool := &respReq.Params.Tools[i]
+				switch tool.Type {
+				case schemas.ResponsesToolTypeWebSearch, schemas.ResponsesToolTypeWebFetch:
+					assert.Equal(t, wantCallers, tool.AllowedCallers,
+						"neutral %s allowed_callers must reflect the sandbox opt-in state", tool.Type)
+				}
+			}
+
+			// Wire request: the contract must survive bifrost's Anthropic converter.
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			wire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			var wireWebSearch, wireWebFetch *anthropic.AnthropicTool
+			wireHasCodeExec := false
+			for i := range wire.Tools {
+				tool := &wire.Tools[i]
+				if tool.Type == nil {
+					continue
+				}
+				switch {
+				case strings.HasPrefix(string(*tool.Type), "web_search_"):
+					wireWebSearch = tool
+				case strings.HasPrefix(string(*tool.Type), "web_fetch_"):
+					wireWebFetch = tool
+				case strings.HasPrefix(string(*tool.Type), "code_execution"):
+					wireHasCodeExec = true
+				}
+			}
+
+			assert.Equal(t, tt.wantWireCodeExec, wireHasCodeExec, "explicit code_execution on the wire")
+			require.Equal(t, tt.wantWireWebSearch, wireWebSearch != nil, "web_search on the wire")
+			require.Equal(t, tt.wantWireWebFetch, wireWebFetch != nil, "web_fetch on the wire")
+			for _, tool := range []*anthropic.AnthropicTool{wireWebSearch, wireWebFetch} {
+				if tool == nil {
+					continue
+				}
+				assert.Equal(t, wantCallers, tool.AllowedCallers,
+					"wire %s allowed_callers must reflect the sandbox opt-in state", *tool.Type)
+			}
+		})
+	}
+}
+
+// TestWebSearchAllowedCallersStrippedForOpenAI pins the bifrost serializer
+// behavior that makes the unconditional allowed_callers pin safe: the
+// Anthropic-only flag must not leak onto the OpenAI Responses wire (OpenAI
+// 400s on unknown tool fields). If this test breaks after a bifrost upgrade,
+// the plugin must start gating the flag by provider instead.
+func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
+	b := &LLM{
+		provider:           schemas.OpenAI,
+		enabledNativeTools: []string{llm.NativeToolWebSearch},
+		useResponsesAPI:    true,
+	}
+	cfg := llm.LanguageModelConfig{Model: "gpt-4o", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+	require.NotEmpty(t, respReq.Params.Tools)
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: cfg.Model,
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(body), "allowed_callers",
+		"the Anthropic-only allowed_callers flag must be stripped from OpenAI Responses requests")
+	assert.Contains(t, string(body), `"web_search"`,
+		"the web_search tool itself must still reach OpenAI")
+}
+
+// TestAnthropicOnlyWebFetchDroppedForOpenAI pins the bifrost behavior that
+// makes heterogeneous fallback chains safe without per-fallback filtering in
+// the plugin: a request built for an Anthropic primary with web_fetch enabled
+// keeps the tool in the neutral request (Bifrost reuses the same request for
+// every fallback attempt), and the OpenAI serializer drops the Anthropic-only
+// tool type outright instead of forwarding it to a 400. If this test breaks
+// after a bifrost upgrade, the plugin must start intersecting
+// EnabledNativeTools with every fallback provider's support matrix.
+func TestAnthropicOnlyWebFetchDroppedForOpenAI(t *testing.T) {
+	// Anthropic primary with web_fetch (and web_search) enabled — the shape a
+	// request has when Bifrost retries it against an OpenAI fallback.
+	b := &LLM{
+		provider:           schemas.Anthropic,
+		enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolWebFetch},
+	}
+	cfg := llm.LanguageModelConfig{Model: "claude-sonnet-4-6", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+
+	hasWebFetch := false
+	for _, tool := range respReq.Params.Tools {
+		if tool.Type == schemas.ResponsesToolTypeWebFetch {
+			hasWebFetch = true
+		}
+	}
+	require.True(t, hasWebFetch, "the neutral request carries web_fetch for the Anthropic primary")
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: "gpt-4o",
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	assert.NotContains(t, string(body), "web_fetch",
+		"OpenAI's serializer must drop the Anthropic-only web_fetch tool so a fallback attempt cannot 400")
+	assert.Contains(t, string(body), `"web_search"`,
+		"web_search is part of OpenAI's tool union and must survive the fallback serialization")
+}
+
 func TestBuildResponsesReasoning(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -393,6 +746,21 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			checkMaxTokens:   Ptr(2048),
 		},
 		{
+			name:             "Anthropic budget >= maxTokens is clamped below max_tokens",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			thinkingBudget:   8192,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			checkMaxTokens:   Ptr(8191),
+		},
+		{
+			name:             "Anthropic with no valid budget below the minimum returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 1024},
+			expectNil:        true,
+		},
+		{
 			name:             "OpenAI uses Effort with summary",
 			provider:         schemas.OpenAI,
 			reasoningEnabled: true,
@@ -444,6 +812,22 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: false,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
 			expectNil:        true,
+		},
+		{
+			name:             "Anthropic with JSON schema returns nil",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			expectNil:        true,
+		},
+		{
+			name:             "OpenAI with JSON schema keeps reasoning",
+			provider:         schemas.OpenAI,
+			reasoningEnabled: true,
+			reasoningEffort:  "high",
+			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      Ptr("high"),
+			checkSummary:     Ptr("auto"),
 		},
 	}
 
@@ -538,24 +922,24 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 		expected           bool
 	}{
 		{
-			name:               "native tools configured returns true",
+			name:               "OpenAI-compatible native tools do not override disabled Responses API",
 			provider:           schemas.OpenAI,
-			enabledNativeTools: []string{"web_search"},
-			expected:           true,
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed with web_search enabled returns true",
+			name:               "OpenAI-compatible native web search does not override disabled Responses API",
 			provider:           schemas.OpenAI,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
-			name:               "NativeWebSearchAllowed without web_search in tools returns true",
+			name:               "OpenAI-compatible request option does not override disabled Responses API",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,
 			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true},
-			expected:           true,
+			expected:           false,
 		},
 		{
 			name:               "explicit responses API flag wins for direct OpenAI",
@@ -566,16 +950,29 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			expected:           true,
 		},
 		{
+			name:               "Azure native tools do not override disabled Responses API",
+			provider:           schemas.Azure,
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			expected:           false,
+		},
+		{
+			name:               "Azure uses Responses API when explicitly enabled",
+			provider:           schemas.Azure,
+			useResponsesAPI:    true,
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
+			expected:           true,
+		},
+		{
 			name:               "unsupported provider ignores native tools",
 			provider:           schemas.Bedrock,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{},
 			expected:           false,
 		},
 		{
 			name:               "Gemini with native tools auto-enables Responses API",
 			provider:           schemas.Gemini,
-			enabledNativeTools: []string{"web_search"},
+			enabledNativeTools: []string{llm.NativeToolWebSearch},
 			cfg:                llm.LanguageModelConfig{},
 			expected:           true,
 		},
@@ -677,7 +1074,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts)
+			messages := b.convertMessages(tt.posts, llm.LanguageModelConfig{})
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -721,7 +1118,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts)
+	messages := b.convertMessages(posts, llm.LanguageModelConfig{})
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
@@ -1220,7 +1617,7 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.Type)
 				assert.Equal(t, "object", *req.Params.Text.Format.JSONSchema.Type)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.Properties)
-				assert.Len(t, *req.Params.Text.Format.JSONSchema.Properties, 2)
+				assert.Equal(t, 2, req.Params.Text.Format.JSONSchema.Properties.Len())
 				assert.ElementsMatch(t, []string{"name", "score"}, req.Params.Text.Format.JSONSchema.Required)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties)
 				require.NotNil(t, req.Params.Text.Format.JSONSchema.AdditionalProperties.AdditionalPropertiesBool)
@@ -1592,6 +1989,57 @@ func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T
 	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
 }
 
+func TestNewFromServiceConfig_BotModelOverrideCapsOutputTokens(t *testing.T) {
+	tests := []struct {
+		name              string
+		serviceTokenLimit int
+		expectedMaxTokens int
+	}{
+		{
+			name:              "caps service limit to bot model limit",
+			serviceTokenLimit: 128000,
+			expectedMaxTokens: 64000,
+		},
+		{
+			name:              "preserves lower service limit",
+			serviceTokenLimit: 32000,
+			expectedMaxTokens: 32000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := llm.ServiceConfig{
+				ID:               "svc-anthropic",
+				Type:             llm.ServiceTypeAnthropic,
+				APIKey:           "anthropic-key",
+				DefaultModel:     "claude-sonnet-4-6",
+				OutputTokenLimit: tt.serviceTokenLimit,
+			}
+			bot := llm.BotConfig{
+				ServiceID: service.ID,
+				Model:     "claude-haiku-4-5-20251001",
+			}
+
+			llmInstance, err := NewFromServiceConfig(service, bot, nil)
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			cfg := llmInstance.createConfig(nil)
+			bifrostReq := llmInstance.convertToBifrostRequest(llm.CompletionRequest{
+				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+			}, cfg)
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			anthropicReq, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
+			require.NoError(t, err)
+			assert.Equal(t, bot.Model, anthropicReq.Model)
+			assert.Equal(t, tt.expectedMaxTokens, anthropicReq.MaxTokens)
+		})
+	}
+}
+
 // chatCompletionSSE writes a minimal OpenAI-style streaming chat completion
 // response carrying the given content. bifrost.LLM issues streaming requests
 // under the hood even for ChatCompletionNoStream (see TestEnvProxyRouting).
@@ -1600,6 +2048,55 @@ func chatCompletionSSE(w http.ResponseWriter, content string) {
 	fmt.Fprintf(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":%q},\"finish_reason\":null}]}\n\n", content)
 	fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
 	fmt.Fprint(w, "data: [DONE]\n\n")
+}
+
+func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
+	var chatHit, responsesHit atomic.Bool
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/chat/completions":
+			chatHit.Store(true)
+			chatCompletionSSE(w, "from-chat-completions")
+		case "/v1/responses":
+			responsesHit.Store(true)
+			http.Error(w, `{"error":"ROUTE NOT SUPPORTED"}`, http.StatusUnprocessableEntity)
+		default:
+			http.Error(w, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	service := llm.ServiceConfig{
+		ID:              "scaleway",
+		Type:            llm.ServiceTypeOpenAICompatible,
+		APIKey:          "key",
+		APIURL:          server.URL,
+		DefaultModel:    "gemma",
+		UseResponsesAPI: false,
+	}
+	bot := llm.BotConfig{
+		ID:                 "bot-1",
+		ServiceID:          service.ID,
+		DisableTools:       true,
+		EnabledNativeTools: []string{llm.NativeToolWebSearch},
+	}
+
+	llmInstance, err := NewFromServiceConfig(service, bot, nil)
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(
+		context.Background(),
+		llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+		llm.WithToolsDisabled(),
+		llm.WithNativeWebSearchAllowed(),
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "from-chat-completions", result)
+	assert.True(t, chatHit.Load(), "request must use /v1/chat/completions")
+	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
 }
 
 // TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
@@ -2228,8 +2725,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutputMultiTypeArray(t *testi
 	js := req.Params.Text.Format.JSONSchema
 	assert.Nil(t, js.Type)
 	require.Len(t, js.AnyOf, 2)
-	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
-	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1])
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0].ToMap())
+	assert.Equal(t, map[string]any{"type": "null"}, js.AnyOf[1].ToMap())
 }
 
 func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testing.T) {
@@ -2255,8 +2752,8 @@ func TestConvertToBifrostResponsesRequestStructuredOutputTopLevelAnyOf(t *testin
 	require.NotNil(t, req.Params.Text.Format.JSONSchema)
 	js := req.Params.Text.Format.JSONSchema
 	require.Len(t, js.AnyOf, 2)
-	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0])
-	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1])
+	assert.Equal(t, map[string]any{"type": "string"}, js.AnyOf[0].ToMap())
+	assert.Equal(t, map[string]any{"type": "number"}, js.AnyOf[1].ToMap())
 }
 
 func TestChatCompletionNoStreamReturnsErrorForUnsupportedResponsesSchema(t *testing.T) {
@@ -2510,7 +3007,7 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 			DefaultModel:     "claude-sonnet-4-6",
 			StreamingTimeout: 10 * time.Second,
 		},
-		EnabledNativeTools: []string{"web_search"},
+		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

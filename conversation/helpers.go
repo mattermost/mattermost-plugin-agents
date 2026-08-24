@@ -81,6 +81,7 @@ func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
 func toolUseBlocks(
 	message string,
 	reasoning llm.ReasoningData,
+	serverTools []llm.ServerToolUse,
 	toolCalls []llm.ToolCall,
 	shared bool,
 ) []ContentBlock {
@@ -91,6 +92,16 @@ func toolUseBlocks(
 			Type:      BlockTypeThinking,
 			Text:      reasoning.Text,
 			Signature: reasoning.Signature,
+		})
+	}
+
+	// Server tool activity precedes the text, matching the streaming layer's
+	// buildContentBlocks ordering (the activity happens before the answer).
+	for i := range serverTools {
+		serverTool := serverTools[i]
+		blocks = append(blocks, ContentBlock{
+			Type:       BlockTypeServerToolUse,
+			ServerTool: &serverTool,
 		})
 	}
 

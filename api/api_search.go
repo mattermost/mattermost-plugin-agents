@@ -5,6 +5,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -62,6 +63,10 @@ func (a *API) handleRunSearch(c *gin.Context) {
 
 	result, err := a.searchService.RunSearch(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
 	if err != nil {
+		if errors.Is(err, search.ErrSearchUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -103,6 +108,10 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 
 	response, err := a.searchService.SearchQuery(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
 	if err != nil {
+		if errors.Is(err, search.ErrSearchUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -128,6 +137,7 @@ type RawSearchResult struct {
 	Username    string  `json:"username"`
 	Content     string  `json:"content"`
 	Score       float32 `json:"score"`
+	CreateAt    int64   `json:"create_at"` // Post creation timestamp (Unix millis)
 }
 
 // RawSearchResponse represents the response body for the raw semantic search endpoint
@@ -189,6 +199,10 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
+		if errors.Is(err, search.ErrSearchUnavailable) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+			return
+		}
 		a.pluginAPI.Log.Error("Raw search failed", "error", err, "user_id", userID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "search failed"})
 		return
@@ -207,6 +221,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 			Username:    r.Username,
 			Content:     r.Content,
 			Score:       r.Score,
+			CreateAt:    r.CreateAt,
 		})
 	}
 

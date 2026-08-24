@@ -2,11 +2,24 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render} from '@testing-library/react';
+import {fireEvent, render, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+
+const mockDoToolCall = jest.fn();
+const mockInvalidateConversation = jest.fn();
+
+jest.mock('@/client', () => ({
+    doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
+        mockDoToolCall(postID, toolIDs, toolAnswers),
+    doToolResult: jest.fn(),
+}));
+
+jest.mock('@/hooks/use_conversation', () => ({
+    invalidateConversation: (conversationID: string) => mockInvalidateConversation(conversationID),
+}));
 
 type MockRenderContext = {
     tool: ToolCall;
@@ -34,7 +47,7 @@ function makeTool(overrides: Partial<ToolCall>): ToolCall {
     };
 }
 
-function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call') {
+function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call', canApprove = true) {
     return render(
         <IntlProvider locale='en'>
             <ToolApprovalSet
@@ -42,7 +55,7 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 conversationID='conv_1'
                 toolCalls={toolCalls}
                 approvalStage={approvalStage}
-                canApprove={true}
+                canApprove={canApprove}
                 canExpand={true}
                 showArguments={true}
                 showResults={true}
@@ -59,6 +72,9 @@ function getToolCardProps(toolID: string): MockRenderContext {
 
 beforeEach(() => {
     mockRenderToolCall.mockClear();
+    mockDoToolCall.mockReset();
+    mockDoToolCall.mockImplementation(() => Promise.resolve());
+    mockInvalidateConversation.mockClear();
 });
 
 describe('ToolApprovalSet', () => {
@@ -98,6 +114,42 @@ describe('ToolApprovalSet', () => {
         const manualTool = getToolCardProps('tool_manual');
         expect(manualTool.onApprove).toEqual(expect.any(Function));
         expect(manualTool.onReject).toEqual(expect.any(Function));
+    });
+
+    test('renders live pending auto-executing tools without decision controls', () => {
+        renderComponent([
+            makeTool({id: 'tool_auto', would_auto_execute: true}),
+        ], 'done');
+
+        const autoTool = getToolCardProps('tool_auto');
+        expect(autoTool.onApprove).toBeUndefined();
+        expect(autoTool.onReject).toBeUndefined();
+    });
+
+    test('resumes an interrupted all-auto round with an empty accepted list', async () => {
+        const {getByRole} = renderComponent([
+            makeTool({id: 'tool_auto_a', would_auto_execute: true}),
+            makeTool({id: 'tool_auto_b', would_auto_execute: true}),
+        ]);
+
+        expect(getToolCardProps('tool_auto_a').onApprove).toBeUndefined();
+        expect(getToolCardProps('tool_auto_b').onReject).toBeUndefined();
+
+        fireEvent.click(getByRole('button', {name: 'Run tools'}));
+
+        await waitFor(() => {
+            expect(mockDoToolCall).toHaveBeenCalledWith('post_1', [], {});
+        });
+        expect(mockInvalidateConversation).toHaveBeenCalledWith('conv_1');
+    });
+
+    test('does not offer resume to non-owners', () => {
+        const {queryByRole} = renderComponent([
+            makeTool({id: 'tool_auto', would_auto_execute: true}),
+        ], 'call', false);
+
+        expect(getToolCardProps('tool_auto').onApprove).toBeUndefined();
+        expect(queryByRole('button', {name: 'Run tools'})).toBeNull();
     });
 
     test('excludes already-decided results from share decisions', () => {

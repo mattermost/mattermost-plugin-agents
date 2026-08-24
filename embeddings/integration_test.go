@@ -156,6 +156,11 @@ func addTestPost(t *testing.T, db *sqlx.DB, postID, userID, channelID, message s
 
 // createFullSearchSystem creates a CompositeSearch with mock provider and real PGVector
 func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embeddings.EmbeddingSearch {
+	return createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{})
+}
+
+// createFullSearchSystemWithRecency is createFullSearchSystem with recency bias settings.
+func createFullSearchSystemWithRecency(t *testing.T, db *sqlx.DB, dimensions int, recency embeddings.RecencyBiasSettings) embeddings.EmbeddingSearch {
 	provider := embeddings.NewMockEmbeddingProvider(dimensions)
 
 	pgVectorConfig := postgres.PGVectorConfig{
@@ -170,7 +175,7 @@ func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embedding
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts)
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, recency)
 }
 
 // TestBasicIndexAndSearchMechanics tests that the indexing and search plumbing works
@@ -243,7 +248,54 @@ func TestBasicIndexAndSearchMechanics(t *testing.T) {
 	}
 }
 
-// TestReindexWithDimensionMismatch tests behavior when dimension changes between indexes
+// TestRecencyBiasEndToEnd verifies the over-fetch + rerank path against real
+// pgvector: two posts with identical content produce identical similarity
+// (the mock provider is deterministic), so with recency bias enabled the
+// ordering can only come from the time decay.
+func TestRecencyBiasEndToEnd(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	const dimensions = 64
+	search := createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{
+		Enabled:      true,
+		HalfLifeDays: 7,
+		Floor:        0.7,
+	})
+	ctx := context.Background()
+
+	addTestChannel(t, db, "channel1", "team1", "O", []string{"user1"})
+
+	const content = "How do I configure the deployment pipeline for staging?"
+	now := model.GetMillis()
+	oldCreateAt := now - 90*24*60*60*1000 // 90 days ago
+	freshCreateAt := now - 60*60*1000     // 1 hour ago
+
+	addTestPost(t, db, "old_post", "user1", "channel1", content, oldCreateAt)
+	addTestPost(t, db, "fresh_post", "user1", "channel1", content, freshCreateAt)
+
+	err := search.Store(ctx, []embeddings.PostDocument{
+		{PostID: "old_post", CreateAt: oldCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
+		{PostID: "fresh_post", CreateAt: freshCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
+	})
+	require.NoError(t, err)
+
+	results, err := search.Search(ctx, content, embeddings.SearchOptions{
+		Limit:  2,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// Identical content means identical raw similarity scores...
+	assert.InDelta(t, float64(results[0].Score), float64(results[1].Score), 1e-6)
+	// ...so the newer post ranking first proves the recency rerank worked.
+	assert.Equal(t, "fresh_post", results[0].Document.PostID)
+	assert.Equal(t, "old_post", results[1].Document.PostID)
+}
+
+// TestReindexWithDimensionMismatch verifies Full Reindex Clear recreates the
+// pgvector table when configured dimensions change.
 func TestReindexWithDimensionMismatch(t *testing.T) {
 	db := testDB(t)
 	defer cleanupDB(t, db)
@@ -285,26 +337,15 @@ func TestReindexWithDimensionMismatch(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, results)
 
-	// Now attempt to create a new search system with different dimensions
-	// This simulates a model configuration change
-	// The pgvector table already exists with 64 dimensions, so this should fail
-	// when trying to store new embeddings with different dimensions
-
-	// First, clear the index to simulate a reindex scenario
-	err = search64.Clear(ctx)
+	// Simulate a config change: new search at 128 dims, then Full Reindex Clear.
+	search128 := createFullSearchSystem(t, db, 128)
+	err = search128.Clear(ctx)
 	require.NoError(t, err)
 
-	// Verify index is cleared
 	var count int
 	err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
 	require.NoError(t, err)
 	assert.Equal(t, 0, count, "Index should be empty after clear")
-
-	// The vector store was created with 64 dimensions and the table column is fixed
-	// A proper reindex requires creating a new vector store with correct dimensions
-
-	// Create search with 128 dimensions - this will fail because the table column is 64 dims
-	search128 := createFullSearchSystem(t, db, 128)
 
 	doc128 := embeddings.PostDocument{
 		PostID:    "post2",
@@ -315,11 +356,20 @@ func TestReindexWithDimensionMismatch(t *testing.T) {
 		Content:   "New content with different dimensions",
 	}
 
-	// This should error because embedding dimensions don't match table
 	addTestPost(t, db, "post2", "user1", "channel1", "New content with different dimensions", now+1000)
 	err = search128.Store(ctx, []embeddings.PostDocument{doc128})
-	assert.Error(t, err, "Storing with mismatched dimensions should fail")
-	assert.Contains(t, err.Error(), "dimensions", "Error should mention dimension mismatch")
+	require.NoError(t, err, "Store after dimension-aware Clear should succeed")
+
+	err = db.Get(&storedDim, "SELECT vector_dims(embedding) FROM llm_posts_embeddings WHERE post_id = 'post2'")
+	require.NoError(t, err)
+	assert.Equal(t, 128, storedDim)
+
+	results, err = search128.Search(ctx, "different dimensions", embeddings.SearchOptions{
+		Limit:  5,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, results)
 }
 
 // Note: Semantic relevance testing with real embeddings is in search/search_eval_test.go

@@ -11,8 +11,6 @@ import (
 	"os/exec"
 	"strings"
 
-	sq "github.com/Masterminds/squirrel"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
@@ -157,6 +155,11 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing transcription: %v", r)
+			}
+		}()
 
 		transcriptionFileID, err := GetCaptionsFileIDFromProps(transcriptionPost)
 		if err != nil {
@@ -239,6 +242,11 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 					s.pluginAPI.Log.Error("Failed to update post in error handling handleCallRecordingPost", "error", err)
 				}
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
+			}
+		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing call recording: %v", r)
 			}
 		}()
 
@@ -369,17 +377,8 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 }
 
 func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
-	if _, err := s.db.ExecBuilder(s.db.Builder().
-		Update("FileInfo").
-		Set("PostId", post.Id).
-		Set("ChannelId", post.ChannelId).
-		Where(sq.And{
-			sq.Eq{"Id": fileinfo.Id},
-			sq.Eq{"PostId": ""},
-		})); err != nil {
-		return fmt.Errorf("unable to update file info: %w", err)
-	}
-
+	// The server's UpdatePost attaches the still-unattached file (uploaded
+	// via the plugin API, CreatorId "nouser") when it appears in FileIds.
 	post.FileIds = []string{fileinfo.Id}
 	post.Message = ""
 	if err := s.pluginAPI.Post.UpdatePost(post); err != nil {

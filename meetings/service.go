@@ -10,16 +10,14 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-const (
-	CallsRecordingPostType = "custom_calls_recording"
-	CallsBotUsername       = "calls"
-	ZoomBotUsername        = "zoom"
-)
+const CallsRecordingPostType = "custom_calls_recording"
+
+// MeetingBotUsernames is the set of bot usernames whose posts can be summarized as meeting transcriptions.
+var MeetingBotUsernames = []string{"calls", "zoom", "google-meet"}
 
 // Service handles meeting summarization and transcription functionality
 type Service struct {
@@ -29,7 +27,6 @@ type Service struct {
 	bots             *bots.MMBots
 	i18n             *i18n.Bundle
 	metricsService   metrics.Metrics
-	db               *mmapi.DBClient
 	contextBuilder   *llmcontext.Builder
 	conversations    *conversations.Conversations
 
@@ -44,7 +41,6 @@ func NewService(
 	bots *bots.MMBots,
 	i18n *i18n.Bundle,
 	metricsService metrics.Metrics,
-	db *mmapi.DBClient,
 	contextBuilder *llmcontext.Builder,
 	conversations *conversations.Conversations,
 ) *Service {
@@ -55,7 +51,6 @@ func NewService(
 		bots:             bots,
 		i18n:             i18n,
 		metricsService:   metricsService,
-		db:               db,
 		contextBuilder:   contextBuilder,
 		conversations:    conversations,
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -15,6 +16,10 @@ import (
 func (a *API) handleOAuthStart(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	serverName := c.Param("serverName")
+	// Recorded before any validation so every fail path carries the target
+	// server. Never audit the resource_metadata query value or the provider
+	// auth URL: both can embed client IDs and PKCE parameters.
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, audit.TruncateID(serverName))
 	if serverName == "" {
 		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Missing MCP server name.")
 		return
@@ -51,7 +56,16 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 		}
 	}
 
-	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL)
+	// scope carries the authoritative challenge scope from the failed MCP
+	// handshake (RFC 6750 §3), validated against the RFC 6749 §3.3 charset.
+	scope := c.Query("scope")
+	if scope != "" && !isValidOAuthScope(scope) {
+		a.pluginAPI.Log.Debug("Rejected MCP OAuth start scope query", "serverName", serverConfig.Name)
+		a.renderOAuthErrorPage(c, http.StatusBadRequest, "Authorization Failed", "Invalid scope parameter.")
+		return
+	}
+
+	authURL, err := oauthManager.InitiateOAuthFlowForServerWithMetadata(c.Request.Context(), userID, serverConfig, metadataURL, scope)
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to start OAuth flow", "serverName", serverConfig.Name, "error", err)
 		a.renderOAuthErrorPage(c, http.StatusInternalServerError, "Authorization Failed", "Unable to start the MCP authorization flow.")
@@ -59,6 +73,40 @@ func (a *API) handleOAuthStart(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, authURL)
+}
+
+// isValidOAuthScope validates a space-separated OAuth scope string against
+// the RFC 6749 §3.3 scope-token charset, with a sanity length cap. The cap is
+// generous because providers with URL-style scopes (~60 bytes each) can list
+// many in an insufficient_scope challenge; it matches the resource_metadata
+// URL length cap.
+func isValidOAuthScope(scope string) bool {
+	const maxScopeLength = 2048
+	if len(scope) > maxScopeLength {
+		return false
+	}
+	for _, r := range scope {
+		// scope-token = %x21 / %x23-5B / %x5D-7E; tokens separated by SP.
+		if r == ' ' || r == 0x21 || (r >= 0x23 && r <= 0x5B) || (r >= 0x5D && r <= 0x7E) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// normalizeOAuthErrorCode clamps an OAuth authorization error to the RFC 6749
+// section 4.1.2.1 enum. Anything else becomes "other" so redirect-controlled
+// text cannot be injected into audit records.
+func normalizeOAuthErrorCode(code string) string {
+	switch code {
+	case "invalid_request", "unauthorized_client", "access_denied",
+		"unsupported_response_type", "invalid_scope", "server_error",
+		"temporarily_unavailable":
+		return code
+	default:
+		return "other"
+	}
 }
 
 func (a *API) handleOAuthCallback(c *gin.Context) {
@@ -69,6 +117,12 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 
 	if errorParam != "" {
 		errorDescription := c.Query("error_description")
+		// Only the spec-defined error code enum (e.g. "access_denied") is
+		// audited; error_description is provider-controlled free text and
+		// must never enter the record. The error code itself is clamped to
+		// the RFC 6749 enum so a crafted redirect cannot inject arbitrary
+		// text into the audit log either.
+		audit.AddParam(auditRec(c), "provider_error", normalizeOAuthErrorCode(errorParam))
 		a.pluginAPI.Log.Error("OAuth authorization failed", "error", errorParam, "description", errorDescription)
 		a.renderOAuthWindowClosePage(c, http.StatusBadRequest, "Authorization Failed")
 		return
@@ -80,12 +134,18 @@ func (a *API) handleOAuthCallback(c *gin.Context) {
 		return
 	}
 
-	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code)
+	// iss is the RFC 9207 issuer identifier; ProcessOAuthCallback verifies it
+	// against the issuer the authorization session was bound to.
+	session, err := a.mcpClientManager.ProcessOAuthCallback(c.Request.Context(), userID, state, code, c.Query("iss"))
 	if err != nil {
 		a.pluginAPI.Log.Error("Failed to process OAuth callback", "error", err)
 		a.renderOAuthWindowClosePage(c, http.StatusInternalServerError, "Authorization Failed")
 		return
 	}
+
+	// The callback URL carries no server name; the session resolved from the
+	// state is the only source of which server the user just granted.
+	audit.AddParam(auditRec(c), audit.KeyMCPServer, session.ServerID)
 
 	a.publishMCPOAuthClusterInvalidation(userID)
 	a.publishMCPConnectionUpdated(userID, session)

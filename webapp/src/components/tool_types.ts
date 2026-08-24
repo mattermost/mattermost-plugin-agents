@@ -51,9 +51,9 @@ export interface ToolCall {
     // server (e.g. AskUserQuestion). See UserInteractionSelect.
     user_interaction?: string;
 
-    // True for a pending call that passed the auto-execution policy but was
-    // paused with its batch. It runs server-side once the user resolves the
-    // rest, so no approval UI should render for it.
+    // True for a pending call that passed the auto-execution policy. The call
+    // may be running live or paused in a persisted round, but never needs an
+    // individual approval decision.
     would_auto_execute?: boolean;
 
     // True when the matching tool result has already received its terminal

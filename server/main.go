@@ -240,18 +240,12 @@ func (p *Plugin) OnActivate() error {
 
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
 
-	// Atomic pointer for the embedding search - single source of truth
-	var currentSearch atomic.Pointer[embeddings.EmbeddingSearch]
+	// Availability is the single source of truth for the embedding search.
+	// Indexing stays available whenever search is initialized so a reindex can
+	// always be started; query-time search is additionally gated on model
+	// compatibility (wired below).
+	searchAvailability := search.NewAvailability()
 	var lastSearchInitError atomic.Value // stores string
-
-	// Getter function that reads from the atomic pointer
-	getSearch := func() embeddings.EmbeddingSearch {
-		ptr := currentSearch.Load()
-		if ptr == nil {
-			return nil
-		}
-		return *ptr
-	}
 
 	// Config getter for saving model info after reindexing
 	configGetter := func() embeddings.EmbeddingSearchConfig {
@@ -267,12 +261,13 @@ func (p *Plugin) OnActivate() error {
 		return val.(string)
 	}
 
-	// Initialize embedding search
+	// Skip constructor CREATE while a deferred reindex owns the ANN index.
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
 		llmUpstreamHTTPClient,
 		p.configuration.EmbeddingSearchConfig(),
 		licenseChecker,
+		indexer.DeferredIndexRebuildActive(mmClient),
 	)
 	if err != nil {
 		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
@@ -280,8 +275,16 @@ func (p *Plugin) OnActivate() error {
 		// Continue without search functionality
 	}
 
-	// Create indexer service with getter function
-	indexerService := indexer.New(getSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
+	// Create indexer service. IndexSearch stays available whenever search is
+	// initialized, so a full reindex can run during model incompatibility.
+	indexerService := indexer.New(searchAvailability.IndexSearch, configGetter, mmClient, bots, dbClient.DB, p.API)
+
+	// Query-time search is only allowed when the configured embedding model is
+	// compatible with the existing index.
+	searchAvailability.SetQueryAllowedFunc(func() bool {
+		cfg := p.configuration.EmbeddingSearchConfig()
+		return indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName()).Compatible
+	})
 
 	// Mark any orphaned reindex jobs as failed (any node, staleness-based).
 	// Handles wedge cases where the plugin/server crashed while a job was
@@ -291,29 +294,21 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Warn("Failed to check for orphaned reindex job", "error", orphanErr)
 	}
 
-	// Check model compatibility and disable search if the model has changed since last reindex.
-	// Search will be re-enabled by the config update listener (registered below) after a
-	// reindex updates the stored model info — this is intentional, not a deadlock.
+	// Store the initialized search; QuerySearch handles compatibility gating.
+	searchAvailability.Set(embeddingsSearch)
 	if embeddingsSearch != nil {
-		embeddingsCfg := p.configuration.EmbeddingSearchConfig()
-		compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
-		if !compatibility.Compatible {
-			pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
-				"reason", compatibility.Reason)
-			embeddingsSearch = nil // Disable search
-			lastSearchInitError.Store("search disabled: " + compatibility.Reason)
-		}
-	}
-
-	// Store initial search in atomic pointer
-	if embeddingsSearch != nil {
-		currentSearch.Store(&embeddingsSearch)
 		lastSearchInitError.Store("") // Clear any previous error
 	}
 
-	// Create search service with getter function
+	// Reconcile leftover deferred-index state (never auto-build on activate).
+	if reconcileErr := indexerService.ReconcileVectorIndexState(context.Background()); reconcileErr != nil {
+		pluginAPI.Log.Warn("Failed to reconcile vector index state", "error", reconcileErr)
+	}
+
+	// Create search service. It uses QuerySearch, which returns nil when the
+	// configured model and existing index are incompatible.
 	searchService := search.New(
-		getSearch,
+		searchAvailability.QuerySearch,
 		mmClient,
 		prompts,
 		streamingService,
@@ -328,41 +323,20 @@ func (p *Plugin) OnActivate() error {
 			llmUpstreamHTTPClient,
 			p.configuration.EmbeddingSearchConfig(),
 			licenseChecker,
+			indexer.DeferredIndexRebuildActive(mmClient),
 		)
 		if initErr != nil {
 			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
 			// Disable search on failure
-			currentSearch.Store(nil)
+			searchAvailability.Set(nil)
 			lastSearchInitError.Store(initErr.Error())
 			return
 		}
 
-		// Check model compatibility.
-		// If the configured model no longer matches the indexed model, search is intentionally
-		// disabled until a reindex updates the stored model info. This is not a deadlock: the
-		// listener re-fires on every config save and re-calls InitEmbeddingsSearch above, so
-		// after a successful reindex the next config change will pass this check and re-enable search.
-		if newEmbeddingsSearch != nil {
-			embeddingsCfg := p.configuration.EmbeddingSearchConfig()
-			compatibility := indexerService.CheckModelCompatibility(embeddingsCfg.GetProviderType(), embeddingsCfg.Dimensions, embeddingsCfg.GetModelName())
-			if !compatibility.Compatible {
-				pluginAPI.Log.Warn("Embedding model configuration has changed, search disabled until re-index",
-					"reason", compatibility.Reason)
-				newEmbeddingsSearch = nil
-				lastSearchInitError.Store("search disabled: " + compatibility.Reason)
-			}
-		}
-
-		// Update atomic pointer - both services will see the new value
-		if newEmbeddingsSearch != nil {
-			currentSearch.Store(&newEmbeddingsSearch)
-			lastSearchInitError.Store("") // Clear any previous error
-		} else {
-			currentSearch.Store(nil)
-			if lastSearchInitError.Load() != nil {
-				lastSearchInitError.Store("")
-			}
-		}
+		// Store the reinitialized search. QuerySearch blocks incompatible model
+		// queries while IndexSearch allows reindexing.
+		searchAvailability.Set(newEmbeddingsSearch)
+		lastSearchInitError.Store("")
 		pluginAPI.Log.Info("Embedding search reinitialized on config change")
 	})
 
@@ -445,7 +419,6 @@ func (p *Plugin) OnActivate() error {
 		bots,
 		i18nBundle,
 		metricsService,
-		dbClient,
 		contextBuilder,
 		conversationsService,
 	)

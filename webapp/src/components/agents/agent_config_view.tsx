@@ -7,7 +7,17 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, EnabledTool, ServiceInfo} from '@/types/agents';
+import {
+    UserAgent,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    EnabledTool,
+    MaxCustomInstructionsRunes,
+    ServiceInfo,
+    DefaultMaxToolTurns,
+    MaxAllowedMaxToolTurns,
+    codePointLength,
+} from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
@@ -45,12 +55,6 @@ export type AgentDraft = {
     structuredOutputEnabled: boolean;
     maxToolTurns: number;
 }
-
-// DefaultMaxToolTurns mirrors llm.DefaultMaxToolTurns on the backend. Kept
-// here so the create form pre-populates the field even before any service is
-// selected.
-export const DefaultMaxToolTurns = 30;
-export const MaxAllowedMaxToolTurns = 250;
 
 const emptyDraft: AgentDraft = {
     displayName: '',
@@ -197,7 +201,16 @@ const AgentConfigView = (props: Props) => {
     const intl = useIntl();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
-    const initialDraft = useMemo(() => (agent ? agentToDraft(agent) : cloneDraft(emptyDraft)), [agent]);
+    const initialDraft = useMemo(() => {
+        if (agent) {
+            return agentToDraft(agent);
+        }
+        const draft = cloneDraft(emptyDraft);
+        if (services.length > 0) {
+            draft.serviceId = services[0].id;
+        }
+        return draft;
+    }, [agent, services]);
     const [draft, setDraft] = useState<AgentDraft>(initialDraft);
     const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -292,6 +305,12 @@ const AgentConfigView = (props: Props) => {
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
+        }
+        if (codePointLength(draft.customInstructions) > MaxCustomInstructionsRunes) {
+            errs.customInstructions = intl.formatMessage(
+                {defaultMessage: 'Custom instructions must be {max} characters or fewer'},
+                {max: intl.formatNumber(MaxCustomInstructionsRunes)},
+            );
         }
         if (draft.maxToolTurns < 1 || draft.maxToolTurns > MaxAllowedMaxToolTurns) {
             errs.maxToolTurns = intl.formatMessage(
@@ -423,7 +442,6 @@ const AgentConfigView = (props: Props) => {
                         <McpsTab
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                            mcpDynamicToolLoading={draft.mcpDynamicToolLoading}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />
