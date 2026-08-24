@@ -20,6 +20,9 @@ var (
 	// ErrCannotResumeRebuild is returned when StartReindexJob(false) is
 	// asked to resume a rebuild-vector-index job.
 	ErrCannotResumeRebuild = errors.New("cannot resume a vector index rebuild; use rebuild vector index")
+	// ErrRebuildIncompleteReindex is returned when rebuild is requested after
+	// a failed or canceled full reindex. Rebuild does not re-embed.
+	ErrRebuildIncompleteReindex = errors.New("cannot rebuild vector index after an incomplete reindex; finish or restart the reindex (rebuild does not re-embed)")
 )
 
 // jobAlreadyRunningError is returned when an exclusive indexer job is

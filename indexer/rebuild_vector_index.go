@@ -27,6 +27,12 @@ func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error
 	}
 	defer sess.Unlock()
 
+	// Full reindex (clearIndex) may have emptied the embeddings table.
+	// Rebuild finalizes HNSW only and must not paper over that.
+	if sess.hasExisting && sess.existing.isUnfinishedFullReindex() {
+		return JobStatus{}, ErrRebuildIncompleteReindex
+	}
+
 	if bulkIndexerFor(s.getSearch()) == nil {
 		return JobStatus{}, errVectorStoreNoBulkIndex
 	}

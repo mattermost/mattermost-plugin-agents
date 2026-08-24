@@ -87,6 +87,18 @@ func (js *JobStatus) isRebuild() bool {
 	return js != nil && js.Operation == JobOperationRebuildVectorIndex
 }
 
+// isUnfinishedFullReindex reports a failed or canceled full reindex leftover
+// (Resumable=false). Pre-rebuild-PR rows have an empty Operation.
+func (js *JobStatus) isUnfinishedFullReindex() bool {
+	if js == nil || js.Resumable {
+		return false
+	}
+	if js.Operation != "" && js.Operation != JobOperationReindex {
+		return false
+	}
+	return js.Status == JobStatusFailed || js.Status == JobStatusCanceled
+}
+
 // Cursor stores the cursor position for resumable indexing
 type Cursor struct {
 	LastCreateAt int64  `json:"last_create_at"`

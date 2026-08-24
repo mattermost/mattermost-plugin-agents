@@ -266,9 +266,8 @@ export const ReindexSection = ({
     const isRebuildJob = jobStatus?.operation === 'rebuild_vector_index';
     const embeddingIdentityMismatch = hasLocalModelMismatch || healthCheckResult?.model_compatible === false;
 
-    // Resume is only for embed reindex jobs that marked themselves resumable.
-    const canResume = Boolean(jobStatus?.resumable) &&
-        !isRebuildJob &&
+    // Resume is for embed reindex jobs with progress. Rebuilds are not resumable.
+    const canResume = !isRebuildJob &&
         (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
         (jobStatus?.processed_rows ?? 0) > 0;
 
@@ -316,7 +315,7 @@ export const ReindexSection = ({
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                         <StaleActions>
-                            {jobStatus?.resumable && hasProgress && (
+                            {!isRebuildJob && hasProgress && (
                                 <SecondaryButton onClick={onResumeClick}>
                                     <FormattedMessage defaultMessage='Resume from checkpoint'/>
                                 </SecondaryButton>
@@ -459,7 +458,7 @@ export const ReindexSection = ({
                         </>
                     )}
 
-                    {/* Show default buttons when no job running and not resumable */}
+                    {/* Show default buttons when no job is running and resume is not available */}
                     {!isReindexing && !canResume && (
                         <ButtonGroup>
                             <PrimaryButton onClick={onReindexClick}>

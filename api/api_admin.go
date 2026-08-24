@@ -172,7 +172,7 @@ func (a *API) handleRebuildVectorIndex(c *gin.Context) {
 	jobStatus, err := a.indexerService.StartRebuildVectorIndex(c.Request.Context())
 	if err != nil {
 		switch {
-		case errors.Is(err, indexer.ErrRebuildIncompatible):
+		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
 		case err.Error() == "job already running":

@@ -5,6 +5,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -62,6 +63,110 @@ func TestStartRebuildVectorIndexRejects(t *testing.T) {
 		require.Error(t, err)
 		assert.ErrorIs(t, err, errVectorStoreNoBulkIndex)
 	})
+
+	tests := []struct {
+		name      string
+		existing  JobStatus
+		wantErr   error
+		overwrite bool
+	}{
+		{
+			name: "failed full reindex",
+			existing: JobStatus{
+				JobID:         "failed-reindex",
+				Status:        JobStatusFailed,
+				Operation:     JobOperationReindex,
+				Resumable:     false,
+				ProcessedRows: 0,
+			},
+			wantErr: ErrRebuildIncompleteReindex,
+		},
+		{
+			name: "failed full reindex with empty operation",
+			existing: JobStatus{
+				JobID:     "legacy-reindex",
+				Status:    JobStatusFailed,
+				Operation: "",
+				Resumable: false,
+			},
+			wantErr: ErrRebuildIncompleteReindex,
+		},
+		{
+			name: "canceled full reindex",
+			existing: JobStatus{
+				JobID:     "canceled-reindex",
+				Status:    JobStatusCanceled,
+				Operation: JobOperationReindex,
+				Resumable: false,
+			},
+			wantErr: ErrRebuildIncompleteReindex,
+		},
+		{
+			name: "failed rebuild leftover is allowed",
+			existing: JobStatus{
+				JobID:     "failed-rebuild",
+				Status:    JobStatusFailed,
+				Operation: JobOperationRebuildVectorIndex,
+				Resumable: false,
+			},
+			overwrite: true,
+		},
+		{
+			name: "failed catch-up leftover is allowed",
+			existing: JobStatus{
+				JobID:     "failed-catchup",
+				Status:    JobStatusFailed,
+				Operation: JobOperationReindex,
+				Resumable: true,
+			},
+			overwrite: true,
+		},
+		{
+			name: "completed reindex is allowed",
+			existing: JobStatus{
+				JobID:     "completed-reindex",
+				Status:    JobStatusCompleted,
+				Operation: JobOperationReindex,
+				Resumable: false,
+			},
+			overwrite: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := mocks.NewMockClient(t)
+			mockMutexAPI := &plugintest.API{}
+			search := &fakeDeferSearch{rec: &callRecorder{}, bulk: &fakeBulkIndexer{rec: &callRecorder{}}}
+			mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+				Run(func(args mock.Arguments) {
+					*args.Get(1).(*JobStatus) = tt.existing
+				}).
+				Return(nil)
+			mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+			if tt.overwrite {
+				mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
+					status, ok := v.(JobStatus)
+					return ok && status.Operation == JobOperationRebuildVectorIndex
+				})).Return(true, nil)
+				mockClient.On("KVGet", VectorIndexStateKey, mock.Anything).Return(errors.New("kv unreachable"))
+				mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
+			}
+
+			idx := New(func() embeddings.EmbeddingSearch { return search }, nil, mockClient, nil, nil, mockMutexAPI)
+			_, err := idx.StartRebuildVectorIndex(context.Background())
+			require.Error(t, err)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				mockClient.AssertNotCalled(t, "KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything)
+				return
+			}
+			assert.NotErrorIs(t, err, ErrRebuildIncompleteReindex)
+			mockClient.AssertCalled(t, "KVCompareAndSet", ReindexJobKey, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestRunRebuildVectorIndexJobPrepareFinalizeNoClear(t *testing.T) {

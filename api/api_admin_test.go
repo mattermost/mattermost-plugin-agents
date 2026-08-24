@@ -1317,6 +1317,31 @@ func TestAuditRebuildVectorIndex(t *testing.T) {
 			},
 		},
 		{
+			name: "incomplete reindex records a 400 fail",
+			body: `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer: &mockIndexerService{
+				jobStatus: &indexer.JobStatus{
+					JobID:     "failed-reindex",
+					Status:    indexer.JobStatusFailed,
+					Operation: indexer.JobOperationReindex,
+					Resumable: false,
+				},
+				searchConfigured: true,
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+		{
 			name:           "search not configured records a 400 fail",
 			body:           `{"prompt":"` + plantedRebuildSentinel + `"}`,
 			mockIndexer:    nil,
