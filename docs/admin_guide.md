@@ -80,7 +80,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 
 Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
 
-Fallback only changes which configured service handles an LLM request. It doesn't change user permissions, channel scoping, tool execution, or prompt construction. OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
+Fallback selects which configured service handles an LLM request. It doesn't change user permissions, channel scoping, or tool execution. One exception affects prompt construction: for requests that ask for structured output, the complete fallback chain determines up front whether the request uses native schema support or the prompt fallback (see [Structured output](#structured-output)). OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
 
 Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
 
@@ -173,7 +173,7 @@ Native tool activity (searches performed, pages fetched, code runs) is shown on 
 - Files created by provider code execution are referenced by name only; they are not downloadable from Mattermost.
 - Native tool activity is display-only context: it is not replayed to the model in later conversation turns.
 
-For Anthropic services, extended thinking and native structured output can't be used on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
+For Anthropic services, extended thinking and native structured output can't be used on the same request. Requests that send a JSON schema natively skip extended thinking for that request; all other requests keep using it. Requests served through the prompt fallback don't send a native schema, so they keep extended thinking.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
