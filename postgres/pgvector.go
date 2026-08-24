@@ -50,17 +50,10 @@ func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 // vectorIndexName is the HNSW ANN index; dropped/rebuilt around deferred bulk loads.
 const vectorIndexName = "llm_posts_embeddings_embedding_idx"
 
-// Shared by constructor and FinalizeBulkIndex so both build the same index.
-const createVectorIndexQuery = "CREATE INDEX IF NOT EXISTS " + vectorIndexName +
-	" ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops)"
-
-// Canonical pg_get_indexdef suffix for the expected HNSW L2 index. Same-named
-// B-tree/cosine/partial/expression indexes would silently break <-> queries.
-const expectedVectorIndexDefSuffix = "USING hnsw (embedding vector_l2_ops)"
-
 type PGVector struct {
 	db              *sqlx.DB
 	dimensions      int
+	hnswM           int
 	skipVectorIndex bool
 }
 
@@ -70,9 +63,23 @@ var _ embeddings.BulkIndexer = (*PGVector)(nil)
 type PGVectorConfig struct {
 	Dimensions int `json:"dimensions"`
 
+	// HNSWM is applied after unmarshalling vectorStore.parameters so a stale
+	// parameters blob cannot override the top-level config field.
+	HNSWM int `json:"-"`
+
 	// SkipVectorIndex: skip constructor CREATE while a deferred reindex owns
 	// the lifecycle (avoids sync rebuild of an intentionally dropped index).
 	SkipVectorIndex bool `json:"-"`
+}
+
+func clampHNSWM(m int) int {
+	if m <= 0 {
+		return embeddings.DefaultHNSWM
+	}
+	if m < embeddings.MinHNSWM {
+		return embeddings.MinHNSWM
+	}
+	return min(m, embeddings.MaxHNSWM)
 }
 
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
@@ -88,6 +95,7 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 	pv := &PGVector{
 		db:              db,
 		dimensions:      config.Dimensions,
+		hnswM:           clampHNSWM(config.HNSWM),
 		skipVectorIndex: config.SkipVectorIndex,
 	}
 	if err := pv.ensureSchema(context.Background(), !config.SkipVectorIndex, pv.db); err != nil {
@@ -129,7 +137,7 @@ func (pv *PGVector) ensureSchema(ctx context.Context, withVectorIndex bool, ex e
 		"CREATE INDEX IF NOT EXISTS llm_posts_embeddings_is_chunk_idx ON llm_posts_embeddings(is_chunk)",
 	}
 	if withVectorIndex {
-		queries = append(queries, createVectorIndexQuery)
+		queries = append(queries, pv.createVectorIndexSQL())
 	}
 
 	for _, query := range queries {
@@ -462,20 +470,24 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 		return pv.ensureSchema(ctx, !pv.skipVectorIndex, pv.db)
 	}
 
-	// Same dimensions: truncate keeps typmod and any existing ANN index.
+	// Same dimensions: truncate keeps typmod. Replace a leftover wrong-shape
+	// HNSW index while the table is empty so ModelInfo after a maintain-mode
+	// full reindex matches the catalog. Leave a missing index dropped —
+	// deferred reindex Prepare already dropped it for FinalizeBulkIndex.
 	if tableDims == pv.dimensions {
 		if _, truncErr := pv.db.ExecContext(ctx, "TRUNCATE TABLE llm_posts_embeddings"); truncErr != nil {
 			return fmt.Errorf("failed to clear vectors: %w", truncErr)
 		}
-		return nil
+		return pv.replaceMismatchedVectorIndex(ctx)
 	}
 
-	// Dimension change: DROP + recreate. Preserve HNSW only if it was present
-	// (deferred reindex drops it via PrepareBulkIndex before Clear).
-	hadVectorIndex, err := pv.vectorIndexExists(ctx)
+	// Dimension change: DROP + recreate. Recreate HNSW if any same-named
+	// index existed (including wrong m); deferred reindex drops it first.
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return err
 	}
+	hadVectorIndex := status.exists
 
 	tx, err := pv.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -491,6 +503,30 @@ func (pv *PGVector) Clear(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit dimension change: %w", err)
+	}
+	return nil
+}
+
+// replaceMismatchedVectorIndex drops and recreates HNSW when a leftover
+// index exists but does not match the configured m. A missing index is left
+// dropped so deferred bulk load is not undone. skipVectorIndex defers
+// recreation to FinalizeBulkIndex.
+func (pv *PGVector) replaceMismatchedVectorIndex(ctx context.Context) error {
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
+	if err != nil {
+		return err
+	}
+	if !status.exists || (status.valid && status.definitionOK) {
+		return nil
+	}
+	if pv.skipVectorIndex {
+		return nil
+	}
+	if _, err := pv.db.ExecContext(ctx, "DROP INDEX IF EXISTS "+vectorIndexName); err != nil {
+		return fmt.Errorf("failed to drop mismatched vector index: %w", err)
+	}
+	if _, err := pv.db.ExecContext(ctx, pv.createVectorIndexSQL()); err != nil {
+		return fmt.Errorf("failed to rebuild vector index after clear: %w", err)
 	}
 	return nil
 }
@@ -525,7 +561,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 		_, _ = conn.ExecContext(resetCtx, "RESET statement_timeout")
 	}()
 
-	status, err := vectorIndexStatus(ctx, conn)
+	status, err := pv.vectorIndexStatus(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("failed to check vector index state: %w", err)
 	}
@@ -535,11 +571,11 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 		}
 	}
 
-	if _, buildErr := conn.ExecContext(ctx, createVectorIndexQuery); buildErr != nil {
+	if _, buildErr := conn.ExecContext(ctx, pv.createVectorIndexSQL()); buildErr != nil {
 		return fmt.Errorf("failed to build vector index: %w", buildErr)
 	}
 
-	status, err = vectorIndexStatus(ctx, conn)
+	status, err = pv.vectorIndexStatus(ctx, conn)
 	if err != nil {
 		return fmt.Errorf("failed to verify vector index after build: %w", err)
 	}
@@ -551,7 +587,7 @@ func (pv *PGVector) FinalizeBulkIndex(ctx context.Context) error {
 
 // VectorIndexExists is true only for a valid index with the expected definition.
 func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
-	status, err := vectorIndexStatus(ctx, pv.db)
+	status, err := pv.vectorIndexStatus(ctx, pv.db)
 	if err != nil {
 		return false, err
 	}
@@ -561,13 +597,13 @@ func (pv *PGVector) VectorIndexExists(ctx context.Context) (bool, error) {
 type indexStatus struct {
 	exists bool
 	valid  bool
-	// definitionOK: exact match for expected HNSW L2 def (see suffix const).
+	// definitionOK: full-table HNSW on embedding with vector_l2_ops and m.
 	definitionOK bool
 }
 
 // vectorIndexStatus looks up the ANN index on llm_posts_embeddings in the
 // current schema. Same-named wrong defs do not count. q may be a pinned conn.
-func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
+func (pv *PGVector) vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus, error) {
 	rows := []struct {
 		Valid    bool   `db:"indisvalid"`
 		IndexDef string `db:"indexdef"`
@@ -590,7 +626,7 @@ func vectorIndexStatus(ctx context.Context, q sqlx.QueryerContext) (indexStatus,
 	return indexStatus{
 		exists:       true,
 		valid:        rows[0].Valid,
-		definitionOK: strings.HasSuffix(rows[0].IndexDef, expectedVectorIndexDefSuffix),
+		definitionOK: vectorIndexDefinitionOK(rows[0].IndexDef, pv.hnswM),
 	}, nil
 }
 

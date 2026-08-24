@@ -29,6 +29,14 @@ export const RECENCY_DEFAULTS = {
     floor: 0.7,
 } as const;
 
+// Mirror the server's HNSW m defaults and bounds
+// (embeddings.DefaultHNSWM etc. in embeddings/embeddings.go).
+export const HNSW_DEFAULTS = {
+    m: 8,
+    min: 2,
+    max: 100,
+} as const;
+
 export type ReindexIndexStrategy = typeof REINDEX_INDEX_STRATEGY[keyof typeof REINDEX_INDEX_STRATEGY];
 
 export interface ChunkingOptions {
@@ -43,6 +51,7 @@ export interface EmbeddingSearchConfig {
     embeddingProvider: UpstreamConfig;
     parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
+    hnswM?: number;
     chunkingOptions?: ChunkingOptions;
     reindexWorkers?: number;
     reindexBatchSize?: number;
@@ -69,6 +78,9 @@ export interface JobStatusType {
 
     // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
     phase?: string;
+
+    // Server JobStatus.operation: 'reindex' | 'rebuild_vector_index'
+    operation?: string;
 }
 
 // Mirror the server's vector index phases
@@ -93,8 +105,10 @@ export interface HealthCheckResultType {
     model_compatible: boolean;
     model_needs_reindex: boolean;
     model_compat_reason?: string;
+    stored_provider_type?: string;
     stored_dimensions?: number;
     stored_model_name?: string;
+    stored_hnsw_m?: number;
 
     // Deferred reindex owns the ANN lifecycle; search gated for dropped/building.
     vector_index_state?: {

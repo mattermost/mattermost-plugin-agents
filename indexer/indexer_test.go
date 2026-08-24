@@ -336,26 +336,27 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 func TestCheckModelCompatibility(t *testing.T) {
 	tests := []struct {
-		name                string
-		storedInfo          ModelInfo
-		storedInfoErr       error
-		currentProviderType string
-		currentDimensions   int
-		currentModelName    string
-		expectedCompat      bool
-		expectedReindex     bool
-		expectedReason      string
+		name            string
+		storedInfo      ModelInfo
+		storedInfoErr   error
+		current         ModelInfo
+		expectedCompat  bool
+		expectedReindex bool
+		expectedReason  string
+		expectedStoredM int
 	}{
 		{
-			name:                "fresh install with no stored info returns compatible",
-			storedInfo:          ModelInfo{},
-			storedInfoErr:       mmapi.ErrKVNotFound,
-			currentProviderType: "openai",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			name:          "fresh install with no stored info returns compatible",
+			storedInfo:    ModelInfo{},
+			storedInfoErr: mmapi.ErrKVNotFound,
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "matching dimensions and empty current model name returns compatible",
@@ -363,13 +364,9 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current:         ModelInfo{Dimensions: 1536},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "dimension mismatch returns incompatible",
@@ -377,13 +374,14 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 768,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "dimension mismatch: stored=768, current=1536",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "dimension mismatch: stored=768, current=1536",
 		},
 		{
 			name: "model name mismatch returns incompatible",
@@ -391,13 +389,14 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
 		},
 		{
 			name: "matching config returns compatible",
@@ -405,13 +404,13 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "provider type mismatch returns incompatible",
@@ -420,13 +419,15 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions:   1536,
 				ModelName:    "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "anthropic",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "provider changed: stored=openai, current=anthropic",
+			current: ModelInfo{
+				ProviderType: "anthropic",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "provider changed: stored=openai, current=anthropic",
 		},
 		{
 			name: "matching provider type with same config returns compatible",
@@ -435,13 +436,49 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions:   1536,
 				ModelName:    "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "openai",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "stored missing hnsw_m is compatible and does not nag",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "stored hnsw_m 16 vs current 8 needs rebuild but search stays compatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        16,
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: true,
+			expectedReason:  "hnsw m changed: stored=16, current=8",
+			expectedStoredM: 16,
 		},
 	}
 
@@ -449,7 +486,6 @@ func TestCheckModelCompatibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := mocks.NewMockClient(t)
 
-			// Setup KVGet expectation for GetModelInfo
 			mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
 				Run(func(args mock.Arguments) {
 					if tt.storedInfoErr == nil {
@@ -460,11 +496,12 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Return(tt.storedInfoErr)
 
 			indexer := New(nil, nil, mockClient, nil, nil, nil)
-			result := indexer.CheckModelCompatibility(tt.currentProviderType, tt.currentDimensions, tt.currentModelName)
+			result := indexer.CheckModelCompatibility(tt.current)
 
 			assert.Equal(t, tt.expectedCompat, result.Compatible)
 			assert.Equal(t, tt.expectedReindex, result.NeedsReindex)
 			assert.Equal(t, tt.expectedReason, result.Reason)
+			assert.Equal(t, tt.expectedStoredM, result.StoredHNSWM)
 		})
 	}
 }
@@ -821,7 +858,12 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			assert.Equal(t, 1536, store.model.Dimensions)
 			store.mu.Unlock()
 
-			compat := idx.CheckModelCompatibility("openai", 1536, tt.compatAgainst)
+			compat := idx.CheckModelCompatibility(ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    tt.compatAgainst,
+				HNSWM:        embeddings.DefaultHNSWM,
+			})
 			assert.Equal(t, tt.wantCompatible, compat.Compatible)
 		})
 	}
@@ -1283,6 +1325,7 @@ func TestConfigGetter(t *testing.T) {
 		assert.Equal(t, embeddings.ProviderTypeOpenAI, result.ProviderType)
 		assert.Equal(t, "text-embedding-3-small", result.ModelName)
 		assert.Equal(t, 1536, result.Dimensions)
+		assert.Equal(t, embeddings.DefaultHNSWM, result.HNSWM)
 	})
 }
 
@@ -2979,6 +3022,42 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 		assert.False(t, savedStatus.CompletedAt.IsZero())
 	})
 
+	t.Run("rebuild jobs stay non-resumable after orphan reclaim", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "rebuild-job"
+				status.Status = JobStatusRunning
+				status.Operation = JobOperationRebuildVectorIndex
+				status.Resumable = false
+				status.ProcessedRows = 10
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
+			}).
+			Return(nil)
+
+		var savedStatus *JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
+			savedStatus = &status
+			return status.Status == JobStatusFailed
+		})).Return(true, nil)
+
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		require.NotNil(t, savedStatus)
+		assert.False(t, savedStatus.Resumable, "rebuild orphans must not become Resume Reindex")
+		assert.Equal(t, JobOperationRebuildVectorIndex, savedStatus.Operation)
+	})
+
 	t.Run("marks stale running job on a different node as failed", func(t *testing.T) {
 		// Hostname-bound recovery is the wedge: in containerized deploys the
 		// hostname changes on restart, and in clusters the original node may
@@ -3509,6 +3588,7 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				ProviderType: "openai",
 				ModelName:    "text-embedding-3-small",
 				Dimensions:   1536,
+				HNSWM:        embeddings.DefaultHNSWM,
 			},
 		},
 		{
@@ -3525,6 +3605,7 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				ProviderType: "bedrock",
 				ModelName:    "",
 				Dimensions:   768,
+				HNSWM:        embeddings.DefaultHNSWM,
 			},
 		},
 	}
@@ -3541,6 +3622,7 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				assert.Equal(t, tc.expected.ProviderType, result.ProviderType)
 				assert.Equal(t, tc.expected.ModelName, result.ModelName)
 				assert.Equal(t, tc.expected.Dimensions, result.Dimensions)
+				assert.Equal(t, tc.expected.HNSWM, result.HNSWM)
 			}
 		})
 	}

@@ -13,18 +13,31 @@ import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {FloatItem, IntItem} from '../number_items';
 
-import {EmbeddingSearchConfig, RECENCY_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
+import {EmbeddingSearchConfig, HNSW_DEFAULTS, RECENCY_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, ReindexIndexStrategy} from './types';
 import {OpenAIProviderConfig, OpenAICompatibleProviderConfig} from './provider_configs';
 import {ChunkingOptionsConfig} from './chunking_options';
 import {ReindexSection} from './reindex_section';
-import {ReindexConfirmation} from './reindex_confirmation';
+import {ReindexConfirmation, RebuildVectorIndexConfirmation} from './reindex_confirmation';
 import {useJobStatus} from './use_job_status';
+import {embeddingIdentityMismatchKind} from './local_identity_mismatch';
 
 const Horizontal = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
+`;
+
+const IndexStorageGroup = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+`;
+
+const IndexStorageTitle = styled.div`
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--center-channel-color);
 `;
 
 // Mirror the server's normalization (GetReindexWorkers/GetReindexBatchSize):
@@ -43,6 +56,14 @@ const normalizeReindexIndexStrategy = (value: string | undefined): ReindexIndexS
         return REINDEX_INDEX_STRATEGY.defer;
     }
     return REINDEX_INDEX_STRATEGY.maintain;
+};
+
+// Mirror GetHNSWM: unset/non-positive → 8, then clamp to [2, 100].
+const normalizeHNSWM = (value: number | undefined): number => {
+    if (typeof value !== 'number' || isNaN(value) || value <= 0) {
+        return HNSW_DEFAULTS.m;
+    }
+    return Math.min(Math.max(value, HNSW_DEFAULTS.min), HNSW_DEFAULTS.max);
 };
 
 // Mirror the server's GetRecencyBiasSettings normalization: unset or
@@ -81,30 +102,52 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
         handleCancelReindex,
         handleCancelJob,
         handleCatchUpClick,
+        handleRebuildVectorIndexClick,
+        handleConfirmRebuildVectorIndex,
+        handleCancelRebuildVectorIndex,
         handleHealthCheck,
         handleResumeClick,
+        showRebuildConfirmation,
     } = useJobStatus();
 
     // Check if current form values differ from stored (indexed) values
     // This enables showing a warning immediately when editing, before save
-    const currentModelName = value.embeddingProvider.parameters?.embeddingModel as string | null;
-    const storedDimensions = modelCompatibility?.stored_dimensions ?? 0;
-    const storedModelName = modelCompatibility?.stored_model_name ?? '';
+    const currentModelName = (value.embeddingProvider.parameters?.embeddingModel as string | null) || '';
+    const storedHNSWM = modelCompatibility?.stored_hnsw_m ?? 0;
+    const currentHNSWM = normalizeHNSWM(value.hnswM);
+    const hasLocalHNSWMismatch = storedHNSWM !== 0 && storedHNSWM !== currentHNSWM;
 
-    // Compute local mismatch and reason
+    const mismatchKind = embeddingIdentityMismatchKind(modelCompatibility, {
+        providerType: value.embeddingProvider.type,
+        dimensions: value.dimensions,
+        modelName: currentModelName,
+    });
     let localMismatchReason = '';
-    if (modelCompatibility && storedDimensions > 0) {
-        if (value.dimensions !== storedDimensions) {
-            localMismatchReason = intl.formatMessage(
-                {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
-                {stored: storedDimensions, current: value.dimensions},
-            );
-        } else if (currentModelName && currentModelName !== storedModelName) {
-            localMismatchReason = intl.formatMessage(
-                {defaultMessage: 'model changed: stored={stored}, current={current}'},
-                {stored: storedModelName, current: currentModelName},
-            );
-        }
+    switch (mismatchKind) {
+    case 'provider':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'provider changed: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_provider_type ?? '', current: value.embeddingProvider.type},
+        );
+        break;
+    case 'dimensions':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'dimension mismatch: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_dimensions ?? 0, current: value.dimensions},
+        );
+        break;
+    case 'model':
+        localMismatchReason = intl.formatMessage(
+            {defaultMessage: 'model changed: stored={stored}, current={current}'},
+            {stored: modelCompatibility?.stored_model_name ?? '', current: currentModelName},
+        );
+        break;
+    case null:
+        break;
+    default: {
+        const exhaustive: never = mismatchKind;
+        throw new Error(`unhandled embedding identity mismatch: ${exhaustive}`);
+    }
     }
     const hasLocalModelMismatch = localMismatchReason !== '';
 
@@ -157,6 +200,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                                 reindexWorkers: REINDEX_DEFAULTS.workers,
                                 reindexBatchSize: REINDEX_DEFAULTS.batchSize,
                                 reindexIndexStrategy: REINDEX_INDEX_STRATEGY.maintain,
+                                hnswM: HNSW_DEFAULTS.m,
                             });
                         } else {
                             onChange({
@@ -231,19 +275,33 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
 
                 {isEnabled && (
                     <>
-                        <IntItem
-                            label={intl.formatMessage({defaultMessage: 'Dimensions'})}
-                            placeholder='1024'
-                            value={value?.dimensions}
-                            onChange={(dimensionsValue) => {
-                                onChange({
-                                    ...value,
-                                    dimensions: dimensionsValue,
-                                });
-                            }}
-                            min={1}
-                            helptext={intl.formatMessage({defaultMessage: 'The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.'})}
-                        />
+                        <IndexStorageGroup>
+                            <IndexStorageTitle>
+                                <FormattedMessage defaultMessage='Index storage'/>
+                            </IndexStorageTitle>
+                            <IntItem
+                                label={intl.formatMessage({defaultMessage: 'Dimensions'})}
+                                placeholder='1024'
+                                value={value?.dimensions}
+                                onChange={(dimensionsValue) => {
+                                    onChange({
+                                        ...value,
+                                        dimensions: dimensionsValue,
+                                    });
+                                }}
+                                min={1}
+                                helptext={intl.formatMessage({defaultMessage: 'The number of dimensions for the vector embeddings. Common values are 768, 1024, or 1536 depending on the model.'})}
+                            />
+                            <IntItem
+                                label={intl.formatMessage({defaultMessage: 'HNSW M'})}
+                                placeholder={HNSW_DEFAULTS.m.toString()}
+                                value={normalizeHNSWM(value.hnswM)}
+                                onChange={(hnswM) => onChange({...value, hnswM})}
+                                min={HNSW_DEFAULTS.min}
+                                max={HNSW_DEFAULTS.max}
+                                helptext={intl.formatMessage({defaultMessage: 'Graph connections per row. Lower uses less RAM and is slightly less accurate. Changing this rebuilds the vector index; it does not re-embed posts. Default 8.'})}
+                            />
+                        </IndexStorageGroup>
 
                         <ChunkingOptionsConfig
                             value={value}
@@ -324,10 +382,12 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                         healthCheckLoading={healthCheckLoading}
                         hasLocalModelMismatch={hasLocalModelMismatch}
                         localMismatchReason={localMismatchReason}
+                        hasLocalHNSWMismatch={hasLocalHNSWMismatch}
                         isJobStale={isJobStale}
                         onReindexClick={handleReindexClick}
                         onCancelJob={handleCancelJob}
                         onCatchUpClick={handleCatchUpClick}
+                        onRebuildVectorIndexClick={handleRebuildVectorIndexClick}
                         onHealthCheck={handleHealthCheck}
                         onResumeClick={handleResumeClick}
                     />
@@ -339,6 +399,11 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 onConfirm={handleConfirmReindex}
                 onCancel={handleCancelReindex}
                 embeddingProviderType={value.embeddingProvider.type}
+            />
+            <RebuildVectorIndexConfirmation
+                show={showRebuildConfirmation}
+                onConfirm={handleConfirmRebuildVectorIndex}
+                onCancel={handleCancelRebuildVectorIndex}
             />
         </Panel>
     );

@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 21
+// Audit event names for every state-changing operation in the plugin: 22
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals and parallel work never edits this file.
@@ -25,6 +25,7 @@ const (
 	AuditEventReindexPosts          = "reindexPosts"
 	AuditEventCancelReindexJob      = "cancelReindexJob"
 	AuditEventCatchUpReindex        = "catchUpReindex"
+	AuditEventRebuildVectorIndex    = "rebuildVectorIndex"
 	AuditEventClearMCPToolsCache    = "clearMCPToolsCache"
 	AuditEventUpdateMCPPluginServer = "updateMCPPluginServer"
 
@@ -86,6 +87,7 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,
 		handlerFuncName(a.handleCancelJob):          AuditEventCancelReindexJob,
 		handlerFuncName(a.handleCatchUpIndex):       AuditEventCatchUpReindex,
+		handlerFuncName(a.handleRebuildVectorIndex): AuditEventRebuildVectorIndex,
 		handlerFuncName(a.handleClearMCPToolsCache): AuditEventClearMCPToolsCache,
 		handlerFuncName(a.handleUpdatePluginServer): AuditEventUpdateMCPPluginServer,
 
