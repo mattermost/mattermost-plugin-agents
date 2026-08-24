@@ -257,10 +257,72 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 				"the first snapshot arrives when the tool starts, before the result")
 
 			final := snapshots[len(snapshots)-1]
+			for i := range tt.wantFinal {
+				tt.wantFinal[i].ProviderRoute = string(schemas.Anthropic)
+			}
 			assert.Equal(t, tt.wantFinal, final,
 				"the final snapshot must carry every tool of the round in arrival order")
 		})
 	}
+}
+
+// TestStreamResponsesCapturesFallbackFileRoute verifies that the runtime-only
+// route stored beside a provider file id identifies the account that actually
+// served a failed-over completion.
+func TestStreamResponsesCapturesFallbackFileRoute(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"type":"error","error":{"type":"overloaded_error"}}`, http.StatusServiceUnavailable)
+	}))
+	defer primary.Close()
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeAnthropicSSE(w, []string{
+			`{"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_fallback","type":"message","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}`,
+			`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_fallback","name":"bash_code_execution","input":{"command":"echo output"}}}`,
+			`{"type":"content_block_stop","index":0}`,
+			`{"type":"content_block_start","index":1,"content_block":{"type":"bash_code_execution_tool_result","tool_use_id":"srvtoolu_fallback","content":{"type":"bash_code_execution_result","stdout":"","stderr":"","return_code":0,"content":[{"type":"bash_code_execution_output","file_id":"file_fallback"}]}}}`,
+			`{"type":"content_block_stop","index":1}`,
+			`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}`,
+			`{"type":"message_stop"}`,
+		})
+	}))
+	defer fallback.Close()
+
+	llmClient, err := New(Config{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
+			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
+		},
+		Fallbacks: []FallbackEntry{{
+			ID: "backup",
+			ProviderSettings: ProviderSettings{
+				Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
+				DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
+			},
+		}},
+		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	})
+	require.NoError(t, err)
+	defer llmClient.Shutdown()
+
+	result, err := llmClient.ChatCompletion(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "make a file"}},
+	})
+	require.NoError(t, err)
+
+	var final []llm.ServerToolUse
+	for event := range result.Stream {
+		if event.Type == llm.EventTypeServerToolUse {
+			final = event.Value.([]llm.ServerToolUse)
+		}
+		if event.Type == llm.EventTypeError {
+			t.Fatalf("unexpected stream error: %v", event.Value)
+		}
+	}
+
+	require.Len(t, final, 1)
+	require.Equal(t, []string{"file_fallback"}, final[0].FileIDs)
+	require.Equal(t, string(schemas.Anthropic)+"::backup", final[0].ProviderRoute)
 }
 
 func flatten(groups ...[]string) []string {
@@ -348,19 +410,100 @@ func TestDownloadProviderFile(t *testing.T) {
 	downloader := llmClient.ProviderServices().FileDownloader
 	require.NotNil(t, downloader, "an Anthropic client must expose file download")
 
-	file, err := downloader.DownloadProviderFile(context.Background(), "file_011abc")
+	tests := []struct {
+		name    string
+		ref     llm.ProviderFileReference
+		wantErr bool
+		verify  func(t *testing.T, file llm.ProviderFile)
+	}{
+		{
+			name: "successful download returns metadata and content",
+			ref:  llm.ProviderFileReference{ID: "file_011abc", ProviderRoute: string(schemas.Anthropic)},
+			verify: func(t *testing.T, file llm.ProviderFile) {
+				assert.Equal(t, fileBytes, file.Content)
+				assert.Equal(t, "text/csv", file.ContentType)
+				assert.Equal(t, "results.csv", file.Name, "the sandbox's own file name must survive to the caller")
+				assert.Equal(t, "/v1/files/file_011abc/content", gotPath)
+				assert.Equal(t, "test-key", gotAPIKey, "download must use the service credentials")
+			},
+		},
+		{
+			name:    "provider failure is returned",
+			ref:     llm.ProviderFileReference{ID: "file_missing", ProviderRoute: string(schemas.Anthropic)},
+			wantErr: true,
+		},
+		{
+			name:    "empty file id is rejected",
+			ref:     llm.ProviderFileReference{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			file, downloadErr := downloader.DownloadProviderFile(context.Background(), tt.ref)
+			if tt.wantErr {
+				require.Error(t, downloadErr)
+				return
+			}
+			require.NoError(t, downloadErr)
+			tt.verify(t, file)
+		})
+	}
+}
+
+// TestDownloadProviderFileUsesCapturedFallbackRoute verifies that provider
+// file references do not silently switch back to primary credentials after a
+// completion was served by a fallback account.
+func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
+	var primaryRequests int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&primaryRequests, 1)
+		http.Error(w, "wrong provider route", http.StatusUnauthorized)
+	}))
+	defer primary.Close()
+
+	var fallbackAPIKey string
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fallbackAPIKey = r.Header.Get("x-api-key")
+		switch r.URL.Path {
+		case "/v1/files/file_fallback":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"file_fallback","type":"file","filename":"fallback.txt","size_bytes":8,"mime_type":"text/plain","created_at":"2026-01-01T00:00:00Z","downloadable":true}`))
+		case "/v1/files/file_fallback/content":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("fallback"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fallback.Close()
+
+	llmClient, err := New(Config{
+		ProviderSettings: ProviderSettings{
+			Provider: schemas.Anthropic, APIKey: "primary-key", APIURL: primary.URL,
+			DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
+		},
+		Fallbacks: []FallbackEntry{{
+			ID: "backup",
+			ProviderSettings: ProviderSettings{
+				Provider: schemas.Anthropic, APIKey: "fallback-key", APIURL: fallback.URL,
+				DefaultModel: "claude-sonnet-4-6", StreamingTimeout: 10 * time.Second,
+			},
+		}},
+	})
 	require.NoError(t, err)
-	assert.Equal(t, fileBytes, file.Content)
-	assert.Equal(t, "text/csv", file.ContentType)
-	assert.Equal(t, "results.csv", file.Name, "the sandbox's own file name must survive to the caller")
-	assert.Equal(t, "/v1/files/file_011abc/content", gotPath)
-	assert.Equal(t, "test-key", gotAPIKey, "download must use the service credentials")
+	defer llmClient.Shutdown()
 
-	_, err = downloader.DownloadProviderFile(context.Background(), "file_missing")
-	require.Error(t, err, "provider errors must surface to the caller")
-
-	_, err = downloader.DownloadProviderFile(context.Background(), "")
-	require.Error(t, err, "empty file id is rejected before any request")
+	file, err := llmClient.DownloadProviderFile(context.Background(), llm.ProviderFileReference{
+		ID:            "file_fallback",
+		ProviderRoute: string(schemas.Anthropic) + "::backup",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "fallback.txt", file.Name)
+	assert.Equal(t, []byte("fallback"), file.Content)
+	assert.Equal(t, "fallback-key", fallbackAPIKey)
+	assert.Zero(t, atomic.LoadInt32(&primaryRequests), "primary credentials must not be used for a fallback-owned file")
 }
 
 // TestMapServerToolStatus pins the item-status mapping. "incomplete" (e.g. an

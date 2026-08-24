@@ -3,7 +3,10 @@
 
 package llm
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // MaxPostAttachments is the Mattermost per-post attachment limit. It bounds
 // how many files tools may create for or attach to a single post.
@@ -79,11 +82,27 @@ type ServerToolUse struct {
 	// files an Anthropic code-execution command left in $OUTPUT_DIR). The
 	// response flow downloads these and attaches them to the bot's reply.
 	FileIDs []string `json:"file_ids,omitempty"`
+
+	// ProviderRoute is the opaque Bifrost route that produced FileIDs. It is
+	// runtime-only: the downloader needs it to use the right fallback account,
+	// but it must never be broadcast or persisted with display activity.
+	ProviderRoute string `json:"-"`
 }
 
 // Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
 // web-influenced string field, mirroring ToolCall.SanitizeArguments. Call it
 // before broadcasting or persisting the activity.
+// CloneServerToolUses makes a deep-enough copy for presentation transforms.
+// FileIDs is the only reference-valued field; cloning it ensures sanitation
+// cannot mutate the canonical provider replay snapshot.
+func CloneServerToolUses(uses []ServerToolUse) []ServerToolUse {
+	cloned := slices.Clone(uses)
+	for i := range cloned {
+		cloned[i].FileIDs = slices.Clone(uses[i].FileIDs)
+	}
+	return cloned
+}
+
 func (s *ServerToolUse) Sanitize() {
 	s.Query = SanitizeNonPrintableChars(s.Query)
 	s.URL = SanitizeNonPrintableChars(s.URL)

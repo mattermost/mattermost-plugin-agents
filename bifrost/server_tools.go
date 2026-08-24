@@ -82,6 +82,9 @@ func (t *serverToolTracker) upsert(use llm.ServerToolUse) {
 	if len(use.FileIDs) > 0 {
 		existing.FileIDs = use.FileIDs
 	}
+	if use.ProviderRoute != "" {
+		existing.ProviderRoute = use.ProviderRoute
+	}
 }
 
 // setCommand records the sandbox code/command for an already-tracked
@@ -99,8 +102,8 @@ func (t *serverToolTracker) setCommand(itemID, command string) bool {
 // observeItem converts a Responses output item into tracked server-tool
 // activity. Returns true when the item was server-tool related (i.e. callers
 // should emit a fresh snapshot).
-func (t *serverToolTracker) observeItem(item *schemas.ResponsesMessage) bool {
-	use := serverToolUseFromItem(item)
+func (t *serverToolTracker) observeItem(item *schemas.ResponsesMessage, providerRoute schemas.ModelProvider) bool {
+	use := serverToolUseFromItem(item, providerRoute)
 	if use == nil {
 		return false
 	}
@@ -111,12 +114,15 @@ func (t *serverToolTracker) observeItem(item *schemas.ResponsesMessage) bool {
 // serverToolUseFromItem maps a web_search_call / web_fetch_call /
 // code_interpreter_call output item onto the neutral activity struct. Returns
 // nil for every other item type.
-func serverToolUseFromItem(item *schemas.ResponsesMessage) *llm.ServerToolUse {
+func serverToolUseFromItem(item *schemas.ResponsesMessage, providerRoute schemas.ModelProvider) *llm.ServerToolUse {
 	if item == nil || item.Type == nil {
 		return nil
 	}
 
-	use := llm.ServerToolUse{Status: mapServerToolStatus(item.Status)}
+	use := llm.ServerToolUse{
+		Status:        mapServerToolStatus(item.Status),
+		ProviderRoute: string(providerRoute),
+	}
 	if item.ID != nil {
 		use.ID = *item.ID
 	}

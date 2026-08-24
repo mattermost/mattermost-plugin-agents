@@ -3,7 +3,11 @@
 
 package llm
 
-import "strings"
+import (
+	"slices"
+	"sort"
+	"strings"
+)
 
 // Kinds of assistant output a turn is made of, in the order the provider
 // streamed them.
@@ -12,6 +16,14 @@ const (
 	TurnSegmentThinking   = "thinking"
 	TurnSegmentServerTool = "server_tool"
 )
+
+// TextRange is a half-open byte range in the concatenation of a turn's text
+// segments. It is used for deletion-only rewrites such as removing citation
+// markers without moving text around intervening activity.
+type TextRange struct {
+	Start int
+	End   int
+}
 
 // TurnSegment is one piece of assistant output, recorded when it arrived.
 type TurnSegment struct {
@@ -109,27 +121,65 @@ func (s *TurnSequence) RecordServerTools(uses []ServerToolUse) {
 	}
 }
 
-// ReplaceText collapses the turn's text into a single segment holding the given
-// content, keeping the position of the first text segment (or appending when
-// there is none). Used for whole-message rewrites such as web-search citation
-// cleanup, which cannot be mapped back onto the individual fragments.
-func (s *TurnSequence) ReplaceText(text string) {
-	kept := make([]TurnSegment, 0, len(s.segments)+1)
-	inserted := false
+// RemoveTextRanges deletes ranges from the concatenated response text while
+// retaining every text segment's position relative to reasoning and server
+// tools. original must match the sequence's text exactly; a mismatch returns
+// false without changing the sequence.
+func (s *TurnSequence) RemoveTextRanges(original string, ranges []TextRange) bool {
+	if s.Text() != original {
+		return false
+	}
+	if len(ranges) == 0 {
+		return true
+	}
+
+	normalized := slices.Clone(ranges)
+	sort.Slice(normalized, func(i, j int) bool {
+		if normalized[i].Start == normalized[j].Start {
+			return normalized[i].End < normalized[j].End
+		}
+		return normalized[i].Start < normalized[j].Start
+	})
+	for i := range normalized {
+		if normalized[i].Start < 0 || normalized[i].End < normalized[i].Start || normalized[i].End > len(original) {
+			return false
+		}
+		if i > 0 && normalized[i].Start < normalized[i-1].End {
+			return false
+		}
+	}
+
+	updated := make([]TurnSegment, 0, len(s.segments))
+	textOffset := 0
 	for _, segment := range s.segments {
 		if segment.Kind != TurnSegmentText {
-			kept = append(kept, segment)
+			updated = append(updated, segment)
 			continue
 		}
-		if !inserted && text != "" {
-			kept = append(kept, TurnSegment{Kind: TurnSegmentText, Text: text})
-			inserted = true
+
+		segmentStart := textOffset
+		segmentEnd := segmentStart + len(segment.Text)
+		textOffset = segmentEnd
+		cursor := 0
+		var cleaned strings.Builder
+		for _, textRange := range normalized {
+			if textRange.End <= segmentStart || textRange.Start >= segmentEnd {
+				continue
+			}
+			removeStart := max(textRange.Start, segmentStart) - segmentStart
+			removeEnd := min(textRange.End, segmentEnd) - segmentStart
+			cleaned.WriteString(segment.Text[cursor:removeStart])
+			cursor = removeEnd
+		}
+		cleaned.WriteString(segment.Text[cursor:])
+		segment.Text = cleaned.String()
+		if segment.Text != "" {
+			updated = append(updated, segment)
 		}
 	}
-	if !inserted && text != "" {
-		kept = append(kept, TurnSegment{Kind: TurnSegmentText, Text: text})
-	}
-	s.segments = kept
+
+	s.segments = updated
+	return true
 }
 
 // Reset drops every recorded segment.

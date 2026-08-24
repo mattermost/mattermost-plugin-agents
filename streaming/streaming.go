@@ -697,14 +697,19 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					// Web search annotations with cleaned message
 					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
 						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {
-							// Replace post message with cleaned version (citation markers removed).
-							// Reset messageBuilder so subsequent text events append to the cleaned content.
+							// Replace the post's visible message with the citation-marker-free
+							// version. Persisted turn text is cleaned by deleting the same
+							// ranges from each existing segment, preserving activity order.
 							messageBuilder.Reset()
 							messageBuilder.WriteString(cleanedMsg)
 							post.Message = cleanedMsg
 							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 							if acc != nil {
-								acc.sequence.ReplaceText(cleanedMsg)
+								originalMsg, hasOriginal := annotationMap["originalMessage"].(string)
+								removedRanges, hasRanges := annotationMap["removedTextRanges"].([]llm.TextRange)
+								if !hasOriginal || !hasRanges || !acc.sequence.RemoveTextRanges(originalMsg, removedRanges) || acc.sequence.Text() != cleanedMsg {
+									p.mmClient.LogWarn("Unable to preserve turn text segments during citation cleanup", "post_id", post.Id)
+								}
 							}
 						}
 
@@ -742,8 +747,13 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				// Provider-executed tool activity (web search / web fetch /
 				// code execution). The event carries the cumulative snapshot
 				// for the round; sanitize, persist, and broadcast it.
-				if serverTools, ok := event.Value.([]llm.ServerToolUse); ok {
+				if rawServerTools, ok := event.Value.([]llm.ServerToolUse); ok {
+					// Presentation sanitation must never mutate ToolRunner's
+					// canonical provider replay snapshot, which can share slice
+					// backing storage with this event.
+					serverTools := llm.CloneServerToolUses(rawServerTools)
 					for i := range serverTools {
+						serverTools[i].ProviderRoute = ""
 						serverTools[i].Sanitize()
 					}
 					if acc != nil {

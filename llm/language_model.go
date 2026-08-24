@@ -88,6 +88,14 @@ func WithReasoningDisabled() LanguageModelOption {
 
 type LanguageModelWrapper func(LanguageModel) LanguageModel
 
+// ProviderFileReference identifies a provider-side file and the provider route
+// that created it. ProviderRoute is opaque outside the provider implementation;
+// callers must preserve it exactly and must not expose it to users.
+type ProviderFileReference struct {
+	ID            string
+	ProviderRoute string
+}
+
 // ProviderFile is a provider-side file's content and metadata.
 type ProviderFile struct {
 	// Name is the file name the provider recorded. For code-execution output
@@ -106,6 +114,8 @@ type ProviderFile struct {
 // not type-assert for this interface on a bot's LanguageModel: that value is a
 // decorator chain and the assertion always fails.
 type ProviderFileDownloader interface {
-	// DownloadProviderFile returns the file's content and metadata.
-	DownloadProviderFile(ctx context.Context, fileID string) (ProviderFile, error)
+	// DownloadProviderFile returns the file's content and metadata. The
+	// reference must be the one captured from the provider response so a file
+	// produced by a fallback is downloaded with that fallback's route.
+	DownloadProviderFile(ctx context.Context, ref ProviderFileReference) (ProviderFile, error)
 }

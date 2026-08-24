@@ -24,6 +24,7 @@ func TestServerToolActivityRecord(t *testing.T) {
 		uses     []llm.ServerToolUse
 		contains []string
 		absent   []string
+		empty    bool
 	}{
 		{
 			name:   "no activity replays nothing",
@@ -48,16 +49,16 @@ func TestServerToolActivityRecord(t *testing.T) {
 			},
 		},
 		{
-			// The model cannot see provider file ids, so the record has to
-			// state the outcome instead: the files went out with the reply.
-			name: "captured output files are reported as attached",
+			// The model cannot see provider file ids, and attachment may
+			// still fail after capture, so replay must not claim success.
+			name: "captured output files are reported as pending attachment",
 			uses: []llm.ServerToolUse{{
 				ID:      "srvtoolu_2",
 				Tool:    llm.NativeToolCodeInterpreter,
 				Status:  llm.ServerToolStatusSuccess,
 				FileIDs: []string{"file_1", "file_2"},
 			}},
-			contains: []string{"2 output file(s) were captured and attached to the reply"},
+			contains: []string{"2 output file(s) were captured for attachment to the reply"},
 			absent:   []string{"file_1", "file_2"},
 		},
 		{
@@ -79,15 +80,18 @@ func TestServerToolActivityRecord(t *testing.T) {
 			contains: []string{"mattermost plugins", "https://example.com", "Example"},
 		},
 		{
-			name:   "an entry with no tool is skipped",
-			uses:   []llm.ServerToolUse{{ID: "s1", Status: llm.ServerToolStatusSuccess}},
-			absent: []string{"[completed]"},
+			name:  "an entry with no tool produces no replay record",
+			uses:  []llm.ServerToolUse{{ID: "s1", Status: llm.ServerToolStatusSuccess}},
+			empty: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			record := serverToolActivityRecord(tt.uses)
+			if tt.empty {
+				assert.Empty(t, record)
+			}
 			for _, want := range tt.contains {
 				assert.Contains(t, record, want)
 			}
@@ -99,8 +103,8 @@ func TestServerToolActivityRecord(t *testing.T) {
 }
 
 // TestServerToolActivityReplayedInRequest pins the wiring end to end: an
-// assistant post carrying server-tool activity must put the record into the
-// outgoing request, ahead of that turn's own text.
+// assistant post carrying server-tool activity must preserve its position
+// relative to the assistant text around it.
 func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	llmClient, err := New(Config{
 		ProviderSettings: ProviderSettings{
@@ -117,7 +121,7 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 		{Role: llm.PostRoleUser, Message: "make me a chart"},
 		{
 			Role:    llm.PostRoleBot,
-			Message: "Here is the chart.",
+			Message: "I'll make it. Here is the chart.",
 			ServerTools: []llm.ServerToolUse{{
 				ID:      "srvtoolu_1",
 				Tool:    llm.NativeToolCodeInterpreter,
@@ -126,6 +130,11 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 				Command: "python chart.py",
 				FileIDs: []string{"file_1"},
 			}},
+			AssistantSegments: []llm.TurnSegment{
+				{Kind: llm.TurnSegmentText, Text: "I'll make it. "},
+				{Kind: llm.TurnSegmentServerTool, ServerToolID: "srvtoolu_1"},
+				{Kind: llm.TurnSegmentText, Text: "Here is the chart."},
+			},
 		},
 		{Role: llm.PostRoleUser, Message: "now make it blue"},
 	}}
@@ -139,12 +148,13 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 		}
 	}
 
-	require.Len(t, texts, 4, "the activity record is an extra assistant message")
+	require.Len(t, texts, 5, "the activity record is an extra assistant message")
 	assert.Equal(t, "make me a chart", texts[0])
-	assert.Contains(t, texts[1], "python chart.py", "activity comes before the turn's text")
-	assert.Contains(t, texts[1], "attached to the reply")
-	assert.Equal(t, "Here is the chart.", texts[2])
-	assert.Equal(t, "now make it blue", texts[3])
+	assert.Equal(t, "I'll make it. ", texts[1])
+	assert.Contains(t, texts[2], "python chart.py")
+	assert.Contains(t, texts[2], "for attachment to the reply")
+	assert.Equal(t, "Here is the chart.", texts[3])
+	assert.Equal(t, "now make it blue", texts[4])
 }
 
 // TestServerToolActivityNotReplayedWhenAbsent pins that ordinary turns are

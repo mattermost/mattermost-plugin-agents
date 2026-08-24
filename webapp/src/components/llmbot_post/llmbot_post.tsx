@@ -197,6 +197,30 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'reasoning_summary' && data.reasoning) {
+                // RoundView renders reasoning before provider activity. If
+                // reasoning starts after activity, close that activity round
+                // first so the live UI preserves provider arrival order.
+                const live = liveRef.current;
+                if (live.serverTools.length > 0) {
+                    setLiveRounds((prev) => [
+                        ...prev,
+                        {
+                            id: `live-${prev.length}-${Date.now()}`,
+                            text: live.message,
+                            toolCalls: live.toolCalls,
+                            reasoning: {summary: live.reasoningSummary, signature: ''},
+                            annotations: live.annotations,
+                            serverTools: live.serverTools,
+                        },
+                    ]);
+                    setMessage('');
+                    setToolCalls([]);
+                    setReasoningSummary('');
+                    setAnnotations([]);
+                    setServerTools([]);
+                    roundActivityIds.current = new Set();
+                }
+
                 // Don't clear generating: the `generating && currentRound`
                 // gate in renderedRounds would hide the thinking block.
                 setReasoningSummary(data.reasoning);

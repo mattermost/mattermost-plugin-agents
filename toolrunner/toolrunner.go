@@ -236,10 +236,18 @@ func (r *ToolRunner) runLoop(
 				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 					serverTools = uses
 					sequence.RecordServerTools(uses)
-					// Register the sandbox output files the provider captured
-					// so the response flow can attach them to the reply.
+					// Register the sandbox output files before any presentation
+					// sanitation. Downloads need the exact provider ids and the
+					// route that produced them, especially after fallback.
 					for _, use := range uses {
-						request.Context.AddSandboxFileIDs(use.FileIDs...)
+						refs := make([]llm.ProviderFileReference, 0, len(use.FileIDs))
+						for _, id := range use.FileIDs {
+							refs = append(refs, llm.ProviderFileReference{
+								ID:            id,
+								ProviderRoute: use.ProviderRoute,
+							})
+						}
+						request.Context.AddSandboxFiles(refs...)
 					}
 				}
 				output <- event
@@ -571,6 +579,7 @@ func appendToolTurnAndPost(
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
 		ServerTools:        serverTools,
+		AssistantSegments:  segments,
 	})
 }
 

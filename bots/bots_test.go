@@ -1309,7 +1309,7 @@ func TestWithConfigPreservesDependencies(t *testing.T) {
 
 type stubFileDownloader struct{}
 
-func (stubFileDownloader) DownloadProviderFile(context.Context, string) (llm.ProviderFile, error) {
+func (stubFileDownloader) DownloadProviderFile(context.Context, llm.ProviderFileReference) (llm.ProviderFile, error) {
 	return llm.ProviderFile{Name: "out.txt", ContentType: "text/plain", Content: []byte("x")}, nil
 }
 

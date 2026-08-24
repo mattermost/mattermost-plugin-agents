@@ -263,29 +263,65 @@ func TestContextCreatedFilesNilReceiver(t *testing.T) {
 	assert.Nil(t, rt.CreatedFilesList())
 }
 
-func TestContextSandboxFileIDs(t *testing.T) {
-	c := &Context{}
+func TestContextSandboxFiles(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "observation order and provider routes are preserved while repeated references are skipped",
+			run: func(t *testing.T) {
+				c := &Context{}
+				c.AddSandboxFiles(
+					ProviderFileReference{ID: "file_1", ProviderRoute: "anthropic"},
+					ProviderFileReference{},
+					ProviderFileReference{ID: "file_2", ProviderRoute: "anthropic::fallback"},
+				)
+				c.AddSandboxFiles(
+					ProviderFileReference{ID: "file_1", ProviderRoute: "different-route"},
+					ProviderFileReference{ID: "file_3", ProviderRoute: "anthropic"},
+				)
 
-	// Observation order is the order the files are attached to the post, and
-	// server-tool snapshots are cumulative — so repeats must not duplicate.
-	c.AddSandboxFileIDs("file_1", "", "file_2")
-	c.AddSandboxFileIDs("file_1", "file_3")
-	assert.Equal(t, []string{"file_1", "file_2", "file_3"}, c.ToolRuntime.SandboxFileIDs)
+				assert.Equal(t, []ProviderFileReference{
+					{ID: "file_1", ProviderRoute: "anthropic"},
+					{ID: "file_2", ProviderRoute: "anthropic::fallback"},
+					{ID: "file_1", ProviderRoute: "different-route"},
+					{ID: "file_3", ProviderRoute: "anthropic"},
+				}, c.ToolRuntime.SandboxFiles)
+			},
+		},
+		{
+			name: "consume is ordered and idempotent",
+			run: func(t *testing.T) {
+				c := &Context{}
+				refs := []ProviderFileReference{{ID: "file_1"}, {ID: "file_2"}}
+				c.AddSandboxFiles(refs...)
+				assert.Equal(t, refs, c.ConsumeSandboxFiles())
+				assert.Empty(t, c.ConsumeSandboxFiles())
+			},
+		},
+		{
+			name: "nil context absorbs writes and reads",
+			run: func(t *testing.T) {
+				var nilCtx *Context
+				nilCtx.AddSandboxFiles(ProviderFileReference{ID: "file_1"})
+				assert.Nil(t, nilCtx.ConsumeSandboxFiles())
+			},
+		},
+		{
+			name: "nil runtime absorbs writes",
+			run: func(t *testing.T) {
+				var nilRuntime *ToolRuntimeContext
+				assert.NotPanics(t, func() {
+					nilRuntime.AddSandboxFiles(ProviderFileReference{ID: "file_1"})
+				})
+			},
+		},
+	}
 
-	// Consuming makes the attach path idempotent across a repeated stream end.
-	assert.Equal(t, []string{"file_1", "file_2", "file_3"}, c.ConsumeSandboxFileIDs())
-	assert.Empty(t, c.ConsumeSandboxFileIDs())
-}
-
-func TestContextSandboxFileIDsNilReceiver(t *testing.T) {
-	var nilCtx *Context
-	nilCtx.AddSandboxFileIDs("file_1")
-	assert.Nil(t, nilCtx.ConsumeSandboxFileIDs())
-
-	// A nil runtime must absorb the write rather than panic; the streaming
-	// layer records ids without knowing whether a runtime was allocated.
-	var nilRuntime *ToolRuntimeContext
-	assert.NotPanics(t, func() { nilRuntime.AddSandboxFileIDs("file_1") })
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
 }
 
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {

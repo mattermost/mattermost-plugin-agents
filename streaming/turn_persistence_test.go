@@ -432,6 +432,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		final := []llm.ServerToolUse{{
 			ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess,
 			SubTool: "bash", Command: "ls", Output: "file.txt\u202E\n",
+			FileIDs: []string{"file\u202E1"}, ProviderRoute: "anthropic::fallback",
 		}}
 
 		streamChannel := make(chan llm.TextStreamEvent, 4)
@@ -457,7 +458,15 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
 		require.Equal(t, "ls", blocks[0].ServerTool.Command)
 		require.NotContains(t, blocks[0].ServerTool.Output, "\u202E", "output must be sanitized before persisting")
+		require.NotContains(t, blocks[0].ServerTool.FileIDs[0], "\u202E")
+		require.Empty(t, blocks[0].ServerTool.ProviderRoute, "runtime route must not be persisted")
 		require.Equal(t, conversation.BlockTypeText, blocks[1].Type)
+
+		// Streaming presentation sanitation must not mutate the canonical
+		// provider data held by ToolRunner for replay and file download.
+		require.Equal(t, "file.txt\u202E\n", final[0].Output)
+		require.Equal(t, "file\u202E1", final[0].FileIDs[0])
+		require.Equal(t, "anthropic::fallback", final[0].ProviderRoute)
 
 		// Websocket: every snapshot is broadcast under the server_tool control.
 		var serverToolEvents []publishedEvent
@@ -471,6 +480,8 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(serverToolEvents[1].payload["server_tool"].(string)), &broadcastUses))
 		require.Len(t, broadcastUses, 1)
 		require.Equal(t, llm.ServerToolStatusSuccess, broadcastUses[0].Status)
+		require.NotContains(t, broadcastUses[0].Output, "\u202E")
+		require.Empty(t, broadcastUses[0].ProviderRoute)
 	})
 
 	t.Run("finalizes with token usage", func(t *testing.T) {
@@ -910,12 +921,14 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 			{Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1},
 		}
 		annotationEvent := map[string]interface{}{
-			"annotations":    annotations,
-			"cleanedMessage": "Cleaned text",
+			"annotations":       annotations,
+			"cleanedMessage":    "Cleaned text",
+			"originalMessage":   "Cleaned !!CITE1!!text",
+			"removedTextRanges": []llm.TextRange{{Start: 8, End: 17}},
 		}
 
 		streamChannel := make(chan llm.TextStreamEvent, 3)
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Original text [1]"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Cleaned !!CITE1!!text"}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeAnnotations, Value: annotationEvent}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
@@ -949,6 +962,59 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
 		require.Len(t, parsedAnnotations, 1)
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
+	})
+
+	t.Run("citation cleanup preserves text around provider activity", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		const original = "Before !!CITE1!! after !!CITE2!!"
+		firstMarker := strings.Index(original, "!!CITE1!!")
+		secondMarker := strings.Index(original, "!!CITE2!!")
+		annotationEvent := map[string]interface{}{
+			"annotations": []llm.Annotation{{
+				Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1,
+			}},
+			"cleanedMessage":  "Before  after ",
+			"originalMessage": original,
+			"removedTextRanges": []llm.TextRange{
+				{Start: firstMarker, End: firstMarker + len("!!CITE1!!")},
+				{Start: secondMarker, End: secondMarker + len("!!CITE2!!")},
+			},
+		}
+
+		streamChannel := make(chan llm.TextStreamEvent, 5)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Before !!CITE1!!"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess,
+		}}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: " after !!CITE2!!"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeAnnotations, Value: annotationEvent}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+		require.GreaterOrEqual(t, len(blocks), 3)
+		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+		require.Equal(t, "Before ", blocks[0].Text)
+		require.Equal(t, conversation.BlockTypeServerToolUse, blocks[1].Type)
+		require.Equal(t, conversation.BlockTypeText, blocks[2].Type)
+		require.Equal(t, " after ", blocks[2].Text)
 	})
 
 	// An empty stream must persist the no-result fallback (and the content

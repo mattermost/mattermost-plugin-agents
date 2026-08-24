@@ -391,7 +391,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
-	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext)
+	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)
@@ -478,7 +478,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
-	stream := c.decorateStreamWithCreatedFiles(ctx, bot, dmStream.Stream, responsePost, nil, llmContext)
+	stream := c.decorateStreamWithCreatedFiles(ctx, bot, dmStream.Stream, responsePost, nil, llmContext, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
 		c.failResponsePlaceholder(responsePost, postingUser.Locale)

@@ -50,6 +50,11 @@ type Post struct {
 	// display-truncated, and the sandbox container is not carried forward, so
 	// forged result blocks would point at a container that no longer exists.
 	ServerTools []ServerToolUse
+
+	// AssistantSegments records where response text and server-tool activity
+	// occurred relative to each other. ServerTools holds each invocation's
+	// final payload; server-tool segments reference that snapshot by ID.
+	AssistantSegments []TurnSegment
 }
 
 type CompletionRequest struct {
@@ -73,6 +78,11 @@ func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int
 		if (totalTokens + postTokens) > maxTokens {
 			charactersToCut := (postTokens - (maxTokens - totalTokens)) * 4
 			post.Message = strings.TrimSpace(post.Message[charactersToCut:])
+			// The partial-message cut cannot be mapped safely onto interleaved
+			// activity segments. Drop that old turn's replay metadata rather
+			// than bypassing truncation by sending the original segment text.
+			post.AssistantSegments = nil
+			post.ServerTools = nil
 			b.Posts = append(b.Posts, post)
 			slices.Reverse(b.Posts)
 			return true

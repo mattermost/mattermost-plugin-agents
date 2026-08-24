@@ -13,12 +13,15 @@ import (
 	"unicode/utf8"
 
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+const sandboxOutputFileAttachmentOperation = "attach_sandbox_output_file"
 
 // AttachSandboxOutputFiles materializes the files a provider code-execution
 // sandbox captured this turn as Mattermost files, recording them on llmCtx so
@@ -36,8 +39,8 @@ import (
 // Individual failures are logged and skipped: a file that cannot be downloaded
 // or uploaded must not fail the reply it was going to ride along with.
 func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, downloader llm.ProviderFileDownloader, llmCtx *llm.Context) {
-	fileIDs := llmCtx.ConsumeSandboxFileIDs()
-	if len(fileIDs) == 0 {
+	files := llmCtx.ConsumeSandboxFiles()
+	if len(files) == 0 {
 		return
 	}
 	if client == nil || downloader == nil {
@@ -45,14 +48,14 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 	}
 
 	if err := sandboxAttachmentAllowed(client, llmCtx); err != nil {
-		client.LogWarn("Not attaching code execution output files", "reason", err.Error(), "files", len(fileIDs))
+		client.LogWarn("Not attaching code execution output files", "reason", err.Error(), "files", len(files))
 		return
 	}
 
 	cfg := client.GetConfig()
 	sizeLimit := createFileContentLimit(cfg)
 
-	for _, fileID := range fileIDs {
+	for _, fileRef := range files {
 		// Recheck each iteration: every successful attach consumes a slot.
 		slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn)
 		if len(llmCtx.CreatedFilesList()) >= slots {
@@ -60,9 +63,9 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 				"cap", maxCreatedFilesPerTurn)
 			return
 		}
-		if err := attachOneSandboxFile(ctx, client, downloader, llmCtx, fileID, sizeLimit); err != nil {
+		if err := attachOneSandboxFile(ctx, client, downloader, llmCtx, fileRef, sizeLimit); err != nil {
 			// The provider file id is a request-scoped handle, not content.
-			client.LogError("Failed to attach a code execution output file", "error", err.Error(), "provider_file_id", fileID)
+			client.LogError("Failed to attach a code execution output file", "error", err.Error(), "provider_file_id", fileRef.ID)
 		}
 	}
 }
@@ -93,11 +96,16 @@ func attachOneSandboxFile(
 	client mmapi.Client,
 	downloader llm.ProviderFileDownloader,
 	llmCtx *llm.Context,
-	fileID string,
+	fileRef llm.ProviderFileReference,
 	sizeLimit int64,
 ) error {
-	downloadCtx, span := telemetry.Tracer().Start(ctx, "download sandbox output file")
-	file, err := downloader.DownloadProviderFile(downloadCtx, fileID)
+	spanAttributes := trace.WithAttributes(
+		telemetry.ToolName.String(sandboxOutputFileAttachmentOperation),
+		telemetry.ChannelID.String(llmCtx.Channel.Id),
+		telemetry.UserID.String(llmCtx.RequestingUser.Id),
+	)
+	downloadCtx, span := telemetry.Tracer().Start(ctx, "download sandbox output file", spanAttributes)
+	file, err := downloader.DownloadProviderFile(downloadCtx, fileRef)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, "download failed")
@@ -118,7 +126,7 @@ func attachOneSandboxFile(
 		return err
 	}
 
-	_, uploadSpan := telemetry.Tracer().Start(ctx, "upload sandbox output file")
+	_, uploadSpan := telemetry.Tracer().Start(ctx, "upload sandbox output file", spanAttributes)
 	info, err := client.UploadFile(bytes.NewReader(file.Content), name, llmCtx.Channel.Id)
 	if err != nil {
 		uploadSpan.RecordError(err)

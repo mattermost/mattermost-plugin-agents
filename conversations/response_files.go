@@ -19,8 +19,8 @@ import (
 const maxResponseAttachments = llm.MaxPostAttachments
 
 // decorateStreamWithCreatedFiles wraps stream so that, on a clean end, the
-// files created during the turn (recorded on the given contexts via
-// CreateFile, files the provider's code-execution sandbox captured, plus
+// files created during the turn (recorded on createdFileContexts via
+// CreateFile, files captured on the explicit active sandboxContext, plus
 // extraFileIDs recovered from persisted turns) are announced with an
 // EventTypeFiles event immediately before EventTypeEnd. The streaming layer
 // merges the IDs into post.FileIds and the server's UpdatePost performs the
@@ -29,7 +29,7 @@ const maxResponseAttachments = llm.MaxPostAttachments
 //
 // bot may be nil for flows with no provider-side file access; sandbox files are
 // then skipped and only tool-created files are attached.
-func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot *bots.Bot, stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
+func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot *bots.Bot, stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, sandboxContext *llm.Context, createdFileContexts ...*llm.Context) *llm.TextStreamResult {
 	if stream == nil {
 		return nil
 	}
@@ -37,11 +37,11 @@ func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot 
 	go func() {
 		defer close(output)
 		for event := range stream.Stream {
-			// Errors and a close without End pass through untouched; the
-			// files stay unattached until a later follow-up's turn scan.
+			// Errors and a close without End pass through untouched; no
+			// response-file event is emitted for an incomplete stream.
 			if event.Type == llm.EventTypeEnd {
-				c.attachSandboxOutputFiles(ctx, bot, contexts)
-				if ids := c.collectAttachableFileIDs(post, extraFileIDs, contexts); len(ids) > 0 {
+				c.attachSandboxOutputFiles(ctx, bot, sandboxContext)
+				if ids := c.collectAttachableFileIDs(post, extraFileIDs, createdFileContexts); len(ids) > 0 {
 					output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: ids}
 				}
 			}
@@ -56,17 +56,12 @@ func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot 
 // tool-created ones. Runs at end of turn rather than mid-stream: each file costs
 // a provider download plus a Mattermost upload, and nothing can be attached to
 // the post until the stream finishes anyway.
-func (c *Conversations) attachSandboxOutputFiles(ctx context.Context, bot *bots.Bot, contexts []*llm.Context) {
-	if !bot.SandboxFileAttachmentAvailable() {
+func (c *Conversations) attachSandboxOutputFiles(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) {
+	if llmCtx == nil || !bot.SandboxFileAttachmentAvailable() {
 		return
 	}
 	downloader := bot.ProviderServices().FileDownloader
-	for _, llmCtx := range contexts {
-		if llmCtx == nil {
-			continue
-		}
-		mmtools.AttachSandboxOutputFiles(ctx, c.mmClient, downloader, llmCtx)
-	}
+	mmtools.AttachSandboxOutputFiles(ctx, c.mmClient, downloader, llmCtx)
 }
 
 // collectAttachableFileIDs merges the created-file registries of the given

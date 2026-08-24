@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,34 +114,30 @@ func TestTurnSequenceRecordServerToolsIsIdempotent(t *testing.T) {
 	}, s.Segments())
 }
 
-// TestTurnSequenceReplaceText covers web-search citation cleanup, which rewrites
-// the whole message: the cleaned text takes the first text position so it still
-// follows the search activity that produced it.
-func TestTurnSequenceReplaceText(t *testing.T) {
+// TestTurnSequenceRemoveTextRangesPreservesInterleaving covers citation
+// cleanup across text separated by provider activity. Removing markers must
+// not move the later text ahead of the second tool.
+func TestTurnSequenceRemoveTextRangesPreservesInterleaving(t *testing.T) {
 	var s TurnSequence
 
 	s.RecordServerTools([]ServerToolUse{{ID: "srv1", Tool: NativeToolWebSearch}})
-	s.AppendText("Answer with [1] markers")
+	s.AppendText("Answer !!CITE1!!")
 	s.RecordServerTools([]ServerToolUse{{ID: "srv2", Tool: NativeToolWebFetch}})
-	s.AppendText(" and more [2]")
+	s.AppendText(" and more !!CITE2!!")
 
-	s.ReplaceText("Answer with markers and more")
+	original := s.Text()
+	first := strings.Index(original, "!!CITE1!!")
+	second := strings.Index(original, "!!CITE2!!")
+	require.True(t, s.RemoveTextRanges(original, []TextRange{
+		{Start: first, End: first + len("!!CITE1!!")},
+		{Start: second, End: second + len("!!CITE2!!")},
+	}))
 
 	require.Equal(t, []TurnSegment{
 		{Kind: TurnSegmentServerTool, ServerToolID: "srv1"},
-		{Kind: TurnSegmentText, Text: "Answer with markers and more"},
+		{Kind: TurnSegmentText, Text: "Answer "},
 		{Kind: TurnSegmentServerTool, ServerToolID: "srv2"},
-	}, s.Segments())
-}
-
-func TestTurnSequenceReplaceTextWithNoPriorText(t *testing.T) {
-	var s TurnSequence
-	s.RecordServerTools([]ServerToolUse{{ID: "srv1", Tool: NativeToolWebSearch}})
-	s.ReplaceText("cleaned")
-
-	require.Equal(t, []TurnSegment{
-		{Kind: TurnSegmentServerTool, ServerToolID: "srv1"},
-		{Kind: TurnSegmentText, Text: "cleaned"},
+		{Kind: TurnSegmentText, Text: " and more "},
 	}, s.Segments())
 }
 

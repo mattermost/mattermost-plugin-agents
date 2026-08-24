@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -168,6 +169,8 @@ func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 		case BlockTypeServerToolUse:
 			if block.ServerTool != nil {
 				st := *block.ServerTool
+				st.FileIDs = slices.Clone(block.ServerTool.FileIDs)
+				st.ProviderRoute = ""
 				st.Sanitize()
 				result[i].ServerTool = &st
 			}

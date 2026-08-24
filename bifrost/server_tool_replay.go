@@ -23,19 +23,16 @@ const serverToolReplayHeader = "[Record of provider-executed tool activity in th
 // the sandbox container forward, so replayed code-execution results would refer
 // to a container that no longer exists.
 func serverToolActivityRecord(uses []llm.ServerToolUse) string {
-	if len(uses) == 0 {
-		return ""
-	}
-
-	var b strings.Builder
-	b.WriteString(serverToolReplayHeader)
+	lines := make([]string, 0, len(uses))
 	for i := range uses {
 		if line := serverToolActivityLine(&uses[i]); line != "" {
-			b.WriteString("\n")
-			b.WriteString(line)
+			lines = append(lines, line)
 		}
 	}
-	return b.String()
+	if len(lines) == 0 {
+		return ""
+	}
+	return serverToolReplayHeader + "\n" + strings.Join(lines, "\n")
 }
 
 func serverToolActivityLine(use *llm.ServerToolUse) string {
@@ -68,11 +65,11 @@ func serverToolActivityLine(use *llm.ServerToolUse) string {
 	appendField("command", use.Command)
 	appendField("output", use.Output)
 
-	// The model never sees the provider's file ids, so report the outcome it
-	// does need: these files went out with the reply. Without this it re-runs
-	// the work or tells the user nothing was shared.
+	// The model never sees the provider's file ids. Report that the files were
+	// selected for attachment, but do not claim upload success: download,
+	// validation, permissions, or post limits can still reject them.
 	if n := len(use.FileIDs); n > 0 {
-		fmt.Fprintf(&b, "\n  %d output file(s) were captured and attached to the reply", n)
+		fmt.Fprintf(&b, "\n  %d output file(s) were captured for attachment to the reply", n)
 	}
 
 	return b.String()

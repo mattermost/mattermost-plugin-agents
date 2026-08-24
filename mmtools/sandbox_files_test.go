@@ -25,12 +25,12 @@ type fakeDownloader struct {
 	requested []string
 }
 
-func (d *fakeDownloader) DownloadProviderFile(_ context.Context, fileID string) (llm.ProviderFile, error) {
-	d.requested = append(d.requested, fileID)
+func (d *fakeDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
+	d.requested = append(d.requested, ref.ID)
 	if d.err != nil {
 		return llm.ProviderFile{}, d.err
 	}
-	file, ok := d.files[fileID]
+	file, ok := d.files[ref.ID]
 	if !ok {
 		return llm.ProviderFile{}, errors.New("not found")
 	}
@@ -42,7 +42,9 @@ func sandboxCtx(channelID string, fileIDs ...string) *llm.Context {
 		Channel:        &model.Channel{Id: channelID},
 		RequestingUser: &model.User{Id: "user-id"},
 	}
-	c.AddSandboxFileIDs(fileIDs...)
+	for _, fileID := range fileIDs {
+		c.AddSandboxFiles(llm.ProviderFileReference{ID: fileID})
+	}
 	return c
 }
 
@@ -108,7 +110,7 @@ func TestAttachSandboxOutputFilesRefusals(t *testing.T) {
 			name: "no channel to hold the files",
 			llmCtx: func() *llm.Context {
 				c := &llm.Context{RequestingUser: &model.User{Id: "user-id"}}
-				c.AddSandboxFileIDs("file_1")
+				c.AddSandboxFiles(llm.ProviderFileReference{ID: "file_1"})
 				return c
 			},
 			permission: true,
@@ -117,7 +119,7 @@ func TestAttachSandboxOutputFilesRefusals(t *testing.T) {
 			name: "no requesting user",
 			llmCtx: func() *llm.Context {
 				c := &llm.Context{Channel: &model.Channel{Id: channelID}}
-				c.AddSandboxFileIDs("file_1")
+				c.AddSandboxFiles(llm.ProviderFileReference{ID: "file_1"})
 				return c
 			},
 			permission: true,

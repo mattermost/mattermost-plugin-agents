@@ -261,7 +261,7 @@ func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
 	}}
 	final := []llm.ServerToolUse{{
 		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "weather NYC",
-		FileIDs: []string{"file_from_sandbox"},
+		Output: "raw\u202eoutput", FileIDs: []string{"file_from_sandbox"}, ProviderRoute: "anthropic::fallback",
 	}}
 
 	inner := &testLLM{
@@ -307,15 +307,23 @@ func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
 	turn := result.ToolTurns[0]
 	require.Len(t, turn.AssistantServerTools, 1)
 	assert.Equal(t, final[0], turn.AssistantServerTools[0])
+	assert.Contains(t, turn.AssistantServerTools[0].Output, "\u202e",
+		"canonical provider replay data must remain byte-for-byte unchanged")
 
 	// The second round had no server tools; nothing to assert there because
 	// it produced no ToolTurn (it was the final text response).
 	assert.Equal(t, 2, inner.callCount)
+	replayedPost := inner.capturedRequests[1].Posts[len(inner.capturedRequests[1].Posts)-1]
+	require.Len(t, replayedPost.ServerTools, 1)
+	assert.Equal(t, "raw\u202eoutput", replayedPost.ServerTools[0].Output,
+		"presentation sanitation must not alter the next provider request")
 
 	// Observed sandbox file ids must be registered on the context, in order,
 	// so the response flow can download and attach them to the reply. The
 	// snapshot is cumulative, so a repeated id must not be recorded twice.
-	assert.Equal(t, []string{"file_from_sandbox"}, request.Context.ConsumeSandboxFileIDs())
+	assert.Equal(t, []llm.ProviderFileReference{{
+		ID: "file_from_sandbox", ProviderRoute: "anthropic::fallback",
+	}}, request.Context.ConsumeSandboxFiles())
 }
 
 func TestToolRunner_MultipleToolRounds(t *testing.T) {

@@ -384,6 +384,45 @@ describe('LLMBotPost live activity ordering', () => {
         const rendered = container.textContent ?? '';
         expect(rendered.indexOf('Searched the web for "q"')).toBeLessThan(rendered.indexOf('Here you go.'));
     });
+
+    test('reasoning that follows provider activity starts a new live round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                ]),
+            }));
+        });
+        await expect(screen.findByText('Searched the web for "first"')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Considering the result',
+            }));
+        });
+        await expect(screen.findByText('Thinking')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Final answer.'}));
+        });
+        await expect(screen.findByText('Final answer.')).resolves.toBeTruthy();
+
+        const rendered = container.textContent ?? '';
+        expect(rendered.indexOf('Searched the web for "first"')).toBeLessThan(rendered.indexOf('Thinking'));
+        expect(rendered.indexOf('Thinking')).toBeLessThan(rendered.indexOf('Final answer.'));
+    });
 });
 
 describe('LLMBotPost conversation_id prop handling', () => {

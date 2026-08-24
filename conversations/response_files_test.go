@@ -10,14 +10,26 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type responseFilesDownloader struct {
+	requested []llm.ProviderFileReference
+}
+
+func (d *responseFilesDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
+	d.requested = append(d.requested, ref)
+	return llm.ProviderFile{Name: ref.ID + ".txt", Content: []byte("content")}, nil
+}
 
 func makeEventStream(events ...llm.TextStreamEvent) *llm.TextStreamResult {
 	ch := make(chan llm.TextStreamEvent, len(events))
@@ -118,7 +130,7 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 			c := &Conversations{}
 			post := &model.Post{Id: "post-id", ChannelId: "channel-id", FileIds: tt.postFileIDs}
 
-			decorated := c.decorateStreamWithCreatedFiles(context.Background(), nil, makeEventStream(tt.events...), post, tt.extraFileIDs, tt.contexts...)
+			decorated := c.decorateStreamWithCreatedFiles(context.Background(), nil, makeEventStream(tt.events...), post, tt.extraFileIDs, nil, tt.contexts...)
 			events := drainTextStreamEvents(t, decorated)
 
 			assert.Equal(t, tt.wantEventTypes, eventTypes(events))
@@ -140,8 +152,57 @@ func TestDecorateStreamWithCreatedFiles(t *testing.T) {
 
 	t.Run("nil stream returns nil", func(t *testing.T) {
 		c := &Conversations{}
-		assert.Nil(t, c.decorateStreamWithCreatedFiles(context.Background(), nil, nil, &model.Post{}, nil))
+		assert.Nil(t, c.decorateStreamWithCreatedFiles(context.Background(), nil, nil, &model.Post{}, nil, nil))
 	})
+}
+
+func TestDecorateStreamAttachesSandboxFilesOnlyFromActiveContext(t *testing.T) {
+	const channelID = "channel-id"
+
+	client := mocks.NewMockClient(t)
+	client.On("GetConfig").Return(&model.Config{}).Twice()
+	client.On("HasPermissionToChannel", "user-id", channelID, model.PermissionUploadFile).Return(true).Once()
+	client.On("UploadFile", mock.Anything, "active.txt", channelID).
+		Return(&model.FileInfo{Id: "mm-active", Name: "active.txt"}, nil).Once()
+
+	downloader := &responseFilesDownloader{}
+	bot := bots.NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolCodeInterpreter}},
+		llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+		&model.Bot{},
+		nil,
+	)
+	bot.SetProviderServicesForTest(&llm.ProviderServices{FileDownloader: downloader})
+
+	activeContext := &llm.Context{
+		Channel:        &model.Channel{Id: channelID},
+		RequestingUser: &model.User{Id: "user-id"},
+	}
+	activeContext.AddSandboxFiles(llm.ProviderFileReference{ID: "active", ProviderRoute: "anthropic"})
+
+	historicalContext := ctxWithCreatedFiles("historical-created")
+	historicalContext.AddSandboxFiles(llm.ProviderFileReference{ID: "historical", ProviderRoute: "anthropic::old"})
+
+	c := &Conversations{mmClient: client}
+	decorated := c.decorateStreamWithCreatedFiles(
+		context.Background(),
+		bot,
+		makeEventStream(llm.TextStreamEvent{Type: llm.EventTypeEnd}),
+		&model.Post{Id: "post-id", ChannelId: channelID},
+		nil,
+		activeContext,
+		activeContext,
+		historicalContext,
+	)
+	events := drainTextStreamEvents(t, decorated)
+
+	require.Equal(t, []llm.ProviderFileReference{{ID: "active", ProviderRoute: "anthropic"}}, downloader.requested)
+	require.Empty(t, activeContext.ConsumeSandboxFiles())
+	require.Equal(t, []llm.ProviderFileReference{{ID: "historical", ProviderRoute: "anthropic::old"}}, historicalContext.ConsumeSandboxFiles(),
+		"historical provider files must remain untouched")
+	require.Equal(t, []llm.EventType{llm.EventTypeFiles, llm.EventTypeEnd}, eventTypes(events))
+	require.Equal(t, []string{"mm-active", "historical-created"}, events[0].Value,
+		"historical contexts remain eligible only for previously created Mattermost files")
 }
 
 func createFileResultJSON(t *testing.T, fileID string) string {
