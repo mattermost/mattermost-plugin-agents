@@ -242,6 +242,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
 		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
 		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},
+		{event: AuditEventUpdateChannelAutoReply, method: http.MethodPut, path: "/channel/channelid/autoreply"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
@@ -267,6 +268,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 			e.mockAPI.On("HasPermissionTo", mock.Anything, mock.Anything).Return(false).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
 			e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+			e.mockAPI.On("GetChannel", mock.Anything).Return((*model.Channel)(nil), &model.AppError{Message: "not found"}).Maybe()
 
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("{}"))
 			if tt.bridge {

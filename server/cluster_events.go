@@ -16,6 +16,7 @@ const clusterEventConfigUpdate = "config_update"
 const clusterEventAgentUpdate = "agent_update"
 const clusterEventMCPOAuthUserInvalidate = "mcp_oauth_user_invalidate"
 const clusterEventStreamStop = "stream_stop"
+const clusterEventChannelAutoReplyInvalidate = "channel_autoreply_invalidate"
 
 type mcpOAuthUserInvalidateClusterPayload struct {
 	UserID string `json:"userID"`
@@ -23,6 +24,17 @@ type mcpOAuthUserInvalidateClusterPayload struct {
 
 type streamStopClusterPayload struct {
 	PostID string `json:"postID"`
+}
+
+type channelAutoReplyInvalidateClusterPayload struct {
+	ChannelID string `json:"channelID"`
+}
+
+// channelAutoReplyRefresher is the part of *autoreply.Service the cluster
+// event handler needs. Narrowed to an interface so the handler is testable
+// without a database.
+type channelAutoReplyRefresher interface {
+	RefreshChannel(channelID string) error
 }
 
 func (p *Plugin) publishClusterEvent(eventID string) error {
@@ -102,6 +114,34 @@ func (p *Plugin) PublishStreamStop(postID string) error {
 	return nil
 }
 
+// PublishChannelAutoReplyInvalidate broadcasts a per-channel auto-reply cache
+// invalidation to all other nodes in the cluster. The originating node has
+// already updated its own cache; receivers re-read the channel's row from the
+// database, so a duplicated or reordered event still converges.
+func (p *Plugin) PublishChannelAutoReplyInvalidate(channelID string) error {
+	if channelID == "" {
+		return nil
+	}
+
+	payload, err := json.Marshal(channelAutoReplyInvalidateClusterPayload{ChannelID: channelID})
+	if err != nil {
+		return err
+	}
+
+	ev := model.PluginClusterEvent{
+		Id:   clusterEventChannelAutoReplyInvalidate,
+		Data: payload,
+	}
+	opts := model.PluginClusterEventSendOptions{
+		SendType: model.PluginClusterEventSendTypeReliable,
+	}
+	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
+		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventChannelAutoReplyInvalidate, "error", err.Error())
+		return err
+	}
+	return nil
+}
+
 // OnPluginClusterEvent handles cluster events from other nodes.
 func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterEvent) {
 	switch ev.Id {
@@ -150,6 +190,22 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 		if p.streamingService != nil {
 			p.streamingService.StopStreaming(payload.PostID)
+		}
+
+	case clusterEventChannelAutoReplyInvalidate:
+		var payload channelAutoReplyInvalidateClusterPayload
+		if err := json.Unmarshal(ev.Data, &payload); err != nil {
+			p.pluginAPI.Log.Error("Failed to unmarshal channel auto-reply cluster invalidation payload", "error", err.Error())
+			return
+		}
+		if payload.ChannelID == "" {
+			p.pluginAPI.Log.Error("Received channel auto-reply cluster invalidation with empty channelID")
+			return
+		}
+		if p.autoreplyService != nil {
+			if err := p.autoreplyService.RefreshChannel(payload.ChannelID); err != nil {
+				p.pluginAPI.Log.Error("Failed to refresh channel auto-reply cache on cluster event", "channel_id", payload.ChannelID, "error", err.Error())
+			}
 		}
 	}
 }

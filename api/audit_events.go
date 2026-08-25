@@ -13,7 +13,8 @@ import (
 // Audit event names for every state-changing operation in the plugin: 22
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
-// never use inline string literals and parallel work never edits this file.
+// never use inline string literals; new state-changing routes add their
+// names here rather than inline.
 //
 // The server stamps the plugin ID into every record's parameters when it is
 // logged, so the names stay unprefixed.
@@ -39,6 +40,9 @@ const (
 	AuditEventCreateCustomPrompt = "createCustomPrompt"
 	AuditEventUpdateCustomPrompt = "updateCustomPrompt"
 	AuditEventDeleteCustomPrompt = "deleteCustomPrompt"
+
+	// Channel configuration.
+	AuditEventUpdateChannelAutoReply = "updateChannelAutoReply"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -101,6 +105,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleCreateCustomPrompt): AuditEventCreateCustomPrompt,
 		handlerFuncName(a.handleUpdateCustomPrompt): AuditEventUpdateCustomPrompt,
 		handlerFuncName(a.handleDeleteCustomPrompt): AuditEventDeleteCustomPrompt,
+
+		// Channel configuration.
+		handlerFuncName(a.handlePutChannelAutoReply): AuditEventUpdateChannelAutoReply,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -29,6 +30,12 @@ type fakeMMClient struct {
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
+	fileInfos            map[string]*model.FileInfo
+
+	// logMu guards logErrors: background goroutines (e.g. title generation)
+	// may log while the test goroutine reads.
+	logMu     sync.Mutex
+	logErrors []string
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -173,7 +180,18 @@ func (c *fakeMMClient) GetConfig() *model.Config {
 	return &model.Config{}
 }
 
-func (c *fakeMMClient) LogError(string, ...interface{}) {}
+func (c *fakeMMClient) LogError(msg string, _ ...interface{}) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	c.logErrors = append(c.logErrors, msg)
+}
+
+// loggedErrors returns a snapshot of the error-level log messages.
+func (c *fakeMMClient) loggedErrors() []string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	return append([]string(nil), c.logErrors...)
+}
 
 func (c *fakeMMClient) LogWarn(string, ...interface{}) {}
 
@@ -207,7 +225,12 @@ func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission)
 	return true
 }
 
-func (c *fakeMMClient) GetFileInfo(string) (*model.FileInfo, error) {
+func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
+	if c.fileInfos != nil {
+		if info, ok := c.fileInfos[fileID]; ok {
+			return info, nil
+		}
+	}
 	return nil, errors.New("not implemented")
 }
 

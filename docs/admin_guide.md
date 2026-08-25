@@ -326,6 +326,8 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Turning auto-reply off never requires a license, so an existing setting stays clearable after a license downgrade. The channel settings tab UI requires Mattermost v11.10 or later, while the plugin's minimum server version remains 11.9.0 — on v11.9 the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+
 ## Management tasks
 
 ### Plugin metrics
@@ -849,3 +851,4 @@ The following table outlines which features require a license:
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
 | Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
+| Per-channel agent auto-reply | Entry, Enterprise, and Enterprise Advanced |

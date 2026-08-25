@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -65,6 +66,7 @@ type Plugin struct {
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
 	store                *store.Store
+	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
 }
 
@@ -232,6 +234,13 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Error("failed to ensure bots", "error", ensureBotsErr)
 	}
 	migrateAndRefresh("activation")
+
+	autoreplyStore := autoreply.NewStore(dbClient)
+	autoreplyService := autoreply.NewService(autoreplyStore, bots, mmClient, p)
+	if loadCacheErr := autoreplyService.LoadCache(); loadCacheErr != nil {
+		return fmt.Errorf("failed to load channel auto-reply settings: %w", loadCacheErr)
+	}
+	p.autoreplyService = autoreplyService
 
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
@@ -418,6 +427,7 @@ func (p *Plugin) OnActivate() error {
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
+	conversationsService.SetAutoReplySettings(autoreplyService)
 	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
@@ -486,6 +496,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		autoreplyService,
 	)
 
 	apiService.SetConversationService(convService)
