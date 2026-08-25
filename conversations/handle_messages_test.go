@@ -62,7 +62,7 @@ func TestHandleMessages(t *testing.T) {
 			UserId:    "userid",
 			ChannelId: "channelid",
 			RemoteId:  &remoteid,
-		}, nil)
+		})
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
@@ -72,7 +72,7 @@ func TestHandleMessages(t *testing.T) {
 			ChannelId: "channelid",
 		}
 		post.AddProp("from_plugin", true)
-		err := e.conversations.handleMessages(ctx, post, nil)
+		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
@@ -82,7 +82,7 @@ func TestHandleMessages(t *testing.T) {
 			ChannelId: "channelid",
 		}
 		post.AddProp("from_webhook", true)
-		err := e.conversations.handleMessages(ctx, post, nil)
+		err := e.conversations.handleMessages(ctx, post)
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
@@ -98,7 +98,7 @@ func TestHandleMessages(t *testing.T) {
 				ChannelId: "channelid",
 				Type:      postType,
 			}
-			err := e.conversations.handleMessages(ctx, post, nil)
+			err := e.conversations.handleMessages(ctx, post)
 			require.ErrorIs(t, err, ErrNoResponse)
 		})
 	}
@@ -117,7 +117,7 @@ func TestHandleMessages(t *testing.T) {
 					UserId:    "userid",
 					ChannelId: "channelid",
 					Type:      postType,
-				}, nil)
+				})
 				require.ErrorIs(t, err, sentinel)
 				require.NotErrorIs(t, err, ErrNoResponse)
 			})

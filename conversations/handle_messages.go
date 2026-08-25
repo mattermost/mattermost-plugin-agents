@@ -145,17 +145,6 @@ func (c *Conversations) buildConversationContextWithTools(
 }
 
 func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
-	c.messageHasBeenPosted(post, nil)
-}
-
-// MessageHasBeenPostedWithAfterPlaceholder processes a posted message and runs
-// afterPlaceholder immediately after creating a response placeholder. When no
-// response is created, it runs before returning.
-func (c *Conversations) MessageHasBeenPostedWithAfterPlaceholder(_ *plugin.Context, post *model.Post, afterPlaceholder func(context.Context)) {
-	c.messageHasBeenPosted(post, afterPlaceholder)
-}
-
-func (c *Conversations) messageHasBeenPosted(post *model.Post, afterPlaceholder func(context.Context)) {
 	ctx, span := telemetry.Tracer().Start(context.Background(), "message has been posted",
 		trace.WithAttributes(
 			telemetry.PostID.String(post.Id),
@@ -165,17 +154,7 @@ func (c *Conversations) messageHasBeenPosted(post *model.Post, afterPlaceholder 
 	)
 	defer span.End()
 
-	callbackCalled := false
-	callAfterPlaceholder := func(ctx context.Context) {
-		if callbackCalled || afterPlaceholder == nil {
-			return
-		}
-		callbackCalled = true
-		afterPlaceholder(ctx)
-	}
-	defer callAfterPlaceholder(ctx)
-
-	if err := c.handleMessages(ctx, post, callAfterPlaceholder); err != nil {
+	if err := c.handleMessages(ctx, post); err != nil {
 		if errors.Is(err, ErrNoResponse) {
 			c.mmClient.LogDebug(err.Error())
 		} else {
@@ -184,7 +163,7 @@ func (c *Conversations) messageHasBeenPosted(post *model.Post, afterPlaceholder 
 	}
 }
 
-func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, afterPlaceholder func(context.Context)) error {
+func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) error {
 	// Don't respond to ourselves
 	if c.bots.IsAnyBot(post.UserId) {
 		return fmt.Errorf("not responding to ourselves: %w", ErrNoResponse)
@@ -232,12 +211,12 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, af
 
 	// Check we are mentioned like @ai
 	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
-		return c.handleMentions(ctx, bot, post, postingUser, channel, afterPlaceholder)
+		return c.handleMentions(ctx, bot, post, postingUser, channel)
 	}
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(ctx, bot, channel, postingUser, post, afterPlaceholder)
+		return c.handleDMs(ctx, bot, channel, postingUser, post)
 	}
 
 	// Per-channel auto-reply handles the no-mention fall-through, and the two
@@ -247,7 +226,7 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, af
 	// the agent works — it does in every one of those cases. Only a real
 	// failure returns without the reminder.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
-		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel, afterPlaceholder)
+		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
 			c.maybeNotifyAgentMentionNeeded(post, channel)
 		}
@@ -261,7 +240,7 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, af
 	return nil
 }
 
-func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel, afterPlaceholder func(context.Context)) (err error) {
+func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
 	if restrictionErr := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); restrictionErr != nil {
 		return restrictionErr
 	}
@@ -290,9 +269,6 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		}
 	}()
 
-	if afterPlaceholder != nil {
-		afterPlaceholder(ctx)
-	}
 	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost)
 }
 
@@ -456,7 +432,7 @@ func (c *Conversations) handleMentionViaConversation(
 	return nil
 }
 
-func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post, afterPlaceholder func(context.Context)) (err error) {
+func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {
 	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); restrictionErr != nil {
 		return restrictionErr
 	}
@@ -478,9 +454,6 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		}
 	}()
 
-	if afterPlaceholder != nil {
-		afterPlaceholder(ctx)
-	}
 	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost)
 }
 

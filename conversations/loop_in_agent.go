@@ -67,5 +67,5 @@ func (c *Conversations) HandleLoopInAgent(ctx context.Context, userID string, bo
 		loopInPost.Message += " " + message
 	}
 
-	return c.handleMentions(ctx, bot, loopInPost, postingUser, channel, nil)
+	return c.handleMentions(ctx, bot, loopInPost, postingUser, channel)
 }
