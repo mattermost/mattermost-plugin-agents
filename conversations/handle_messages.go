@@ -262,8 +262,8 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, af
 }
 
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel, afterPlaceholder func(context.Context)) (err error) {
-	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
-		return err
+	if restrictionErr := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); restrictionErr != nil {
+		return restrictionErr
 	}
 
 	// Check config to determine if tools should be allowed in channel mentions
@@ -281,8 +281,8 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", err)
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	defer func() {
 		if err != nil {
@@ -457,8 +457,8 @@ func (c *Conversations) handleMentionViaConversation(
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post, afterPlaceholder func(context.Context)) (err error) {
-	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
-		return err
+	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); restrictionErr != nil {
+		return restrictionErr
 	}
 
 	responseRootID := post.Id
@@ -469,8 +469,8 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", err)
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	defer func() {
 		if err != nil {
