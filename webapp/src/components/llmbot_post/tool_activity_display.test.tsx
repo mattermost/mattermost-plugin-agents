@@ -83,17 +83,23 @@ describe('ToolActivityDisplay collapsed rendering', () => {
         ]));
 
         expect(screen.getByText('Used 1 tool')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('error');
     });
 
     test('expands to the full stack of rounds when the header is clicked', () => {
         const onToggleExpanded = jest.fn();
         const {rerender} = render(activityElement(finishedRounds, {onToggleExpanded}));
 
-        fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+        const header = screen.getByTestId('llm-bot-tool-activity-header');
+        expect(header.tagName).toBe('BUTTON');
+        expect(header.getAttribute('aria-expanded')).toBe('false');
+
+        fireEvent.click(header);
         expect(onToggleExpanded).toHaveBeenCalledWith(true);
 
         rerender(activityElement(finishedRounds, {onToggleExpanded, expanded: true}));
 
+        expect(screen.getByTestId('llm-bot-tool-activity-header').getAttribute('aria-expanded')).toBe('true');
         expect(screen.getByText('round:r1')).toBeTruthy();
         expect(screen.getByText('round:r2')).toBeTruthy();
 

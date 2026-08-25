@@ -40,6 +40,9 @@ export async function getTownSquareChannel(
     const client = await mattermost.getClient(username, password);
     const teams = await client.getMyTeams();
     const team = teams[0];
+    if (!team) {
+        throw new Error(`User ${username} is not a member of any team`);
+    }
     const channels = await client.getMyChannels(team.id);
     const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
 

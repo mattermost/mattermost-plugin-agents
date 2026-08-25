@@ -199,7 +199,10 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
     return (
         <ActivityContainer data-testid='llm-bot-tool-activity'>
             <CollapseHeaderRow
+                as='button'
+                type='button'
                 data-testid='llm-bot-tool-activity-header'
+                aria-expanded={expanded}
                 onClick={() => props.onToggleExpanded(!expanded)}
             >
                 <CollapseChevron $expanded={expanded}>
@@ -285,6 +288,12 @@ const SlotRow = styled.div<{$phase: 'in' | 'out' | 'static'}>`
 
     ${(props) => props.$phase === 'out' && css`
         animation: ${rollOut} ${SLOT_ANIM_MS}ms ease-in forwards;
+
+        /* rollOut's forwards fill never runs when animation is disabled, so
+           hide the outgoing row instead of leaving it stacked on the incoming. */
+        @media (prefers-reduced-motion: reduce) {
+            display: none;
+        }
     `}
 
     ${noMotionWhenReduced}

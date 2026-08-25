@@ -6,14 +6,22 @@ import styled from 'styled-components';
 /**
  * The clickable one-line header of a collapsible section of a bot post —
  * the "Thinking" reasoning row and the tool activity row. Call sites add
- * their own margins.
+ * their own margins. Native button chrome is reset so a call site can render
+ * this as a <button> without changing the look.
  */
 export const CollapseHeaderRow = styled.div`
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
     font-size: 12px;
+    font-family: inherit;
     color: rgba(var(--center-channel-color-rgb), 0.75);
+    text-align: left;
     cursor: pointer;
     user-select: none;
 

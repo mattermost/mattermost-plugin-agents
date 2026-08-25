@@ -99,6 +99,10 @@ export async function expectToolActivitySummary(
 /**
  * Asserts no activity area at all — either nothing ran, or the only round is
  * one the viewer owes a decision on, which renders below the activity area.
+ *
+ * `toHaveCount(0)` succeeds on the first poll if the area has not rendered
+ * yet, so callers must wait for a stable post state first (for example a
+ * visible approval button or a visible final answer).
  */
 export async function expectNoToolActivity(scope: Locator): Promise<void> {
     await expect(scope.locator(TOOL_ACTIVITY_SELECTOR)).toHaveCount(0);
