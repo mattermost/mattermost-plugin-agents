@@ -427,6 +427,68 @@ func TestExecuteSearch(t *testing.T) {
 	}
 }
 
+type createdAfterSearch struct {
+	docs []embeddings.PostDocument
+}
+
+func (s *createdAfterSearch) Store(context.Context, []embeddings.PostDocument) error { return nil }
+func (s *createdAfterSearch) Delete(context.Context, []string) error                 { return nil }
+func (s *createdAfterSearch) Clear(context.Context) error                            { return nil }
+func (s *createdAfterSearch) DeleteOrphaned(context.Context, int64, int64) (int64, error) {
+	return 0, nil
+}
+func (s *createdAfterSearch) Search(_ context.Context, _ string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	var out []embeddings.SearchResult
+	for _, d := range s.docs {
+		if opts.CreatedAfter > 0 && d.CreateAt <= opts.CreatedAfter {
+			continue
+		}
+		out = append(out, embeddings.SearchResult{Document: d, Score: 1})
+	}
+	return out, nil
+}
+
+func TestExecuteSearchReturnsIndexedRowsOutsideWriteWindow(t *testing.T) {
+	now := time.Now().UnixMilli()
+	cfg := embeddings.EmbeddingSearchConfig{IndexRetentionDays: 365}
+	floor := cfg.IndexRetentionFloor(now)
+	stale := embeddings.PostDocument{
+		PostID:    "stale",
+		CreateAt:  floor - embeddings.MillisPerDay,
+		ChannelID: "channel1",
+		UserID:    "user1",
+		Content:   "old",
+	}
+	fresh := embeddings.PostDocument{
+		PostID:    "fresh",
+		CreateAt:  floor + embeddings.MillisPerDay,
+		ChannelID: "channel1",
+		UserID:    "user1",
+		Content:   "new",
+	}
+
+	mockClient := mmapimocks.NewMockClient(t)
+	allowVectorIndexStateRead(mockClient)
+	mockClient.On("GetChannel", "channel1").Return(&model.Channel{
+		Id:          "channel1",
+		DisplayName: "General",
+		Type:        model.ChannelTypeOpen,
+	}, nil).Maybe()
+	mockClient.On("GetUser", "user1").Return(&model.User{
+		Id:       "user1",
+		Username: "testuser",
+	}, nil).Maybe()
+
+	store := &createdAfterSearch{docs: []embeddings.PostDocument{stale, fresh}}
+	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, nil, nil, nil, nil)
+
+	results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	require.Equal(t, "stale", results[0].PostID)
+	require.Equal(t, "fresh", results[1].PostID)
+}
+
 func TestBuildPrompt(t *testing.T) {
 	// Load real prompts for tests
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
