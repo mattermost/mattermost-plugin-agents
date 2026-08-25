@@ -26,6 +26,7 @@ const (
 	AuditEventReindexPosts          = "reindexPosts"
 	AuditEventCancelReindexJob      = "cancelReindexJob"
 	AuditEventCatchUpReindex        = "catchUpReindex"
+	AuditEventRebuildVectorIndex    = "rebuildVectorIndex"
 	AuditEventClearMCPToolsCache    = "clearMCPToolsCache"
 	AuditEventUpdateMCPPluginServer = "updateMCPPluginServer"
 
@@ -90,6 +91,7 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,
 		handlerFuncName(a.handleCancelJob):          AuditEventCancelReindexJob,
 		handlerFuncName(a.handleCatchUpIndex):       AuditEventCatchUpReindex,
+		handlerFuncName(a.handleRebuildVectorIndex): AuditEventRebuildVectorIndex,
 		handlerFuncName(a.handleClearMCPToolsCache): AuditEventClearMCPToolsCache,
 		handlerFuncName(a.handleUpdatePluginServer): AuditEventUpdateMCPPluginServer,
 

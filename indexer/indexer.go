@@ -32,6 +32,11 @@ type Indexer struct {
 	storeRetryAttempts  int
 	storeRetryBaseDelay time.Duration
 	heartbeatInterval   time.Duration
+
+	// beforePersistModelInfo, if set, runs after the job is marked complete
+	// and before model metadata is written. Tests use it to change live
+	// config while the worker is still in persist.
+	beforePersistModelInfo func()
 }
 
 func New(
@@ -131,54 +136,21 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 // If clearIndex is true, the existing index will be cleared before reindexing.
 // If clearIndex is false, the job will resume from where it left off (if applicable).
 func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
-	// Check if search is initialized
 	if s.getSearch == nil || s.getSearch() == nil {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
-	// Optimistic check before acquiring mutex
-	var jobStatus JobStatus
-	err := s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	if isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
-
-	// Acquire cluster mutex for job start
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
+	sess, err := s.beginExclusiveJob()
 	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
+		return s.exclusiveJobConflict(err)
 	}
-	mtx.Lock()
-	defer mtx.Unlock()
+	defer sess.Unlock()
 
-	// Re-read under the mutex. Reset on not-found so the optimistic-read
-	// snapshot can't leak into the resume carry-over.
-	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	hasExisting := err == nil
-	if !hasExisting {
-		jobStatus = JobStatus{}
-	}
-	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
+	if !clearIndex && sess.hasExisting && sess.existing.isRebuild() {
+		return JobStatus{}, ErrCannotResumeRebuild
 	}
 
-	// Capture cutoff timestamp BEFORE counting posts to prevent race gap
-	// Posts created after this point will be caught by the catch-up pass
 	cutoffTimestamp := time.Now().UnixMilli()
-
-	// Get an estimate of total posts for progress tracking
-	var count int64
-	dbErr := s.db.Get(&count, `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`, cutoffTimestamp)
-	if dbErr != nil {
-		s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
-		count = 0 // Continue with zero estimate
-	}
 
 	newJobStatus := JobStatus{
 		JobID:     model.NewId(),
@@ -186,45 +158,52 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		StartedAt: time.Now(),
 		Resumable: !clearIndex,
 		NodeID:    s.getNodeID(),
+		Operation: JobOperationReindex,
 	}
 
-	// When resuming, preserve CutoffAt, TotalRows, ProcessedRows, and the
-	// start-time model snapshot from the previous job so the UI shows
-	// accurate progress and completion unlocks the model actually indexed.
-	if !clearIndex && hasExisting {
-		newJobStatus.TotalRows = jobStatus.TotalRows
-		newJobStatus.CutoffAt = jobStatus.CutoffAt
-		newJobStatus.ProcessedRows = jobStatus.ProcessedRows
-		newJobStatus.ModelInfo = jobStatus.ModelInfo
+	if !clearIndex && sess.hasExisting {
+		newJobStatus.TotalRows = sess.existing.TotalRows
+		newJobStatus.CutoffAt = sess.existing.CutoffAt
+		newJobStatus.ProcessedRows = sess.existing.ProcessedRows
+		newJobStatus.ModelInfo = sess.existing.ModelInfo
+		newJobStatus.RetentionFloor = sess.existing.RetentionFloor
+		newJobStatus.IndexRetentionDays = sess.existing.IndexRetentionDays
+		if sess.existing.isCatchUp() {
+			newJobStatus.Operation = JobOperationCatchUp
+			if identErr := s.errIfCatchUpIncompatible(s.getModelInfoFromConfig()); identErr != nil {
+				return JobStatus{}, identErr
+			}
+		}
 	} else {
-		// Fresh start - calculate new values and snapshot current model.
+		snap := s.snapshotRetention(cutoffTimestamp)
+		count, dbErr := s.countIndexablePosts(cutoffTimestamp, snap.floor, false)
+		if dbErr != nil {
+			s.pluginAPI.LogWarn("Failed to get post count for progress tracking", "error", dbErr)
+			count = 0
+		}
 		newJobStatus.TotalRows = count
 		newJobStatus.CutoffAt = cutoffTimestamp
-		newJobStatus.ModelInfo = s.getModelInfoFromConfig()
+		newJobStatus.ModelInfo = snap.model
+		newJobStatus.RetentionFloor = snap.floor
+		newJobStatus.IndexRetentionDays = snap.days
 	}
 
-	// CAS routes through master; the predicate rejects the write if the row
-	// changed since our read, even when that read came from a stale replica.
-	var oldValue interface{}
-	if hasExisting {
-		oldValue = jobStatus
-	}
-	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
-	}
-	if !ok {
-		return JobStatus{}, fmt.Errorf("job already running")
+	if err := sess.commit(s, newJobStatus); err != nil {
+		return s.exclusiveJobConflict(err)
 	}
 
-	// Clear cursor if doing a fresh reindex
 	if clearIndex {
 		if err := s.pluginAPI.KVDelete(IndexerCursorKey); err != nil {
 			return JobStatus{}, fmt.Errorf("failed to clear reindex cursor: %w", err)
 		}
 	}
 
-	// Claim deferred-index ownership before start; fail if lifecycle unknown.
+	if newJobStatus.isCatchUp() {
+		returnStatus := newJobStatus
+		go s.runCatchUpJob(&newJobStatus)
+		return returnStatus, nil
+	}
+
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
@@ -237,9 +216,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 		return JobStatus{}, deferErr
 	}
 
-	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Start the reindexing job in background
 	go s.runReindexJob(&newJobStatus, clearIndex, deferRun)
 
 	return returnStatus, nil
@@ -310,6 +287,10 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 
 // shouldIndexPost returns whether a post should be indexed based on consistent criteria
 func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool {
+	return s.shouldIndexPostWithFloor(post, channel, s.retentionFloorNow())
+}
+
+func (s *Indexer) shouldIndexPostWithFloor(post *model.Post, channel *model.Channel, floor int64) bool {
 	// Skip posts that don't have content (message or attachments)
 	if post.Message == "" && len(post.Attachments()) == 0 {
 		return false
@@ -335,6 +316,10 @@ func (s *Indexer) shouldIndexPost(post *model.Post, channel *model.Channel) bool
 		return false
 	}
 
+	if floor > 0 && post.CreateAt < floor {
+		return false
+	}
+
 	return true
 }
 
@@ -344,75 +329,49 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 		return JobStatus{}, fmt.Errorf("search functionality is not configured")
 	}
 
-	// Get last indexed timestamp
 	lastIndexed := s.getLastIndexedTimestamp()
 	if lastIndexed == 0 {
 		return JobStatus{}, fmt.Errorf("no previous index found, run a full reindex first")
 	}
 
-	// Acquire cluster mutex
-	mtx, err := cluster.NewMutex(s.clusterMutex, "ai_reindex_job")
+	sess, err := s.beginExclusiveJob()
 	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to create mutex: %w", err)
+		return s.exclusiveJobConflict(err)
 	}
-	mtx.Lock()
-	defer mtx.Unlock()
+	defer sess.Unlock()
 
-	var jobStatus JobStatus
-	err = s.pluginAPI.KVGet(ReindexJobKey, &jobStatus)
-	if err != nil && !mmapi.IsKVNotFound(err) {
-		return JobStatus{}, fmt.Errorf("failed to check job status: %w", err)
-	}
-	hasExisting := err == nil
-	if !hasExisting {
-		jobStatus = JobStatus{}
-	}
-	if hasExisting && isActiveJob(&jobStatus) && !s.isJobStale(&jobStatus) {
-		return jobStatus, fmt.Errorf("job already running")
-	}
-
-	// Capture cutoff timestamp for catch-up
 	cutoffTimestamp := time.Now().UnixMilli()
+	snap := s.snapshotRetention(cutoffTimestamp)
+	if identErr := s.errIfCatchUpIncompatible(snap.model); identErr != nil {
+		return JobStatus{}, identErr
+	}
 
-	// Count posts to catch up
-	var count int64
-	err = s.db.Get(&count, `
-		SELECT COUNT(*) FROM Posts
-		WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''
-		AND CreateAt > $1`, lastIndexed)
+	count, err := s.countIndexablePosts(cutoffTimestamp, snap.floor, true)
 	if err != nil {
 		s.pluginAPI.LogWarn("Failed to get catch-up post count", "error", err)
 	}
 
 	newJobStatus := JobStatus{
-		JobID:     model.NewId(),
-		Status:    JobStatusRunning,
-		StartedAt: time.Now(),
-		TotalRows: count,
-		Resumable: true,
-		NodeID:    s.getNodeID(),
-		CutoffAt:  cutoffTimestamp,
+		JobID:              model.NewId(),
+		Status:             JobStatusRunning,
+		StartedAt:          time.Now(),
+		TotalRows:          count,
+		Resumable:          true,
+		NodeID:             s.getNodeID(),
+		CutoffAt:           cutoffTimestamp,
+		Operation:          JobOperationCatchUp,
+		RetentionFloor:     snap.floor,
+		IndexRetentionDays: snap.days,
 	}
 
-	var oldValue interface{}
-	if hasExisting {
-		oldValue = jobStatus
-	}
-	ok, err := s.pluginAPI.KVCompareAndSet(ReindexJobKey, oldValue, newJobStatus)
-	if err != nil {
-		return JobStatus{}, fmt.Errorf("failed to save job status: %w", err)
-	}
-	if !ok {
-		return JobStatus{}, fmt.Errorf("job already running")
+	if err := sess.commit(s, newJobStatus); err != nil {
+		return s.exclusiveJobConflict(err)
 	}
 
-	// Set cursor to start from last indexed timestamp
-	s.saveCursor(Cursor{LastCreateAt: lastIndexed, LastID: ""})
+	s.saveCursor(Cursor{LastCreateAt: snap.floor, LastID: ""})
 
-	// Snapshot status for return value before the background job mutates newJobStatus.
 	returnStatus := newJobStatus
-	// Catch-up never defers the index (small tail only); ModelInfo stays nil.
-	go s.runReindexJob(&newJobStatus, false, nil)
+	go s.runCatchUpJob(&newJobStatus)
 
 	return returnStatus, nil
 }
@@ -426,6 +385,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	result := HealthCheckResult{
 		CheckedAt: time.Now(),
 	}
+	floor := s.retentionFloorAt(result.CheckedAt.UnixMilli())
 
 	// Surface deferred-index ownership (explains search unavailability).
 	if state, stateErr := s.loadVectorIndexState(); stateErr == nil && state != nil {
@@ -462,6 +422,10 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 			args = append(args, "%"+botID+"%")
 		}
 		query += " AND NOT (c.Type = 'D' AND (" + strings.Join(likeConditions, " OR ") + "))"
+		if floor > 0 {
+			query += " AND p.CreateAt >= ?"
+			args = append(args, floor)
+		}
 
 		query = s.db.Rebind(query)
 		err = s.db.GetContext(ctx, &result.DBPostCount, query, args...)
@@ -471,9 +435,15 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 			return result, err
 		}
 	} else {
-		err := s.db.GetContext(ctx, &result.DBPostCount, `
+		query := `
 			SELECT COUNT(*) FROM Posts
-			WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''`)
+			WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = ''`
+		var args []any
+		if floor > 0 {
+			query += " AND CreateAt >= $1"
+			args = append(args, floor)
+		}
+		err := s.db.GetContext(ctx, &result.DBPostCount, query, args...)
 		if err != nil {
 			result.Error = fmt.Sprintf("failed to count DB posts: %v", err)
 			result.Status = "error"
@@ -482,7 +452,7 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	}
 
 	// Count posts in index
-	indexedCount, err := s.countIndexedPosts(ctx)
+	indexedCount, err := s.countIndexedPosts(ctx, floor)
 	if err != nil {
 		result.Error = fmt.Sprintf("failed to count indexed posts: %v", err)
 		result.Status = "error"
@@ -514,14 +484,31 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 }
 
 // countIndexedPosts counts unique posts in the vector store
-func (s *Indexer) countIndexedPosts(ctx context.Context) (int64, error) {
+func (s *Indexer) countIndexedPosts(ctx context.Context, floor int64) (int64, error) {
+	query := `SELECT COUNT(DISTINCT post_id) FROM llm_posts_embeddings`
+	var args []any
+	if floor > 0 {
+		query += ` WHERE created_at >= $1`
+		args = append(args, floor)
+	}
 	var count int64
-	err := s.db.GetContext(ctx, &count, `
-		SELECT COUNT(DISTINCT post_id) FROM llm_posts_embeddings`)
+	err := s.db.GetContext(ctx, &count, query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (s *Indexer) countIndexablePosts(cutoff, floor int64, skipExisting bool) (int64, error) {
+	query := `SELECT COUNT(*) FROM Posts WHERE DeleteAt = 0 AND (Message != '' OR Props::text LIKE '%"attachments"%') AND Type = '' AND CreateAt <= $1`
+	args := []any{cutoff}
+	if skipExisting {
+		query += ` AND NOT EXISTS (SELECT 1 FROM llm_posts_embeddings e WHERE e.post_id = Posts.Id)`
+	}
+	query, args = appendCreateAtFloor(query, args, floor, "CreateAt")
+	var count int64
+	err := s.db.Get(&count, query, args...)
+	return count, err
 }
 
 // SaveModelInfo stores the current model configuration
@@ -537,8 +524,16 @@ func (s *Indexer) GetModelInfo() (ModelInfo, error) {
 	return info, err
 }
 
-// CheckModelCompatibility checks if current config matches the indexed model
-func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDimensions int, currentModelName string) ModelCompatibility {
+// CheckModelCompatibility checks if current config matches the indexed model.
+// Missing stored fields (including hnsw_m == 0, empty vector element type,
+// and a missing index-retention window) are treated as compatible so upgrades
+// do not nag. An HNSW m change needs an index rebuild but search stays
+// compatible. A stored vector element type that differs from current is the
+// same class as a dimension mismatch: search is incompatible and a Full
+// Reindex is required. Widening the retention window needs Catch Up (search
+// stays on); tightening is write-only, so already-indexed posts stay
+// searchable and no Catch Up is required.
+func (s *Indexer) CheckModelCompatibility(current ModelInfo) ModelCompatibility {
 	storedInfo, err := s.GetModelInfo()
 	if err != nil || (storedInfo.Dimensions == 0 && storedInfo.ModelName == "") {
 		// No stored info means this is a fresh install or no previous index
@@ -550,35 +545,69 @@ func (s *Indexer) CheckModelCompatibility(currentProviderType string, currentDim
 
 	// Always include stored values so frontend can do client-side comparison
 	result := ModelCompatibility{
-		StoredProviderType: storedInfo.ProviderType,
-		StoredDimensions:   storedInfo.Dimensions,
-		StoredModelName:    storedInfo.ModelName,
+		StoredProviderType:       storedInfo.ProviderType,
+		StoredDimensions:         storedInfo.Dimensions,
+		StoredModelName:          storedInfo.ModelName,
+		StoredHNSWM:              storedInfo.HNSWM,
+		StoredVectorElementType:  storedInfo.VectorElementType,
+		StoredIndexRetentionDays: storedInfo.IndexRetentionDays,
 	}
 
-	if storedInfo.ProviderType != "" && currentProviderType != "" && storedInfo.ProviderType != currentProviderType {
+	if storedInfo.ProviderType != "" && current.ProviderType != "" && storedInfo.ProviderType != current.ProviderType {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("provider changed: stored=%s, current=%s", storedInfo.ProviderType, currentProviderType)
+		result.Reason = fmt.Sprintf("provider changed: stored=%s, current=%s", storedInfo.ProviderType, current.ProviderType)
 		return result
 	}
 
-	if storedInfo.Dimensions != currentDimensions {
+	if storedInfo.Dimensions != current.Dimensions {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, currentDimensions)
+		result.Reason = fmt.Sprintf("dimension mismatch: stored=%d, current=%d", storedInfo.Dimensions, current.Dimensions)
 		return result
 	}
 
-	if storedInfo.ModelName != currentModelName && currentModelName != "" {
+	currentElementType := embeddings.NormalizeVectorElementType(current.VectorElementType)
+	if storedInfo.VectorElementType != "" && storedInfo.VectorElementType != currentElementType {
 		result.Compatible = false
 		result.NeedsReindex = true
-		result.Reason = fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, currentModelName)
+		result.Reason = fmt.Sprintf("vector element type changed: stored=%s, current=%s", storedInfo.VectorElementType, currentElementType)
+		return result
+	}
+
+	if storedInfo.ModelName != current.ModelName && current.ModelName != "" {
+		result.Compatible = false
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("model changed: stored=%s, current=%s", storedInfo.ModelName, current.ModelName)
 		return result
 	}
 
 	result.Compatible = true
 	result.NeedsReindex = false
+	if storedInfo.HNSWM != 0 && storedInfo.HNSWM != current.HNSWM {
+		result.NeedsReindex = true
+		result.Reason = fmt.Sprintf("hnsw m changed: stored=%d, current=%d", storedInfo.HNSWM, current.HNSWM)
+	}
+	applyRetentionCompatibility(&result, storedInfo.IndexRetentionDays, retentionDaysValue(current.IndexRetentionDays))
 	return result
+}
+
+func applyRetentionCompatibility(result *ModelCompatibility, storedDays *int, currentDays int) {
+	if storedDays == nil {
+		return
+	}
+	stored := *storedDays
+	switch {
+	case retentionWindowWider(currentDays, stored):
+		result.NeedsCatchUp = true
+		if result.Reason == "" {
+			result.Reason = fmt.Sprintf("index retention increased: stored=%d, current=%d", stored, currentDays)
+		}
+	case retentionWindowNarrower(currentDays, stored):
+		if result.Reason == "" {
+			result.Reason = "Lowering this does not remove already-indexed posts; they stay searchable. The new window applies to live indexing and the next Full Reindex or Catch Up. Run Full Reindex to drop history and reduce RAM."
+		}
+	}
 }
 
 // StaleJobThreshold is the duration after which a running job is considered stale
@@ -623,7 +652,7 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 
 	newStatus := jobStatus
 	newStatus.Status = JobStatusFailed
-	newStatus.Resumable = true
+	newStatus.Resumable = !jobStatus.isRebuild()
 	newStatus.Error = fmt.Sprintf("Job orphaned: heartbeat older than %s on node %q",
 		StaleJobThreshold, jobStatus.NodeID)
 	newStatus.CompletedAt = time.Now()
@@ -644,16 +673,18 @@ func (s *Indexer) MarkOrphanedJobAsFailed() error {
 	return nil
 }
 
-// getModelInfoFromConfig builds ModelInfo from the current configuration
+// getModelInfoFromConfig builds ModelInfo from a single config read.
 func (s *Indexer) getModelInfoFromConfig() *ModelInfo {
-	if s.configGetter == nil {
+	return s.snapshotRetention(time.Now().UnixMilli()).model
+}
+
+func (s *Indexer) errIfCatchUpIncompatible(current *ModelInfo) error {
+	if current == nil {
 		return nil
 	}
-
-	cfg := s.configGetter()
-	return &ModelInfo{
-		ProviderType: cfg.GetProviderType(),
-		ModelName:    cfg.GetModelName(),
-		Dimensions:   cfg.Dimensions,
+	compat := s.CheckModelCompatibility(*current)
+	if !compat.Compatible {
+		return fmt.Errorf("%w: %s", ErrCatchUpIncompatible, compat.Reason)
 	}
+	return nil
 }

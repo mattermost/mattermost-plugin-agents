@@ -129,7 +129,7 @@ func TestStoreBatchWithRetry(t *testing.T) {
 					return nil
 				}).Maybe()
 
-			err := idx.storeBatchWithRetry(context.Background(), mockSearch, tt.posts)
+			err := idx.storeBatchWithRetry(context.Background(), mockSearch, tt.posts, 0)
 
 			if tt.wantErr {
 				require.Error(t, err)

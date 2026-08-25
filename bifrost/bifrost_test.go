@@ -1989,6 +1989,57 @@ func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T
 	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
 }
 
+func TestNewFromServiceConfig_BotModelOverrideCapsOutputTokens(t *testing.T) {
+	tests := []struct {
+		name              string
+		serviceTokenLimit int
+		expectedMaxTokens int
+	}{
+		{
+			name:              "caps service limit to bot model limit",
+			serviceTokenLimit: 128000,
+			expectedMaxTokens: 64000,
+		},
+		{
+			name:              "preserves lower service limit",
+			serviceTokenLimit: 32000,
+			expectedMaxTokens: 32000,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := llm.ServiceConfig{
+				ID:               "svc-anthropic",
+				Type:             llm.ServiceTypeAnthropic,
+				APIKey:           "anthropic-key",
+				DefaultModel:     "claude-sonnet-4-6",
+				OutputTokenLimit: tt.serviceTokenLimit,
+			}
+			bot := llm.BotConfig{
+				ServiceID: service.ID,
+				Model:     "claude-haiku-4-5-20251001",
+			}
+
+			llmInstance, err := NewFromServiceConfig(service, bot, nil)
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			cfg := llmInstance.createConfig(nil)
+			bifrostReq := llmInstance.convertToBifrostRequest(llm.CompletionRequest{
+				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+			}, cfg)
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+			anthropicReq, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
+			require.NoError(t, err)
+			assert.Equal(t, bot.Model, anthropicReq.Model)
+			assert.Equal(t, tt.expectedMaxTokens, anthropicReq.MaxTokens)
+		})
+	}
+}
+
 // chatCompletionSSE writes a minimal OpenAI-style streaming chat completion
 // response carrying the given content. bifrost.LLM issues streaming requests
 // under the hood even for ChatCompletionNoStream (see TestEnvProxyRouting).

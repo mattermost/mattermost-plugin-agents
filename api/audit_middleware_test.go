@@ -232,6 +232,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventReindexPosts, method: http.MethodPost, path: "/admin/reindex"},
 		{event: AuditEventCancelReindexJob, method: http.MethodPost, path: "/admin/reindex/cancel"},
 		{event: AuditEventCatchUpReindex, method: http.MethodPost, path: "/admin/reindex/catchup"},
+		{event: AuditEventRebuildVectorIndex, method: http.MethodPost, path: "/admin/reindex/rebuild-vector-index"},
 		{event: AuditEventClearMCPToolsCache, method: http.MethodPost, path: "/admin/mcp/tools/cache/clear"},
 		{event: AuditEventUpdateMCPPluginServer, method: http.MethodPut, path: "/admin/mcp/plugin-servers/some.plugin"},
 		{event: AuditEventCreateAgent, method: http.MethodPost, path: "/agents"},

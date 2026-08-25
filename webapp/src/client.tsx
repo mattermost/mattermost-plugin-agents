@@ -607,6 +607,23 @@ export async function catchUpIndex() {
     });
 }
 
+export async function rebuildVectorIndex() {
+    const url = `${baseRoute()}/admin/reindex/rebuild-vector-index`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function checkIndexHealth() {
     const url = `${baseRoute()}/admin/reindex/health-check`;
     const response = await fetch(url, Client4.getOptions({

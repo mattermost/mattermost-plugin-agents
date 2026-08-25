@@ -18,7 +18,7 @@ import (
 )
 
 // newVectorStore creates a new vector store based on the provided configuration
-func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions int, skipVectorIndex bool) (embeddings.VectorStore, error) {
+func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions, hnswM int, vectorElementType string, skipVectorIndex bool) (embeddings.VectorStore, error) {
 	switch config.Type { //nolint:gocritic
 	case embeddings.VectorStoreTypePGVector:
 		pgVectorConfig := postgres.PGVectorConfig{
@@ -27,6 +27,10 @@ func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions in
 		if err := json.Unmarshal(config.Parameters, &pgVectorConfig); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal pgvector config: %w", err)
 		}
+		// Apply after unmarshal so a stale parameters blob cannot override
+		// top-level fields.
+		pgVectorConfig.HNSWM = hnswM
+		pgVectorConfig.VectorElementType = vectorElementType
 		pgVectorConfig.SkipVectorIndex = skipVectorIndex
 		return postgres.NewPGVector(db, pgVectorConfig)
 	}
@@ -135,7 +139,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 
 	switch cfg.Type { //nolint:gocritic
 	case embeddings.SearchTypeComposite:
-		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions, skipVectorIndex)
+		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions, cfg.GetHNSWM(), cfg.GetVectorElementType(), skipVectorIndex)
 		if err != nil {
 			return nil, err
 		}
