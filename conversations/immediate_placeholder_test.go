@@ -4,10 +4,12 @@
 package conversations_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -35,13 +37,21 @@ func assertConversationAttachedBeforeLLM(t *testing.T, client *fakeMMClient) {
 
 func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) {
 	tests := []struct {
-		name      string
-		configure func(*autoReplyTestEnv)
-		message   string
+		name           string
+		configure      func(*autoReplyTestEnv)
+		post           func(*autoReplyTestEnv) *model.Post
+		requesterID    string
+		rootID         string
+		respondingToID string
 	}{
 		{
-			name:    "explicit mention",
-			message: "@" + autoReplyBotUsername + " help me",
+			name: "explicit mention",
+			post: func(env *autoReplyTestEnv) *model.Post {
+				return env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" help me")
+			},
+			requesterID:    autoReplyUserID,
+			rootID:         autoReplyRootID,
+			respondingToID: autoReplyRootID,
 		},
 		{
 			name: "auto reply",
@@ -52,7 +62,32 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 					Mode:      autoreply.ModeRootPosts,
 				})
 			},
-			message: "help me",
+			post: func(env *autoReplyTestEnv) *model.Post {
+				return env.rootPost(autoReplyUserID, "help me")
+			},
+			requesterID:    autoReplyUserID,
+			rootID:         autoReplyRootID,
+			respondingToID: autoReplyRootID,
+		},
+		{
+			name: "thread mention",
+			post: func(env *autoReplyTestEnv) *model.Post {
+				return env.threadReply(autoReplyUserID, "@"+autoReplyBotUsername+" help me", false)
+			},
+			requesterID:    autoReplyUserID,
+			rootID:         autoReplyRootID,
+			respondingToID: autoReplyReplyID,
+		},
+		{
+			name: "bot activate ai mention",
+			post: func(env *autoReplyTestEnv) *model.Post {
+				post := env.rootPost(autoReplyForeignBotID, "@"+autoReplyBotUsername+" help me")
+				post.AddProp(conversations.ActivateAIProp, true)
+				return post
+			},
+			requesterID:    autoReplyForeignBotID,
+			rootID:         autoReplyRootID,
+			respondingToID: autoReplyRootID,
 		},
 	}
 
@@ -71,10 +106,10 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 					t,
 					env.mmClient.createdPosts[0],
 					autoReplyBotUserID,
-					autoReplyUserID,
+					tt.requesterID,
 					autoReplyChannelID,
-					autoReplyRootID,
-					autoReplyRootID,
+					tt.rootID,
+					tt.respondingToID,
 				)
 				require.Empty(t, allConversations(env.convStore), "placeholder must precede conversation persistence")
 			}
@@ -88,7 +123,7 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 				assertConversationAttachedBeforeLLM(t, env.mmClient)
 			}
 
-			env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, tt.message))
+			env.conversations.MessageHasBeenPosted(nil, tt.post(env))
 
 			require.True(t, mcpInvoked)
 			require.True(t, llmInvoked)
@@ -233,4 +268,16 @@ func TestMessagePostedUpdatesPlaceholderOnSetupFailure(t *testing.T) {
 			require.Contains(t, client.updatedPosts[len(client.updatedPosts)-1].Message, "An error occurred")
 		})
 	}
+}
+
+func TestMessagePostedUpdatesPlaceholderWhenConversationSetupFails(t *testing.T) {
+	env := setupAutoReplyTestEnv(t, []llm.BotConfig{autoReplyBotConfig()})
+	env.convStore.lookupErr = errors.New("conversation lookup failed")
+
+	env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" help"))
+
+	require.Len(t, env.mmClient.createdPosts, 1)
+	require.Len(t, env.mmClient.updatedPosts, 1)
+	require.Empty(t, env.mmClient.updatedPosts[0].GetProp(streaming.ConversationIDProp))
+	require.Contains(t, env.mmClient.updatedPosts[0].Message, "An error occurred")
 }

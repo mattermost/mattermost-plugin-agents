@@ -35,6 +35,7 @@ type fakeConvStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn // keyed by conversationID
 	allTurns      map[string]*store.Turn  // keyed by turn ID
+	lookupErr     error
 }
 
 func newFakeConvStore() *fakeConvStore {
@@ -75,6 +76,9 @@ func (s *fakeConvStore) GetConversation(id string) (*store.Conversation, error) 
 func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
 	for _, conv := range s.conversations {
 		if conv.RootPostID != nil && *conv.RootPostID == rootPostID &&
 			conv.BotID == botID && conv.UserID == userID && conv.DeleteAt == 0 {
