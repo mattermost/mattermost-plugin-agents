@@ -4,6 +4,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -46,6 +47,8 @@ func TestMCPConfigValidateDuplicates(t *testing.T) {
 		conflictIndexes  []int
 		conflictReasons  []MCPServerConflictReason
 		errorMustContain []string
+		// errorLineCount, when set, asserts how many collisions were reported.
+		errorLineCount int
 	}{
 		{
 			name: "distinct names and urls are valid",
@@ -87,9 +90,11 @@ func TestMCPConfigValidateDuplicates(t *testing.T) {
 				{Name: "Alpha", BaseURL: "https://MCP.Example.com:443/mcp/"},
 				{Name: "Beta", BaseURL: "https://mcp.example.com/mcp"},
 			},
-			conflictIndexes:  []int{0, 1},
-			conflictReasons:  []MCPServerConflictReason{MCPServerConflictDuplicateURL, MCPServerConflictDuplicateURL},
-			errorMustContain: []string{"is used by more than one server"},
+			conflictIndexes: []int{0, 1},
+			conflictReasons: []MCPServerConflictReason{MCPServerConflictDuplicateURL, MCPServerConflictDuplicateURL},
+			// Reported once, against the canonical endpoint both entries share.
+			errorMustContain: []string{`endpoint "https://mcp.example.com/mcp" is configured on more than one server`},
+			errorLineCount:   1,
 		},
 		{
 			name: "reordered query parameters are rejected as duplicates",
@@ -148,6 +153,9 @@ func TestMCPConfigValidateDuplicates(t *testing.T) {
 
 			for _, substring := range tc.errorMustContain {
 				require.Contains(t, err.Error(), substring)
+			}
+			if tc.errorLineCount > 0 {
+				require.Len(t, strings.Split(err.Error(), "\n"), tc.errorLineCount)
 			}
 		})
 	}

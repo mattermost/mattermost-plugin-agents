@@ -44,7 +44,9 @@ func (c MCPServerConflict) Error() string {
 	case MCPServerConflictDuplicateName:
 		return fmt.Sprintf("%v: name %q is used by more than one server", ErrDuplicateMCPServer, c.Name)
 	case MCPServerConflictDuplicateURL:
-		return fmt.Sprintf("%v: URL %q is used by more than one server", ErrDuplicateMCPServer, c.BaseURL)
+		// Named by its canonical form: that is what the entries collide on, and
+		// it is the same text for every member of the group.
+		return fmt.Sprintf("%v: endpoint %q is configured on more than one server", ErrDuplicateMCPServer, CanonicalMCPEndpointURL(c.BaseURL))
 	default:
 		return fmt.Sprintf("%v: server %q", ErrDuplicateMCPServer, c.Name)
 	}
@@ -52,6 +54,15 @@ func (c MCPServerConflict) Error() string {
 
 func (c MCPServerConflict) Unwrap() error {
 	return ErrDuplicateMCPServer
+}
+
+// conflictKey identifies the colliding group, so a collision can be reported
+// once instead of once per member.
+func (c MCPServerConflict) conflictKey() string {
+	if c.Reason == MCPServerConflictDuplicateURL {
+		return string(c.Reason) + "\x00" + CanonicalMCPEndpointURL(c.BaseURL)
+	}
+	return string(c.Reason) + "\x00" + strings.TrimSpace(c.Name)
 }
 
 // CanonicalMCPEndpointURL returns a comparable form of an MCP endpoint URL:
@@ -175,15 +186,15 @@ func (c MCPConfig) Validate() error {
 	}
 
 	// One error per colliding value rather than per colliding entry: repeating
-	// the same message for every member of a group is just noise.
+	// the same collision for every member of a group is just noise.
 	seen := make(map[string]bool, len(conflicts))
 	var err error
 	for _, conflict := range conflicts {
-		message := conflict.Error()
-		if seen[message] {
+		key := conflict.conflictKey()
+		if seen[key] {
 			continue
 		}
-		seen[message] = true
+		seen[key] = true
 		err = errors.Join(err, conflict)
 	}
 	return err

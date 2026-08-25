@@ -259,7 +259,7 @@ func TestHandleGetMCPToolsSurfacesDuplicateServerConflicts(t *testing.T) {
 					{Name: "Duplicate Two", BaseURL: dupOne.URL + "/", Enabled: true},
 				}
 			},
-			expectMessage: "is used by more than one server",
+			expectMessage: "is configured on more than one server",
 		},
 	}
 
