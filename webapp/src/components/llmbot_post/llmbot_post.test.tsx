@@ -8,6 +8,7 @@ import {useSelector} from 'react-redux';
 
 import {useConversation} from '@/hooks/use_conversation';
 import {PluginWebSocketMessage} from '@/types';
+import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import {MAX_SEARCH_SOURCES} from '../search_sources';
 
@@ -92,6 +93,67 @@ function makePost(message = '', props: Record<string, unknown> = {}) {
             ...props,
         },
     };
+}
+
+function makeTurn(overrides: Partial<Turn> = {}): Turn {
+    return {
+        id: 'turn_1',
+        post_id: 'post_1',
+        role: 'assistant',
+        content: [],
+        tokens_in: 0,
+        tokens_out: 0,
+        sequence: 1,
+        ...overrides,
+    };
+}
+
+function makeConversation(turns: Turn[]): ConversationResponse {
+    return {
+        id: WELL_FORMED_ID,
+        user_id: 'user_1',
+        bot_id: 'bot_1',
+        channel_id: 'channel_1',
+        root_post_id: 'root_1',
+        title: '',
+        operation: 'conversation',
+        turns,
+    };
+}
+
+function makeToolOnlyConversation(
+    approvalState: NonNullable<Turn['approval_state']>,
+    toolStatus: 'rejected' | 'pending',
+): ConversationResponse {
+    const assistantTurn = makeTurn({
+        post_id: 'post_1',
+        approval_state: approvalState,
+        content: [{
+            type: 'tool_use',
+            id: 'tc_1',
+            name: 'mattermost__get_channel_info',
+            status: toolStatus,
+        }],
+    });
+
+    if (toolStatus !== 'rejected') {
+        return makeConversation([assistantTurn]);
+    }
+
+    return makeConversation([
+        assistantTurn,
+        makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            role: 'tool_result',
+            sequence: 2,
+            content: [{
+                type: 'tool_result',
+                tool_use_id: 'tc_1',
+                content: 'Tool call rejected by user',
+            }],
+        }),
+    ]);
 }
 
 // Builds a search source entry with a unique well-formed post id.
@@ -267,6 +329,51 @@ describe('LLMBotPost server tool activity rendering', () => {
         await waitFor(() => {
             expect(screen.queryByText('Fetched example.com')).toBeNull();
         });
+    });
+});
+
+describe('LLMBotPost remount of empty-message tool-only posts', () => {
+    test.each([
+        {
+            name: 'rejected tool_use',
+            approvalState: 'done' as const,
+            toolStatus: 'rejected' as const,
+        },
+        {
+            name: 'pending tool_use',
+            approvalState: 'call' as const,
+            toolStatus: 'pending' as const,
+        },
+    ])('does not show Starting... when conversation already has a $name', ({approvalState, toolStatus}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeToolOnlyConversation(approvalState, toolStatus),
+            loading: false,
+            error: null,
+        });
+
+        renderPost(makePost());
+
+        expect(screen.queryByText('Starting...')).toBeNull();
+    });
+
+    test('still shows Starting... when the conversation is loaded but this post has no rounds yet', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({
+                    id: 'user_turn',
+                    post_id: 'root_1',
+                    role: 'user',
+                    sequence: 1,
+                    content: [{type: 'text', text: 'hello'}],
+                }),
+            ]),
+            loading: false,
+            error: null,
+        });
+
+        renderPost(makePost());
+
+        expect(screen.getByText('Starting...')).toBeTruthy();
     });
 });
 

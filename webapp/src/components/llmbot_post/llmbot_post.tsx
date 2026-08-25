@@ -432,6 +432,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     };
 
+    // Tool-only posts leave post.message empty, so precontent stays true on
+    // remount; hide Starting... once persisted or live rounds exist.
+    const showStarting = renderedRounds.length === 0 && (precontent || (conversationLoading && !generating));
+
     return (
         <PostBody
             data-testid='llm-bot-post'
@@ -447,7 +451,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {(precontent || (conversationLoading && !generating && renderedRounds.length === 0)) && (
+            {showStarting && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
