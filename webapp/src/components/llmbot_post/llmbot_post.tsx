@@ -433,8 +433,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     };
 
     // Tool-only posts leave post.message empty, so precontent stays true on
-    // remount; hide Starting... once persisted or live rounds exist.
-    const showStarting = renderedRounds.length === 0 && (precontent || (conversationLoading && !generating));
+    // remount. Hide Starting... once rounds exist, except while generation is
+    // actually resuming (continue/start still set precontent on purpose).
+    const showStarting =
+        (precontent && (generating || renderedRounds.length === 0)) ||
+        (conversationLoading && !generating && renderedRounds.length === 0);
 
     return (
         <PostBody

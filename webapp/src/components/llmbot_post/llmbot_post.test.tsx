@@ -365,7 +365,7 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
         expect(screen.queryByText('Starting...')).toBeNull();
     });
 
-    test('does not show Starting... after continue when persisted rounds already exist', () => {
+    test('shows Starting... after continue while generation resumes over persisted rounds', () => {
         mockUseConversation.mockReturnValue({
             conversation: makeToolOnlyConversation('call', 'pending', 'other_user'),
             loading: false,
@@ -386,7 +386,7 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'continue'}));
         });
 
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.getByText('Starting...')).toBeTruthy();
     });
 
     test('still shows Starting... when the conversation is loaded but this post has no rounds yet', () => {
