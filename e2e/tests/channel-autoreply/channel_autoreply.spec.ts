@@ -201,6 +201,46 @@ test.describe('Per-channel agent auto-reply', () => {
         }, { timeout: 45000, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
     });
 
+    test('off/unset: mixed-case @mention responds without an ephemeral reminder', async ({ page }) => {
+        test.setTimeout(120000);
+
+        const { client, botUser, channel } = await setupClientAndChannel('mixedcase');
+        const mmPage = new MattermostPage(page);
+        await mmPage.login(mattermost.url(), username, password);
+        await page.goto(`${mattermost.url()}/test/channels/${channel.name}`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 30000 });
+
+        const rootPost = await client.createPost({
+            channel_id: channel.id,
+            message: '@mock mixed-case mention test',
+        });
+        const firstReply = await mmPage.expectBotThreadReplyFromApi(
+            client, channel.id, botUser.id, rootPost.id, responseTestText,
+        );
+
+        await page.getByText('1 reply').click();
+        const replyBox = page.getByTestId('reply_textbox');
+        await replyBox.waitFor({ state: 'visible', timeout: 15000 });
+        await waitOutSkewWindow(firstReply);
+        const sinceMs = Date.now();
+        await replyBox.fill('@Mock try again');
+        await replyBox.press('Enter');
+
+        await expect.poll(async () => {
+            const postsResponse = await client.getPosts(channel.id, 0, 200);
+            return Object.values(postsResponse.posts || {}).filter(
+                (p) => p.user_id === botUser.id &&
+                    p.root_id === rootPost.id &&
+                    p.id !== firstReply.id &&
+                    p.create_at >= sinceMs - 5000 &&
+                    p.message.includes(responseTestText),
+            ).length;
+        }, { timeout: 45000, intervals: [500, 1000, 2000] }).toBeGreaterThan(0);
+        await expect(
+            page.locator('#rhsContainer').getByText('To respond to an agent you must @mention them.'),
+        ).not.toBeVisible();
+    });
+
     test('off/unset: no auto-reply, and the @mention ephemeral reminder is unchanged', async ({ page }) => {
         test.setTimeout(120000);
 

@@ -126,7 +126,7 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 		name            string
 		channel         *model.Channel
 		previousUserID  string
-		replyHasMention bool
+		replyMessage    string
 		replyHasRootID  bool
 		expectEphemeral bool
 	}{
@@ -134,7 +134,6 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "thread reply after agent post triggers reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen},
 			previousUserID:  reminderBotID,
-			replyHasMention: false,
 			replyHasRootID:  true,
 			expectEphemeral: true,
 		},
@@ -142,7 +141,6 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "thread reply after human post does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen},
 			previousUserID:  reminderOtherUserID,
-			replyHasMention: false,
 			replyHasRootID:  true,
 			expectEphemeral: false,
 		},
@@ -150,7 +148,6 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "top-level post does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen},
 			previousUserID:  reminderBotID,
-			replyHasMention: false,
 			replyHasRootID:  false,
 			expectEphemeral: false,
 		},
@@ -158,7 +155,6 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "thread reply in DM channel does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeDirect},
 			previousUserID:  reminderBotID,
-			replyHasMention: false,
 			replyHasRootID:  true,
 			expectEphemeral: false,
 		},
@@ -166,7 +162,6 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "thread reply in group DM channel does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeGroup},
 			previousUserID:  reminderBotID,
-			replyHasMention: false,
 			replyHasRootID:  true,
 			expectEphemeral: false,
 		},
@@ -174,7 +169,15 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			name:            "thread reply that already mentions the bot does not trigger reminder",
 			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen},
 			previousUserID:  reminderBotID,
-			replyHasMention: true,
+			replyMessage:    "@" + reminderBotUsername + " thanks!",
+			replyHasRootID:  true,
+			expectEphemeral: false,
+		},
+		{
+			name:            "thread reply with mixed-case bot mention does not trigger reminder",
+			channel:         &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen},
+			previousUserID:  reminderBotID,
+			replyMessage:    "@Test-Bot thanks!",
 			replyHasRootID:  true,
 			expectEphemeral: false,
 		},
@@ -202,8 +205,8 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 			}
 
 			replyMessage := "thanks!"
-			if tc.replyHasMention {
-				replyMessage = "@" + reminderBotUsername + " thanks!"
+			if tc.replyMessage != "" {
+				replyMessage = tc.replyMessage
 			}
 			rootIDForReply := reminderRootID
 			if !tc.replyHasRootID {
