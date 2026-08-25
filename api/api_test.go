@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
@@ -55,6 +56,7 @@ type TestEnvironment struct {
 	conversationStore *mockConversationStore
 	agentStore        *mockAgentStore
 	mcp               *mockMCPClientManager
+	autoReplyStore    *fakeChannelAutoReplyStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -277,6 +279,54 @@ func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
 	m.discoverPluginToolsCallCount++
 	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
+}
+
+// fakeChannelAutoReplyStore is a hand-rolled in-memory implementation of
+// ChannelAutoReplyStore. Injectable errors exercise the handlers' status-code
+// mapping; setErr may wrap autoreply.ErrValidation to exercise the 400 path.
+type fakeChannelAutoReplyStore struct {
+	settings    map[string]*autoreply.Setting
+	setCalls    []autoreply.Setting
+	deleteCalls []string
+	getErr      error
+	setErr      error
+	deleteErr   error
+}
+
+func newFakeChannelAutoReplyStore() *fakeChannelAutoReplyStore {
+	return &fakeChannelAutoReplyStore{settings: make(map[string]*autoreply.Setting)}
+}
+
+func (f *fakeChannelAutoReplyStore) Get(channelID string) (*autoreply.Setting, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.settings[channelID], nil
+}
+
+func (f *fakeChannelAutoReplyStore) Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error) {
+	if f.setErr != nil {
+		return nil, f.setErr
+	}
+	setting := autoreply.Setting{
+		ChannelID: channelID,
+		BotID:     botID,
+		Mode:      mode,
+		UpdatedBy: updatedBy,
+		UpdateAt:  time.Now().UnixMilli(),
+	}
+	f.setCalls = append(f.setCalls, setting)
+	f.settings[channelID] = &setting
+	return &setting, nil
+}
+
+func (f *fakeChannelAutoReplyStore) Delete(channelID string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleteCalls = append(f.deleteCalls, channelID)
+	delete(f.settings, channelID)
+	return nil
 }
 
 type fakeMCPOAuthClusterNotifier struct {
@@ -600,6 +650,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
 	mcpMgr := newTestMCPClientManager(t)
+	autoReplyStore := newFakeChannelAutoReplyStore()
 
 	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
 	for i := 1; i <= 20; i++ {
@@ -667,6 +718,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockConvStore,
 		nil,
 		nil,
+		autoReplyStore,
 	)
 
 	return &TestEnvironment{
@@ -678,6 +730,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		conversationStore: mockConvStore,
 		agentStore:        agentStore,
 		mcp:               mcpMgr,
+		autoReplyStore:    autoReplyStore,
 	}
 }
 

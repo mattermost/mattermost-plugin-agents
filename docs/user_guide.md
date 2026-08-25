@@ -47,6 +47,20 @@ If multiple agents are configured for your Mattermost workspace, select your pre
 
 You can also @mention a specific agent by name in channels.
 
+### Channel auto-reply
+
+Channel members with permission to manage channel settings can configure one agent to reply automatically in a channel, without being @mentioned. Auto-reply supports three modes, matching the options in the channel settings UI:
+
+- **Off** (default): The agent replies only when @mentioned or in direct messages.
+- **Top-level posts only**: The agent automatically replies to each new top-level post, starting a thread. Further replies in that thread still require an @mention (or the "loop in" link).
+- **Threads too**: Everything above, plus the agent automatically replies to every non-bot reply in the channel's threads.
+
+To configure auto-reply, select the channel name to open the channel dropdown, select **Channel Settings**, and open the **Agents** tab. Choose the auto-reply mode and the auto-replying agent, then select **Save**. The tab appears only in public and private channels (not direct or group messages), only for users with the channel-management permission, and only when at least one agent is available in the channel.
+
+An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
+
+> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+
 ### Use custom prompt templates
 
 Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.

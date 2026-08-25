@@ -10,11 +10,13 @@ import manifest from './manifest';
 
 import {
     doLoopInAgent,
+    getChannelAutoReply,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
     searchAllChannels,
     setSiteURL,
+    updateChannelAutoReply,
     updateRead,
 } from './client';
 
@@ -43,7 +45,18 @@ jest.mock('@mattermost/client', () => {
                 return {...options, headers: {'X-Requested-With': 'XMLHttpRequest'}};
             }
         },
-        ClientError: class extends Error {},
+
+        // Carries status_code like the real ClientError so callers can assert on it.
+        ClientError: class extends Error {
+            status_code?: number;
+            url?: string;
+
+            constructor(baseUrl: string, data?: {message?: string; status_code?: number; url?: string}) {
+                super(data?.message ?? '');
+                this.status_code = data?.status_code;
+                this.url = data?.url;
+            }
+        },
         mockSearchAllChannels,
         mockUpdateThreadReadForUser,
     };
@@ -225,6 +238,59 @@ describe('doLoopInAgent', () => {
         await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('getChannelAutoReply', () => {
+    test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
+        const body = {bot_id: 'bot-1', mode: 'threads'};
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test('percent-encodes the channel id so it occupies a single path segment', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+
+        await getChannelAutoReply('cha/nnel');
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/cha%2Fnnel/autoreply`);
+    });
+
+    test.each([403, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('updateChannelAutoReply', () => {
+    test('issues a PUT with exactly the settings payload and resolves without reading the body', async () => {
+        const json = jest.fn();
+        mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+        }));
+        expect(json).not.toHaveBeenCalled();
+    });
+
+    test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
     });
 });
 

@@ -21,7 +21,7 @@ func userIsMentioned(text, botUsername string) bool {
 			continue
 		}
 
-		if strings.Trim(word, ":.-_") == "@"+botUsername {
+		if strings.EqualFold(strings.Trim(word, ":.-_"), "@"+botUsername) {
 			return true
 		}
 	}

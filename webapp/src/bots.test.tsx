@@ -12,9 +12,12 @@ import {
     getSelectedAgentId,
     useBotlist,
     useBotlistForChannel,
+    fetchAndStoreBots,
+    filterBotsByChannelAccess,
     LLMBot,
 } from './bots';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
+import {BotsHandler} from './redux';
 import manifest from './manifest';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
@@ -199,6 +202,73 @@ describe('useBotlist setActiveBot persistence', () => {
         act(() => result.current.setActiveBot(null));
 
         expect(mockSavePreferences).not.toHaveBeenCalled();
+    });
+});
+
+describe('filterBotsByChannelAccess', () => {
+    const all = makeBot('all', {channelAccessLevel: ChannelAccessLevel.All});
+    const allowIn = makeBot('allow-in', {channelAccessLevel: ChannelAccessLevel.Allow, channelIDs: ['chan']});
+    const allowOut = makeBot('allow-out', {channelAccessLevel: ChannelAccessLevel.Allow, channelIDs: ['other']});
+    const blockIn = makeBot('block-in', {channelAccessLevel: ChannelAccessLevel.Block, channelIDs: ['chan']});
+    const blockOut = makeBot('block-out', {channelAccessLevel: ChannelAccessLevel.Block, channelIDs: ['other']});
+    const none = makeBot('none', {channelAccessLevel: ChannelAccessLevel.None});
+
+    test('keeps All-access bots regardless of channel membership', () => {
+        expect(filterBotsByChannelAccess([all], 'chan').map((b) => b.id)).toEqual(['all']);
+        expect(filterBotsByChannelAccess([all], 'anything-else').map((b) => b.id)).toEqual(['all']);
+    });
+
+    test('Allow requires the channel to be listed in channelIDs', () => {
+        expect(filterBotsByChannelAccess([allowIn, allowOut], 'chan').map((b) => b.id)).toEqual(['allow-in']);
+    });
+
+    test('Block excludes the channels listed in channelIDs', () => {
+        expect(filterBotsByChannelAccess([blockIn, blockOut], 'chan').map((b) => b.id)).toEqual(['block-out']);
+    });
+
+    test('None-access bots are always filtered out', () => {
+        expect(filterBotsByChannelAccess([none], 'chan')).toEqual([]);
+    });
+
+    test('treats null channelIDs as an empty list', () => {
+        const allowNull = makeBot('allow-null', {channelAccessLevel: ChannelAccessLevel.Allow, channelIDs: null});
+        const blockNull = makeBot('block-null', {channelAccessLevel: ChannelAccessLevel.Block, channelIDs: null});
+
+        expect(filterBotsByChannelAccess([allowNull, blockNull], 'chan').map((b) => b.id)).toEqual(['block-null']);
+    });
+
+    test('returns an empty array for an empty bot list', () => {
+        expect(filterBotsByChannelAccess([], 'chan')).toEqual([]);
+    });
+});
+
+describe('fetchAndStoreBots', () => {
+    test('dispatches the bots and feature flags, and returns the bots', async () => {
+        const bots = [makeBot('a')];
+        mockGetAIBots.mockResolvedValue({bots, searchEnabled: true, allowUnsafeLinks: 1});
+        const dispatch = jest.fn();
+
+        await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
+
+        expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_SEARCH_ENABLED', searchEnabled: true});
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_ALLOW_UNSAFE_LINKS', allowUnsafeLinks: true});
+    });
+
+    test('returns null and dispatches nothing when the response is falsy', async () => {
+        mockGetAIBots.mockResolvedValue(null);
+        const dispatch = jest.fn();
+
+        await expect(fetchAndStoreBots(dispatch)).resolves.toBeNull();
+
+        expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    test('propagates fetch failures to the caller', async () => {
+        const error = new Error('network');
+        mockGetAIBots.mockRejectedValue(error);
+
+        await expect(fetchAndStoreBots(jest.fn())).rejects.toBe(error);
     });
 });
 

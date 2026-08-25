@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -36,6 +37,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -64,6 +66,7 @@ type Plugin struct {
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
 	store                *store.Store
+	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
 }
 
@@ -232,6 +235,13 @@ func (p *Plugin) OnActivate() error {
 	}
 	migrateAndRefresh("activation")
 
+	autoreplyStore := autoreply.NewStore(dbClient)
+	autoreplyService := autoreply.NewService(autoreplyStore, bots, mmClient, p)
+	if loadCacheErr := autoreplyService.LoadCache(); loadCacheErr != nil {
+		return fmt.Errorf("failed to load channel auto-reply settings: %w", loadCacheErr)
+	}
+	p.autoreplyService = autoreplyService
+
 	prompts, promptManagerErr := llm.NewPrompts(prompts.PromptsFolder)
 	if promptManagerErr != nil {
 		pluginAPI.Log.Error("failed to initialize prompts", "error", promptManagerErr)
@@ -283,7 +293,14 @@ func (p *Plugin) OnActivate() error {
 	// compatible with the existing index.
 	searchAvailability.SetQueryAllowedFunc(func() bool {
 		cfg := p.configuration.EmbeddingSearchConfig()
-		return indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName()).Compatible
+		return indexerService.CheckModelCompatibility(indexer.ModelInfo{
+			ProviderType:       cfg.GetProviderType(),
+			Dimensions:         cfg.Dimensions,
+			ModelName:          cfg.GetModelName(),
+			HNSWM:              cfg.GetHNSWM(),
+			VectorElementType:  cfg.GetVectorElementType(),
+			IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		}).Compatible
 	})
 
 	// Mark any orphaned reindex jobs as failed (any node, staleness-based).
@@ -410,6 +427,7 @@ func (p *Plugin) OnActivate() error {
 
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
+	conversationsService.SetAutoReplySettings(autoreplyService)
 	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
@@ -478,6 +496,7 @@ func (p *Plugin) OnActivate() error {
 		p.store,
 		getSearchInitError,
 		customPromptsStore,
+		autoreplyService,
 	)
 
 	apiService.SetConversationService(convService)

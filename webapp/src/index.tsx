@@ -4,7 +4,7 @@
 import React from 'react';
 import {Store, UnknownAction} from 'redux';
 import styled from 'styled-components';
-import {FormattedMessage, createIntl} from 'react-intl';
+import {FormattedMessage, IntlShape, createIntl} from 'react-intl';
 
 import {GlobalState} from '@mattermost/types/store';
 import {CodeTagsIcon} from '@mattermost/compass-icons/components';
@@ -27,7 +27,7 @@ import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChanne
 
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
-import {BotsHandler, setupRedux} from './redux';
+import {setupRedux} from './redux';
 import UnreadsSummarize from './components/unreads_summarize';
 import {PostbackPost} from './components/postback_post';
 import {AgentMentionReminderPost} from './components/agent_mention_reminder_post';
@@ -43,7 +43,9 @@ import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
-import {useBotlist, resolveActiveBot, getSelectedAgentId} from './bots';
+import {useBotlist, resolveActiveBot, getSelectedAgentId, fetchAndStoreBots} from './bots';
+import {botsFromState, makeChannelAutoReplySchema} from './components/channel_settings/autoreply_schema';
+import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
@@ -52,7 +54,10 @@ import {isEnterpriseLicensedOrDevelopment} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
-function getAgentsProductLabel(store: WebappStore): string {
+// Static intl for plain-string labels computed outside React (product label,
+// channel-settings schema). Locale is resolved once at call time; a locale
+// switch without reload keeps old labels, matching the product-label precedent.
+function getStaticIntl(store: WebappStore): IntlShape {
     const state = store.getState() as any;
     const locale = state.entities?.i18n?.locale ?? 'en';
     let messages: Record<string, string>;
@@ -63,12 +68,15 @@ function getAgentsProductLabel(store: WebappStore): string {
         // eslint-disable-next-line global-require
         messages = require('./i18n/en.json');
     }
-    const intl = createIntl({
+    return createIntl({
         locale,
         messages,
         defaultLocale: 'en',
     });
-    return intl.formatMessage({defaultMessage: 'Agents'});
+}
+
+function getAgentsProductLabel(store: WebappStore): string {
+    return getStaticIntl(store).formatMessage({defaultMessage: 'Agents'});
 }
 
 const IconAIContainer = styled.img`
@@ -216,17 +224,19 @@ export default class Plugin {
             );
         };
 
-        const invalidateRuntimeBotsCache = () => {
-            store.dispatch({
-                type: BotsHandler,
-                bots: null,
-            } as any);
+        // Refetch in place rather than clearing first: the previous list stays
+        // readable until fresh data replaces it. A null window would be visible
+        // to the channel-settings tab's synchronous shouldRender, making the
+        // "Agents" tab disappear and reappear on every config change. A failed
+        // refetch leaves the stale list, which is preferable to no list.
+        const refreshRuntimeBotsCache = () => {
+            fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         };
 
-        registry.registerWebSocketEventHandler('config_changed', invalidateRuntimeBotsCache);
+        registry.registerWebSocketEventHandler('config_changed', refreshRuntimeBotsCache);
 
-        // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that invalidate so RHS dropdown refetches.
-        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', invalidateRuntimeBotsCache);
+        // Agent CRUD refreshes server-side bot cache but does not emit config_changed; mirror that refresh so RHS dropdown updates.
+        registry.registerWebSocketEventHandler('custom_mattermost-ai_bots_invalidate', refreshRuntimeBotsCache);
 
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);
@@ -248,6 +258,28 @@ export default class Plugin {
 
         registry.registerAdminConsoleCustomSetting('Config', Config);
         const agentsProductLabel = getAgentsProductLabel(store);
+
+        // Channel settings tab (Mattermost >= 11.10 only). The schema is built
+        // exactly once: the host re-runs hydration whenever the schema object
+        // reference changes, so it must stay stable for the plugin's lifetime.
+        if (registry.registerChannelSettingsTab) {
+            registry.registerChannelSettingsTab(makeChannelAutoReplySchema(store, getStaticIntl(store)));
+
+            // Re-sync an open settings modal when the setting changes remotely.
+            registry.registerWebSocketEventHandler(
+                'custom_mattermost-ai_channel_autoreply_updated',
+                (msg: PluginWebSocketMessage<ChannelAutoReplyUpdatedEvent>) => {
+                    handleChannelAutoReplyUpdated(
+                        () => botsFromState(store.getState()),
+                        msg.data,
+                    );
+                },
+            );
+
+            // Warm the runtime bots cache so the synchronous shouldRender can
+            // see agent availability before any AI surface has been opened.
+            fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
+        }
 
         if (rhs) {
             registry.registerChannelHeaderButtonAction(<ChannelHeaderIcon/>, () => {
