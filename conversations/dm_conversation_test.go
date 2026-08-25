@@ -276,6 +276,7 @@ type dmTestLLM struct {
 	responses []*llm.TextStreamResult
 	callIdx   int
 	requests  []llm.CompletionRequest
+	onChat    func()
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -286,6 +287,9 @@ func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequ
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
+	if f.onChat != nil {
+		f.onChat()
+	}
 	if f.callIdx >= len(f.responses) {
 		return nil, fmt.Errorf("no more responses configured")
 	}
@@ -361,6 +365,7 @@ type dmTestEnv struct {
 	mockAPI       *plugintest.API
 	mmClient      *fakeMMClient
 	mcpMgr        *testMCPClientManager
+	botService    *bots.MMBots
 	botID         string
 	userID        string
 	channelID     string
@@ -477,6 +482,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		mockAPI:       mockAPI,
 		mmClient:      mmClient,
 		mcpMgr:        mcpMgr,
+		botService:    botsService,
 		botID:         botID,
 		userID:        userID,
 		channelID:     channelID,
@@ -487,11 +493,15 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 
 // testMCPClientManager implements llmcontext.MCPClientManager for testing.
 type testMCPClientManager struct {
-	tools  []llm.Tool
-	errors *mcp.Errors
+	tools      []llm.Tool
+	errors     *mcp.Errors
+	onGetTools func()
 }
 
 func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	if m.onGetTools != nil {
+		m.onGetTools()
+	}
 	return m.tools, m.errors
 }
 

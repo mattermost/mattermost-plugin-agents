@@ -256,7 +256,13 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		responseRootID = post.RootId
 	}
 
-	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responseRootID)
+	responsePost := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    responseRootID,
+	}
+	return c.withResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, postingUser.Locale, responsePost, post.Id, func() error {
+		return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost)
+	})
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
@@ -272,7 +278,7 @@ func (c *Conversations) handleMentionViaConversation(
 	channel *model.Channel,
 	allowToolsInChannel bool,
 	channelToolsAutoRunEverywhereOnly bool,
-	responseRootID string,
+	responsePost *model.Post,
 ) error {
 	var extraOpts []llm.ContextOption
 	if channelToolsAutoRunEverywhereOnly {
@@ -319,7 +325,7 @@ func (c *Conversations) handleMentionViaConversation(
 		UserID:       postingUser.Id,
 		BotID:        bot.GetMMBot().UserId,
 		ChannelID:    channel.Id,
-		RootPostID:   responseRootID,
+		RootPostID:   responsePost.RootId,
 		Operation:    "conversation",
 		SystemPrompt: systemPrompt,
 		UserMessage:  post.Message,
@@ -328,6 +334,9 @@ func (c *Conversations) handleMentionViaConversation(
 	})
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
+	}
+	if updateErr := c.attachConversationToResponsePlaceholder(responsePost, convResult.Conversation.ID); updateErr != nil {
+		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
@@ -346,18 +355,8 @@ func (c *Conversations) handleMentionViaConversation(
 	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
 	defer runSpan.End()
 
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootID,
-	}
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
-	}
-
-	threadData, threadErr := mmapi.GetThreadData(c.mmClient, responseRootID)
+	threadData, threadErr := mmapi.GetThreadData(c.mmClient, responsePost.RootId)
 	if threadErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("failed to get thread data: %w", threadErr)
 	}
 
@@ -372,7 +371,6 @@ func (c *Conversations) handleMentionViaConversation(
 		threadData,
 	)
 	if reqErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("failed to build completion request: %w", reqErr)
 	}
 
@@ -400,7 +398,6 @@ func (c *Conversations) handleMentionViaConversation(
 	}, opts...)
 
 	if runErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("tool runner failed: %w", runErr)
 	}
 
@@ -408,7 +405,6 @@ func (c *Conversations) handleMentionViaConversation(
 	stream = c.decorateStreamWithCreatedFiles(stream, responsePost, nil, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
@@ -433,11 +429,21 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		return err
 	}
 
-	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post)
+	responseRootID := post.Id
+	if post.RootId != "" {
+		responseRootID = post.RootId
+	}
+	responsePost := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    responseRootID,
+	}
+	return c.withResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, postingUser.Locale, responsePost, post.Id, func() error {
+		return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost)
+	})
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
-func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post, responsePost *model.Post) error {
 	extraOpts := []llm.ContextOption{
 		c.contextBuilder.WithLLMContextInteractive(),
 		c.contextBuilder.WithLLMContextResponseFiles(),
@@ -454,15 +460,12 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	)
 	ensureDMWebSearchTracking(llmContext)
 
-	responseRootID := post.Id
-	if post.RootId != "" {
-		responseRootID = post.RootId
-	}
-
-	// Create/get conversation before the placeholder so conversation_id is set on the initial post.
 	convResult, err := c.CreateOrGetDMConversation(bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
+	}
+	if updateErr := c.attachConversationToResponsePlaceholder(responsePost, convResult.ConversationID); updateErr != nil {
+		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
@@ -477,25 +480,14 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	ctx, runSpan := telemetry.Tracer().Start(ctx, "agent run", runOpts...)
 	defer runSpan.End()
 
-	responsePost := &model.Post{
-		ChannelId: channel.Id,
-		RootId:    responseRootID,
-	}
-	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
-	}
-
 	dmStream, err := c.ProcessDMRequest(ctx, convResult.ConversationID, bot.LLM(), llmContext, bot.GetConfig().EffectiveMaxToolTurns())
 	if err != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
 	stream := c.decorateStreamWithCreatedFiles(dmStream.Stream, responsePost, nil, llmContext)
 
 	if streamErr := c.streamResponseToExistingPost(ctx, stream, responsePost, postingUser, channel); streamErr != nil {
-		c.failResponsePlaceholder(responsePost, postingUser.Locale)
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
@@ -528,6 +520,22 @@ func ensureDMWebSearchTracking(llmContext *llm.Context) {
 func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
 	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
+}
+
+func (c *Conversations) withResponsePlaceholder(botID, requesterUserID, userLocale string, post *model.Post, respondingToPostID string, run func() error) error {
+	if err := c.createResponsePlaceholder(botID, requesterUserID, post, respondingToPostID); err != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", err)
+	}
+	if err := run(); err != nil {
+		c.failResponsePlaceholder(post, userLocale)
+		return err
+	}
+	return nil
+}
+
+func (c *Conversations) attachConversationToResponsePlaceholder(post *model.Post, conversationID string) error {
+	post.AddProp(streaming.ConversationIDProp, conversationID)
+	return c.mmClient.UpdatePost(post)
 }
 
 func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {

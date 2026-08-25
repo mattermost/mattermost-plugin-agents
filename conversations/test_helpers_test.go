@@ -31,6 +31,7 @@ type fakeMMClient struct {
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
 	fileInfos            map[string]*model.FileInfo
+	onUpdatePost         func(*model.Post)
 
 	// logMu guards logErrors: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
@@ -64,6 +65,9 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 
 func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	c.updatedPosts = append(c.updatedPosts, post.Clone())
+	if c.onUpdatePost != nil {
+		c.onUpdatePost(post)
+	}
 	return nil
 }
 
