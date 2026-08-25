@@ -7,6 +7,12 @@ import {IntlProvider} from 'react-intl';
 
 import AvatarItem from './avatar';
 
+// Same module id avatar.tsx imports. The suite-wide asset mapper stubs pngs;
+// asserting against this value is stable whether the file runs alone or with
+// the rest of the suite.
+// @ts-ignore it exists
+import aiIcon from 'src/../../assets/bot_icon.png';
+
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     return {
@@ -21,8 +27,6 @@ jest.mock('react-intl', () => {
 jest.mock('@/client', () => ({
     getBotProfilePictureUrl: jest.fn(),
 }));
-
-jest.mock('src/../../assets/bot_icon.png', () => 'placeholder-icon.png', {virtual: true});
 
 const {getBotProfilePictureUrl} = jest.requireMock('@/client') as {
     getBotProfilePictureUrl: jest.Mock<Promise<string>, [string]>;
@@ -104,7 +108,7 @@ describe('AvatarItem', () => {
             expect(getBotProfilePictureUrl).toHaveBeenCalledWith('newbot');
         });
 
-        expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
+        expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
     });
 
     it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {
@@ -122,7 +126,7 @@ describe('AvatarItem', () => {
 
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
+            expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
             expect(unhandled).not.toHaveBeenCalled();
         } finally {
             process.off('unhandledRejection', unhandled);

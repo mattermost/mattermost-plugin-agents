@@ -244,7 +244,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 // Cumulative provider-executed tool activity for the round;
                 // each event replaces the prior snapshot.
                 try {
-                    const parsedServerTools = JSON.parse(data.server_tool) as ServerToolUse[];
+                    const parsedServerTools = JSON.parse(data.server_tool);
+                    if (!Array.isArray(parsedServerTools)) {
+                        throw new Error('server_tool payload is not an array');
+                    }
                     setServerTools(parsedServerTools);
                     setPrecontent(false);
                 } catch {

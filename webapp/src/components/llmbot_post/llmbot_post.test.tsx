@@ -719,6 +719,26 @@ describe('LLMBotPost server tool activity rendering', () => {
             expect(screen.queryByText('Fetched example.com')).toBeNull();
         });
     });
+
+    test('ignores a non-array server_tool payload instead of crashing', () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: 'null',
+            }));
+        });
+
+        expect(screen.getByText('Error parsing server tool data')).toBeTruthy();
+    });
 });
 
 describe('LLMBotPost conversation_id prop handling', () => {
