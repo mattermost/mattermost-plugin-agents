@@ -45,11 +45,26 @@ export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
     control?: string
+    progress_phase?: AgentProgressPhase
+    progress_seq?: number
     tool_call?: string
     reasoning?: string
     annotations?: string
     server_tool?: string
 }
+
+export type AgentProgressPhase =
+    'checking_mcp' |
+    'loading_conversation' |
+    'preparing_request' |
+    'connecting_provider';
+
+const progressPhaseSequence: Record<string, number> = {
+    checking_mcp: 1,
+    loading_conversation: 2,
+    preparing_request: 3,
+    connecting_provider: 4,
+};
 
 interface LLMBotPostProps {
     post: any;
@@ -103,7 +118,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
     const [serverTools, setServerTools] = useState<ServerToolUse[]>([]);
     const [precontent, setPrecontent] = useState(props.post.message === '');
+    const [progressPhase, setProgressPhase] = useState<AgentProgressPhase>();
     const [error, setError] = useState('');
+    const progressSequenceRef = useRef(0);
+    const progressCompleteRef = useRef(props.post.message !== '');
 
     // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
     // Needs a ref because of the useEffect closure.
@@ -132,6 +150,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
+            progressCompleteRef.current = true;
+            setProgressPhase(undefined);
             setMessage(props.post.message);
             setPrecontent(false);
         }
@@ -185,7 +205,23 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 return;
             }
 
+            if (data.control === 'progress') {
+                const phase = data.progress_phase;
+                if (!phase || progressCompleteRef.current) {
+                    return;
+                }
+                const expectedSequence = progressPhaseSequence[phase];
+                if (expectedSequence === undefined || data.progress_seq !== expectedSequence || expectedSequence <= progressSequenceRef.current) {
+                    return;
+                }
+                progressSequenceRef.current = expectedSequence;
+                setProgressPhase(phase);
+                return;
+            }
+
             if (data.control === 'reasoning_summary' && data.reasoning) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 // Don't clear generating: the `generating && currentRound`
                 // gate in renderedRounds would hide the thinking block.
                 setReasoningSummary(data.reasoning);
@@ -195,12 +231,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'reasoning_summary_done' && data.reasoning) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(false);
                 return;
             }
 
             if (data.control === 'tool_call' && data.tool_call) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
@@ -234,6 +274,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'annotations' && data.annotations) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 try {
                     const parsedAnnotations = JSON.parse(data.annotations);
                     setAnnotations(parsedAnnotations);
@@ -245,6 +287,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'server_tool' && data.server_tool) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 // Cumulative provider-executed tool activity for the round;
                 // each event replaces the prior snapshot.
                 try {
@@ -258,6 +302,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (typeof data.next === 'string' && !stoppedRef.current) {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 setGenerating(true);
                 setPrecontent(false);
                 setMessage(data.next);
@@ -265,6 +311,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'end') {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
@@ -277,6 +325,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'cancel') {
+                progressCompleteRef.current = true;
+                setProgressPhase(undefined);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
@@ -402,6 +452,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const isGenerationInProgress = generating || isReasoningLoading;
 
+    let precontentMessage = intl.formatMessage({defaultMessage: 'Starting...'});
+    switch (progressPhase) {
+    case 'checking_mcp':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Checking MCP connections and tools...'});
+        break;
+    case 'loading_conversation':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Loading conversation context...'});
+        break;
+    case 'preparing_request':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Preparing request...'});
+        break;
+    case 'connecting_provider':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Connecting to provider...'});
+        break;
+    }
+
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
@@ -450,9 +516,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             {(precontent || (conversationLoading && !generating && renderedRounds.length === 0)) && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
-                    <span>
-                        <FormattedMessage defaultMessage='Starting...'/>
-                    </span>
+                    <span>{precontentMessage}</span>
                 </MinimalReasoningContainer>
             )}
             {renderedRounds.map((round, idx) => {
