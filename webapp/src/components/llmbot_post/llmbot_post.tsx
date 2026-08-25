@@ -433,7 +433,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     };
 
     // Tool-only posts leave post.message empty, so precontent stays true on
-    // remount. Hide Starting... once rounds exist, except while generation is
+    // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
     const showStarting =
         (precontent && (generating || renderedRounds.length === 0)) ||
@@ -458,7 +458,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
-                        <FormattedMessage defaultMessage='Starting...'/>
+                        <FormattedMessage defaultMessage='Working...'/>
                     </span>
                 </MinimalReasoningContainer>
             )}

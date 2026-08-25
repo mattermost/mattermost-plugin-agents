@@ -221,7 +221,7 @@ describe('LLMBotPost streaming fallback rendering', () => {
 
         renderPost(makePost(), websocketRegister);
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
         expect(listener).toBeDefined();
 
         act(() => {
@@ -236,14 +236,14 @@ describe('LLMBotPost streaming fallback rendering', () => {
         });
 
         expect(screen.getByText(errorText)).toBeTruthy();
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
     });
 
     test('renders updated post message when the streaming text websocket was missed', async () => {
         const errorText = 'Sorry! An error occurred while accessing the LLM.';
         const {rerender} = renderPost(makePost());
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
 
         rerender(
             <IntlProvider locale='en'>
@@ -257,7 +257,7 @@ describe('LLMBotPost streaming fallback rendering', () => {
         await waitFor(() => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
     });
 });
 
@@ -353,7 +353,7 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
             toolStatus: 'pending' as const,
             userId: 'other_user',
         },
-    ])('does not show Starting... when conversation already has a $name', ({approvalState, toolStatus, userId}) => {
+    ])('does not show Working... when conversation already has a $name', ({approvalState, toolStatus, userId}) => {
         mockUseConversation.mockReturnValue({
             conversation: makeToolOnlyConversation(approvalState, toolStatus, userId),
             loading: false,
@@ -362,10 +362,10 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
 
         renderPost(makePost());
 
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
     });
 
-    test('shows Starting... after continue while generation resumes over persisted rounds', () => {
+    test('shows Working... after continue while generation resumes over persisted rounds', () => {
         mockUseConversation.mockReturnValue({
             conversation: makeToolOnlyConversation('call', 'pending', 'other_user'),
             loading: false,
@@ -379,17 +379,17 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
 
         renderPost(makePost(), websocketRegister);
 
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
         expect(listener).toBeDefined();
 
         act(() => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'continue'}));
         });
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
     });
 
-    test('still shows Starting... when the conversation is loaded but this post has no rounds yet', () => {
+    test('still shows Working... when the conversation is loaded but this post has no rounds yet', () => {
         mockUseConversation.mockReturnValue({
             conversation: makeConversation([
                 makeTurn({
@@ -406,7 +406,7 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
 
         renderPost(makePost());
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
     });
 });
 

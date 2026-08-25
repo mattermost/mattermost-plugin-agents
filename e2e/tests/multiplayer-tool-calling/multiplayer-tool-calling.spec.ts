@@ -417,7 +417,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             const onlookerBot = onlookerRhs.locator('[data-testid="llm-bot-post"]').last();
             await expect(onlookerBot).toBeVisible({timeout: 30000});
             await expect(onlookerBot.getByText(getChannelInfoToolLabel, {exact: true})).toBeVisible({timeout: 30000});
-            await expect(onlookerBot.getByText('Starting...', {exact: true})).toHaveCount(0);
+            await expect(onlookerBot.getByText('Working...', {exact: true})).toHaveCount(0);
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
 
