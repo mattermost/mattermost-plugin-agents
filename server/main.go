@@ -577,16 +577,18 @@ func (p *Plugin) applyTelemetryConfig() {
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
-	p.conversationsService.MessageHasBeenPosted(c, post)
+	p.conversationsService.MessageHasBeenPostedWithAfterPlaceholder(c, post, func(ctx context.Context) {
+		p.indexPostedMessage(ctx, post)
+	})
+}
 
-	// Index the new message in the vector database
+func (p *Plugin) indexPostedMessage(ctx context.Context, post *model.Post) {
 	if p.indexerService != nil {
-		// Get channel to retrieve team ID
 		channel, err := p.API.GetChannel(post.ChannelId)
 		if err != nil {
 			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
 		} else {
-			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
+			if err := p.indexerService.IndexPost(ctx, post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
 			}
 		}

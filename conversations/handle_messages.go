@@ -145,6 +145,17 @@ func (c *Conversations) buildConversationContextWithTools(
 }
 
 func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
+	c.messageHasBeenPosted(post, nil)
+}
+
+// MessageHasBeenPostedWithAfterPlaceholder processes a posted message and runs
+// afterPlaceholder immediately after creating a response placeholder. When no
+// response is created, it runs before returning.
+func (c *Conversations) MessageHasBeenPostedWithAfterPlaceholder(_ *plugin.Context, post *model.Post, afterPlaceholder func(context.Context)) {
+	c.messageHasBeenPosted(post, afterPlaceholder)
+}
+
+func (c *Conversations) messageHasBeenPosted(post *model.Post, afterPlaceholder func(context.Context)) {
 	ctx, span := telemetry.Tracer().Start(context.Background(), "message has been posted",
 		trace.WithAttributes(
 			telemetry.PostID.String(post.Id),
@@ -154,7 +165,17 @@ func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post
 	)
 	defer span.End()
 
-	if err := c.handleMessages(ctx, post); err != nil {
+	callbackCalled := false
+	callAfterPlaceholder := func(ctx context.Context) {
+		if callbackCalled || afterPlaceholder == nil {
+			return
+		}
+		callbackCalled = true
+		afterPlaceholder(ctx)
+	}
+	defer callAfterPlaceholder(ctx)
+
+	if err := c.handleMessages(ctx, post, callAfterPlaceholder); err != nil {
 		if errors.Is(err, ErrNoResponse) {
 			c.mmClient.LogDebug(err.Error())
 		} else {
@@ -163,7 +184,7 @@ func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post
 	}
 }
 
-func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) error {
+func (c *Conversations) handleMessages(ctx context.Context, post *model.Post, afterPlaceholder func(context.Context)) error {
 	// Don't respond to ourselves
 	if c.bots.IsAnyBot(post.UserId) {
 		return fmt.Errorf("not responding to ourselves: %w", ErrNoResponse)
@@ -211,12 +232,12 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 
 	// Check we are mentioned like @ai
 	if bot := c.bots.GetBotMentioned(post.Message); bot != nil {
-		return c.handleMentions(ctx, bot, post, postingUser, channel)
+		return c.handleMentions(ctx, bot, post, postingUser, channel, afterPlaceholder)
 	}
 
 	// Check if this is post in the DM channel with any bot
 	if bot := c.bots.GetBotForDMChannel(channel); bot != nil {
-		return c.handleDMs(ctx, bot, channel, postingUser, post)
+		return c.handleDMs(ctx, bot, channel, postingUser, post, afterPlaceholder)
 	}
 
 	// Per-channel auto-reply handles the no-mention fall-through, and the two
@@ -226,7 +247,7 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	// the agent works — it does in every one of those cases. Only a real
 	// failure returns without the reminder.
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
-		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
+		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel, afterPlaceholder)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
 			c.maybeNotifyAgentMentionNeeded(post, channel)
 		}
@@ -240,7 +261,7 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	return nil
 }
 
-func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel, afterPlaceholder func(context.Context)) (err error) {
 	if err := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); err != nil {
 		return err
 	}
@@ -260,9 +281,19 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	return c.withResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, postingUser.Locale, responsePost, post.Id, func() error {
-		return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost)
-	})
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		}
+	}()
+
+	if afterPlaceholder != nil {
+		afterPlaceholder(ctx)
+	}
+	return c.handleMentionViaConversation(ctx, bot, post, postingUser, channel, allowToolsInChannel, channelToolsAutoRunEverywhereOnly, responsePost)
 }
 
 // handleMentionViaConversation processes a channel mention using the conversation entity model.
@@ -335,7 +366,8 @@ func (c *Conversations) handleMentionViaConversation(
 	if convErr != nil {
 		return fmt.Errorf("failed to get or create conversation: %w", convErr)
 	}
-	if updateErr := c.attachConversationToResponsePlaceholder(responsePost, convResult.Conversation.ID); updateErr != nil {
+	responsePost.AddProp(streaming.ConversationIDProp, convResult.Conversation.ID)
+	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 	if channelToolsAutoRunEverywhereOnly {
@@ -424,7 +456,7 @@ func (c *Conversations) handleMentionViaConversation(
 	return nil
 }
 
-func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) error {
+func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post, afterPlaceholder func(context.Context)) (err error) {
 	if err := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); err != nil {
 		return err
 	}
@@ -437,9 +469,19 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	return c.withResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, postingUser.Locale, responsePost, post.Id, func() error {
-		return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost)
-	})
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); err != nil {
+		return fmt.Errorf("unable to create response placeholder: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			c.failResponsePlaceholder(responsePost, postingUser.Locale)
+		}
+	}()
+
+	if afterPlaceholder != nil {
+		afterPlaceholder(ctx)
+	}
+	return c.handleDMViaConversation(ctx, bot, channel, postingUser, post, responsePost)
 }
 
 // handleDMViaConversation processes a DM message using the conversation entity model.
@@ -464,7 +506,8 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
-	if updateErr := c.attachConversationToResponsePlaceholder(responsePost, convResult.ConversationID); updateErr != nil {
+	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
+	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 
@@ -520,22 +563,6 @@ func ensureDMWebSearchTracking(llmContext *llm.Context) {
 func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
 	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
-}
-
-func (c *Conversations) withResponsePlaceholder(botID, requesterUserID, userLocale string, post *model.Post, respondingToPostID string, run func() error) error {
-	if err := c.createResponsePlaceholder(botID, requesterUserID, post, respondingToPostID); err != nil {
-		return fmt.Errorf("unable to create response placeholder: %w", err)
-	}
-	if err := run(); err != nil {
-		c.failResponsePlaceholder(post, userLocale)
-		return err
-	}
-	return nil
-}
-
-func (c *Conversations) attachConversationToResponsePlaceholder(post *model.Post, conversationID string) error {
-	post.AddProp(streaming.ConversationIDProp, conversationID)
-	return c.mmClient.UpdatePost(post)
 }
 
 func (c *Conversations) streamResponseToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel) error {

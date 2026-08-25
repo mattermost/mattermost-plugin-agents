@@ -48,7 +48,7 @@ func (c *Conversations) autoReplySettingForChannel(channel *model.Channel) *auto
 //
 // All conditions that prevent a reply return an error wrapping ErrNoResponse so
 // MessageHasBeenPosted logs them at debug, not error, level.
-func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.Setting, post *model.Post, postingUser *model.User, channel *model.Channel) error {
+func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.Setting, post *model.Post, postingUser *model.User, channel *model.Channel, afterPlaceholder func(context.Context)) error {
 	// Mode gate: root_posts fires only for top-level posts; threads fires for both.
 	if setting.Mode == autoreply.ModeRootPosts && post.RootId != "" {
 		return fmt.Errorf("auto-reply mode root_posts ignores thread replies: %w", ErrNoResponse)
@@ -78,5 +78,5 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		autoPost.Message += " " + message
 	}
 
-	return c.handleMentions(ctx, bot, autoPost, postingUser, channel)
+	return c.handleMentions(ctx, bot, autoPost, postingUser, channel, afterPlaceholder)
 }

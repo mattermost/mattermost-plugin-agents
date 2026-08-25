@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -98,9 +99,23 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 				tt.configure(env)
 			}
 
-			mcpInvoked := false
+			afterPlaceholderCalled := false
 			env.mcpMgr.onGetTools = func() {
-				mcpInvoked = true
+				require.True(t, afterPlaceholderCalled, "post indexing must complete before MCP discovery")
+			}
+			env.mmClient.onUpdatePost = func(*model.Post) {
+				require.True(t, afterPlaceholderCalled)
+			}
+
+			llmInvoked := false
+			env.fakeLLM.onChat = func() {
+				llmInvoked = true
+				require.True(t, afterPlaceholderCalled, "post indexing must complete before the LLM can run tools")
+				assertConversationAttachedBeforeLLM(t, env.mmClient)
+			}
+
+			env.conversations.MessageHasBeenPostedWithAfterPlaceholder(nil, tt.post(env), func(context.Context) {
+				afterPlaceholderCalled = true
 				require.Len(t, env.mmClient.createdPosts, 1)
 				assertInitialResponsePlaceholder(
 					t,
@@ -112,20 +127,9 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 					tt.respondingToID,
 				)
 				require.Empty(t, allConversations(env.convStore), "placeholder must precede conversation persistence")
-			}
-			env.mmClient.onUpdatePost = func(*model.Post) {
-				require.True(t, mcpInvoked)
-			}
+			})
 
-			llmInvoked := false
-			env.fakeLLM.onChat = func() {
-				llmInvoked = true
-				assertConversationAttachedBeforeLLM(t, env.mmClient)
-			}
-
-			env.conversations.MessageHasBeenPosted(nil, tt.post(env))
-
-			require.True(t, mcpInvoked)
+			require.True(t, afterPlaceholderCalled)
 			require.True(t, llmInvoked)
 		})
 	}
@@ -134,9 +138,28 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 func TestMessagePostedCreatesDMPlaceholderBeforeMCPDiscovery(t *testing.T) {
 	env := setupDMTestEnv(t, dmMakeTextStream("done"))
 
-	mcpInvoked := false
+	afterPlaceholderCalled := false
 	env.mcpMgr.onGetTools = func() {
-		mcpInvoked = true
+		require.True(t, afterPlaceholderCalled, "post indexing must complete before MCP discovery")
+	}
+	env.mmClient.onUpdatePost = func(*model.Post) {
+		require.True(t, afterPlaceholderCalled)
+	}
+
+	llmInvoked := false
+	env.fakeLLM.onChat = func() {
+		llmInvoked = true
+		require.True(t, afterPlaceholderCalled, "post indexing must complete before the LLM can run tools")
+		assertConversationAttachedBeforeLLM(t, env.mmClient)
+	}
+
+	env.conversations.MessageHasBeenPostedWithAfterPlaceholder(nil, &model.Post{
+		Id:        "post1",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		Message:   "help me",
+	}, func(context.Context) {
+		afterPlaceholderCalled = true
 		require.Len(t, env.mmClient.createdPosts, 1)
 		assertInitialResponsePlaceholder(
 			t,
@@ -148,26 +171,26 @@ func TestMessagePostedCreatesDMPlaceholderBeforeMCPDiscovery(t *testing.T) {
 			"post1",
 		)
 		require.Empty(t, allConversations(env.convStore), "placeholder must precede conversation persistence")
-	}
-	env.mmClient.onUpdatePost = func(*model.Post) {
-		require.True(t, mcpInvoked)
-	}
-
-	llmInvoked := false
-	env.fakeLLM.onChat = func() {
-		llmInvoked = true
-		assertConversationAttachedBeforeLLM(t, env.mmClient)
-	}
-
-	env.conversations.MessageHasBeenPosted(nil, &model.Post{
-		Id:        "post1",
-		UserId:    env.userID,
-		ChannelId: env.channelID,
-		Message:   "help me",
 	})
 
-	require.True(t, mcpInvoked)
+	require.True(t, afterPlaceholderCalled)
 	require.True(t, llmInvoked)
+}
+
+func TestMessagePostedRunsAfterPlaceholderCallbackWithoutResponse(t *testing.T) {
+	env := setupAutoReplyTestEnv(t, []llm.BotConfig{autoReplyBotConfig()})
+	callbackCalls := 0
+
+	env.conversations.MessageHasBeenPostedWithAfterPlaceholder(
+		nil,
+		env.rootPost(autoReplyUserID, "not a mention"),
+		func(context.Context) {
+			callbackCalls++
+			require.Empty(t, env.mmClient.createdPosts)
+		},
+	)
+
+	require.Equal(t, 1, callbackCalls)
 }
 
 func TestMessagePostedDoesNotCreatePlaceholderWhenRejected(t *testing.T) {
