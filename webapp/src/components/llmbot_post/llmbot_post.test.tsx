@@ -108,10 +108,10 @@ function makeTurn(overrides: Partial<Turn> = {}): Turn {
     };
 }
 
-function makeConversation(turns: Turn[]): ConversationResponse {
+function makeConversation(turns: Turn[], userId = 'user_1'): ConversationResponse {
     return {
         id: WELL_FORMED_ID,
-        user_id: 'user_1',
+        user_id: userId,
         bot_id: 'bot_1',
         channel_id: 'channel_1',
         root_post_id: 'root_1',
@@ -124,6 +124,7 @@ function makeConversation(turns: Turn[]): ConversationResponse {
 function makeToolOnlyConversation(
     approvalState: NonNullable<Turn['approval_state']>,
     toolStatus: 'rejected' | 'pending',
+    userId = 'user_1',
 ): ConversationResponse {
     const assistantTurn = makeTurn({
         post_id: 'post_1',
@@ -137,7 +138,7 @@ function makeToolOnlyConversation(
     });
 
     if (toolStatus !== 'rejected') {
-        return makeConversation([assistantTurn]);
+        return makeConversation([assistantTurn], userId);
     }
 
     return makeConversation([
@@ -153,7 +154,7 @@ function makeToolOnlyConversation(
                 content: 'Tool call rejected by user',
             }],
         }),
-    ]);
+    ], userId);
 }
 
 // Builds a search source entry with a unique well-formed post id.
@@ -338,20 +339,52 @@ describe('LLMBotPost remount of empty-message tool-only posts', () => {
             name: 'rejected tool_use',
             approvalState: 'done' as const,
             toolStatus: 'rejected' as const,
+            userId: 'user_1',
         },
         {
             name: 'pending tool_use',
             approvalState: 'call' as const,
             toolStatus: 'pending' as const,
+            userId: 'user_1',
         },
-    ])('does not show Starting... when conversation already has a $name', ({approvalState, toolStatus}) => {
+        {
+            name: 'pending tool_use as an onlooker',
+            approvalState: 'call' as const,
+            toolStatus: 'pending' as const,
+            userId: 'other_user',
+        },
+    ])('does not show Starting... when conversation already has a $name', ({approvalState, toolStatus, userId}) => {
         mockUseConversation.mockReturnValue({
-            conversation: makeToolOnlyConversation(approvalState, toolStatus),
+            conversation: makeToolOnlyConversation(approvalState, toolStatus, userId),
             loading: false,
             error: null,
         });
 
         renderPost(makePost());
+
+        expect(screen.queryByText('Starting...')).toBeNull();
+    });
+
+    test('does not show Starting... after continue when persisted rounds already exist', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeToolOnlyConversation('call', 'pending', 'other_user'),
+            loading: false,
+            error: null,
+        });
+
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(listener).toBeDefined();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'continue'}));
+        });
 
         expect(screen.queryByText('Starting...')).toBeNull();
     });
