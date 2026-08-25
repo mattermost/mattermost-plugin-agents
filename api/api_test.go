@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -109,6 +110,22 @@ type mcpDisconnectCall struct {
 	serverName string
 }
 
+// allowAnyPluginAPILogging permits arbitrary log calls from subsystems used in
+// tests (for example MCP discovery). plugintest expands variadic arguments into
+// positional ones, so each arity needs its own expectation.
+func allowAnyPluginAPILogging(mockAPI *plugintest.API) {
+	for arity := 1; arity <= 20; arity++ {
+		args := make([]any, arity)
+		for i := range args {
+			args[i] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
 	oauthManager         *mcp.OAuthManager
@@ -136,8 +153,15 @@ type mockMCPClientManager struct {
 	// no live source-plugin registration (hydrated from persisted config).
 	orphanPluginIDs map[string]bool
 
-	discoverPluginToolsResponse  []mcp.ToolInfo
-	discoverPluginToolsErr       error
+	discoverPluginToolsResponse []mcp.ToolInfo
+	discoverPluginToolsErr      error
+	// discoverPluginToolsFunc overrides the canned response per plugin. Set it
+	// to model per-plugin latency or per-plugin failures.
+	discoverPluginToolsFunc func(cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
+	httpClient              *http.Client
+
+	// Plugin discovery runs concurrently, so its bookkeeping is guarded.
+	discoverMu                   sync.Mutex
 	discoverPluginToolsCallCount int
 }
 
@@ -190,7 +214,7 @@ func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, 
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return nil
+	return m.httpClient
 }
 
 func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -267,8 +291,21 @@ func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
 }
 
 func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+	m.discoverMu.Lock()
 	m.discoverPluginToolsCallCount++
+	discover := m.discoverPluginToolsFunc
+	m.discoverMu.Unlock()
+
+	if discover != nil {
+		return discover(cfg)
+	}
 	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
+}
+
+func (m *mockMCPClientManager) pluginDiscoveryCallCount() int {
+	m.discoverMu.Lock()
+	defer m.discoverMu.Unlock()
+	return m.discoverPluginToolsCallCount
 }
 
 // fakeChannelAutoReplyStore is a hand-rolled in-memory implementation of
@@ -642,17 +679,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mcpMgr := newTestMCPClientManager(t)
 	autoReplyStore := newFakeChannelAutoReplyStore()
 
-	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
-	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
-		for j := range args {
-			args[j] = mock.Anything
-		}
-		mockAPI.On("LogDebug", args...).Maybe()
-		mockAPI.On("LogInfo", args...).Maybe()
-		mockAPI.On("LogWarn", args...).Maybe()
-		mockAPI.On("LogError", args...).Maybe()
-	}
+	allowAnyPluginAPILogging(mockAPI)
 
 	// Mock GetConfig and GetLicense for WithLLMContextServerInfo and the
 	// context builder's remote-MCP license gate. Default to a licensed

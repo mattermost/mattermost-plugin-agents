@@ -629,4 +629,3 @@ func shortSlugHash(value string) string {
 func pluginServerOriginKey(pluginID string) string {
 	return "plugin://" + pluginID
 }
-
