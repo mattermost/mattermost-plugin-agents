@@ -50,7 +50,7 @@ export default class PostEventListener {
             this.pendingProgressUpdates.set(postID, msg);
         } else if (
             typeof msg.data.next === 'string' ||
-            (msg.data.control !== undefined && msg.data.control !== 'start' && msg.data.control !== 'continue')
+            (typeof msg.data.control === 'string' && msg.data.control !== 'start' && msg.data.control !== 'continue')
         ) {
             this.pendingProgressUpdates.delete(postID);
         }

@@ -41,6 +41,12 @@ const SearchResultsPropKey = 'search_results';
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
 
+export type AgentProgressPhase =
+    'checking_mcp' |
+    'loading_conversation' |
+    'preparing_request' |
+    'connecting_provider';
+
 export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
@@ -52,12 +58,6 @@ export interface PostUpdateWebsocketMessage {
     annotations?: string
     server_tool?: string
 }
-
-export type AgentProgressPhase =
-    'checking_mcp' |
-    'loading_conversation' |
-    'preparing_request' |
-    'connecting_provider';
 
 const progressPhaseSequence: Record<string, number> = {
     checking_mcp: 1,
@@ -118,7 +118,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
     const [serverTools, setServerTools] = useState<ServerToolUse[]>([]);
     const [precontent, setPrecontent] = useState(props.post.message === '');
-    const [progressPhase, setProgressPhase] = useState<AgentProgressPhase>();
+    const [progressPhase, setProgressPhase] = useState<AgentProgressPhase | null>(null);
     const [error, setError] = useState('');
     const progressSequenceRef = useRef(0);
     const progressCompleteRef = useRef(props.post.message !== '');
@@ -151,7 +151,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
             progressCompleteRef.current = true;
-            setProgressPhase(undefined);
+            setProgressPhase(null);
             setMessage(props.post.message);
             setPrecontent(false);
         }
@@ -211,7 +211,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     return;
                 }
                 const expectedSequence = progressPhaseSequence[phase];
-                if (expectedSequence === undefined || data.progress_seq !== expectedSequence || expectedSequence <= progressSequenceRef.current) {
+                if (typeof expectedSequence !== 'number' || data.progress_seq !== expectedSequence || expectedSequence <= progressSequenceRef.current) {
                     return;
                 }
                 progressSequenceRef.current = expectedSequence;
@@ -221,7 +221,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'reasoning_summary' && data.reasoning) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
+
                 // Don't clear generating: the `generating && currentRound`
                 // gate in renderedRounds would hide the thinking block.
                 setReasoningSummary(data.reasoning);
@@ -232,7 +233,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'reasoning_summary_done' && data.reasoning) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(false);
                 return;
@@ -240,7 +241,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'tool_call' && data.tool_call) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
@@ -275,7 +276,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'annotations' && data.annotations) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 try {
                     const parsedAnnotations = JSON.parse(data.annotations);
                     setAnnotations(parsedAnnotations);
@@ -288,7 +289,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'server_tool' && data.server_tool) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
+
                 // Cumulative provider-executed tool activity for the round;
                 // each event replaces the prior snapshot.
                 try {
@@ -303,7 +305,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (typeof data.next === 'string' && !stoppedRef.current) {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 setGenerating(true);
                 setPrecontent(false);
                 setMessage(data.next);
@@ -312,7 +314,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'end') {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
@@ -326,7 +328,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'cancel') {
                 progressCompleteRef.current = true;
-                setProgressPhase(undefined);
+                setProgressPhase(null);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
