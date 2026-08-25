@@ -21,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/delegation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -163,6 +164,7 @@ type API struct {
 	streamStopNotifier    StreamStopClusterNotifier
 	conversationStore     ConversationStore
 	convService           *conversation.Service
+	delegationService     *delegation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 	mcpRequestLimiter     *mcpRequestLimiter
@@ -307,6 +309,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
 	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
+	router.GET("/delegations/:parenttoolcallid", a.handleGetDelegationStatus)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)

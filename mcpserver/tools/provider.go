@@ -36,6 +36,11 @@ type MCPToolContext struct {
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
 
+	// ParentToolCallID is the tool_use ID of the calling agent's tool call,
+	// forwarded via call metadata by the plugin's MCP client (embedded
+	// servers only). Used to key delegation progress on the parent turn.
+	ParentToolCallID string
+
 	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
 	MMServerURL        string
 	BeforeHookResolver auth.BeforeHookResolver
@@ -95,12 +100,14 @@ type MattermostToolProvider struct {
 	trackAIGenerated   bool                  // Whether to add ai_generated_by props to posts
 	searchService      SemanticSearchService // Optional semantic search service, can be nil
 	fileContentService FileContentService    // Optional file content service for read_file, can be nil
+	delegationService  DelegationService     // Optional delegation service for ask_agent, can be nil (embedded servers only)
 }
 
 // NewMattermostToolProvider creates a new tool provider
 // Now accepts a ServerConfig interface to avoid circular dependencies
 // searchService is optional and can be nil if semantic search is not available
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
+// delegationService is optional and can be nil; ask_agent is hidden without it
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, delegationService DelegationService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -116,6 +123,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		trackAIGenerated:   config.GetTrackAIGenerated(),
 		searchService:      searchService,
 		fileContentService: fileContentService,
+		delegationService:  delegationService,
 	}
 }
 
@@ -349,11 +357,17 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		mcpContext.BeforeHookResolver = resolver
 	}
 
-	// Extract bot_user_id from metadata if present (for embedded servers)
-	// Only do this when tracking is enabled
-	if p.trackAIGenerated && metadata != nil {
+	// Extract identity fields from server-injected metadata (embedded servers
+	// only; never model-controlled). BotUserID is calling-agent identity used
+	// by delegation and (separately, gated on trackAIGenerated inside
+	// stampAIGenerated) by AI-content attribution — the tracking setting must
+	// not decide whether identity is available.
+	if metadata != nil {
 		if botUserID, ok := metadata["bot_user_id"].(string); ok {
 			mcpContext.BotUserID = botUserID
+		}
+		if parentToolCallID, ok := metadata["parent_tool_call_id"].(string); ok {
+			mcpContext.ParentToolCallID = parentToolCallID
 		}
 	}
 

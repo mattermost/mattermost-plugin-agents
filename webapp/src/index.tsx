@@ -41,6 +41,8 @@ import {invalidateConversation} from './hooks/use_conversation';
 // clears the matching composition cache.
 import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
+import {notifyDelegationUpdate} from './hooks/use_delegation_updates';
+import {DelegationUpdate} from './types/delegation';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist, resolveActiveBot, getSelectedAgentId} from './bots';
@@ -203,6 +205,14 @@ export default class Plugin {
             'custom_mattermost-ai_mcp_connection_updated',
             (msg: PluginWebSocketMessage<MCPConnectionEvent>) => {
                 notifyMCPConnectionUpdated(msg.data);
+            },
+        );
+
+        // Live agent-to-agent delegation progress for delegation cards.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_delegation_update',
+            (msg: WebSocketMessage<DelegationUpdate>) => {
+                notifyDelegationUpdate(msg.data);
             },
         );
 

@@ -40,6 +40,20 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 	return b.String()
 }
 
+// DelegationResult formats a completed delegation's answer for the
+// delegating agent: attribution, a permalink to the delegation thread, and
+// the target agent's final answer.
+func DelegationResult(displayName, username, permalink, answer string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("Answer from %s (@%s)", displayName, username))
+	if permalink != "" {
+		b.WriteString(fmt.Sprintf(" — conversation: %s", permalink))
+	}
+	b.WriteString("\n\n")
+	b.WriteString(answer)
+	return b.String()
+}
+
 func ThreadData(data *mmapi.ThreadData) string {
 	result := ""
 	for _, post := range data.Posts {

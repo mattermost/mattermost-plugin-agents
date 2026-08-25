@@ -30,6 +30,9 @@ type Metrics interface {
 
 	ObserveTokenUsage(botName, teamID, userID string, inputTokens, outputTokens int)
 	ObserveMCPDynamicToolEvent(botName, event, result string)
+
+	ObserveDelegation(sourceBot, targetBot, outcome string)
+	ObserveDelegationDuration(seconds float64)
 }
 
 type InstanceInfo struct {
@@ -54,6 +57,9 @@ type metrics struct {
 	llmOutputTokensTotal *prometheus.CounterVec
 
 	mcpDynamicToolEventsTotal *prometheus.CounterVec
+
+	delegationsTotal          *prometheus.CounterVec
+	delegationDurationSeconds prometheus.Histogram
 }
 
 // NewMetrics Factory method to create a new metrics collector.
@@ -152,6 +158,25 @@ func NewMetrics(info InstanceInfo) Metrics {
 	}, []string{"bot_name", "event", "result"})
 	m.registry.MustRegister(m.mcpDynamicToolEventsTotal)
 
+	m.delegationsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace:   MetricsNamespace,
+		Subsystem:   MetricsSubsystemLLM,
+		Name:        "delegations_total",
+		Help:        "The total number of agent-to-agent delegations by outcome.",
+		ConstLabels: additionalLabels,
+	}, []string{"source_bot", "target_bot", "outcome"})
+	m.registry.MustRegister(m.delegationsTotal)
+
+	m.delegationDurationSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace:   MetricsNamespace,
+		Subsystem:   MetricsSubsystemLLM,
+		Name:        "delegation_duration_seconds",
+		Help:        "Wall-clock duration of completed agent-to-agent delegations.",
+		ConstLabels: additionalLabels,
+		Buckets:     []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600},
+	})
+	m.registry.MustRegister(m.delegationDurationSeconds)
+
 	return m
 }
 
@@ -216,4 +241,27 @@ func (m *metrics) ObserveMCPDynamicToolEvent(botName, event, result string) {
 		"event":    event,
 		"result":   result,
 	}).Inc()
+}
+
+func (m *metrics) ObserveDelegation(sourceBot, targetBot, outcome string) {
+	if m == nil {
+		return
+	}
+	if sourceBot == "" {
+		sourceBot = "unknown"
+	}
+	if targetBot == "" {
+		targetBot = "unknown"
+	}
+	m.delegationsTotal.With(prometheus.Labels{
+		"source_bot": sourceBot,
+		"target_bot": targetBot,
+		"outcome":    outcome,
+	}).Inc()
+}
+
+func (m *metrics) ObserveDelegationDuration(seconds float64) {
+	if m != nil {
+		m.delegationDurationSeconds.Observe(seconds)
+	}
 }

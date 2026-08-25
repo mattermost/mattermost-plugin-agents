@@ -10,6 +10,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
+import type {DelegationStatus} from '@/types/delegation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
@@ -374,6 +375,23 @@ export async function getConversation(conversationId: string): Promise<Conversat
     if (response.ok) {
         const raw = await response.json() as ConversationResponse;
         return normalizeConversationResponse(raw);
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getDelegationStatus(parentToolCallId: string): Promise<DelegationStatus> {
+    const url = `${baseRoute()}/delegations/${parentToolCallId}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return (await response.json()) as DelegationStatus;
     }
 
     throw new ClientError(Client4.url, {

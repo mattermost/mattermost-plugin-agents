@@ -6,11 +6,14 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doToolCall, doToolResult} from '@/client';
-import {invalidateConversation} from '@/hooks/use_conversation';
+import {invalidateConversation, useConversation} from '@/hooks/use_conversation';
 
+import LoadingSpinner from './assets/loading_spinner';
+import {deriveApprovalStageForPost, extractToolCallsForPost, findApprovalPostID} from './llmbot_post/turn_content_utils';
 import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
 import ToolCard from './tool_card';
 import QuestionCard, {parseQuestionArgs} from './question_card';
+import DelegationCard, {isAskAgentToolCall} from './delegation/delegation_card';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -55,6 +58,20 @@ const BatchButton = styled.button`
     &:active {
         background: rgba(var(--button-bg-rgb), 0.16);
     }
+`;
+
+const DelegatedApprovalsContainer = styled.div`
+    padding: 0 8px;
+    border-left: 2px solid rgba(var(--button-bg-rgb), 0.24);
+`;
+
+const DelegatedApprovalsLoading = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
 // Tool call interfaces
@@ -319,6 +336,26 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     return null;
                 }
 
+                if (isAskAgentToolCall(tool)) {
+                    return (
+                        <DelegationCard
+                            key={tool.id}
+                            tool={tool}
+                            approvalStage={props.approvalStage}
+                            isProcessing={isDecisionCall && isSubmitting}
+                            localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
+                            canApprove={isDecisionCall}
+                            onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
+                            onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
+                            renderPendingApprovals={props.canApprove ? (delegationID) => (
+                                <DelegatedApprovalSet
+                                    delegationID={delegationID}
+                                />
+                            ) : undefined} // eslint-disable-line no-undefined
+                        />
+                    );
+                }
+
                 if (tool.user_interaction === UserInteractionSelect) {
                     // Redacted calls (non-requesters) have no arguments to
                     // render; fall through to the generic tool card.
@@ -428,5 +465,49 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         </ToolCallsContainer>
     );
 };
+
+function DelegatedApprovalSet({delegationID}: {delegationID: string}) {
+    const {conversation, loading, error} = useConversation(delegationID);
+
+    if (loading) {
+        return (
+            <DelegatedApprovalsLoading data-testid='delegation-approvals-loading'>
+                <LoadingSpinner/>
+                <FormattedMessage
+                    id='ai.delegation.loading_approvals'
+                    defaultMessage='Loading agent request…'
+                />
+            </DelegatedApprovalsLoading>
+        );
+    }
+    if (error || !conversation) {
+        return null;
+    }
+
+    const responsePostID = findApprovalPostID(conversation);
+    if (!responsePostID) {
+        return null;
+    }
+
+    const toolCalls = extractToolCallsForPost(conversation, responsePostID);
+    if (toolCalls.length === 0) {
+        return null;
+    }
+
+    return (
+        <DelegatedApprovalsContainer data-testid='delegation-embedded-approvals'>
+            <ToolApprovalSet
+                postID={responsePostID}
+                conversationID={delegationID}
+                toolCalls={toolCalls}
+                approvalStage={deriveApprovalStageForPost(conversation, responsePostID)}
+                canApprove={true}
+                canExpand={true}
+                showArguments={toolCalls.some((tool) => tool.arguments != null)}
+                showResults={toolCalls.some((tool) => tool.result != null)}
+            />
+        </DelegatedApprovalsContainer>
+    );
+}
 
 export default ToolApprovalSet;

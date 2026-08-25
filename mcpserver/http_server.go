@@ -94,7 +94,8 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	fileContentService := tools.NewHTTPFileContentService(pluginURL)
 
 	// Register tools with remote access mode
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService)
+	// Delegation is embedded-only in v1; external HTTP servers do not expose ask_agent.
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, nil)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)

@@ -118,9 +118,9 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 			wantCount: 8,
 		},
 		{
-			name:      "Mattermost seeds 70 read tools",
+			name:      "Mattermost seeds 70 read tools plus ask_agent",
 			baseURL:   EmbeddedClientKey,
-			wantCount: 70,
+			wantCount: 71,
 		},
 		{
 			name:    "unknown host returns nil",
@@ -163,6 +163,8 @@ func TestSeedVettedToolConfigs(t *testing.T) {
 				require.True(t, cfg.Enabled)
 				switch {
 				case strings.Contains(tt.baseURL, "api.githubcopilot.com"):
+					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
+				case tt.baseURL == EmbeddedClientKey:
 					require.True(t, cfg.Policy == ToolPolicyAutoRunInDM || cfg.Policy == ToolPolicyAsk)
 				default:
 					require.Equal(t, ToolPolicyAutoRunInDM, cfg.Policy)
@@ -215,6 +217,8 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		requireNoToolConfig(t, configs, "get_file_link")
 		requireNoToolConfig(t, configs, "list_incoming_webhooks")
 		requireNoToolConfig(t, configs, "list_outgoing_webhooks")
+		// Delegation is explicitly seeded at policy "ask".
+		requireToolConfig(t, configs, "ask_agent", ToolPolicyAsk, true)
 	})
 }
 

@@ -250,12 +250,17 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	// Regeneration is triggered by the requester clicking the regen control,
-	// so the user is interactively present.
+	// so the user is interactively present. Delegation conversations keep
+	// ask_agent excluded on regen too.
+	regenOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
+	}
+	regenOpts = append(regenOpts, c.delegationConversationContextOptions(conv)...)
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
+		regenOpts...,
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -303,7 +308,8 @@ func (c *Conversations) regenerateViaConversation(
 		}
 	}
 
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
+	maxRounds := maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv)
+	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(maxRounds))
 	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
 		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
 		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {

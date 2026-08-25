@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -147,6 +148,35 @@ func (s *fakeConvStore) UpdateTurnContent(id string, content json.RawMessage) er
 		}
 	}
 	return nil
+}
+
+func (s *fakeConvStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.allTurns[id]
+	if !ok {
+		return false, nil
+	}
+	// In-memory semantic-equality approximation of the JSONB comparison.
+	var current, want any
+	if err := json.Unmarshal(t.Content, &current); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(expected, &want); err != nil {
+		return false, err
+	}
+	if !reflect.DeepEqual(current, want) {
+		return false, nil
+	}
+	t.Content = updated
+	for convID, turns := range s.turns {
+		for i := range turns {
+			if turns[i].ID == id {
+				s.turns[convID][i].Content = updated
+			}
+		}
+	}
+	return true, nil
 }
 
 func (s *fakeConvStore) GetTurnByPostID(postID string) (*store.Turn, error) {

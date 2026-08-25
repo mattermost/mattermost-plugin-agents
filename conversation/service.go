@@ -30,6 +30,7 @@ type Store interface {
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
+	UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	UpdateTurnPostID(id string, postID *string) error
 	DeleteResponseTurns(conversationID, postID string) error
@@ -202,6 +203,14 @@ func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) 
 // UpdateTurnContent updates the content JSON of a turn.
 func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
 	return s.store.UpdateTurnContent(turnID, content)
+}
+
+// ClaimTurnContent atomically replaces a turn's content only while it still
+// equals expected, returning whether this caller won the claim. Losing the
+// claim means another request (possibly on another node) already resolved the
+// same blocks.
+func (s *Service) ClaimTurnContent(turnID string, expected, updated json.RawMessage) (bool, error) {
+	return s.store.UpdateTurnContentIfMatches(turnID, expected, updated)
 }
 
 // CreateTurn persists a new turn in the store with an explicit sequence.

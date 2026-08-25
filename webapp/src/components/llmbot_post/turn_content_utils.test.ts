@@ -11,6 +11,7 @@ import {
     extractReasoningFromTurn,
     extractAnnotationsFromTurn,
     deriveApprovalStageForPost,
+    findApprovalPostID,
     hasAutoApprovedToolsForPost,
     buildRoundsFromTurns,
     computeRenderedRounds,
@@ -72,6 +73,27 @@ describe('statusStringToEnum', () => {
         expect(statusStringToEnum(undefined as any)).toBe(ToolCallStatus.Pending);
     });
 });
+
+describe('findApprovalPostID', () => {
+    test('returns the latest anchor that still needs a decision', () => {
+        const conv = makeConversation([
+            makeTurn({id: 'older', post_id: 'post_old', sequence: 1, approval_state: 'call'}),
+            makeTurn({id: 'done', post_id: 'post_done', sequence: 2, approval_state: 'done'}),
+            makeTurn({id: 'latest', post_id: 'post_latest', sequence: 3, approval_state: 'result'}),
+        ]);
+
+        expect(findApprovalPostID(conv)).toBe('post_latest');
+    });
+
+    test('returns null when no approval remains', () => {
+        const conv = makeConversation([
+            makeTurn({post_id: 'post_done', approval_state: 'done'}),
+        ]);
+
+        expect(findApprovalPostID(conv)).toBeNull();
+    });
+});
+
 describe('extractToolCallsForPost', () => {
     test('returns empty array when the anchor turn has no tool_use blocks and no follow-ups', () => {
         const turn = makeTurn({post_id: 'post_1', content: [{type: 'text', text: 'hello'}]});
