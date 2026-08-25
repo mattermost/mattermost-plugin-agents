@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -51,8 +52,11 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartReindexJob(clearIndex)
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -143,14 +147,44 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 
 	jobStatus, err := a.indexerService.StartCatchUpJob()
 	if err != nil {
-		switch err.Error() {
-		case "job already running":
+		switch {
+		case errors.Is(err, indexer.ErrCatchUpIncompatible):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case "no previous index found, run a full reindex first":
+		case err.Error() == "no previous index found, run a full reindex first":
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		default:
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+	}
+
+	audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
+	c.JSON(http.StatusOK, jobStatus)
+}
+
+// handleRebuildVectorIndex drops and rebuilds the HNSW index without re-embedding.
+func (a *API) handleRebuildVectorIndex(c *gin.Context) {
+	if a.indexerService == nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
+		return
+	}
+
+	jobStatus, err := a.indexerService.StartRebuildVectorIndex(c.Request.Context())
+	if err != nil {
+		switch {
+		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
+			c.AbortWithError(http.StatusBadRequest, err)
+			return
+		case err.Error() == "job already running":
+			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
+			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
 			c.AbortWithError(http.StatusInternalServerError, err)
@@ -182,13 +216,24 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	// Include model compatibility in the health check result
 	cfg := a.config.EmbeddingSearchConfig()
-	compat := a.indexerService.CheckModelCompatibility(cfg.GetProviderType(), cfg.Dimensions, cfg.GetModelName())
+	compat := a.indexerService.CheckModelCompatibility(indexer.ModelInfo{
+		ProviderType:       cfg.GetProviderType(),
+		Dimensions:         cfg.Dimensions,
+		ModelName:          cfg.GetModelName(),
+		HNSWM:              cfg.GetHNSWM(),
+		VectorElementType:  cfg.GetVectorElementType(),
+		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
 	result.ModelCompatReason = compat.Reason
 	result.StoredProviderType = compat.StoredProviderType
 	result.StoredDimensions = compat.StoredDimensions
 	result.StoredModelName = compat.StoredModelName
+	result.StoredHNSWM = compat.StoredHNSWM
+	result.StoredVectorElementType = compat.StoredVectorElementType
+	result.StoredIndexRetentionDays = compat.StoredIndexRetentionDays
+	result.NeedsCatchUp = compat.NeedsCatchUp
 
 	c.JSON(http.StatusOK, result)
 }
@@ -535,7 +580,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.RegisterPluginServer(updated)
+	a.mcpClientManager.UpdatePluginServer(updated)
 	a.configUpdater.Update(cfg)
 
 	// Rebuild when either old or new state was external so removed tools

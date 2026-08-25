@@ -315,7 +315,7 @@ func TestBotConfigsEqual(t *testing.T) {
 			UserIDs:            []string{"u1"},
 			TeamIDs:            []string{"t1"},
 			MaxFileSize:        1024,
-			EnabledNativeTools: []string{"web_search"},
+			EnabledNativeTools: []string{llm.NativeToolWebSearch},
 			ReasoningEnabled:   true,
 			ReasoningEffort:    "medium",
 			ThinkingBudget:     4096,
@@ -1080,7 +1080,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 // native tools through Bifrost, even if the bot config lists web_search.
 func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
 	b := NewBot(
-		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
 		llm.ServiceConfig{Type: llm.ServiceTypeCohere},
 		&model.Bot{UserId: "b1"},
 		nil,
@@ -1090,7 +1090,7 @@ func TestHasNativeWebSearchEnabledUnsupportedServiceType(t *testing.T) {
 
 func TestHasNativeWebSearchEnabledSupportedServiceType(t *testing.T) {
 	b := NewBot(
-		llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
 		llm.ServiceConfig{Type: llm.ServiceTypeGemini},
 		&model.Bot{UserId: "b1"},
 		nil,
@@ -1140,7 +1140,7 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := NewBot(
-				llm.BotConfig{EnabledNativeTools: []string{"web_search"}},
+				llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
 				tt.service,
 				&model.Bot{UserId: "b1"},
 				nil,

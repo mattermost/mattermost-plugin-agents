@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -100,76 +99,6 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 	require.Empty(t, client.Tools())
 }
 
-func TestExtractOAuthMetadataURL(t *testing.T) {
-	tests := []struct {
-		name      string
-		errMsg    string
-		wantURL   string
-		wantFound bool
-	}{
-		{
-			name:      "nil error",
-			errMsg:    "",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "unrelated error",
-			errMsg:    "connection refused",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "metadata URL without wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL with wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com/.well-known/oauth-protected-resource: Got error: token refresh failed",
-			wantURL:   "https://example.com/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL embedded in longer error chain",
-			errMsg:    "failed to connect: OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "empty metadata URL",
-			errMsg:    "OAuth authentication needed for resource at ",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "URL with port",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "URL with port and wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource: Got error: something failed",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			if tt.errMsg != "" {
-				err = fmt.Errorf("%s", tt.errMsg)
-			}
-			gotURL, gotFound := extractOAuthMetadataURL(err)
-			require.Equal(t, tt.wantFound, gotFound)
-			require.Equal(t, tt.wantURL, gotURL)
-		})
-	}
-}
-
 func TestClientOAuthNeededError(t *testing.T) {
 	client := &Client{
 		config: ServerConfig{
@@ -180,36 +109,18 @@ func TestClientOAuthNeededError(t *testing.T) {
 		},
 	}
 
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{
-			name: "mcp unauthorized error",
-			err: &mcpUnauthorized{
-				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
-			},
-		},
-		{
-			name: "string matched oauth error",
-			err:  fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
-		},
-	}
+	err := client.oauthNeededError(&mcpUnauthorized{
+		metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+	})
+	require.Error(t, err)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := client.oauthNeededError(tt.err)
-			require.Error(t, err)
-
-			var oauthErr *OAuthNeededError
-			require.ErrorAs(t, err, &oauthErr)
-			authURL, parseErr := url.Parse(oauthErr.AuthURL())
-			require.NoError(t, parseErr)
-			require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
-			require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
-			require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
-		})
-	}
+	var oauthErr *OAuthNeededError
+	require.ErrorAs(t, err, &oauthErr)
+	authURL, parseErr := url.Parse(oauthErr.AuthURL())
+	require.NoError(t, parseErr)
+	require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
+	require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
+	require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
 }
 
 // TestNilCacheHandling verifies that nil cache is handled gracefully in the cache code

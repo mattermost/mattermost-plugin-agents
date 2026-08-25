@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -336,26 +337,28 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 func TestCheckModelCompatibility(t *testing.T) {
 	tests := []struct {
-		name                string
-		storedInfo          ModelInfo
-		storedInfoErr       error
-		currentProviderType string
-		currentDimensions   int
-		currentModelName    string
-		expectedCompat      bool
-		expectedReindex     bool
-		expectedReason      string
+		name               string
+		storedInfo         ModelInfo
+		storedInfoErr      error
+		current            ModelInfo
+		expectedCompat     bool
+		expectedReindex    bool
+		expectedReason     string
+		expectedStoredM    int
+		expectedStoredType string
 	}{
 		{
-			name:                "fresh install with no stored info returns compatible",
-			storedInfo:          ModelInfo{},
-			storedInfoErr:       mmapi.ErrKVNotFound,
-			currentProviderType: "openai",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			name:          "fresh install with no stored info returns compatible",
+			storedInfo:    ModelInfo{},
+			storedInfoErr: mmapi.ErrKVNotFound,
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "matching dimensions and empty current model name returns compatible",
@@ -363,13 +366,9 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current:         ModelInfo{Dimensions: 1536},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "dimension mismatch returns incompatible",
@@ -377,13 +376,14 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 768,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "dimension mismatch: stored=768, current=1536",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "dimension mismatch: stored=768, current=1536",
 		},
 		{
 			name: "model name mismatch returns incompatible",
@@ -391,13 +391,14 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-ada-002",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "model changed: stored=text-embedding-ada-002, current=text-embedding-3-small",
 		},
 		{
 			name: "matching config returns compatible",
@@ -405,13 +406,13 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions: 1536,
 				ModelName:  "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current: ModelInfo{
+				Dimensions: 1536,
+				ModelName:  "text-embedding-3-small",
+				HNSWM:      embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
 		},
 		{
 			name: "provider type mismatch returns incompatible",
@@ -420,13 +421,15 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions:   1536,
 				ModelName:    "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "anthropic",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      false,
-			expectedReindex:     true,
-			expectedReason:      "provider changed: stored=openai, current=anthropic",
+			current: ModelInfo{
+				ProviderType: "anthropic",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  false,
+			expectedReindex: true,
+			expectedReason:  "provider changed: stored=openai, current=anthropic",
 		},
 		{
 			name: "matching provider type with same config returns compatible",
@@ -435,13 +438,123 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Dimensions:   1536,
 				ModelName:    "text-embedding-3-small",
 			},
-			storedInfoErr:       nil,
-			currentProviderType: "openai",
-			currentDimensions:   1536,
-			currentModelName:    "text-embedding-3-small",
-			expectedCompat:      true,
-			expectedReindex:     false,
-			expectedReason:      "",
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "stored missing hnsw_m is compatible and does not nag",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "stored hnsw_m 16 vs current 8 needs rebuild but search stays compatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        16,
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:  true,
+			expectedReindex: true,
+			expectedReason:  "hnsw m changed: stored=16, current=8",
+			expectedStoredM: 16,
+		},
+		{
+			name: "stored missing vector element type is compatible",
+			storedInfo: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			expectedCompat:  true,
+			expectedReindex: false,
+		},
+		{
+			name: "vector vs halfvec is search incompatible and needs full reindex",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			expectedCompat:     false,
+			expectedReindex:    true,
+			expectedReason:     "vector element type changed: stored=vector, current=halfvec",
+			expectedStoredType: embeddings.VectorElementTypeVector,
+		},
+		{
+			name: "matching halfvec is compatible",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			current: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeHalfvec,
+			},
+			expectedCompat:     true,
+			expectedReindex:    false,
+			expectedStoredType: embeddings.VectorElementTypeHalfvec,
+		},
+		{
+			name: "stored vector vs empty current type is compatible",
+			storedInfo: ModelInfo{
+				ProviderType:      "openai",
+				Dimensions:        1536,
+				ModelName:         "text-embedding-3-small",
+				VectorElementType: embeddings.VectorElementTypeVector,
+			},
+			current: ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    "text-embedding-3-small",
+				HNSWM:        embeddings.DefaultHNSWM,
+			},
+			expectedCompat:     true,
+			expectedReindex:    false,
+			expectedStoredType: embeddings.VectorElementTypeVector,
 		},
 	}
 
@@ -449,7 +562,6 @@ func TestCheckModelCompatibility(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := mocks.NewMockClient(t)
 
-			// Setup KVGet expectation for GetModelInfo
 			mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
 				Run(func(args mock.Arguments) {
 					if tt.storedInfoErr == nil {
@@ -460,11 +572,14 @@ func TestCheckModelCompatibility(t *testing.T) {
 				Return(tt.storedInfoErr)
 
 			indexer := New(nil, nil, mockClient, nil, nil, nil)
-			result := indexer.CheckModelCompatibility(tt.currentProviderType, tt.currentDimensions, tt.currentModelName)
+			result := indexer.CheckModelCompatibility(tt.current)
 
 			assert.Equal(t, tt.expectedCompat, result.Compatible)
 			assert.Equal(t, tt.expectedReindex, result.NeedsReindex)
 			assert.Equal(t, tt.expectedReason, result.Reason)
+			assert.Equal(t, tt.expectedStoredM, result.StoredHNSWM)
+			assert.Equal(t, tt.expectedStoredType, result.StoredVectorElementType)
+			assert.False(t, result.NeedsCatchUp)
 		})
 	}
 }
@@ -723,9 +838,28 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 	return status
 }
 
+func waitForStoredRetentionDays(t *testing.T, store *jobKVStore, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		got := store.model
+		store.mu.Unlock()
+		if got != nil && got.IndexRetentionDays != nil && *got.IndexRetentionDays == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.NotNil(t, store.model, "timed out waiting for stored retention days=%d", want)
+	require.NotNil(t, store.model.IndexRetentionDays, "timed out waiting for stored retention days=%d", want)
+	require.Equal(t, want, *store.model.IndexRetentionDays, "timed out waiting for stored retention days")
+}
+
 // TestResumeRefreshesModelInfo covers start-time ModelInfo snapshotting:
 // fail mid-pass → resume completes → IndexerModelKey gets the original
-// snapshot (not live config). Also covers catch-up writing nothing.
+// snapshot (not live config). Catch-up updates retention days only.
 func TestResumeRefreshesModelInfo(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -821,12 +955,17 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			assert.Equal(t, 1536, store.model.Dimensions)
 			store.mu.Unlock()
 
-			compat := idx.CheckModelCompatibility("openai", 1536, tt.compatAgainst)
+			compat := idx.CheckModelCompatibility(ModelInfo{
+				ProviderType: "openai",
+				Dimensions:   1536,
+				ModelName:    tt.compatAgainst,
+				HNSWM:        embeddings.DefaultHNSWM,
+			})
 			assert.Equal(t, tt.wantCompatible, compat.Compatible)
 		})
 	}
 
-	t.Run("catch-up does not write model info", func(t *testing.T) {
+	t.Run("catch-up updates retention days without rewriting model identity", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -839,7 +978,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		store := &jobKVStore{}
 		lastIndexed := now - 5000
 		store.lastIdx = &lastIndexed
-		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768}
+		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: utils.Ptr(365)}
 
 		mockClient := mocks.NewMockClient(t)
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
@@ -853,7 +992,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 
 		idx := New(
 			func() embeddings.EmbeddingSearch { return mockSearch },
-			func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "model-a", 1536) },
+			func() embeddings.EmbeddingSearchConfig { return modelCfg("openai", "old-model", 768) },
 			mockClient, &bots.MMBots{}, db, mockMutexAPI,
 		)
 
@@ -861,10 +1000,14 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		require.NoError(t, err)
 		completed := waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
 		assert.Nil(t, completed.ModelInfo, "catch-up must not set a model snapshot")
+		assert.Equal(t, JobOperationCatchUp, completed.Operation)
 
 		store.mu.Lock()
 		require.NotNil(t, store.model)
-		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite IndexerModelKey")
+		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite model identity")
+		assert.Equal(t, 768, store.model.Dimensions)
+		require.NotNil(t, store.model.IndexRetentionDays)
+		assert.Equal(t, 0, *store.model.IndexRetentionDays)
 		store.mu.Unlock()
 	})
 }
@@ -1248,7 +1391,7 @@ func TestCountIndexedPosts(t *testing.T) {
 		require.NoError(t, err)
 
 		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, nil, db, nil)
-		count, err := indexer.countIndexedPosts(context.Background())
+		count, err := indexer.countIndexedPosts(context.Background(), 0)
 
 		require.NoError(t, err)
 		assert.Equal(t, int64(2), count) // Should count unique post_ids, not total rows
@@ -1283,6 +1426,10 @@ func TestConfigGetter(t *testing.T) {
 		assert.Equal(t, embeddings.ProviderTypeOpenAI, result.ProviderType)
 		assert.Equal(t, "text-embedding-3-small", result.ModelName)
 		assert.Equal(t, 1536, result.Dimensions)
+		assert.Equal(t, embeddings.DefaultHNSWM, result.HNSWM)
+		assert.Equal(t, embeddings.VectorElementTypeVector, result.VectorElementType)
+		require.NotNil(t, result.IndexRetentionDays)
+		assert.Equal(t, 0, *result.IndexRetentionDays)
 	})
 }
 
@@ -1907,7 +2054,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		// Save cursor
 		mockClient.On("KVSet", IndexerCursorKey, mock.MatchedBy(func(v interface{}) bool {
 			cursor := v.(Cursor)
-			return cursor.LastCreateAt == lastIndexed && cursor.LastID == ""
+			return cursor.LastCreateAt == 0 && cursor.LastID == ""
 		})).Return(nil).Once()
 
 		// Background job operations
@@ -2037,7 +2184,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	})
 
-	t.Run("catches up only posts created after last indexed timestamp", func(t *testing.T) {
+	t.Run("starts cursor at retention floor not lastIndexed wall clock", func(t *testing.T) {
 		db := testDB(t)
 		defer cleanupDB(t, db)
 
@@ -2049,24 +2196,32 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 		mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-		// Create test channel
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name, TeamId) VALUES ('channel1', 'O', 'town-square', 'team1')")
 		require.NoError(t, err)
 
-		// Timeline setup: lastIndexedTime is the cutoff point
 		now := model.GetMillis()
-		lastIndexedTime := now - 10000 // 10 seconds ago
+		lastIndexedTime := now - 10000
 
-		// Posts BEFORE lastIndexedTime (should NOT be caught up - simulate already indexed)
 		oldPostIDs := []string{"old-post-1", "old-post-2", "old-post-3"}
 		for i, postID := range oldPostIDs {
 			_, err = db.Exec(
 				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
 				postID, lastIndexedTime-1000-int64(i)*100, fmt.Sprintf("Old message %d", i))
 			require.NoError(t, err)
+			_, err = db.Exec(
+				"INSERT INTO llm_posts_embeddings (id, post_id, content, embedding, created_at) VALUES ($1, $1, $2, '[0.1, 0.2, 0.3]', $3)",
+				postID, fmt.Sprintf("Old message %d", i), lastIndexedTime-1000-int64(i)*100)
+			require.NoError(t, err)
 		}
 
-		// Posts AFTER lastIndexedTime (SHOULD be caught up)
+		gapPostIDs := []string{"gap-post-1", "gap-post-2"}
+		for i, postID := range gapPostIDs {
+			_, err = db.Exec(
+				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'channel1', 'user1')",
+				postID, lastIndexedTime-500-int64(i)*10, fmt.Sprintf("Gap message %d", i))
+			require.NoError(t, err)
+		}
+
 		newPostIDs := []string{"new-post-1", "new-post-2", "new-post-3"}
 		for i, postID := range newPostIDs {
 			_, err = db.Exec(
@@ -2075,7 +2230,6 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		// Mock: return lastIndexedTime when asked
 		mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
 			Run(func(args mock.Arguments) {
 				ts := args.Get(1).(*int64)
@@ -2083,24 +2237,19 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			}).
 			Return(nil)
 
-		// Check if job is running - return not found
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(mmapi.ErrKVNotFound)
 
-		// Cursor operations - the catch-up job sets cursor to start from lastIndexedTime
-		// When the background job loads it, return the cursor that was set
 		mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
 			Run(func(args mock.Arguments) {
 				cursor := args.Get(1).(*Cursor)
-				cursor.LastCreateAt = lastIndexedTime
+				cursor.LastCreateAt = 0
 				cursor.LastID = ""
 			}).
 			Return(nil).Maybe()
 
-		// Other KVGet calls (like model info)
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
 
-		// Track which documents are stored
 		var storedPostIDs []string
 		var storedMu sync.Mutex
 		mockSearch.On("Store", mock.Anything, mock.Anything).
@@ -2114,33 +2263,27 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 			}).
 			Return(nil).Maybe()
 
-		// Other KV operations
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVDelete", mock.Anything).Return(nil).Maybe()
 		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
 		mockClient.On("LogError", mock.Anything, mock.Anything).Return().Maybe()
 
-		indexer := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
-		status, err := indexer.StartCatchUpJob()
+		idx := New(func() embeddings.EmbeddingSearch { return mockSearch }, nil, mockClient, mockBots, db, mockMutexAPI)
+		status, err := idx.StartCatchUpJob()
 
 		require.NoError(t, err)
 		assert.Equal(t, JobStatusRunning, status.Status)
+		assert.Equal(t, int64(0), status.RetentionFloor)
 
-		// Wait for background job to complete
 		time.Sleep(300 * time.Millisecond)
 
-		// VERIFY: Only posts after lastIndexedTime were stored
 		storedMu.Lock()
 		defer storedMu.Unlock()
 
-		assert.ElementsMatch(t, newPostIDs, storedPostIDs,
-			"Only posts after lastIndexedTime should be indexed; got: %v, expected: %v", storedPostIDs, newPostIDs)
-
-		// VERIFY: Posts before lastIndexedTime were NOT stored
+		assert.ElementsMatch(t, append(append([]string{}, gapPostIDs...), newPostIDs...), storedPostIDs)
 		for _, oldPostID := range oldPostIDs {
-			assert.NotContains(t, storedPostIDs, oldPostID,
-				"Posts before lastIndexedTime should not be re-indexed: %s", oldPostID)
+			assert.NotContains(t, storedPostIDs, oldPostID)
 		}
 	})
 }
@@ -2979,6 +3122,42 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 		assert.False(t, savedStatus.CompletedAt.IsZero())
 	})
 
+	t.Run("rebuild jobs stay non-resumable after orphan reclaim", func(t *testing.T) {
+		mockClient := mocks.NewMockClient(t)
+
+		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
+			Run(func(args mock.Arguments) {
+				status := args.Get(1).(*JobStatus)
+				status.JobID = "rebuild-job"
+				status.Status = JobStatusRunning
+				status.Operation = JobOperationRebuildVectorIndex
+				status.Resumable = false
+				status.ProcessedRows = 10
+				status.StartedAt = time.Now().Add(-1 * time.Hour)
+			}).
+			Return(nil)
+
+		var savedStatus *JobStatus
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+			status, ok := v.(JobStatus)
+			if !ok {
+				return false
+			}
+			savedStatus = &status
+			return status.Status == JobStatusFailed
+		})).Return(true, nil)
+
+		mockClient.On("LogWarn", mock.Anything, mock.Anything).Return().Maybe()
+
+		indexer := New(nil, nil, mockClient, nil, nil, nil)
+		err := indexer.MarkOrphanedJobAsFailed()
+
+		require.NoError(t, err)
+		require.NotNil(t, savedStatus)
+		assert.False(t, savedStatus.Resumable, "rebuild orphans must not become Resume Reindex")
+		assert.Equal(t, JobOperationRebuildVectorIndex, savedStatus.Operation)
+	})
+
 	t.Run("marks stale running job on a different node as failed", func(t *testing.T) {
 		// Hostname-bound recovery is the wedge: in containerized deploys the
 		// hostname changes on restart, and in clusters the original node may
@@ -3506,9 +3685,11 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				}
 			},
 			expected: &ModelInfo{
-				ProviderType: "openai",
-				ModelName:    "text-embedding-3-small",
-				Dimensions:   1536,
+				ProviderType:      "openai",
+				ModelName:         "text-embedding-3-small",
+				Dimensions:        1536,
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
 			},
 		},
 		{
@@ -3522,9 +3703,11 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				}
 			},
 			expected: &ModelInfo{
-				ProviderType: "bedrock",
-				ModelName:    "",
-				Dimensions:   768,
+				ProviderType:      "bedrock",
+				ModelName:         "",
+				Dimensions:        768,
+				HNSWM:             embeddings.DefaultHNSWM,
+				VectorElementType: embeddings.VectorElementTypeVector,
 			},
 		},
 	}
@@ -3541,6 +3724,10 @@ func TestGetModelInfoFromConfig(t *testing.T) {
 				assert.Equal(t, tc.expected.ProviderType, result.ProviderType)
 				assert.Equal(t, tc.expected.ModelName, result.ModelName)
 				assert.Equal(t, tc.expected.Dimensions, result.Dimensions)
+				assert.Equal(t, tc.expected.HNSWM, result.HNSWM)
+				assert.Equal(t, tc.expected.VectorElementType, result.VectorElementType)
+				require.NotNil(t, result.IndexRetentionDays)
+				assert.Equal(t, 0, *result.IndexRetentionDays)
 			}
 		})
 	}

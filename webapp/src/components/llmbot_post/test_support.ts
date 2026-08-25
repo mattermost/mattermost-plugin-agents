@@ -24,6 +24,7 @@ export function makeRound(id: string, text: string, toolCalls: ToolCall[] = []):
         toolCalls,
         reasoning: {summary: '', signature: ''},
         annotations: [],
+        serverTools: [],
     };
 }
 

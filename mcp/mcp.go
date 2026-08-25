@@ -95,7 +95,7 @@ func DiscoverPluginServerTools(
 		},
 	}
 
-	mcpClient := gosdkmcp.NewClient(
+	mcpClient := NewSDKClient(
 		&gosdkmcp.Implementation{
 			Name:    "mattermost-agents-admin-probe",
 			Version: "1.0",

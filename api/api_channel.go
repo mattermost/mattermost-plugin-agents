@@ -31,7 +31,11 @@ var channelAnalysisRequiredMCPTools = []llm.EnabledMCPTool{
 	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
 }
 
-func (a *API) channelAuthorizationRequired(c *gin.Context) {
+// channelReadAuthorizationRequired resolves the :channelid parameter, stores
+// the channel in the request context, and requires PermissionReadChannel. It
+// has no bot dependency, so routes using only this middleware keep working
+// when no agents are configured or when the default agent is restricted.
+func (a *API) channelReadAuthorizationRequired(c *gin.Context) {
 	channelID := c.Param("channelid")
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -46,7 +50,16 @@ func (a *API) channelAuthorizationRequired(c *gin.Context) {
 		c.AbortWithError(http.StatusForbidden, errors.New("user doesn't have permission to read channel"))
 		return
 	}
+}
 
+func (a *API) channelAuthorizationRequired(c *gin.Context) {
+	a.channelReadAuthorizationRequired(c)
+	if c.IsAborted() {
+		return
+	}
+
+	userID := c.GetHeader("Mattermost-User-Id")
+	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 	if err := a.bots.CheckUsageRestrictions(userID, bot, channel); err != nil {
 		c.AbortWithError(http.StatusForbidden, err)

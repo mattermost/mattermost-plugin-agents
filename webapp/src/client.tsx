@@ -607,6 +607,23 @@ export async function catchUpIndex() {
     });
 }
 
+export async function rebuildVectorIndex() {
+    const url = `${baseRoute()}/admin/reindex/rebuild-vector-index`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function checkIndexHealth() {
     const url = `${baseRoute()}/admin/reindex/health-check`;
     const response = await fetch(url, Client4.getOptions({
@@ -802,6 +819,48 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
 
     if (response.ok) {
         return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+
+export type ChannelAutoReplySettings = {
+    bot_id: string;
+    mode: ChannelAutoReplyMode;
+};
+
+export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
+    const url = `${channelRoute(channelId)}/autoreply`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateChannelAutoReply(channelId: string, settings: ChannelAutoReplySettings): Promise<void> {
+    const url = `${channelRoute(channelId)}/autoreply`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify(settings),
+    }));
+
+    if (response.ok) {
+        return;
     }
 
     throw new ClientError(Client4.url, {

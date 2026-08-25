@@ -10,6 +10,7 @@ import {ToolApprovalStage} from '../tool_types';
 
 import {Round} from './turn_content_utils';
 import {ReasoningDisplay} from './reasoning_display';
+import ServerToolSet from './server_tool_set';
 
 interface RoundViewProps {
     round: Round;
@@ -28,7 +29,8 @@ interface RoundViewProps {
 }
 
 /**
- * One assistant round: reasoning, text, then the tool cards it produced.
+ * One assistant round: reasoning, provider-executed tools, text, then the
+ * client tool cards it produced.
  *
  * Memoized because a streaming response re-renders the post on every chunk
  * while only the live round's content actually changes.
@@ -44,6 +46,9 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     isReasoningLoading={props.reasoningLoading}
                     onToggleCollapse={(collapsed) => props.onToggleReasoning(round.id, collapsed)}
                 />
+            )}
+            {round.serverTools.length > 0 && (
+                <ServerToolSet serverTools={round.serverTools}/>
             )}
             {round.text !== '' && (
                 <PostText

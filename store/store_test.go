@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -150,6 +151,16 @@ func TestRunMigrations(t *testing.T) {
 				require.NoError(t, err)
 				assert.True(t, exists, "Agents_UserAgents table should exist")
 
+				// Check Agents_ChannelAutoReply table exists
+				err = s.db.Get(&exists, `
+					SELECT EXISTS (
+						SELECT 1 FROM information_schema.tables
+						WHERE table_name = 'agents_channelautoreply'
+						AND table_schema = current_schema()
+					)`)
+				require.NoError(t, err)
+				assert.True(t, exists, "Agents_ChannelAutoReply table should exist")
+
 				// Check Agents_DB_Migrations tracking table exists
 				err = s.db.Get(&exists, `
 					SELECT EXISTS (
@@ -176,7 +187,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 9, count, "Should have 9 migration records")
+				assert.Equal(t, 10, count, "Should have 10 migration records")
 			},
 		},
 		{
@@ -304,5 +315,24 @@ func TestSystemKeyValue(t *testing.T) {
 			tt.setup(t, s)
 			tt.validate(t, s)
 		})
+	}
+}
+
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	entries, err := assets.ReadDir("migrations")
+	require.NoError(t, err)
+
+	seen := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		version, _, ok := strings.Cut(name, "_")
+		require.True(t, ok, "unexpected migration filename %s", name)
+		if other, exists := seen[version]; exists {
+			t.Errorf("duplicate migration version %s: %s and %s", version, other, name)
+		}
+		seen[version] = name
 	}
 }

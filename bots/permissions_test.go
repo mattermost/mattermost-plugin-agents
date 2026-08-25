@@ -320,6 +320,105 @@ func TestUsageRestrictions(t *testing.T) {
 	}
 }
 
+func TestCheckUsageRestrictionsForChannel(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	testCases := []struct {
+		name          string
+		bot           *Bot
+		channel       *model.Channel
+		expectedError error
+		// expectAnyError pins fail-closed behavior for errors that do not
+		// wrap ErrUsageRestriction (e.g. a corrupt access level).
+		expectAnyError bool
+	}{
+		{
+			name: "access level all allows any channel",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "allow list containing the channel allows it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
+				ChannelIDs:         []string{"channel1"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "allow list missing the channel blocks it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
+				ChannelIDs:         []string{"channel2"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "block list containing the channel blocks it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
+				ChannelIDs:         []string{"channel1"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "block list missing the channel allows it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
+				ChannelIDs:         []string{"channel2"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "access level none blocks every channel",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelNone,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "user-scope restrictions are ignored: every user blocked but channel allowed",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+				UserAccessLevel:    llm.UserAccessLevelNone,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "out-of-range access level fails closed",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelNone + 1,
+			}, mmBot: nil},
+			channel:        &model.Channel{Id: "channel1"},
+			expectAnyError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := e.bots.CheckUsageRestrictionsForChannel(tc.bot, tc.channel)
+			switch {
+			case tc.expectAnyError:
+				require.Error(t, err)
+			case tc.expectedError != nil:
+				require.ErrorIs(t, err, tc.expectedError)
+			default:
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
