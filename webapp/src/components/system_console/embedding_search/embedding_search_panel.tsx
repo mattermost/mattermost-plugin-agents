@@ -64,7 +64,7 @@ const normalizeHNSWM = (value: number | undefined): number => {
     if (typeof value !== 'number' || isNaN(value) || value <= 0) {
         return HNSW_DEFAULTS.m;
     }
-	return Math.min(Math.max(value, HNSW_DEFAULTS.min), HNSW_DEFAULTS.max);
+    return Math.min(Math.max(value, HNSW_DEFAULTS.min), HNSW_DEFAULTS.max);
 };
 
 interface Props {
