@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -314,5 +315,24 @@ func TestSystemKeyValue(t *testing.T) {
 			tt.setup(t, s)
 			tt.validate(t, s)
 		})
+	}
+}
+
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	entries, err := assets.ReadDir("migrations")
+	require.NoError(t, err)
+
+	seen := make(map[string]string)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+		version, _, ok := strings.Cut(name, "_")
+		require.True(t, ok, "unexpected migration filename %s", name)
+		if other, exists := seen[version]; exists {
+			t.Errorf("duplicate migration version %s: %s and %s", version, other, name)
+		}
+		seen[version] = name
 	}
 }

@@ -1,4 +1,4 @@
-# Schema Migration Review: 000010 — Create Agents_ChannelAutoReply
+# Schema Migration Review: 000011 — Create Agents_ChannelAutoReply
 
 > **Context:** New plugin table storing per-channel agent auto-reply settings. One row
 > per channel that has auto-reply enabled ("off" is represented by row absence), so the
