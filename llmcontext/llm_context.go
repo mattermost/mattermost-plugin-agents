@@ -23,9 +23,11 @@ type ToolProvider interface {
 	GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 }
 
-// MCPToolProvider provides MCP tools for a user
+// MCPToolProvider provides MCP tools for a user. selection tells the provider
+// which MCP servers this request is allowed to reach, so ineligible servers are
+// never connected rather than connected and then filtered out.
 type MCPToolProvider interface {
-	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
+	GetToolsForUser(ctx stdcontext.Context, userID string, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
@@ -153,6 +155,34 @@ func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []ll
 	})
 }
 
+// mcpToolSelection maps this request's per-agent, per-user, and license rules
+// onto the set of MCP servers that may be contacted. Everything it excludes is
+// also excluded by the tool-level filters that follow, but resolving it here is
+// what keeps a disallowed server from being connected in the first place.
+func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed bool) mcp.ToolSelection {
+	selection := mcp.ToolSelection{
+		DeniedOrigins:        c.ToolCatalog.DisabledMCPServerOrigins,
+		ExcludeRemoteServers: !remoteMCPLicensed,
+	}
+
+	if !botCfg.AutoEnableNewMCPTools {
+		selection.AllowedOrigins = enabledMCPToolOrigins(botCfg.EnabledMCPTools)
+	}
+
+	return selection
+}
+
+// enabledMCPToolOrigins returns the server origins an agent allowlist mentions.
+// The result is deliberately non-nil even when empty: an agent that allowlists
+// nothing gets no MCP servers, rather than all of them.
+func enabledMCPToolOrigins(allowlist []llm.EnabledMCPTool) []string {
+	origins := make([]string, 0, len(allowlist))
+	for _, entry := range allowlist {
+		origins = append(origins, entry.ServerOrigin)
+	}
+	return origins
+}
+
 func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {
 	return func(c *llm.Context) {
 		normalized := llm.NormalizeMCPServerOrigins(origins)
@@ -260,9 +290,6 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
-		// Get tools from all connected servers
-		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
-
 		// Remote/external MCP servers are the licensed "MCP Support" feature.
 		// Without a license their tools are never supplied to the LLM: they
 		// are dropped before full-schema insertion and before the dynamic
@@ -270,6 +297,12 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// them. Embedded Mattermost MCP tools are basic tool integrations
 		// and are not filtered.
 		remoteMCPLicensed := b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+
+		// Get tools from every server this request may reach. Server-level
+		// eligibility is resolved up front so ineligible servers are not
+		// contacted; the filters below narrow the result to individual tools.
+		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID, mcpToolSelection(botCfg, c, remoteMCPLicensed))
+
 		if !remoteMCPLicensed {
 			mcpTools = filterMCPToolsByPredicate(mcpTools, func(tool llm.Tool) bool {
 				return !mcp.IsRemoteServerOrigin(tool.ServerOrigin)

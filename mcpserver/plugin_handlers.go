@@ -17,6 +17,7 @@ import (
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -154,57 +155,96 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 
 	// Disabled plugin tools are not registered on the external server.
 	if h.registry != nil {
-		toolOwners := map[string]string{}
-		for _, toolName := range toolProvider.ToolNames() {
-			toolOwners[toolName] = nativeMattermostToolOwner
-		}
-		for _, ps := range h.registry.ListPluginServers() {
-			if !ps.Enabled || !ps.ExposeExternal {
-				continue
-			}
-			discoveryCtx, cancel := context.WithTimeout(context.Background(), h.proxyDiscoveryTimeout)
-			proxyTools, proxyHandlers, buildErr := BuildProxyTools(discoveryCtx, ps, h.sourcePluginAPI)
-			cancel()
-			if buildErr != nil {
-				if errors.Is(buildErr, context.DeadlineExceeded) || errors.Is(discoveryCtx.Err(), context.DeadlineExceeded) {
-					h.logger.Warn("timed out building proxy tools for plugin server; skipping",
-						"plugin_id", ps.PluginID, "timeout", h.proxyDiscoveryTimeout.String())
-					continue
-				}
-				h.logger.Error("failed to build proxy tools for plugin server; skipping",
-					"plugin_id", ps.PluginID, "error", buildErr.Error())
-				continue
-			}
-			policyConfig := &mcppkg.ServerConfig{
-				Name:        ps.Name,
-				Enabled:     true,
-				BaseURL:     "plugin://" + ps.PluginID,
-				ToolConfigs: ps.ToolConfigs,
-			}
-			for i := range proxyTools {
-				if _, enabled := policyConfig.GetToolPolicy(proxyTools[i].Name); !enabled {
-					continue
-				}
-				if existing, ok := toolOwners[proxyTools[i].Name]; ok {
-					if existing == nativeMattermostToolOwner {
-						h.logger.Error("proxy tool name conflicts with native Mattermost tool; skipping",
-							"tool_name", proxyTools[i].Name,
-							"plugin_id", ps.PluginID)
-						continue
-					}
-					h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
-						"tool_name", proxyTools[i].Name,
-						"plugin_id", ps.PluginID,
-						"existing_plugin_id", existing)
-					continue
-				}
-				toolOwners[proxyTools[i].Name] = ps.PluginID
-				mcpServer.AddTool(proxyTools[i], proxyHandlers[i])
-			}
-		}
+		h.addProxyTools(mcpServer, toolProvider.ToolNames())
 	}
 
 	return mcpServer
+}
+
+// proxyDiscovery is one source plugin's discovered proxy tools.
+type proxyDiscovery struct {
+	tools    []*mcp.Tool
+	handlers []mcp.ToolHandler
+}
+
+// addProxyTools discovers every externally-exposed plugin server concurrently
+// and then registers the results sequentially, in registry-snapshot order.
+// Splitting discovery from registration is what keeps collision winners
+// independent of which source plugin answers first: native Mattermost tools
+// always win, and among plugins the first entry in the snapshot wins.
+func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames []string) {
+	exposed := make([]mcppkg.PluginServerConfig, 0)
+	for _, ps := range h.registry.ListPluginServers() {
+		if ps.Enabled && ps.ExposeExternal {
+			exposed = append(exposed, ps)
+		}
+	}
+
+	discovered := utils.RunParallel(len(exposed), func(index int) (proxyDiscovery, error) {
+		return h.discoverProxyTools(exposed[index])
+	})
+
+	toolOwners := make(map[string]string, len(nativeToolNames))
+	for _, toolName := range nativeToolNames {
+		toolOwners[toolName] = nativeMattermostToolOwner
+	}
+
+	for index, ps := range exposed {
+		if discovered[index].Err != nil {
+			continue
+		}
+
+		policyConfig := &mcppkg.ServerConfig{
+			Name:        ps.Name,
+			Enabled:     true,
+			BaseURL:     "plugin://" + ps.PluginID,
+			ToolConfigs: ps.ToolConfigs,
+		}
+		proxyTools := discovered[index].Value.tools
+		proxyHandlers := discovered[index].Value.handlers
+		for i := range proxyTools {
+			if _, enabled := policyConfig.GetToolPolicy(proxyTools[i].Name); !enabled {
+				continue
+			}
+			if existing, ok := toolOwners[proxyTools[i].Name]; ok {
+				if existing == nativeMattermostToolOwner {
+					h.logger.Error("proxy tool name conflicts with native Mattermost tool; skipping",
+						"tool_name", proxyTools[i].Name,
+						"plugin_id", ps.PluginID)
+					continue
+				}
+				h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
+					"tool_name", proxyTools[i].Name,
+					"plugin_id", ps.PluginID,
+					"existing_plugin_id", existing)
+				continue
+			}
+			toolOwners[proxyTools[i].Name] = ps.PluginID
+			mcpServer.AddTool(proxyTools[i], proxyHandlers[i])
+		}
+	}
+}
+
+// discoverProxyTools lists one source plugin's tools under the per-plugin
+// discovery timeout. A plugin that fails or times out is skipped; healthy
+// plugins are unaffected.
+func (h *PluginMCPHandlers) discoverProxyTools(ps mcppkg.PluginServerConfig) (proxyDiscovery, error) {
+	discoveryCtx, cancel := context.WithTimeout(context.Background(), h.proxyDiscoveryTimeout)
+	defer cancel()
+
+	proxyTools, proxyHandlers, err := BuildProxyTools(discoveryCtx, ps, h.sourcePluginAPI)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(discoveryCtx.Err(), context.DeadlineExceeded) {
+			h.logger.Warn("timed out building proxy tools for plugin server; skipping",
+				"plugin_id", ps.PluginID, "timeout", h.proxyDiscoveryTimeout.String())
+		} else {
+			h.logger.Error("failed to build proxy tools for plugin server; skipping",
+				"plugin_id", ps.PluginID, "error", err.Error())
+		}
+		return proxyDiscovery{}, err
+	}
+
+	return proxyDiscovery{tools: proxyTools, handlers: proxyHandlers}, nil
 }
 
 // RebuildExternalServer reconstructs the underlying *mcp.Server from the

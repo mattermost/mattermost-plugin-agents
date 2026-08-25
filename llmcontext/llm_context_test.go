@@ -37,7 +37,7 @@ type countingMCPToolProvider struct {
 	calls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return []llm.Tool{
 		{
@@ -54,7 +54,7 @@ type staticMCPToolProvider struct {
 	overrides map[string]mcp.ToolRetrievalOverride
 }
 
-func (p *staticMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *staticMCPToolProvider) GetToolsForUser(stdcontext.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, p.errors
 }
 

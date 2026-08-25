@@ -52,7 +52,7 @@ type channelFollowUpTestMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, nil
 }
 

@@ -41,9 +41,12 @@ type UserMCPToolInfo struct {
 }
 
 // handleGetUserMCPTools returns the user-visible MCP tools grouped by server.
+// This is a catalog surface: it must show every admin-enabled server so the
+// user can see and connect servers no single agent has allowlisted, so it
+// passes the widest selection.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
+	tools, mcpErrors := a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID, mcp.ToolSelection{})
 
 	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors))
 }
@@ -56,7 +59,7 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
+	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID, mcp.ToolSelection{})
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
 		return

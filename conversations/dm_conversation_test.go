@@ -491,7 +491,7 @@ type testMCPClientManager struct {
 	errors *mcp.Errors
 }
 
-func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.errors
 }
 

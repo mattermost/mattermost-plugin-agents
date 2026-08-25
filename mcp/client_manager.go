@@ -161,105 +161,169 @@ func (m *ClientManager) Close() {
 	m.clients = make(map[string]*UserClients)
 }
 
-// createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
-// When forceRefresh is true the remote connect bypasses the shared tools cache and any
-// existing cached client is replaced.
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
-	// Unless forcing a refresh, reuse an already-cached client so we skip a
-	// redundant remote connect when another goroutine cached one first.
-	if !forceRefresh {
-		m.clientsMu.Lock()
-		if client, exists := m.clients[userID]; exists {
-			m.activity[userID] = time.Now()
-			m.clientsMu.Unlock()
-			return client, client.InitialRemoteConnectErrors()
-		}
-		m.clientsMu.Unlock()
-	}
-
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
-
-	// Connect outside the manager lock so remote MCP handshakes do not block other users.
-	// Cacheable client creation must not inherit request cancellation; a canceled
-	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
-	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
-	userClients.setInitialRemoteConnectErrors(mcpErrors)
-
+// getOrCreateUserClients returns the cached per-user client, creating and
+// registering an empty one when this is the user's first request. Registration
+// happens before any dialing so concurrent cold requests share one instance and
+// therefore one session per server.
+func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
-	// Check again in case another goroutine created the client while we were connecting.
-	// On a forced refresh we intentionally replace (and close) any existing client.
-	if client, exists := m.clients[userID]; exists {
-		if !forceRefresh {
-			userClients.Close()
-			m.activity[userID] = time.Now()
-			return client, client.InitialRemoteConnectErrors()
-		}
-		client.Close()
+	if m.clients == nil {
+		m.clients = make(map[string]*UserClients)
+	}
+	if m.activity == nil {
+		m.activity = make(map[string]time.Time)
 	}
 
-	// Store the client even if some servers failed to connect
-	// This allows partial success - user gets tools from working servers
-	m.clients[userID] = userClients
+	userClients, exists := m.clients[userID]
+	if !exists {
+		userClients = NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+		m.clients[userID] = userClients
+	}
 	m.activity[userID] = time.Now()
 
-	return userClients, mcpErrors
+	return userClients
 }
 
-// getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
-	m.clientsMu.Lock()
-	client, exists := m.clients[userID]
-	if exists {
-		m.activity[userID] = time.Now()
-		m.clientsMu.Unlock()
-		return client, client.InitialRemoteConnectErrors()
+// eligibleServers is the per-request view of which MCP servers a user's tool
+// construction may reach: admin-enabled servers intersected with the caller's
+// selection, minus configuration conflicts that make a server ambiguous.
+type eligibleServers struct {
+	remote   []ServerConfig
+	plugins  []PluginServerConfig
+	embedded bool
+	// origins holds every eligible origin, so discovered tools from a server
+	// that is cached but no longer eligible are never handed to the LLM.
+	origins map[string]bool
+}
+
+func (m *ClientManager) resolveEligibleServers(selection ToolSelection) eligibleServers {
+	filter := selection.compile()
+	resolved := eligibleServers{origins: make(map[string]bool)}
+
+	// A duplicated name or endpoint makes every member of the group ambiguous:
+	// they share a client-map key or a tools-cache entry, so none of them can
+	// be safely picked. They stay out of the runtime until an admin fixes the
+	// configuration; admin discovery reports the conflict.
+	conflicting := make(map[int]bool)
+	for _, conflict := range m.config.ServerConflicts() {
+		conflicting[conflict.Index] = true
 	}
-	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID, false)
+	for i := range m.config.Servers {
+		server := m.config.Servers[i]
+		switch {
+		case !server.Enabled || server.BaseURL == "":
+			continue
+		case conflicting[i]:
+			m.log.Warn("Skipping MCP server with a duplicate name or URL; fix the MCP configuration to enable it",
+				"serverID", server.Name, "serverOrigin", server.BaseURL)
+			continue
+		case !filter.allows(server.BaseURL):
+			continue
+		}
+		resolved.remote = append(resolved.remote, server)
+		resolved.origins[llm.NormalizeMCPServerOrigin(server.BaseURL)] = true
+	}
+
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled && filter.allows(EmbeddedClientKey) {
+		resolved.embedded = true
+		resolved.origins[EmbeddedClientKey] = true
+	}
+
+	for _, cfg := range m.snapshotEnabledPluginServers() {
+		origin := pluginServerOriginKey(cfg.PluginID)
+		if !filter.allows(origin) {
+			continue
+		}
+		resolved.plugins = append(resolved.plugins, cfg)
+		resolved.origins[origin] = true
+	}
+
+	return resolved
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
-	mcpErrors := cloneMCPErrors(initialErrors)
+// buildConnectTasks assembles one flat task list covering remote, embedded, and
+// plugin servers. Keeping them in a single batch is the point: they dial
+// concurrently instead of one category waiting on the previous one.
+func (m *ClientManager) buildConnectTasks(ctx context.Context, userID string, userClients *UserClients, servers eligibleServers, forceRefresh bool) []connectTask {
+	tasks := make([]connectTask, 0, len(servers.remote)+len(servers.plugins)+1)
 
-	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
-	// they run per-request and are not cached, so a canceled request should abort
-	// them. Only the remote connect uses cacheableContext(ctx) (in
-	// createAndStoreUserClient) because its result is cached across requests.
-	if m.embeddedClient != nil {
-		ensuredSessionID, _, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
-			}
+	// Remote sessions are cached across requests, so their dials must not
+	// inherit request cancellation: a closed popover would otherwise leave the
+	// user with a remembered "canceled" failure. Embedded and plugin dials keep
+	// the request context.
+	remoteCtx := cacheableContext(ctx)
+	for _, server := range servers.remote {
+		tasks = append(tasks, userClients.remoteConnectTask(remoteCtx, server, forceRefresh))
+	}
+
+	if servers.embedded {
+		sessionID, _, ensureErr := m.ensureEmbeddedSessionID(userID)
+		switch {
+		case ensureErr != nil:
+			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available",
+				"userID", userID, "error", ensureErr)
+		case userClients.needsEmbeddedReconnect(sessionID):
+			tasks = append(tasks, userClients.embeddedConnectTask(ctx, sessionID, m.embeddedClient))
 		}
 	}
 
-	// Snapshot under RLock, then release before PluginHTTP work.
-	pluginSnap := m.snapshotEnabledPluginServers()
-	for _, cfg := range pluginSnap {
-		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
-			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-			mcpErrors = appendMCPError(mcpErrors, connectErr)
-		}
+	for _, cfg := range servers.plugins {
+		tasks = append(tasks, userClients.pluginConnectTask(ctx, cfg, m.sourcePluginAPI))
 	}
 
-	rawTools := userClient.GetTools(ctx)
-	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
-	return filtered, mcpErrors
+	return tasks
 }
 
-// RefreshToolsForUser drops cached user clients and shared server tool lists,
-// pre-warms a fresh user client, then delegates to GetToolsForUser for the
-// embedded/plugin connect + filtering it shares with the normal lookup path.
-func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
+// GetToolsForUser returns the MCP tools a user may use for this operation.
+// selection carries the operation's intent: runtime tool construction narrows
+// it to the servers the agent, the user, and the license allow, while
+// management and catalog surfaces pass the zero value to reach every
+// admin-enabled server.
+//
+// Eligible servers that have not been connected for this user yet are dialed
+// now, concurrently, so a cold request costs roughly the slowest server rather
+// than the sum of all of them. Servers outside the selection are never
+// contacted and never contribute tools, even if a previous request cached a
+// session for them.
+func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors) {
+	return m.getToolsForUser(ctx, userID, selection, false)
+}
+
+func (m *ClientManager) getToolsForUser(ctx context.Context, userID string, selection ToolSelection, forceRefresh bool) ([]llm.Tool, *Errors) {
+	userClients := m.getOrCreateUserClients(userID)
+	servers := m.resolveEligibleServers(selection)
+
+	tasks := m.buildConnectTasks(ctx, userID, userClients, servers, forceRefresh)
+	mcpErrors := userClients.ensureConnections(ctx, tasks)
+
+	rawTools := userClients.GetTools(ctx)
+	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, servers.plugins)
+	return retainToolsFromOrigins(filtered, servers.origins), mcpErrors
+}
+
+// retainToolsFromOrigins drops tools whose server is not part of this
+// operation's selection. A user client is a long-lived cache, so it can hold
+// sessions for servers an agent switch has since made ineligible.
+func retainToolsFromOrigins(tools []llm.Tool, origins map[string]bool) []llm.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	retained := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if origins[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)] {
+			retained = append(retained, tool)
+		}
+	}
+	return retained
+}
+
+// RefreshToolsForUser drops the cached user client and shared server tool
+// lists, then rediscovers every eligible server from scratch.
+func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors, error) {
 	if userID == "" {
 		return nil, nil, errors.New("userID is required")
 	}
@@ -268,11 +332,8 @@ func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) 
 		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
 	}
 	m.InvalidateUserClients(userID)
-	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
-	// then reuses this cached client rather than rebuilding it.
-	m.createAndStoreUserClient(ctx, userID, true)
 
-	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
+	tools, mcpErrors := m.getToolsForUser(ctx, userID, selection, true)
 	return tools, mcpErrors, nil
 }
 
@@ -291,27 +352,6 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 		}
 	}
 	return refreshErr
-}
-
-func cloneMCPErrors(src *Errors) *Errors {
-	if src == nil || (len(src.ToolAuthErrors) == 0 && len(src.Errors) == 0) {
-		return nil
-	}
-	return &Errors{
-		ToolAuthErrors: append([]llm.ToolAuthError(nil), src.ToolAuthErrors...),
-		Errors:         append([]error(nil), src.Errors...),
-	}
-}
-
-func appendMCPError(mcpErrors *Errors, err error) *Errors {
-	if err == nil {
-		return mcpErrors
-	}
-	if mcpErrors == nil {
-		mcpErrors = &Errors{}
-	}
-	mcpErrors.Errors = append(mcpErrors.Errors, err)
-	return mcpErrors
 }
 
 func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOverride {
@@ -360,6 +400,8 @@ func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOver
 
 // snapshotEnabledPluginServers returns a copy of enabled plugin configs so
 // callers can iterate (and do HTTP work) without holding pluginServersMu.
+// The result is ordered by plugin ID so batched connects report their errors in
+// a stable order rather than one derived from map iteration.
 func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
@@ -369,6 +411,9 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 			out = append(out, cfg)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PluginID < out[j].PluginID
+	})
 	return out
 }
 

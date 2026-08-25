@@ -30,6 +30,14 @@ const (
 
 	listToolsMethod = "tools/list"
 
+	// RemoteConnectTimeout bounds one remote MCP server's whole connection
+	// sequence: streamable-transport negotiation, the legacy HTTP+SSE
+	// fallback, and the initial tools/list. Without it a server that stalls
+	// every step holds a connect slot for the sum of those per-request
+	// timeouts. It matches the plugin HTTP client's own request timeout so a
+	// cold connect is never slower than a single upstream request budget.
+	RemoteConnectTimeout = 30 * time.Second
+
 	ToolPolicyAsk               = config.MCPToolPolicyAsk
 	ToolPolicyAutoRunInDM       = config.MCPToolPolicyAutoRunInDM
 	ToolPolicyAutoRunEverywhere = config.MCPToolPolicyAutoRunEverywhere
@@ -298,29 +306,46 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		toolsCache:   toolsCache,
 	}
 
+	deadline := newConnectDeadline(ctx, RemoteConnectTimeout)
+	session, err := c.connectAndDiscover(deadline.context(), serverConfig, forceRefresh)
+	if err != nil {
+		deadline.abandon()
+		return nil, err
+	}
+	if !deadline.keep() {
+		session.Close()
+		return nil, fmt.Errorf("timed out connecting to MCP server %s after %s", serverConfig.Name, RemoteConnectTimeout)
+	}
+
+	c.session = session
+	return c, nil
+}
+
+// connectAndDiscover negotiates a transport and populates the client's tool
+// list, returning the live session. The caller owns the returned session.
+func (c *Client) connectAndDiscover(ctx context.Context, serverConfig ServerConfig, forceRefresh bool) (*mcp.ClientSession, error) {
 	session, err := c.createSession(ctx, serverConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP session for server %s: %w", serverConfig.Name, err)
 	}
 
 	useSharedToolsCache := shouldUseSharedToolsCache(serverConfig)
-	maybeInvalidateSharedToolsBeforeOAuthListTools(userID, serverConfig, log, toolsCache, oauthManager)
+	maybeInvalidateSharedToolsBeforeOAuthListTools(c.userID, serverConfig, c.log, c.toolsCache, c.oauthManager)
 	serverID := serverConfig.Name
 
 	// Try to get tools from global cache first.
-	if toolsCache != nil && useSharedToolsCache && !forceRefresh {
-		cachedTools := toolsCache.GetTools(serverID)
+	if c.toolsCache != nil && useSharedToolsCache && !forceRefresh {
+		cachedTools := c.toolsCache.GetTools(serverID)
 		if len(cachedTools) > 0 {
 			// Cache hit - use cached tools
 			c.toolsMu.Lock()
 			c.tools = cachedTools
 			c.toolsMu.Unlock()
-			log.Debug("Using cached tools for MCP server",
-				"userID", userID,
+			c.log.Debug("Using cached tools for MCP server",
+				"userID", c.userID,
 				"server", serverConfig.Name,
 				"toolCount", len(cachedTools))
-			c.session = session
-			return c, nil
+			return session, nil
 		}
 	}
 
@@ -336,7 +361,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 
 	if len(discoveredTools) == 0 {
 		session.Close()
-		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", serverConfig.Name, userID)
+		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", serverConfig.Name, c.userID)
 	}
 
 	// Store the tools for this server
@@ -344,22 +369,21 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	c.tools = discoveredTools
 	c.toolsMu.Unlock()
 	for _, tool := range discoveredTools {
-		log.Debug("Registered MCP tool",
-			"userID", userID,
+		c.log.Debug("Registered MCP tool",
+			"userID", c.userID,
 			"name", tool.Name,
 			"description", tool.Description,
 			"server", serverConfig.Name)
 	}
 
 	// Update the global cache with fetched tools.
-	if toolsCache != nil && useSharedToolsCache {
-		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
-			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
+	if c.toolsCache != nil && useSharedToolsCache {
+		if err := c.toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
+			c.log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
 	}
 
-	c.session = session
-	return c, nil
+	return session, nil
 }
 
 // NewPluginClient creates a per-user MCP client for a plugin-registered server.

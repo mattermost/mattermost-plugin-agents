@@ -1716,7 +1716,7 @@ type fakeBridgeMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, _ string, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, nil
 }
 

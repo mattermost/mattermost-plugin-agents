@@ -26,7 +26,7 @@ type countingMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	atomic.AddInt32(&p.calls, 1)
 	return append([]llm.Tool(nil), p.tools...), nil
 }
