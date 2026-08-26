@@ -261,6 +261,102 @@ describe('LLMBotPost streaming fallback rendering', () => {
     });
 });
 
+describe('LLMBotPost setup progress', () => {
+    test('advances phases in order and ignores regressions', () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'checking_mcp',
+                progress_seq: 1,
+            }));
+        });
+        expect(screen.getByText('Checking MCP connections and tools...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'preparing_request',
+                progress_seq: 3,
+            }));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'loading_conversation',
+                progress_seq: 2,
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+        expect(screen.getByText('Preparing request...')).toBeTruthy();
+        expect(screen.queryByText('Loading conversation context...')).toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Connecting to provider...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Hello'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Hello')).toBeTruthy();
+        expect(screen.queryByText('Connecting to provider...')).toBeNull();
+    });
+
+    test('shows reasoning when start was missed and ignores a late start', () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Connecting to provider...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Reasoning before text',
+            }));
+        });
+        expect(screen.getByText('Thinking')).toBeTruthy();
+        expect(screen.queryByText('Connecting to provider...')).toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+        expect(screen.getByText('Thinking')).toBeTruthy();
+        expect(screen.queryByText('Starting...')).toBeNull();
+    });
+});
+
 describe('LLMBotPost server tool activity rendering', () => {
     test('renders provider tool activity from server_tool websocket events', async () => {
         let listener: PostUpdateHandler | undefined;

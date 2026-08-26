@@ -50,8 +50,10 @@ var (
 
 // Attribute keys for agent context
 var (
-	AgentName = attribute.Key("agents.agent.name")
-	AgentID   = attribute.Key("agents.agent.id")
+	AgentName             = attribute.Key("agents.agent.name")
+	AgentID               = attribute.Key("agents.agent.id")
+	AgentProgressPhase    = attribute.Key("agents.agent.progress.phase")
+	AgentProgressSequence = attribute.Key("agents.agent.progress.sequence")
 )
 
 // Attribute keys for tool operations
