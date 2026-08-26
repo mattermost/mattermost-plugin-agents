@@ -5,8 +5,8 @@ package config
 
 import (
 	"fmt"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -74,7 +74,7 @@ func MigrateServicesToBots(cfg Config, loadLegacyConfig func() (LegacyServiceCon
 	existingConfig.Services = make([]llm.ServiceConfig, 0, len(oldConfig.Config.Services))
 	for _, service := range oldConfig.Config.Services {
 		existingConfig.Services = append(existingConfig.Services, llm.ServiceConfig{
-			ID:              uuid.New().String(),
+			ID:              uuid.NewV4().String(),
 			Name:            service.Name,
 			Type:            service.ServiceName,
 			DefaultModel:    service.DefaultModel,
@@ -88,7 +88,7 @@ func MigrateServicesToBots(cfg Config, loadLegacyConfig func() (LegacyServiceCon
 	// Create bots that reference the services
 	existingConfig.Bots = make([]llm.BotConfig, 0, len(existingConfig.Services))
 	for i, service := range existingConfig.Services {
-		botID := uuid.New().String()
+		botID := uuid.NewV4().String()
 		botName := fmt.Sprintf("ai%d", i+1)
 		displayName := service.Name
 		existingConfig.Bots = append(existingConfig.Bots, llm.BotConfig{
@@ -148,7 +148,7 @@ func MigrateSeparateServicesFromBots(cfg Config) (Config, bool, error) {
 		}
 
 		// Generate service ID
-		serviceID := generateServiceID()
+		serviceID := uuid.NewV4().String()
 
 		// Check if similar service already exists (deduplication)
 		existingID := findIdenticalService(serviceMap, bot.Service)
@@ -208,10 +208,6 @@ func RunAllLegacyMigrations(cfg Config, loadLegacyConfig func() (LegacyServiceCo
 	}
 
 	return cfg, changed, nil
-}
-
-func generateServiceID() string {
-	return uuid.New().String()
 }
 
 // findIdenticalService checks if a service with identical configuration already exists.
