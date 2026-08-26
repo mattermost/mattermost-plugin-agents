@@ -467,8 +467,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// Try new Streamable HTTP transport first (2025-03-26 spec).
 	// This will POST InitializeRequest and detect if the server supports the new transport.
 	session, errStreamable := client.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:   serverConfig.BaseURL,
-		HTTPClient: httpClient,
+		Endpoint:             serverConfig.BaseURL,
+		HTTPClient:           httpClient,
+		DisableStandaloneSSE: true,
 	}, nil)
 	if errStreamable == nil {
 		// Successfully connected using Streamable HTTP transport
