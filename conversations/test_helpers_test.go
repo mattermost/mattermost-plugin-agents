@@ -18,6 +18,12 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+type fakeWebSocketEvent struct {
+	event     string
+	payload   map[string]interface{}
+	broadcast *model.WebsocketBroadcast
+}
+
 type fakeMMClient struct {
 	users                map[string]*model.User
 	postThreads          map[string]*model.PostList
@@ -32,6 +38,7 @@ type fakeMMClient struct {
 	ephemeralPostUserIDs []string
 	fileInfos            map[string]*model.FileInfo
 	onUpdatePost         func(*model.Post)
+	websocketEvents      []fakeWebSocketEvent
 
 	// logMu guards logErrors: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
@@ -177,7 +184,12 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) PublishWebSocketEvent(string, map[string]interface{}, *model.WebsocketBroadcast) {
+func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast) {
+	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
+		event:     event,
+		payload:   payload,
+		broadcast: broadcast,
+	})
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {

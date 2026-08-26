@@ -35,6 +35,26 @@ func assertConversationAttachedBeforeLLM(t *testing.T, client *fakeMMClient) {
 	require.NotEmpty(t, client.updatedPosts[0].GetProp(streaming.ConversationIDProp))
 }
 
+func assertResponseProgressEvents(t *testing.T, client *fakeMMClient, channelID string) {
+	t.Helper()
+	expectedPhases := []string{
+		"checking_mcp",
+		"loading_conversation",
+		"preparing_request",
+		"connecting_provider",
+	}
+	require.Len(t, client.websocketEvents, len(expectedPhases))
+	for i, expectedPhase := range expectedPhases {
+		event := client.websocketEvents[i]
+		require.Equal(t, "postupdate", event.event)
+		require.Equal(t, "progress", event.payload["control"])
+		require.Equal(t, expectedPhase, event.payload["progress_phase"])
+		require.Equal(t, i+1, event.payload["progress_seq"])
+		require.Equal(t, channelID, event.broadcast.ChannelId)
+		require.True(t, event.broadcast.ReliableClusterSend)
+	}
+}
+
 func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -127,6 +147,7 @@ func TestMessagePostedCreatesChannelPlaceholderBeforeMCPDiscovery(t *testing.T) 
 
 			require.True(t, mcpInvoked)
 			require.True(t, llmInvoked)
+			assertResponseProgressEvents(t, env.mmClient, autoReplyChannelID)
 		})
 	}
 }
@@ -168,6 +189,7 @@ func TestMessagePostedCreatesDMPlaceholderBeforeMCPDiscovery(t *testing.T) {
 
 	require.True(t, mcpInvoked)
 	require.True(t, llmInvoked)
+	assertResponseProgressEvents(t, env.mmClient, env.channelID)
 }
 
 func TestMessagePostedDoesNotCreatePlaceholderWhenRejected(t *testing.T) {
