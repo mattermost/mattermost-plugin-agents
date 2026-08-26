@@ -96,7 +96,7 @@ func (p *MattermostToolProvider) toolListScheduledPosts(mcpContext *MCPToolConte
 		return "", err
 	}
 
-	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, args.TeamID, true)
+	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, args.TeamID, includeDirectChannels(mcpContext))
 	if err != nil {
 		return "", fmt.Errorf("error fetching scheduled posts: %w", err)
 	}
@@ -105,6 +105,7 @@ func (p *MattermostToolProvider) toolListScheduledPosts(mcpContext *MCPToolConte
 	for _, posts := range byChannel {
 		scheduled = append(scheduled, posts...)
 	}
+	scheduled = filterScheduledPosts(mcpContext, scheduled)
 	if len(scheduled) == 0 {
 		return "no scheduled posts found", nil
 	}
@@ -230,13 +231,22 @@ func (p *MattermostToolProvider) findScheduledPost(mcpContext *MCPToolContext, c
 		teamID = teams[0].Id
 	}
 
-	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, teamID, true)
+	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, teamID, includeDirectChannels(mcpContext))
 	if err != nil {
 		return nil, fmt.Errorf("error fetching scheduled posts: %w", err)
 	}
 	for _, posts := range byChannel {
 		for _, sp := range posts {
 			if sp.Id == scheduledPostID {
+				if mcpContext.IsBotSession {
+					ch, chErr := mcpContext.channelResolver().channel(sp.ChannelId)
+					if chErr != nil {
+						return nil, errUnverifiedChannelReference
+					}
+					if err := rejectIfNotOpenOrPrivate(ch); err != nil {
+						return nil, err
+					}
+				}
 				return sp, nil
 			}
 		}
@@ -250,11 +260,53 @@ func (p *MattermostToolProvider) toolDeleteScheduledPost(mcpContext *MCPToolCont
 		return "", err
 	}
 
+	if mcpContext.IsBotSession {
+		if err := p.requireVisibleScheduledPost(mcpContext, args.ScheduledPostID); err != nil {
+			return "", err
+		}
+	}
+
 	if _, _, err := mcpContext.Client.DeleteScheduledPost(mcpContext.Ctx, args.ScheduledPostID); err != nil {
 		return "", fmt.Errorf("error deleting scheduled post: %w", err)
 	}
 
 	return fmt.Sprintf("Successfully canceled scheduled post %s", args.ScheduledPostID), nil
+}
+
+// requireVisibleScheduledPost fails closed for bot sessions if the scheduled
+// post cannot be found among non-direct posts or its channel is not open/private.
+func (p *MattermostToolProvider) requireVisibleScheduledPost(mcpContext *MCPToolContext, scheduledPostID string) error {
+	userID, err := p.resolveUserID(mcpContext)
+	if err != nil {
+		return errUnverifiedChannelReference
+	}
+	teams, _, err := mcpContext.Client.GetTeamsForUser(mcpContext.Ctx, userID, "")
+	if err != nil {
+		return errUnverifiedChannelReference
+	}
+	r := mcpContext.channelResolver()
+	for _, team := range teams {
+		if team == nil {
+			continue
+		}
+		byChannel, _, listErr := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, team.Id, false)
+		if listErr != nil {
+			return errUnverifiedChannelReference
+		}
+		for _, posts := range byChannel {
+			for _, sp := range posts {
+				if sp == nil || sp.Id != scheduledPostID {
+					continue
+				}
+				ch, chErr := r.channel(sp.ChannelId)
+				if chErr != nil {
+					return errUnverifiedChannelReference
+				}
+				return rejectIfNotOpenOrPrivate(ch)
+			}
+		}
+	}
+	return errDirectOrGroupInaccessible
 }
 
 // toolSetPostReminder implements the set_post_reminder tool.

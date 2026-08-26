@@ -227,6 +227,10 @@ func (p *MattermostToolProvider) toolGetUserChannelMemberships(mcpContext *MCPTo
 	if len(members) == 0 {
 		return "no channel memberships found", nil
 	}
+	members = filterChannelMembers(mcpContext, members)
+	if len(members) == 0 {
+		return "no channel memberships found", nil
+	}
 
 	var result strings.Builder
 	result.WriteString(fmt.Sprintf("Channel memberships (%d):\n\n", len(members)))
@@ -307,12 +311,17 @@ func (p *MattermostToolProvider) toolListSidebarCategories(mcpContext *MCPToolCo
 		return "no sidebar categories found", nil
 	}
 
+	visible := filterSidebarCategories(mcpContext, categories.Categories)
+	if len(visible) == 0 {
+		return "no sidebar categories found", nil
+	}
+
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Sidebar categories (%d):\n\n", len(categories.Categories)))
-	for i := range categories.Categories {
+	result.WriteString(fmt.Sprintf("Sidebar categories (%d):\n\n", len(visible)))
+	for i := range visible {
 		format.WriteSidebarCategory(&result, format.SidebarCategoryEntry{
 			HeaderLabel: fmt.Sprintf("Category %d", i+1),
-			Category:    categories.Categories[i],
+			Category:    visible[i],
 		})
 	}
 	return result.String(), nil

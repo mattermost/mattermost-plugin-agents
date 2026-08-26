@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -219,13 +220,22 @@ func (p *MattermostToolProvider) toolSearchFiles(mcpContext *MCPToolContext, arg
 		return fmt.Sprintf("no files found for %q", args.Terms), nil
 	}
 
-	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d file(s) for %q:\n\n", len(results.Order), args.Terms))
-	for i, id := range results.Order {
+	infos := make([]*model.FileInfo, 0, len(results.Order))
+	for _, id := range results.Order {
 		info := results.FileInfos[id]
 		if info == nil {
 			continue
 		}
+		infos = append(infos, info)
+	}
+	infos = filterFileInfos(mcpContext, infos)
+	if len(infos) == 0 {
+		return fmt.Sprintf("no files found for %q", args.Terms), nil
+	}
+
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("Found %d file(s) for %q:\n\n", len(infos), args.Terms))
+	for i, info := range infos {
 		format.WriteFileDescriptor(&result, format.FileDescriptorEntry{Number: i + 1, FileInfo: info})
 	}
 	return result.String(), nil

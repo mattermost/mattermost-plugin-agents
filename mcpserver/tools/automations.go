@@ -321,6 +321,19 @@ func (p *MattermostToolProvider) toolListAutomations(mcpContext *MCPToolContext,
 		return "No automations found matching the specified criteria.", nil
 	}
 
+	if mcpContext.IsBotSession {
+		visible := make([]Automation, 0, len(automations))
+		for _, a := range automations {
+			if automationVisibleToSession(mcpContext, a) {
+				visible = append(visible, a)
+			}
+		}
+		automations = visible
+		if len(automations) == 0 {
+			return "No automations found matching the specified criteria.", nil
+		}
+	}
+
 	return formatAutomationsJSON(automations)
 }
 
@@ -334,6 +347,10 @@ func (p *MattermostToolProvider) getAutomationByID(ctx context.Context, mcpConte
 	var automation Automation
 	if err := json.NewDecoder(resp.Body).Decode(&automation); err != nil {
 		return "", fmt.Errorf("failed to decode automation response: %w", err)
+	}
+
+	if !automationVisibleToSession(mcpContext, automation) {
+		return "", errDirectOrGroupInaccessible
 	}
 
 	return formatAutomationJSON(automation)
@@ -390,6 +407,9 @@ func (p *MattermostToolProvider) toolUpdateAutomation(mcpContext *MCPToolContext
 	}
 
 	ctx := mcpContext.Ctx
+	if err := p.requireVisibleAutomation(ctx, mcpContext, args.AutomationID); err != nil {
+		return "", err
+	}
 
 	automation := Automation{
 		ID:      args.AutomationID,
@@ -436,6 +456,9 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 	}
 
 	ctx := mcpContext.Ctx
+	if err := p.requireVisibleAutomation(ctx, mcpContext, args.AutomationID); err != nil {
+		return "", err
+	}
 
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodDelete, p.automationAPIURL("/automations/"+args.AutomationID), "")
 	if err != nil {
@@ -550,4 +573,64 @@ func formatAutomationsJSON(automations []Automation) (string, error) {
 		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr))
 	}
 	return result.String(), nil
+}
+
+func automationChannelIDs(a Automation) []string {
+	var ids []string
+	add := func(id string) {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	switch {
+	case a.Trigger.MessagePosted != nil:
+		add(a.Trigger.MessagePosted.ChannelID)
+	case a.Trigger.Schedule != nil:
+		add(a.Trigger.Schedule.ChannelID)
+	case a.Trigger.MembershipChanged != nil:
+		add(a.Trigger.MembershipChanged.ChannelID)
+	}
+	for _, action := range a.Actions {
+		if action.SendMessage != nil {
+			add(action.SendMessage.ChannelID)
+		}
+		if action.AIPrompt != nil && action.AIPrompt.Guardrails != nil {
+			ids = append(ids, action.AIPrompt.Guardrails.ChannelIDs...)
+		}
+	}
+	return ids
+}
+
+func (p *MattermostToolProvider) requireVisibleAutomation(ctx context.Context, mcpContext *MCPToolContext, id string) error {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return nil
+	}
+	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/automations/"+id), "")
+	if err != nil {
+		return handleAutomationHTTPError(resp, err, id)
+	}
+	defer resp.Body.Close()
+
+	var automation Automation
+	if err := json.NewDecoder(resp.Body).Decode(&automation); err != nil {
+		return fmt.Errorf("failed to decode automation response: %w", err)
+	}
+	if !automationVisibleToSession(mcpContext, automation) {
+		return errDirectOrGroupInaccessible
+	}
+	return nil
+}
+
+func automationVisibleToSession(mcpContext *MCPToolContext, a Automation) bool {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return true
+	}
+	r := mcpContext.channelResolver()
+	for _, id := range automationChannelIDs(a) {
+		ch, err := r.channel(id)
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
+			return false
+		}
+	}
+	return true
 }

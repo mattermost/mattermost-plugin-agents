@@ -16,9 +16,31 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsVerifiedOpenOrPrivate(t *testing.T) {
+	tests := []struct {
+		name string
+		ch   *model.Channel
+		want bool
+	}{
+		{"nil", nil, false},
+		{"open", &model.Channel{Type: model.ChannelTypeOpen}, true},
+		{"private", &model.Channel{Type: model.ChannelTypePrivate}, true},
+		{"direct", &model.Channel{Type: model.ChannelTypeDirect}, false},
+		{"group", &model.Channel{Type: model.ChannelTypeGroup}, false},
+		{"empty type", &model.Channel{Type: ""}, false},
+		{"board", &model.Channel{Type: model.ChannelTypeOpenBoard}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isVerifiedOpenOrPrivate(tt.ch))
+		})
+	}
+}
 
 func TestIsDirectOrGroupChannel(t *testing.T) {
 	tests := []struct {
@@ -44,8 +66,9 @@ func TestWithoutDirectAndGroup(t *testing.T) {
 	dm := &model.Channel{Id: "d", Type: model.ChannelTypeDirect}
 	gm := &model.Channel{Id: "g", Type: model.ChannelTypeGroup}
 	priv := &model.Channel{Id: "p", Type: model.ChannelTypePrivate, DisplayName: "Secret"}
+	unknown := &model.Channel{Id: "x", Type: ""}
 
-	got := withoutDirectAndGroup([]*model.Channel{open, dm, gm, priv})
+	got := withoutDirectAndGroup([]*model.Channel{open, dm, gm, priv, unknown, nil})
 	require.Len(t, got, 2)
 	assert.Equal(t, "o", got[0].Id)
 	assert.Equal(t, "p", got[1].Id)
@@ -55,15 +78,17 @@ func TestRejectDirectOrGroupArgs(t *testing.T) {
 	openID := model.NewId()
 	dmID := model.NewId()
 	gmID := model.NewId()
+	unknownID := model.NewId()
 	openPostID := model.NewId()
 	dmPostID := model.NewId()
 	openFileID := model.NewId()
 	dmFileID := model.NewId()
 
 	channels := map[string]*model.Channel{
-		openID: {Id: openID, Type: model.ChannelTypeOpen, DisplayName: "Town Square"},
-		dmID:   {Id: dmID, Type: model.ChannelTypeDirect},
-		gmID:   {Id: gmID, Type: model.ChannelTypeGroup},
+		openID:    {Id: openID, Type: model.ChannelTypeOpen, DisplayName: "Town Square"},
+		dmID:      {Id: dmID, Type: model.ChannelTypeDirect},
+		gmID:      {Id: gmID, Type: model.ChannelTypeGroup},
+		unknownID: {Id: unknownID, Type: ""},
 	}
 	posts := map[string]*model.Post{
 		openPostID: {Id: openPostID, ChannelId: openID},
@@ -99,6 +124,12 @@ func TestRejectDirectOrGroupArgs(t *testing.T) {
 		{"bot session with open file_id is allowed", botCtx, map[string]any{"file_id": openFileID}, nil},
 		{"bot session with nested DM channel_id is rejected", botCtx, map[string]any{"trigger": map[string]any{"channel_id": dmID}}, errDirectOrGroupInaccessible},
 		{"bot session with unresolvable channel_id is rejected", botCtx, map[string]any{"channel_id": model.NewId()}, errUnverifiedChannelReference},
+		{"bot session with unknown channel type is rejected", botCtx, map[string]any{"channel_id": unknownID}, errUnverifiedChannelReference},
+		{"bot session with uppercase CHANNEL_ID DM is rejected", botCtx, map[string]any{"CHANNEL_ID": dmID}, errDirectOrGroupInaccessible},
+		{"bot session with mixed-case Channel_Id DM is rejected", botCtx, map[string]any{"Channel_Id": dmID}, errDirectOrGroupInaccessible},
+		{"bot session with nested uppercase CHANNEL_ID is rejected", botCtx, map[string]any{"trigger": map[string]any{"CHANNEL_ID": dmID}}, errDirectOrGroupInaccessible},
+		{"bot session with in: DM channel ID is rejected", botCtx, map[string]any{"in": dmID}, errDirectOrGroupInaccessible},
+		{"bot session with in: channel name is not resolved as an ID", botCtx, map[string]any{"in": "town-square"}, nil},
 		{"bot session dm tool args (username) are not guarded", botCtx, map[string]any{"username": "alice", "message": "hi"}, nil},
 		{"bot session group_message args (usernames) are not guarded", botCtx, map[string]any{"usernames": []any{"alice", "bob"}, "message": "hi"}, nil},
 		{"nil context is a no-op", nil, map[string]any{"channel_id": dmID}, nil},
@@ -312,12 +343,14 @@ func TestToolSearchChannelsFiltersDirectAndGroupForBot(t *testing.T) {
 	})
 }
 
-func TestFormatPostListChronoFiltersDirectAndGroupForBot(t *testing.T) {
+func TestVisiblePostListFiltersDirectAndGroupForBot(t *testing.T) {
 	openID := model.NewId()
 	dmID := model.NewId()
+	unknownID := model.NewId()
 	authorID := model.NewId()
 	openPost := &model.Post{Id: model.NewId(), ChannelId: openID, UserId: authorID, Message: "public mention", CreateAt: 2}
 	dmPost := &model.Post{Id: model.NewId(), ChannelId: dmID, UserId: authorID, Message: "private mention", CreateAt: 1}
+	unknownPost := &model.Post{Id: model.NewId(), ChannelId: unknownID, UserId: authorID, Message: "unclassified", CreateAt: 3}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), func(w http.ResponseWriter, _ *http.Request) {
@@ -328,6 +361,10 @@ func TestFormatPostListChronoFiltersDirectAndGroupForBot(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect})
 	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", unknownID), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Channel{Id: unknownID, Type: ""})
+	})
 	mux.HandleFunc("/api/v4/users/ids", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode([]*model.User{{Id: authorID, Username: "alice"}})
@@ -337,19 +374,26 @@ func TestFormatPostListChronoFiltersDirectAndGroupForBot(t *testing.T) {
 
 	provider := newTestProvider(t, ts.URL)
 	postList := &model.PostList{
-		Order: []string{openPost.Id, dmPost.Id},
-		Posts: map[string]*model.Post{openPost.Id: openPost, dmPost.Id: dmPost},
+		Order: []string{openPost.Id, dmPost.Id, unknownPost.Id},
+		Posts: map[string]*model.Post{openPost.Id: openPost, dmPost.Id: dmPost, unknownPost.Id: unknownPost},
 	}
 
 	t.Run("human session keeps DM posts", func(t *testing.T) {
-		out := provider.formatPostListChrono(&MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context()}, postList, "posts mentioning you")
+		mcpCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context()}
+		out := provider.formatPostListChrono(mcpCtx, visiblePostList(mcpCtx, postList), "posts mentioning you")
 		assert.Contains(t, out, "public mention")
 		assert.Contains(t, out, "private mention")
 	})
-	t.Run("bot session drops DM posts", func(t *testing.T) {
-		out := provider.formatPostListChrono(&MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), IsBotSession: true}, postList, "posts mentioning you")
+	t.Run("bot session drops DM and unverified posts at the call site", func(t *testing.T) {
+		mcpCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), IsBotSession: true}
+		out := provider.formatPostListChrono(mcpCtx, visiblePostList(mcpCtx, postList), "posts mentioning you")
 		assert.Contains(t, out, "public mention")
 		assert.NotContains(t, out, "private mention")
+		assert.NotContains(t, out, "unclassified")
+	})
+	t.Run("formatter itself does not drop DM posts", func(t *testing.T) {
+		out := provider.formatPostListChrono(&MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), IsBotSession: true}, postList, "posts mentioning you")
+		assert.Contains(t, out, "private mention")
 	})
 }
 
@@ -391,36 +435,178 @@ func TestToolGetChannelInfoFiltersDirectAndGroupForBotByName(t *testing.T) {
 	assert.NotContains(t, out, dm.Id)
 }
 
-func TestToolSchemasGuardKnownIdentifiers(t *testing.T) {
+func TestEveryToolDeclaresDMandGMEnforcement(t *testing.T) {
 	provider := &MattermostToolProvider{
 		logger:     &testLogger{t: t},
 		accessMode: AccessModeRemote,
 		devMode:    true,
 	}
 
-	known := map[string]bool{}
-	for name := range guardedArgKeys {
-		known[name] = true
-	}
-	for name := range identifierArgsNotResolvedByGuard {
-		known[name] = true
-	}
-
+	classified := botSessionDMGMEnforcement()
+	registered := map[string]bool{}
 	for _, tool := range provider.mcpTools() {
-		for _, name := range schemaPropertyNames(tool.Schema) {
-			if !looksLikeChannelOrPostIdentifier(name) {
-				continue
-			}
-			if known[name] {
-				continue
-			}
-			t.Errorf("tool %q has property %q which looks like a channel or post identifier but is not handled by the DM/GM guard. Add it to guardedArgKeys in dm_guard.go (resolved via GetChannel, GetPost, or GetFileInfo), or to identifierArgsNotResolvedByGuard if it cannot reach a D/G channel — and document why.", tool.Name, name)
+		registered[tool.Name] = true
+		if _, ok := classified[tool.Name]; !ok {
+			t.Errorf("tool %q is registered but missing from botSessionDMGMEnforcement; classify it as argument-guard, output-filter, argument-guard+output-filter, cannot-reach-dm-gm, or write-by-username", tool.Name)
 		}
 	}
+	for name := range classified {
+		if !registered[name] {
+			t.Errorf("botSessionDMGMEnforcement has %q but that tool is not registered; remove the stale classification", name)
+		}
+	}
+}
 
-	assert.True(t, identifierArgsNotResolvedByGuard["channel_name"], "channel_name must stay in the known-identifier set")
-	_, guarded := guardedArgKeys["channel_name"]
-	assert.False(t, guarded, "channel_name is not an ID; get_channel_info filters D/G results instead of resolving the name")
+// botSessionDMGMEnforcement is the load-bearing inventory of how every MCP tool
+// is kept from returning DM/GM data to a bot session. A newly registered tool
+// must be added here or TestEveryToolDeclaresDMandGMEnforcement fails.
+func botSessionDMGMEnforcement() map[string]string {
+	return map[string]string{
+		// posts
+		"read_post":           "argument-guard",
+		"create_post":         "argument-guard",
+		"dm":                  "write-by-username",
+		"group_message":       "write-by-username",
+		"get_post_info":       "argument-guard",
+		"list_pinned_posts":   "argument-guard",
+		"list_saved_posts":    "argument-guard+output-filter",
+		"update_post":         "argument-guard",
+		"delete_post":         "argument-guard",
+		"pin_post":            "argument-guard",
+		"unpin_post":          "argument-guard",
+		"save_post":           "argument-guard",
+		"acknowledge_post":    "argument-guard",
+		"create_post_as_user": "argument-guard",
+		// scheduled posts
+		"list_scheduled_posts":  "output-filter",
+		"create_scheduled_post": "argument-guard",
+		"update_scheduled_post": "argument-guard+output-filter",
+		"delete_scheduled_post": "output-filter",
+		"set_post_reminder":     "argument-guard",
+		// reactions
+		"get_post_reactions":  "argument-guard",
+		"get_bulk_reactions":  "argument-guard",
+		"list_custom_emoji":   "cannot-reach-dm-gm",
+		"search_custom_emoji": "cannot-reach-dm-gm",
+		"add_reaction":        "argument-guard",
+		"remove_reaction":     "argument-guard",
+		// threads / unreads
+		"get_threads":             "output-filter",
+		"get_mentions":            "output-filter",
+		"get_unread_counts":       "cannot-reach-dm-gm",
+		"get_channel_unread":      "argument-guard",
+		"get_posts_around_unread": "argument-guard",
+		"mark_channel_read":       "argument-guard",
+		"mark_channels_viewed":    "argument-guard",
+		"mark_post_unread":        "argument-guard",
+		"set_thread_follow":       "argument-guard",
+		// channels
+		"read_channel":              "argument-guard",
+		"create_channel":            "cannot-reach-dm-gm",
+		"get_channel_info":          "argument-guard+output-filter",
+		"get_channel_members":       "argument-guard",
+		"add_channel_member":        "argument-guard",
+		"get_user_channels":         "output-filter",
+		"get_channel_stats":         "argument-guard",
+		"get_channel_member_counts": "argument-guard",
+		"search_channels":           "output-filter",
+		"list_team_channels":        "cannot-reach-dm-gm",
+		"list_archived_channels":    "cannot-reach-dm-gm",
+		"update_channel":            "argument-guard",
+		"archive_channel":           "argument-guard",
+		"restore_channel":           "argument-guard",
+		"convert_channel_privacy":   "argument-guard",
+		// channel members
+		"get_channel_member":            "argument-guard",
+		"get_channel_members_by_ids":    "argument-guard",
+		"get_channel_members_by_status": "argument-guard",
+		"get_user_channel_memberships":  "output-filter",
+		"get_users_not_in_channel":      "argument-guard",
+		"search_users_in_channel":       "argument-guard",
+		"list_sidebar_categories":       "output-filter",
+		"add_channel_members":           "argument-guard",
+		"remove_channel_member":         "argument-guard",
+		"set_channel_mute":              "argument-guard",
+		"set_channel_favorite":          "argument-guard",
+		"update_channel_notify_props":   "argument-guard",
+		// bookmarks
+		"list_channel_bookmarks":  "argument-guard",
+		"create_channel_bookmark": "argument-guard",
+		"update_channel_bookmark": "argument-guard",
+		"delete_channel_bookmark": "argument-guard",
+		// users
+		"get_me":                 "cannot-reach-dm-gm",
+		"get_user":               "cannot-reach-dm-gm",
+		"get_user_by_username":   "cannot-reach-dm-gm",
+		"get_user_by_email":      "cannot-reach-dm-gm",
+		"get_users_by_ids":       "cannot-reach-dm-gm",
+		"get_users_by_usernames": "cannot-reach-dm-gm",
+		"get_user_stats":         "cannot-reach-dm-gm",
+		"get_user_cpa_values":    "cannot-reach-dm-gm",
+		"list_cpa_fields":        "cannot-reach-dm-gm",
+		"update_user":            "cannot-reach-dm-gm",
+		"create_user":            "cannot-reach-dm-gm",
+		// status
+		"get_user_status":        "cannot-reach-dm-gm",
+		"get_users_statuses":     "cannot-reach-dm-gm",
+		"get_user_custom_status": "cannot-reach-dm-gm",
+		"set_status":             "cannot-reach-dm-gm",
+		"set_dnd":                "cannot-reach-dm-gm",
+		// teams
+		"get_team_info":                     "cannot-reach-dm-gm",
+		"get_team_members":                  "cannot-reach-dm-gm",
+		"add_team_member":                   "cannot-reach-dm-gm",
+		"get_team_member":                   "cannot-reach-dm-gm",
+		"get_team_stats":                    "cannot-reach-dm-gm",
+		"get_user_teams":                    "cannot-reach-dm-gm",
+		"get_users_in_team":                 "cannot-reach-dm-gm",
+		"get_users_not_in_team":             "cannot-reach-dm-gm",
+		"get_new_users_in_team":             "cannot-reach-dm-gm",
+		"get_dm_common_teams":               "cannot-reach-dm-gm",
+		"search_teams":                      "cannot-reach-dm-gm",
+		"search_users_in_team":              "cannot-reach-dm-gm",
+		"add_team_members":                  "cannot-reach-dm-gm",
+		"remove_team_member":                "cannot-reach-dm-gm",
+		"update_team":                       "cannot-reach-dm-gm",
+		"invite_users_to_team":              "cannot-reach-dm-gm",
+		"invite_users_to_team_and_channels": "argument-guard",
+		"create_team":                       "cannot-reach-dm-gm",
+		// search
+		"search_posts": "argument-guard+output-filter",
+		"search_users": "cannot-reach-dm-gm",
+		// files
+		"read_file":      "argument-guard",
+		"get_file_info":  "argument-guard",
+		"get_post_files": "argument-guard",
+		"get_file_link":  "argument-guard",
+		"search_files":   "output-filter",
+		"upload_file":    "argument-guard",
+		// integrations
+		"get_bot":                "cannot-reach-dm-gm",
+		"list_bots":              "cannot-reach-dm-gm",
+		"list_incoming_webhooks": "cannot-reach-dm-gm",
+		"list_outgoing_webhooks": "argument-guard",
+		// groups
+		"get_group_info":              "cannot-reach-dm-gm",
+		"list_groups":                 "cannot-reach-dm-gm",
+		"get_user_groups":             "cannot-reach-dm-gm",
+		"get_channel_groups":          "argument-guard",
+		"get_team_groups":             "cannot-reach-dm-gm",
+		"get_users_in_group_channels": "argument-guard",
+		// roles
+		"get_role":                    "cannot-reach-dm-gm",
+		"get_channel_moderations":     "argument-guard",
+		"update_channel_member_roles": "argument-guard",
+		"update_team_member_roles":    "cannot-reach-dm-gm",
+		// agents
+		"list_agents": "cannot-reach-dm-gm",
+		// automations
+		"list_automations":            "argument-guard+output-filter",
+		"get_automation_instructions": "cannot-reach-dm-gm",
+		"create_automation":           "argument-guard",
+		"update_automation":           "argument-guard+output-filter",
+		"delete_automation":           "output-filter",
+	}
 }
 
 func TestDMAndGroupMessageSchemasHaveNoGuardedKeys(t *testing.T) {
@@ -439,6 +625,345 @@ func TestDMAndGroupMessageSchemasHaveNoGuardedKeys(t *testing.T) {
 	}
 }
 
+func TestExecuteSemanticSearchFiltersDirectAndGroup(t *testing.T) {
+	openID := model.NewId()
+	dmID := model.NewId()
+	unknownID := model.NewId()
+	openPost := model.NewId()
+	dmPost := model.NewId()
+	unknownPost := model.NewId()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen, DisplayName: "Town Square"}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", unknownID), serveJSON(&model.Channel{Id: unknownID, Type: ""}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	svc := &capturingSearchService{results: []search.RAGResult{
+		{PostID: openPost, ChannelID: openID, ChannelName: "Town Square", Content: "public", Score: 0.9},
+		{PostID: dmPost, ChannelID: dmID, ChannelName: "Direct Message", Content: "secret", Score: 0.8},
+		{PostID: unknownPost, ChannelID: unknownID, ChannelName: "??", Content: "unverified", Score: 0.7},
+	}}
+	provider := &MattermostToolProvider{logger: &testLogger{t: t}, searchService: svc}
+	client := newTestClient(ts.URL)
+	args := CombinedSearchArgs{Query: "hello", SemanticLimit: 10}
+
+	t.Run("human session keeps DM hits", func(t *testing.T) {
+		got, err := provider.executeSemanticSearch(t.Context(), client, args, "user1", false)
+		require.NoError(t, err)
+		require.Len(t, got, 3)
+	})
+	t.Run("bot session drops DM and unverified hits", func(t *testing.T) {
+		got, err := provider.executeSemanticSearch(t.Context(), client, args, "user1", true)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, openPost, got[0].Post.Id)
+		assert.True(t, svc.lastOpts.ExcludeDirectAndGroup)
+	})
+}
+
+func TestExecuteKeywordSearchPaginatesAfterFiltering(t *testing.T) {
+	openID := model.NewId()
+	dmID := model.NewId()
+	openPost := &model.Post{Id: model.NewId(), ChannelId: openID, UserId: model.NewId(), Message: "public", CreateAt: 1}
+	dmPost := &model.Post{Id: model.NewId(), ChannelId: dmID, UserId: model.NewId(), Message: "secret", CreateAt: 3}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/posts/search", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.PostList{
+			Order: []string{dmPost.Id, openPost.Id},
+			Posts: map[string]*model.Post{openPost.Id: openPost, dmPost.Id: dmPost},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen, DisplayName: "Town Square"}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s", openPost.UserId), serveJSON(&model.User{Id: openPost.UserId, Username: "alice"}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s", dmPost.UserId), serveJSON(&model.User{Id: dmPost.UserId, Username: "bob"}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	t.Run("bot session limit applies to visible posts", func(t *testing.T) {
+		got, err := provider.executeKeywordSearch(t.Context(), client, CombinedSearchArgs{Query: "hello", KeywordLimit: 1}, true)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, openPost.Id, got[0].Post.Id)
+	})
+	t.Run("human session limit can select a DM post", func(t *testing.T) {
+		got, err := provider.executeKeywordSearch(t.Context(), client, CombinedSearchArgs{Query: "hello", KeywordLimit: 1}, false)
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		assert.Equal(t, dmPost.Id, got[0].Post.Id)
+	})
+}
+
+func TestRegisterDynamicToolEnforcesBotDMGuard(t *testing.T) {
+	openID := model.NewId()
+	dmID := model.NewId()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s/stats", openID), serveJSON(&model.ChannelStats{ChannelId: openID, MemberCount: 3}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s/stats", dmID), serveJSON(&model.ChannelStats{ChannelId: dmID, MemberCount: 2}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	client := newTestClient(ts.URL)
+	human := &model.User{Id: model.NewId(), IsBot: false}
+	bot := &model.User{Id: model.NewId(), IsBot: true}
+
+	tests := []struct {
+		name      string
+		user      *model.User
+		args      map[string]any
+		wantError bool
+		wantText  string
+	}{
+		{"bot session with DM channel_id is rejected by the handler", bot, map[string]any{"channel_id": dmID}, true, errDirectOrGroupInaccessible.Error()},
+		{"bot session with uppercase CHANNEL_ID DM is rejected by the handler", bot, map[string]any{"CHANNEL_ID": dmID}, true, errDirectOrGroupInaccessible.Error()},
+		{"bot session with open channel_id reaches the resolver", bot, map[string]any{"channel_id": openID}, false, openID},
+		{"human session with DM channel_id reaches the resolver", human, map[string]any{"channel_id": dmID}, false, dmID},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &MattermostToolProvider{
+				authProvider: sessionAuthProvider{client: client, user: tt.user},
+				logger:       &testLogger{t: t},
+				accessMode:   AccessModeRemote,
+			}
+			result, err := callRegisteredMCPTool(t, provider, "get_channel_stats", tt.args)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			text := mcpToolText(result)
+			if tt.wantError {
+				assert.True(t, result.IsError)
+				assert.Contains(t, text, tt.wantText)
+				return
+			}
+			assert.False(t, result.IsError)
+			assert.Contains(t, text, tt.wantText)
+		})
+	}
+}
+
+func TestToolGetThreadsFiltersDirectAndGroupForBot(t *testing.T) {
+	teamID := model.NewId()
+	userID := model.NewId()
+	openID := model.NewId()
+	dmID := model.NewId()
+	authorID := model.NewId()
+	openRoot := &model.Post{Id: model.NewId(), ChannelId: openID, UserId: authorID, Message: "public thread"}
+	dmRoot := &model.Post{Id: model.NewId(), ChannelId: dmID, UserId: authorID, Message: "secret thread"}
+
+	var gotExcludeDirect string
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s/teams/%s/threads", userID, teamID), func(w http.ResponseWriter, r *http.Request) {
+		gotExcludeDirect = r.URL.Query().Get("excludeDirect")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.Threads{
+			Total:   2,
+			Threads: []*model.ThreadResponse{{PostId: openRoot.Id, Post: openRoot}, {PostId: dmRoot.Id, Post: dmRoot}},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s", authorID), serveJSON(&model.User{Id: authorID, Username: "alice"}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	t.Run("human session includes DM threads", func(t *testing.T) {
+		gotExcludeDirect = ""
+		out, err := provider.toolGetThreads(&MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}, GetThreadsArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public thread")
+		assert.Contains(t, out, "secret thread")
+		assert.NotEqual(t, "true", gotExcludeDirect)
+	})
+	t.Run("bot session omits DM threads", func(t *testing.T) {
+		gotExcludeDirect = ""
+		out, err := provider.toolGetThreads(&MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID, IsBotSession: true}, GetThreadsArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public thread")
+		assert.NotContains(t, out, "secret thread")
+		assert.Equal(t, "true", gotExcludeDirect)
+	})
+}
+
+func TestToolListScheduledPostsFiltersDirectAndGroupForBot(t *testing.T) {
+	teamID := model.NewId()
+	openID := model.NewId()
+	dmID := model.NewId()
+	openSP := &model.ScheduledPost{Draft: model.Draft{ChannelId: openID, Message: "public later"}}
+	openSP.Id = model.NewId()
+	dmSP := &model.ScheduledPost{Draft: model.Draft{ChannelId: dmID, Message: "secret later"}}
+	dmSP.Id = model.NewId()
+
+	var includeDirect string
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/scheduled/team/%s", teamID), func(w http.ResponseWriter, r *http.Request) {
+		includeDirect = r.URL.Query().Get("includeDirectChannels")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string][]*model.ScheduledPost{openID: {openSP}, "directChannels": {dmSP}})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	t.Run("human session includes DM scheduled posts", func(t *testing.T) {
+		includeDirect = ""
+		out, err := provider.toolListScheduledPosts(&MCPToolContext{Client: client, Ctx: t.Context()}, ListScheduledPostsArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public later")
+		assert.Contains(t, out, "secret later")
+		assert.Equal(t, "true", includeDirect)
+	})
+	t.Run("bot session omits DM scheduled posts", func(t *testing.T) {
+		includeDirect = ""
+		out, err := provider.toolListScheduledPosts(&MCPToolContext{Client: client, Ctx: t.Context(), IsBotSession: true}, ListScheduledPostsArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public later")
+		assert.NotContains(t, out, "secret later")
+		assert.Equal(t, "false", includeDirect)
+	})
+}
+
+func TestToolDeleteScheduledPostRejectsDMForBot(t *testing.T) {
+	userID := model.NewId()
+	teamID := model.NewId()
+	openID := model.NewId()
+	dmID := model.NewId()
+	openSPID := model.NewId()
+	dmSPID := model.NewId()
+	openSP := &model.ScheduledPost{Draft: model.Draft{ChannelId: openID, Message: "public later"}}
+	openSP.Id = openSPID
+	deleted := ""
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s/teams", userID), serveJSON([]*model.Team{{Id: teamID}}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/scheduled/team/%s", teamID), serveJSON(map[string][]*model.ScheduledPost{openID: {openSP}}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/posts/schedule/%s", openSPID), func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.NotFound(w, r)
+			return
+		}
+		deleted = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.ScheduledPost{})
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	botCtx := &MCPToolContext{Client: newTestClient(ts.URL), Ctx: t.Context(), UserID: userID, IsBotSession: true}
+
+	t.Run("bot cannot delete a DM scheduled post", func(t *testing.T) {
+		deleted = ""
+		_, err := provider.toolDeleteScheduledPost(botCtx, DeleteScheduledPostArgs{ScheduledPostID: dmSPID})
+		require.Error(t, err)
+		assert.ErrorIs(t, err, errDirectOrGroupInaccessible)
+		assert.Empty(t, deleted)
+	})
+	t.Run("bot can delete an open-channel scheduled post", func(t *testing.T) {
+		deleted = ""
+		out, err := provider.toolDeleteScheduledPost(botCtx, DeleteScheduledPostArgs{ScheduledPostID: openSPID})
+		require.NoError(t, err)
+		assert.Contains(t, out, openSPID)
+		assert.Contains(t, deleted, openSPID)
+	})
+}
+
+func TestToolListSidebarCategoriesFiltersDirectAndGroupForBot(t *testing.T) {
+	teamID := model.NewId()
+	userID := model.NewId()
+	openID := model.NewId()
+	dmID := model.NewId()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s/teams/%s/channels/categories", userID, teamID), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.OrderedSidebarCategories{
+			Categories: []*model.SidebarCategoryWithChannels{
+				{SidebarCategory: model.SidebarCategory{Id: "fav", DisplayName: "Favorites", Type: model.SidebarCategoryFavorites}, Channels: []string{openID, dmID}},
+				{SidebarCategory: model.SidebarCategory{Id: "dms", DisplayName: "Direct Messages", Type: model.SidebarCategoryDirectMessages}, Channels: []string{dmID}},
+			},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	t.Run("human session includes DM channel IDs", func(t *testing.T) {
+		out, err := provider.toolListSidebarCategories(&MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID}, ListSidebarCategoriesArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, openID)
+		assert.Contains(t, out, dmID)
+		assert.Contains(t, out, "Direct Messages")
+	})
+	t.Run("bot session omits DM channel IDs and the DM category", func(t *testing.T) {
+		out, err := provider.toolListSidebarCategories(&MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID, IsBotSession: true}, ListSidebarCategoriesArgs{TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, openID)
+		assert.NotContains(t, out, dmID)
+		assert.NotContains(t, out, "Direct Messages")
+	})
+}
+
+func TestToolSearchFilesFiltersDirectAndGroupForBot(t *testing.T) {
+	teamID := model.NewId()
+	openID := model.NewId()
+	dmID := model.NewId()
+	openFile := &model.FileInfo{Id: model.NewId(), Name: "public.pdf", Size: 10, ChannelId: openID}
+	dmFile := &model.FileInfo{Id: model.NewId(), Name: "secret.pdf", Size: 20, ChannelId: dmID}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/teams/%s/files/search", teamID), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.FileInfoList{
+			Order:     []string{openFile.Id, dmFile.Id},
+			FileInfos: map[string]*model.FileInfo{openFile.Id: openFile, dmFile.Id: dmFile},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), serveJSON(&model.Channel{Id: openID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), serveJSON(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	t.Run("human session includes DM files", func(t *testing.T) {
+		out, err := provider.toolSearchFiles(&MCPToolContext{Client: client, Ctx: t.Context()}, SearchFilesArgs{Terms: "pdf", TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public.pdf")
+		assert.Contains(t, out, "secret.pdf")
+	})
+	t.Run("bot session omits DM files", func(t *testing.T) {
+		out, err := provider.toolSearchFiles(&MCPToolContext{Client: client, Ctx: t.Context(), IsBotSession: true}, SearchFilesArgs{Terms: "pdf", TeamID: teamID})
+		require.NoError(t, err)
+		assert.Contains(t, out, "public.pdf")
+		assert.NotContains(t, out, "secret.pdf")
+	})
+}
+
 type identityAuthProvider struct {
 	fakeToolAuthProvider
 	user *model.User
@@ -451,13 +976,70 @@ func (p identityAuthProvider) GetAuthenticatedUser(context.Context) (*model.User
 
 type capturingSearchService struct {
 	lastOpts search.Options
+	results  []search.RAGResult
 }
 
 func (c *capturingSearchService) Enabled() bool { return true }
 
 func (c *capturingSearchService) Search(_ context.Context, _ string, opts search.Options) ([]search.RAGResult, error) {
 	c.lastOpts = opts
-	return nil, nil
+	return c.results, nil
+}
+
+type sessionAuthProvider struct {
+	client *model.Client4
+	user   *model.User
+}
+
+func (p sessionAuthProvider) ValidateAuth(context.Context) error { return nil }
+
+func (p sessionAuthProvider) GetAuthenticatedMattermostClient(context.Context) (*model.Client4, error) {
+	return p.client, nil
+}
+
+func (p sessionAuthProvider) GetAuthenticatedUser(context.Context) (*model.User, error) {
+	return p.user, nil
+}
+
+func callRegisteredMCPTool(t *testing.T, provider *MattermostToolProvider, name string, args map[string]any) (*mcp.CallToolResult, error) {
+	t.Helper()
+	var tool MCPTool
+	for _, candidate := range provider.mcpTools() {
+		if candidate.Name == name {
+			tool = candidate
+			break
+		}
+	}
+	require.NotEmpty(t, tool.Name, "tool %s is not registered", name)
+
+	server := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "1.0"}, nil)
+	provider.registerDynamicTool(server, tool)
+
+	ctx := t.Context()
+	t1, t2 := mcp.NewInMemoryTransports()
+	ss, err := server.Connect(ctx, t1, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ss.Close() })
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "client", Version: "1.0"}, nil)
+	session, err := client.Connect(ctx, t2, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+
+	return session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+}
+
+func mcpToolText(result *mcp.CallToolResult) string {
+	if result == nil {
+		return ""
+	}
+	var text string
+	for _, content := range result.Content {
+		if tc, ok := content.(*mcp.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	return text
 }
 
 func newIDLookupServer(t *testing.T, channels map[string]*model.Channel, posts map[string]*model.Post, files map[string]*model.FileInfo) *httptest.Server {

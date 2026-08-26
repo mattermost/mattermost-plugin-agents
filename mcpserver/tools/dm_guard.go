@@ -16,9 +16,8 @@ import (
 var errDirectOrGroupInaccessible = fmt.Errorf("direct and group messages are not accessible to this agent")
 
 // errUnverifiedChannelReference is returned when a referenced ID cannot be
-// resolved to a channel. Rejecting keeps an unresolvable reference from
-// skipping the DM/GM check, and reports the real reason rather than implying
-// the target was a DM.
+// resolved to an open or private channel. Rejecting keeps an unresolvable or
+// unexpected reference from skipping the DM/GM check.
 var errUnverifiedChannelReference = fmt.Errorf("could not resolve the channel for a referenced ID; it may be invalid or inaccessible")
 
 type guardedArgKind int
@@ -31,6 +30,7 @@ const (
 
 // guardedArgKeys are argument names the ID guard resolves to a channel.
 // channel_ids / post_ids / file_ids share a kind with their singular forms.
+// Matching is case-insensitive because encoding/json is.
 var guardedArgKeys = map[string]guardedArgKind{
 	"channel_id":       guardedChannelID,
 	"channel_ids":      guardedChannelID,
@@ -43,30 +43,37 @@ var guardedArgKeys = map[string]guardedArgKind{
 	"file_ids":         guardedFileID,
 }
 
-// identifierArgsNotResolvedByGuard are schema property names that identify a
-// channel or post but are not Mattermost IDs. channel_name cannot look up a D/G
-// via GetChannelByName (those channels have no team); GetChannelsForTeamForUser
-// can still return DMs, so get_channel_info filters results instead.
-var identifierArgsNotResolvedByGuard = map[string]bool{
-	"channel_name": true,
+// guardedIfIDKeys are argument names that are a Mattermost ID only when the
+// value itself looks like one (e.g. search_posts "in" may be a name or an ID).
+var guardedIfIDKeys = map[string]guardedArgKind{
+	"in": guardedChannelID,
 }
 
 func isDirectOrGroupChannel(ch *model.Channel) bool {
 	return ch != nil && ch.IsGroupOrDirect()
 }
 
+// isVerifiedOpenOrPrivate is the allow-list for bot sessions: only explicitly
+// open or private channels pass. nil, D, G, boards, and unknown types do not.
+func isVerifiedOpenOrPrivate(ch *model.Channel) bool {
+	return ch != nil && (ch.Type == model.ChannelTypeOpen || ch.Type == model.ChannelTypePrivate)
+}
+
+func includeDirectChannels(mcpContext *MCPToolContext) bool {
+	return mcpContext == nil || !mcpContext.IsBotSession
+}
+
 func withoutDirectAndGroup(channels []*model.Channel) []*model.Channel {
 	out := make([]*model.Channel, 0, len(channels))
 	for _, ch := range channels {
-		if isDirectOrGroupChannel(ch) {
-			continue
+		if isVerifiedOpenOrPrivate(ch) {
+			out = append(out, ch)
 		}
-		out = append(out, ch)
 	}
 	return out
 }
 
-// channelResolver maps IDs to channels, memoized for one tool call.
+// channelResolver maps IDs to channels, memoized for one MCP tool call.
 type channelResolver struct {
 	mcpContext *MCPToolContext
 	byChannel  map[string]*model.Channel
@@ -81,6 +88,13 @@ func newChannelResolver(mcpContext *MCPToolContext) *channelResolver {
 		byPost:     make(map[string]*model.Channel),
 		byFile:     make(map[string]*model.Channel),
 	}
+}
+
+func (mcpContext *MCPToolContext) channelResolver() *channelResolver {
+	if mcpContext.resolver == nil {
+		mcpContext.resolver = newChannelResolver(mcpContext)
+	}
+	return mcpContext.resolver
 }
 
 func (r *channelResolver) channel(id string) (*model.Channel, error) {
@@ -119,15 +133,7 @@ func (r *channelResolver) channelByFile(fileID string) (*model.Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	var ch *model.Channel
-	switch {
-	case info.ChannelId != "":
-		ch, err = r.channel(info.ChannelId)
-	case info.PostId != "":
-		ch, err = r.channelByPost(info.PostId)
-	default:
-		return nil, fmt.Errorf("file %s is not attached to a channel or post", fileID)
-	}
+	ch, err := r.channelForFileInfo(info)
 	if err != nil {
 		return nil, err
 	}
@@ -135,8 +141,33 @@ func (r *channelResolver) channelByFile(fileID string) (*model.Channel, error) {
 	return ch, nil
 }
 
+func (r *channelResolver) channelForFileInfo(info *model.FileInfo) (*model.Channel, error) {
+	if info == nil {
+		return nil, fmt.Errorf("file info is missing")
+	}
+	switch {
+	case info.ChannelId != "":
+		return r.channel(info.ChannelId)
+	case info.PostId != "":
+		return r.channelByPost(info.PostId)
+	default:
+		return nil, fmt.Errorf("file %s is not attached to a channel or post", info.Id)
+	}
+}
+
+func rejectIfNotOpenOrPrivate(ch *model.Channel) error {
+	if isVerifiedOpenOrPrivate(ch) {
+		return nil
+	}
+	if isDirectOrGroupChannel(ch) {
+		return errDirectOrGroupInaccessible
+	}
+	return errUnverifiedChannelReference
+}
+
 // rejectDirectOrGroupArgs scans tool arguments for channel/post/file IDs and
-// rejects the call when any resolve to a DM or GM. No-op for human sessions.
+// rejects the call when any do not resolve to an open or private channel.
+// No-op for human sessions.
 func rejectDirectOrGroupArgs(mcpContext *MCPToolContext, arguments any) error {
 	if mcpContext == nil || !mcpContext.IsBotSession {
 		return nil
@@ -145,13 +176,18 @@ func rejectDirectOrGroupArgs(mcpContext *MCPToolContext, arguments any) error {
 	if len(args) == 0 {
 		return nil
 	}
-	return scanGuardedArgs(args, newChannelResolver(mcpContext))
+	return scanGuardedArgs(args, mcpContext.channelResolver())
 }
 
 func scanGuardedArgs(args map[string]any, r *channelResolver) error {
 	for key, val := range args {
-		if kind, ok := guardedArgKeys[key]; ok {
+		lower := strings.ToLower(key)
+		if kind, ok := guardedArgKeys[lower]; ok {
 			if err := rejectResolvedIDs(kind, val, r); err != nil {
+				return err
+			}
+		} else if kind, ok := guardedIfIDKeys[lower]; ok {
+			if err := rejectResolvedIDsIfID(kind, val, r); err != nil {
 				return err
 			}
 		}
@@ -179,8 +215,24 @@ func rejectResolvedIDs(kind guardedArgKind, val any, r *channelResolver) error {
 		if err != nil {
 			return errUnverifiedChannelReference
 		}
-		if isDirectOrGroupChannel(ch) {
-			return errDirectOrGroupInaccessible
+		if err := rejectIfNotOpenOrPrivate(ch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectResolvedIDsIfID(kind guardedArgKind, val any, r *channelResolver) error {
+	for _, id := range stringIDs(val) {
+		if !model.IsValidId(id) {
+			continue
+		}
+		ch, err := resolveGuardedID(kind, id, r)
+		if err != nil {
+			return errUnverifiedChannelReference
+		}
+		if err := rejectIfNotOpenOrPrivate(ch); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -244,14 +296,14 @@ func filterPostsFromDirectAndGroup(mcpContext *MCPToolContext, posts []*model.Po
 	if mcpContext == nil || !mcpContext.IsBotSession {
 		return posts
 	}
-	r := newChannelResolver(mcpContext)
+	r := mcpContext.channelResolver()
 	out := make([]*model.Post, 0, len(posts))
 	for _, post := range posts {
 		if post == nil {
 			continue
 		}
 		ch, err := r.channel(post.ChannelId)
-		if err != nil || isDirectOrGroupChannel(ch) {
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
 			continue
 		}
 		out = append(out, post)
@@ -259,13 +311,120 @@ func filterPostsFromDirectAndGroup(mcpContext *MCPToolContext, posts []*model.Po
 	return out
 }
 
-func looksLikeChannelOrPostIdentifier(name string) bool {
-	if name == "scheduled_post_id" {
-		return false
+// visiblePostList drops posts that are not in an open or private channel for
+// bot sessions. Human sessions get the list unchanged.
+func visiblePostList(mcpContext *MCPToolContext, postList *model.PostList) *model.PostList {
+	if postList == nil || mcpContext == nil || !mcpContext.IsBotSession {
+		return postList
 	}
-	switch name {
-	case "channel_name", "root_id", "thread_id", "file_id", "file_ids":
-		return true
+	posts := make([]*model.Post, 0, len(postList.Posts))
+	for _, post := range postList.Posts {
+		posts = append(posts, post)
 	}
-	return strings.Contains(name, "channel_id") || strings.Contains(name, "post_id")
+	filtered := filterPostsFromDirectAndGroup(mcpContext, posts)
+	if len(filtered) == len(postList.Posts) {
+		return postList
+	}
+	out := &model.PostList{Posts: make(map[string]*model.Post, len(filtered))}
+	for _, post := range filtered {
+		if post != nil {
+			out.Posts[post.Id] = post
+		}
+	}
+	return out
+}
+
+func filterScheduledPosts(mcpContext *MCPToolContext, posts []*model.ScheduledPost) []*model.ScheduledPost {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return posts
+	}
+	r := mcpContext.channelResolver()
+	out := make([]*model.ScheduledPost, 0, len(posts))
+	for _, sp := range posts {
+		if sp == nil {
+			continue
+		}
+		ch, err := r.channel(sp.ChannelId)
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
+			continue
+		}
+		out = append(out, sp)
+	}
+	return out
+}
+
+func filterThreads(mcpContext *MCPToolContext, threads []*model.ThreadResponse) []*model.ThreadResponse {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return threads
+	}
+	r := mcpContext.channelResolver()
+	out := make([]*model.ThreadResponse, 0, len(threads))
+	for _, tr := range threads {
+		if tr == nil || tr.Post == nil {
+			continue
+		}
+		ch, err := r.channel(tr.Post.ChannelId)
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
+			continue
+		}
+		out = append(out, tr)
+	}
+	return out
+}
+
+func filterFileInfos(mcpContext *MCPToolContext, infos []*model.FileInfo) []*model.FileInfo {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return infos
+	}
+	r := mcpContext.channelResolver()
+	out := make([]*model.FileInfo, 0, len(infos))
+	for _, info := range infos {
+		ch, err := r.channelForFileInfo(info)
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
+			continue
+		}
+		out = append(out, info)
+	}
+	return out
+}
+
+func filterChannelMembers(mcpContext *MCPToolContext, members model.ChannelMembers) model.ChannelMembers {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return members
+	}
+	r := mcpContext.channelResolver()
+	out := make(model.ChannelMembers, 0, len(members))
+	for i := range members {
+		ch, err := r.channel(members[i].ChannelId)
+		if err != nil || !isVerifiedOpenOrPrivate(ch) {
+			continue
+		}
+		out = append(out, members[i])
+	}
+	return out
+}
+
+func filterSidebarCategories(mcpContext *MCPToolContext, categories []*model.SidebarCategoryWithChannels) []*model.SidebarCategoryWithChannels {
+	if mcpContext == nil || !mcpContext.IsBotSession {
+		return categories
+	}
+	r := mcpContext.channelResolver()
+	out := make([]*model.SidebarCategoryWithChannels, 0, len(categories))
+	for _, cat := range categories {
+		if cat == nil || cat.Type == model.SidebarCategoryDirectMessages {
+			continue
+		}
+		copied := *cat
+		visible := make([]string, 0, len(cat.Channels))
+		for _, id := range cat.Channels {
+			ch, err := r.channel(id)
+			if err != nil || !isVerifiedOpenOrPrivate(ch) {
+				continue
+			}
+			visible = append(visible, id)
+		}
+		copied.Channels = visible
+		out = append(out, &copied)
+	}
+	return out
 }

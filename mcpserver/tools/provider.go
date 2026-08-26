@@ -40,6 +40,10 @@ type MCPToolContext struct {
 	// True also when the user cannot be resolved, so the DM/GM guard fails closed.
 	IsBotSession bool
 
+	// resolver memoizes channel lookups for one tool call (argument guard and
+	// output filters share it).
+	resolver *channelResolver
+
 	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
 	MMServerURL        string
 	BeforeHookResolver auth.BeforeHookResolver

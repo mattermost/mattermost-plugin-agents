@@ -266,12 +266,18 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 	}
 
 	channelTeamCache := make(map[string]string)
+	channelVisible := make(map[string]bool)
 	for _, r := range results {
 		if _, exists := channelTeamCache[r.ChannelID]; exists {
 			continue
 		}
 
 		channel, _, chErr := client.GetChannel(ctx, r.ChannelID)
+		if excludeDirectAndGroup {
+			channelVisible[r.ChannelID] = chErr == nil && isVerifiedOpenOrPrivate(channel)
+		} else {
+			channelVisible[r.ChannelID] = true
+		}
 		if chErr == nil && channel.TeamId != "" {
 			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 			if teamErr == nil {
@@ -285,6 +291,9 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 
 	postResults := make([]searchPostResult, 0, len(results))
 	for _, r := range results {
+		if !channelVisible[r.ChannelID] {
+			continue
+		}
 		postResults = append(postResults, searchPostResult{
 			Post: &model.Post{
 				Id:        r.PostID,
@@ -348,6 +357,31 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 		return nil, nil
 	}
 
+	for _, post := range posts {
+		if _, exists := channelCache[post.ChannelId]; exists {
+			continue
+		}
+		channel, _, chErr := client.GetChannel(ctx, post.ChannelId)
+		if chErr == nil {
+			channelCache[post.ChannelId] = channel
+		} else {
+			channelCache[post.ChannelId] = nil
+		}
+	}
+
+	if excludeDirectAndGroup {
+		visible := make([]*model.Post, 0, len(posts))
+		for _, post := range posts {
+			if isVerifiedOpenOrPrivate(channelCache[post.ChannelId]) {
+				visible = append(visible, post)
+			}
+		}
+		posts = visible
+		if len(posts) == 0 {
+			return nil, nil
+		}
+	}
+
 	sort.Slice(posts, func(i, j int) bool {
 		if posts[i].CreateAt != posts[j].CreateAt {
 			return posts[i].CreateAt > posts[j].CreateAt
@@ -366,15 +400,6 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 	}
 
 	for _, post := range posts {
-		if _, exists := channelCache[post.ChannelId]; !exists {
-			channel, _, chErr := client.GetChannel(ctx, post.ChannelId)
-			if chErr == nil {
-				channelCache[post.ChannelId] = channel
-			} else {
-				channelCache[post.ChannelId] = nil
-			}
-		}
-
 		if channel := channelCache[post.ChannelId]; channel != nil && channel.TeamId != "" {
 			if _, exists := teamCache[channel.TeamId]; !exists {
 				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
@@ -421,13 +446,6 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 
 		if user := userCache[post.UserId]; user != nil {
 			result.Username = user.Username
-		}
-
-		if excludeDirectAndGroup {
-			ch := channelCache[post.ChannelId]
-			if ch == nil || isDirectOrGroupChannel(ch) {
-				continue
-			}
 		}
 
 		postResults = append(postResults, result)

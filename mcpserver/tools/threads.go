@@ -109,6 +109,10 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 		PageSize: uint64(args.Limit),
 		Extended: true,
 		Unread:   args.UnreadOnly,
+		// TeamOnly is the documented exclude-DM option; this Client4
+		// serializes ExcludeDirect, not TeamOnly, so both are set.
+		TeamOnly:      mcpContext.IsBotSession,
+		ExcludeDirect: mcpContext.IsBotSession,
 	}
 	threads, _, err := mcpContext.Client.GetUserThreads(mcpContext.Ctx, userID, args.TeamID, opts)
 	if err != nil {
@@ -119,10 +123,19 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 		return "no threads found", nil
 	}
 
+	visible := filterThreads(mcpContext, threads.Threads)
+	if len(visible) == 0 {
+		return "no threads found", nil
+	}
+
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Threads inbox: %d total, %d unread threads, %d unread mentions\n\n",
-		threads.Total, threads.TotalUnreadThreads, threads.TotalUnreadMentions))
-	for i, tr := range threads.Threads {
+	if mcpContext.IsBotSession {
+		result.WriteString(fmt.Sprintf("Threads inbox: %d thread(s)\n\n", len(visible)))
+	} else {
+		result.WriteString(fmt.Sprintf("Threads inbox: %d total, %d unread threads, %d unread mentions\n\n",
+			threads.Total, threads.TotalUnreadThreads, threads.TotalUnreadMentions))
+	}
+	for i, tr := range visible {
 		username := ""
 		if tr.Post != nil {
 			username = p.usernameFor(mcpContext.Ctx, mcpContext.Client, tr.Post.UserId)
@@ -159,7 +172,7 @@ func (p *MattermostToolProvider) toolGetMentions(mcpContext *MCPToolContext, arg
 		return "", fmt.Errorf("error searching mentions: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, postList, "posts mentioning you"), nil
+	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "posts mentioning you"), nil
 }
 
 // mentionKeywords builds the set of terms that mention a user: their @username plus
@@ -266,7 +279,7 @@ func (p *MattermostToolProvider) toolGetPostsAroundUnread(mcpContext *MCPToolCon
 		return "", fmt.Errorf("error fetching posts around unread: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, postList, "posts around your last-read line"), nil
+	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "posts around your last-read line"), nil
 }
 
 // toolMarkChannelRead implements the mark_channel_read tool.

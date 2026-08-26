@@ -1629,7 +1629,7 @@ func TestSearchExcludeDirectAndGroup(t *testing.T) {
 	docs := make([]embeddings.PostDocument, len(channels))
 	embedVectors := make([][]float32, len(channels))
 	for i, ch := range channels {
-		_, err := db.Exec(
+		_, execErr := db.Exec(
 			"INSERT INTO Channels (Id, Name, DisplayName, Type, DeleteAt) VALUES ($1, $2, $3, $4, $5)",
 			ch.id,
 			fmt.Sprintf("name-%s", ch.id),
@@ -1637,7 +1637,7 @@ func TestSearchExcludeDirectAndGroup(t *testing.T) {
 			ch.channelType,
 			int64(0),
 		)
-		require.NoError(t, err, "Failed to insert test channel %s", ch.id)
+		require.NoError(t, execErr, "Failed to insert test channel %s", ch.id)
 		addTestChannelMembers(t, db, ch.id, []string{userID})
 
 		postIDs[i] = ch.postID

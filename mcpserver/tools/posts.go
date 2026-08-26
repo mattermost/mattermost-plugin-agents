@@ -646,7 +646,7 @@ func (p *MattermostToolProvider) toolListPinnedPosts(mcpContext *MCPToolContext,
 		return "", fmt.Errorf("error fetching pinned posts: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, postList, "pinned posts"), nil
+	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "pinned posts"), nil
 }
 
 // toolListSavedPosts implements the list_saved_posts tool.
@@ -688,7 +688,7 @@ func (p *MattermostToolProvider) toolListSavedPosts(mcpContext *MCPToolContext, 
 		return "", fmt.Errorf("error fetching saved posts: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, postList, "saved posts"), nil
+	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "saved posts"), nil
 }
 
 // toolUpdatePost implements the update_post tool.
@@ -813,7 +813,6 @@ func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext
 	for _, post := range postList.Posts {
 		posts = append(posts, post)
 	}
-	posts = filterPostsFromDirectAndGroup(mcpContext, posts)
 	if len(posts) == 0 {
 		return fmt.Sprintf("no %s found", noun)
 	}
