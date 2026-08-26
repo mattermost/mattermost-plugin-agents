@@ -123,16 +123,18 @@ func TestHTTPSemanticSearchService_Search(t *testing.T) {
 				assert.Equal(t, "chan1", req.ChannelID)
 				assert.Equal(t, 20, req.Limit)
 				assert.Equal(t, 5, req.Offset)
+				assert.True(t, req.ExcludeDirectAndGroup)
 
 				resp := httpSearchResponse{Results: []httpSearchResult{}}
 				_ = json.NewEncoder(w).Encode(resp)
 			},
 			query: "search query",
 			opts: search.Options{
-				TeamID:    "team1",
-				ChannelID: "chan1",
-				Limit:     20,
-				Offset:    5,
+				TeamID:                "team1",
+				ChannelID:             "chan1",
+				Limit:                 20,
+				Offset:                5,
+				ExcludeDirectAndGroup: true,
 			},
 			expectedCount: 0,
 		},

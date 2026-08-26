@@ -121,11 +121,12 @@ func (a *API) handleSearchQuery(c *gin.Context) {
 
 // RawSearchRequest represents the request body for the raw semantic search endpoint
 type RawSearchRequest struct {
-	Query     string `json:"query"`
-	TeamID    string `json:"team_id,omitempty"`
-	ChannelID string `json:"channel_id,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Offset    int    `json:"offset,omitempty"`
+	Query                 string `json:"query"`
+	TeamID                string `json:"team_id,omitempty"`
+	ChannelID             string `json:"channel_id,omitempty"`
+	Limit                 int    `json:"limit,omitempty"`
+	Offset                int    `json:"offset,omitempty"`
+	ExcludeDirectAndGroup bool   `json:"exclude_direct_and_group,omitempty"`
 }
 
 // RawSearchResult represents a single raw semantic search result
@@ -192,11 +193,12 @@ func (a *API) handleRawSearch(c *gin.Context) {
 	}
 
 	results, err := a.searchService.Search(c.Request.Context(), req.Query, search.Options{
-		Limit:     limit,
-		Offset:    offset,
-		TeamID:    req.TeamID,
-		ChannelID: req.ChannelID,
-		UserID:    userID,
+		Limit:                 limit,
+		Offset:                offset,
+		TeamID:                req.TeamID,
+		ChannelID:             req.ChannelID,
+		UserID:                userID,
+		ExcludeDirectAndGroup: req.ExcludeDirectAndGroup,
 	})
 	if err != nil {
 		if errors.Is(err, search.ErrSearchUnavailable) {

@@ -38,11 +38,12 @@ func (s *HTTPSemanticSearchService) Enabled() bool {
 
 // httpSearchRequest represents the request body sent to the plugin endpoint
 type httpSearchRequest struct {
-	Query     string `json:"query"`
-	TeamID    string `json:"team_id,omitempty"`
-	ChannelID string `json:"channel_id,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Offset    int    `json:"offset,omitempty"`
+	Query                 string `json:"query"`
+	TeamID                string `json:"team_id,omitempty"`
+	ChannelID             string `json:"channel_id,omitempty"`
+	Limit                 int    `json:"limit,omitempty"`
+	Offset                int    `json:"offset,omitempty"`
+	ExcludeDirectAndGroup bool   `json:"exclude_direct_and_group,omitempty"`
 }
 
 // httpSearchResult represents a single result from the plugin endpoint
@@ -67,11 +68,12 @@ type httpSearchResponse struct {
 func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error) {
 	// Build request body
 	reqBody := httpSearchRequest{
-		Query:     query,
-		TeamID:    opts.TeamID,
-		ChannelID: opts.ChannelID,
-		Limit:     opts.Limit,
-		Offset:    opts.Offset,
+		Query:                 query,
+		TeamID:                opts.TeamID,
+		ChannelID:             opts.ChannelID,
+		Limit:                 opts.Limit,
+		Offset:                opts.Offset,
+		ExcludeDirectAndGroup: opts.ExcludeDirectAndGroup,
 	}
 
 	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/api/v1/search/raw", reqBody, "")

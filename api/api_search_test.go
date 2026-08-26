@@ -741,3 +741,44 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestHandleRawSearchExcludeDirectAndGroup(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name    string
+		exclude bool
+	}{
+		{"true is forwarded to the search service", true},
+		{"false is forwarded to the search service", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			mockEmbedding.On("Search", mock.Anything, "hello", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
+				return opts.ExcludeDirectAndGroup == tc.exclude && opts.UserID == "userid"
+			})).Return([]embeddings.SearchResult{}, nil)
+			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			body, err := json.Marshal(RawSearchRequest{
+				Query:                 "hello",
+				ExcludeDirectAndGroup: tc.exclude,
+			})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodPost, "/search/raw", bytes.NewReader(body))
+			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+		})
+	}
+}
