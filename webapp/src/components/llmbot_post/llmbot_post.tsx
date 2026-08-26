@@ -372,6 +372,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'continue') {
                 reasoningSeenRef.current = false;
+
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
                 setGenerating(true);
