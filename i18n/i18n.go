@@ -16,32 +16,28 @@ var i18nFiles embed.FS
 
 type TranslationFunc func(translationId string, defaultMessage string, params ...any) string
 
-type Bundle i18n.Bundle
+type Bundle = i18n.Bundle
 
 func Init() *Bundle {
 	bundle := i18n.NewBundle(language.English)
 	_, _ = bundle.LoadMessageFileFS(i18nFiles, "i18n/es.json")
 
-	return (*Bundle)(bundle)
+	return bundle
 }
 
 func LocalizerFunc(bundle *Bundle, lang string) TranslationFunc {
-	localizer := i18n.NewLocalizer((*i18n.Bundle)(bundle), lang)
+	localizer := i18n.NewLocalizer(bundle, lang)
 
 	return func(translationId string, defaultMessage string, params ...any) string {
-		if len(params) > 0 {
-			return fmt.Sprintf(localizer.MustLocalize(&i18n.LocalizeConfig{
-				DefaultMessage: &i18n.Message{
-					ID:    translationId,
-					Other: defaultMessage,
-				},
-			}), params...)
-		}
-		return localizer.MustLocalize(&i18n.LocalizeConfig{
+		message := localizer.MustLocalize(&i18n.LocalizeConfig{
 			DefaultMessage: &i18n.Message{
 				ID:    translationId,
 				Other: defaultMessage,
 			},
 		})
+		if len(params) > 0 {
+			return fmt.Sprintf(message, params...)
+		}
+		return message
 	}
 }
