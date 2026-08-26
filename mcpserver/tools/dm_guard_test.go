@@ -387,7 +387,8 @@ func TestEveryToolDeclaresDMandGMEnforcement(t *testing.T) {
 }
 
 // dmGMEnforcement is how a registered MCP tool is kept from returning DM/GM
-// data to a bot session. Invalid values fail to compile.
+// data to a bot session. A named constant is required, so an ad-hoc string
+// classification does not compile.
 type dmGMEnforcement int
 
 const (
@@ -398,9 +399,9 @@ const (
 	dmGMWriteByUsername
 )
 
-// botSessionDMGMEnforcement is the load-bearing inventory of how every MCP tool
-// is kept from returning DM/GM data to a bot session. A newly registered tool
-// must be added here or TestEveryToolDeclaresDMandGMEnforcement fails.
+// botSessionDMGMEnforcement inventories how every MCP tool is kept from
+// returning DM/GM data to a bot session. A newly registered tool must be added
+// here or TestEveryToolDeclaresDMandGMEnforcement fails.
 func botSessionDMGMEnforcement() map[string]dmGMEnforcement {
 	return map[string]dmGMEnforcement{
 		// posts
