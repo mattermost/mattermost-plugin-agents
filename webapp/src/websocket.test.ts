@@ -53,6 +53,12 @@ describe('PostEventListener progress buffering', () => {
             post_id: 'post-id',
             next: 'Hello',
         }));
+        events.handlePostUpdateWebsockets(message({
+            post_id: 'post-id',
+            control: 'progress',
+            progress_phase: 'connecting_provider',
+            progress_seq: 4,
+        }));
         events.registerPostUpdateListener('post-id', 'listener-id', listener);
 
         expect(listener).not.toHaveBeenCalled();

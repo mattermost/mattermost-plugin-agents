@@ -11,14 +11,25 @@ type WebsocketListenerObject = {
     listener: WebsocketListener;
 }
 type WebsocketListeners = WebsocketListenerObject[]
+type ProgressUpdate = PluginWebSocketMessage<PostUpdateWebsocketMessage> | null;
 
 export default class PostEventListener {
     postUpdateWebsocketListeners: WebsocketListeners = [];
-    pendingProgressUpdates = new Map<string, PluginWebSocketMessage<PostUpdateWebsocketMessage>>();
+    progressUpdates = new Map<string, ProgressUpdate>();
+
+    private setProgressUpdate = (postID: string, update: ProgressUpdate) => {
+        if (!this.progressUpdates.has(postID) && this.progressUpdates.size >= 100) {
+            const oldestPostID = this.progressUpdates.keys().next().value;
+            if (oldestPostID) {
+                this.progressUpdates.delete(oldestPostID);
+            }
+        }
+        this.progressUpdates.set(postID, update);
+    };
 
     public registerPostUpdateListener = (postID: string, listenerID: string, listener: WebsocketListener) => {
         this.postUpdateWebsocketListeners.push({postID, listenerID, listener});
-        const pending = this.pendingProgressUpdates.get(postID);
+        const pending = this.progressUpdates.get(postID);
         if (pending) {
             listener(pending);
         }
@@ -35,24 +46,21 @@ export default class PostEventListener {
     public handlePostUpdateWebsockets = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
         const postID = msg.data.post_id;
         if (msg.data.control === 'progress') {
-            const pending = this.pendingProgressUpdates.get(postID);
+            const pending = this.progressUpdates.get(postID);
+            if (pending === null) {
+                return;
+            }
             const pendingSequence = pending?.data.progress_seq ?? 0;
             const incomingSequence = msg.data.progress_seq ?? 0;
             if (incomingSequence <= pendingSequence) {
                 return;
             }
-            if (!pending && this.pendingProgressUpdates.size >= 100) {
-                const oldestPostID = this.pendingProgressUpdates.keys().next().value;
-                if (oldestPostID) {
-                    this.pendingProgressUpdates.delete(oldestPostID);
-                }
-            }
-            this.pendingProgressUpdates.set(postID, msg);
+            this.setProgressUpdate(postID, msg);
         } else if (
             typeof msg.data.next === 'string' ||
             (typeof msg.data.control === 'string' && msg.data.control !== 'start' && msg.data.control !== 'continue')
         ) {
-            this.pendingProgressUpdates.delete(postID);
+            this.setProgressUpdate(postID, null);
         }
 
         this.postUpdateWebsocketListeners.forEach((listenerObject) => {
