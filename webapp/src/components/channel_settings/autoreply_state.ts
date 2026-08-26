@@ -11,11 +11,11 @@ import {LLMBot, filterBotsByChannelAccess, resolveActiveBot} from '@/bots';
 export type ChannelAutoReplySaveErrorKind = 'forbidden' | 'no_agent' | 'generic';
 
 // Module-level draft bridging the host's schema callbacks (loadValues/onSave)
-// and the custom agent-picker setting, which receives nothing but informChange
-// from the host. Safe because only one Channel Settings modal exists at a time
-// and loadValues resolves before the picker mounts (except the
-// loadValues-failure path, which the picker tolerates by rendering a
-// load-failure message).
+// and custom settings (agent picker, ambient instructions, analysis model),
+// which receive nothing but informChange from the host. Safe because only one
+// Channel Settings modal exists at a time and loadValues resolves before
+// custom settings mount (except the loadValues-failure path, which they
+// tolerate by rendering a load-failure message or nothing).
 export type ChannelAutoReplyDraft = {
     channelId: string;
 
@@ -67,23 +67,49 @@ export function useChannelAutoReplyDraft(): ChannelAutoReplyDraft | null {
 }
 
 /**
+ * Coerces an untrusted mode string to the wire enum. Unknown and missing
+ * values collapse to 'off'.
+ */
+export function parseChannelAutoReplyMode(raw: string | undefined): ChannelAutoReplyMode {
+    switch (raw) {
+    case 'off':
+    case 'root_posts':
+    case 'threads':
+    case 'ambient':
+        return raw;
+    default:
+        return 'off';
+    }
+}
+
+function asString(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
+
+/**
  * Validates untrusted GET/websocket data and resolves the effective agent:
- * unknown modes collapse to 'off', and the saved bot id falls back to the
- * system-default agent, then the first agent available in the channel, so the
- * picker can display a selection without ever calling informChange on mount.
+ * unknown modes collapse to 'off', extras become empty strings when missing,
+ * and the saved bot id falls back to the system-default agent, then the first
+ * agent available in the channel, so custom settings can display without ever
+ * calling informChange on mount.
  *
  * `bots` is null when the bot list is unknown (fetch failed or cache cold). In
  * that case the saved bot id is preserved as-is: treating it like an empty
  * list would clear a configured agent and a subsequent save could persist the
  * cleared state. Only a genuinely empty list triggers the reselection flow.
+ * Instructions and analysis_model are independent of the agent list.
  */
 export function normalizeChannelAutoReply(raw: ChannelAutoReplySettings, bots: LLMBot[] | null, channelId: string): ChannelAutoReplySettings {
-    const mode: ChannelAutoReplyMode = raw.mode === 'root_posts' || raw.mode === 'threads' ? raw.mode : 'off';
+    const mode = parseChannelAutoReplyMode(raw.mode);
+    const extras = {
+        instructions: asString(raw.instructions),
+        analysis_model: asString(raw.analysis_model),
+    };
     if (bots === null) {
-        return {mode, bot_id: raw.bot_id ?? ''};
+        return {mode, bot_id: raw.bot_id ?? '', ...extras};
     }
     const resolved = resolveActiveBot(filterBotsByChannelAccess(bots, channelId), raw.bot_id ?? '');
-    return {mode, bot_id: resolved?.id ?? ''};
+    return {mode, bot_id: resolved?.id ?? '', ...extras};
 }
 
 // Websocket payload for custom_mattermost-ai_channel_autoreply_updated; only

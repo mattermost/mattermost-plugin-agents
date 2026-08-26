@@ -8,7 +8,7 @@ import {ClientError} from '@mattermost/client';
 import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
-import {getAIBots, getChannelAutoReply, updateChannelAutoReply} from '@/client';
+import {ChannelAutoReplySettings, getAIBots, getChannelAutoReply, updateChannelAutoReply} from '@/client';
 import {LLMBot} from '@/bots';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {
@@ -27,6 +27,7 @@ import {
 } from './autoreply_schema';
 import {getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import {AutoReplyAnalysisModelField, AutoReplyInstructionsField} from './autoreply_ambient_fields';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
 // in jsdom. Stub it so importing the bots/picker chain doesn't throw.
@@ -73,6 +74,7 @@ const intl = {
 const botsKey = `plugins-${manifest.id}`;
 const TEAM_ID = 'team1';
 const CHANNEL_ID = 'chan1';
+const emptyExtras = {instructions: '', analysis_model: ''};
 
 function makeBot(id: string, overrides: Partial<LLMBot> = {}): LLMBot {
     return {
@@ -152,73 +154,98 @@ describe('makeLoadValues', () => {
     const other = makeBot('other');
 
     test('returns the normalized GET payload and seeds the draft store', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [defaultBot, other]}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
         expect(mockedGetChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID);
-        expect(values).toEqual({mode: 'threads', bot_id: 'other'});
+        expect(values).toEqual({mode: 'threads', bot_id: 'other', ...emptyExtras});
         expect(getChannelAutoReplyDraft()).toEqual({
             channelId: CHANNEL_ID,
-            saved: {bot_id: 'other', mode: 'threads'},
+            saved: {bot_id: 'other', mode: 'threads', ...emptyExtras},
             saveError: null,
         });
         expect(mockedGetAIBots).not.toHaveBeenCalled();
     });
 
     test('resolves the default agent when the setting is unset', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [other, defaultBot]}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'off', bot_id: 'def'});
+        expect(values).toEqual({mode: 'off', bot_id: 'def', ...emptyExtras});
     });
 
     test('resolves the single agent when exactly one is available', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         const store = makeTestStore(makeState({bots: [other]}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'off', bot_id: 'other'});
+        expect(values).toEqual({mode: 'off', bot_id: 'other', ...emptyExtras});
     });
 
     test('awaits a bots fetch when the runtime cache is null', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: '', mode: 'off', ...emptyExtras});
         mockedGetAIBots.mockResolvedValue({bots: [other], searchEnabled: false, allowUnsafeLinks: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
         expect(mockedGetAIBots).toHaveBeenCalled();
-        expect(values).toEqual({mode: 'off', bot_id: 'other'});
+        expect(values).toEqual({mode: 'off', bot_id: 'other', ...emptyExtras});
     });
 
     test('preserves the saved agent when the bots fetch fails', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
         mockedGetAIBots.mockRejectedValue(new Error('bots unavailable'));
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'threads', bot_id: 'other'});
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads'});
+        expect(values).toEqual({mode: 'threads', bot_id: 'other', ...emptyExtras});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads', ...emptyExtras});
     });
 
     test('clears the saved agent when the fetch returns a genuinely empty agent list', async () => {
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'} as ChannelAutoReplySettings);
         mockedGetAIBots.mockResolvedValue({bots: [], searchEnabled: false, allowUnsafeLinks: false});
         const store = makeTestStore(makeState({bots: null}));
 
         const values = await makeLoadValues(store)(makeChannel('O'));
 
-        expect(values).toEqual({mode: 'threads', bot_id: ''});
+        expect(values).toEqual({mode: 'threads', bot_id: '', ...emptyExtras});
+    });
+
+    test('returns ambient extras from GET and seeds them on the draft', async () => {
+        mockedGetChannelAutoReply.mockResolvedValue({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
+        const store = makeTestStore(makeState({bots: [other]}));
+
+        const values = await makeLoadValues(store)(makeChannel('O'));
+
+        expect(values).toEqual({
+            mode: 'ambient',
+            bot_id: 'other',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
     });
 
     test('clears any stale draft and rejects when the GET fails', async () => {
-        setChannelAutoReplyDraft({channelId: 'previous-channel', saved: {bot_id: 'x', mode: 'off'}, saveError: null});
+        setChannelAutoReplyDraft({channelId: 'previous-channel', saved: {bot_id: 'x', mode: 'off', ...emptyExtras}, saveError: null});
         const error = new ClientError('http://localhost', {message: '', status_code: 403, url: 'u'});
         mockedGetChannelAutoReply.mockRejectedValue(error);
         const store = makeTestStore(makeState({bots: [other]}));
@@ -233,7 +260,7 @@ describe('makeOnSave', () => {
     const onSave = makeOnSave();
 
     function seedDraft(saveError: 'forbidden' | 'no_agent' | 'generic' | null = null) {
-        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'off'}, saveError});
+        setChannelAutoReplyDraft({channelId: CHANNEL_ID, saved: {bot_id: 'other', mode: 'off', ...emptyExtras}, saveError});
     }
 
     test('PUTs the selected mode and agent, then updates the draft and clears the error', async () => {
@@ -242,31 +269,76 @@ describe('makeOnSave', () => {
 
         await onSave({mode: 'root_posts', bot_id: 'other'}, makeChannel('O'));
 
-        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts'});
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: 'other', mode: 'root_posts', ...emptyExtras});
         expect(getChannelAutoReplyDraft()).toEqual({
             channelId: CHANNEL_ID,
-            saved: {bot_id: 'other', mode: 'root_posts'},
+            saved: {bot_id: 'other', mode: 'root_posts', ...emptyExtras},
             saveError: null,
         });
     });
 
     test.each([
-        {name: 'off', values: {mode: 'off', bot_id: 'other'}},
-        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other'}},
-        {name: 'a missing mode', values: {bot_id: 'other'}},
-    ])('PUTs an empty bot_id and mode off for $name', async ({values}) => {
+        {name: 'off', values: {mode: 'off', bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
+        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
+        {name: 'a missing mode', values: {bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
+    ])('PUTs an empty bot_id, empty extras, and mode off for $name', async ({values}) => {
         seedDraft();
         mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
 
         await onSave(values as ChannelSettingsValues, makeChannel('O'));
 
-        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off'});
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: '', mode: 'off'});
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off', ...emptyExtras});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: '', mode: 'off', ...emptyExtras});
+    });
+
+    test('PUTs ambient extras with the selected agent', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({
+            mode: 'ambient',
+            bot_id: 'other',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        }, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
+        expect(getChannelAutoReplyDraft()?.saved).toEqual({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
+    });
+
+    test('preserves extras when saving a non-ambient enabled mode', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({
+            mode: 'threads',
+            bot_id: 'other',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        }, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
+            bot_id: 'other',
+            mode: 'threads',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
     });
 
     test.each([
         {name: 'an empty bot_id', values: {mode: 'root_posts', bot_id: ''}},
         {name: 'a bot_id absent from the values', values: {mode: 'threads'}},
+        {name: 'ambient with an empty bot_id', values: {mode: 'ambient', bot_id: '', instructions: 'x', analysis_model: 'y'}},
     ])('rejects with no_agent and performs no PUT for $name', async ({values}) => {
         seedDraft();
 
@@ -326,19 +398,19 @@ describe('makeChannelAutoReplySchema shape', () => {
         expect(typeof schema.onSave).toBe('function');
     });
 
-    test('has exactly one section with a non-empty title and settings named mode and bot_id', () => {
+    test('has exactly one section with a non-empty title and settings named mode, bot_id, instructions, and analysis_model', () => {
         expect(schema.sections).toHaveLength(1);
         expect(schema.sections[0].title.length).toBeGreaterThan(0);
-        expect(schema.sections[0].settings.map((s) => s.name)).toEqual(['mode', 'bot_id']);
+        expect(schema.sections[0].settings.map((s) => s.name)).toEqual(['mode', 'bot_id', 'instructions', 'analysis_model']);
     });
 
-    test('radio setting has default off matching one of three non-empty options', () => {
+    test('radio setting has default off matching one of four non-empty options', () => {
         const radio = schema.sections[0].settings[0];
         if (radio.type !== 'radio') {
             throw new Error('expected the first setting to be the radio');
         }
         expect(radio.default).toBe('off');
-        expect(radio.options.map((o) => o.value)).toEqual(['off', 'root_posts', 'threads']);
+        expect(radio.options.map((o) => o.value)).toEqual(['off', 'root_posts', 'threads', 'ambient']);
         expect(radio.options.map((o) => o.value)).toContain(radio.default);
         for (const option of radio.options) {
             expect(option.value.length).toBeGreaterThan(0);
@@ -346,14 +418,24 @@ describe('makeChannelAutoReplySchema shape', () => {
         }
     });
 
-    test('custom setting provides the agent picker component and no title/helpText/default', () => {
-        const custom = schema.sections[0].settings[1];
-        if (custom.type !== 'custom') {
-            throw new Error('expected the second setting to be the custom picker');
+    test('custom settings provide picker, instructions, and analysis-model components with no title/helpText/default', () => {
+        const expected = [
+            {name: 'bot_id', component: AutoReplyAgentPicker},
+            {name: 'instructions', component: AutoReplyInstructionsField},
+            {name: 'analysis_model', component: AutoReplyAnalysisModelField},
+        ];
+        const customs = schema.sections[0].settings.slice(1);
+        expect(customs).toHaveLength(expected.length);
+        for (let i = 0; i < expected.length; i++) {
+            const custom = customs[i];
+            if (custom.type !== 'custom') {
+                throw new Error(`expected setting ${expected[i].name} to be custom`);
+            }
+            expect(custom.name).toBe(expected[i].name);
+            expect(custom.component).toBe(expected[i].component);
+            expect(custom).not.toHaveProperty('title');
+            expect(custom).not.toHaveProperty('helpText');
+            expect(custom).not.toHaveProperty('default');
         }
-        expect(custom.component).toBe(AutoReplyAgentPicker);
-        expect(custom).not.toHaveProperty('title');
-        expect(custom).not.toHaveProperty('helpText');
-        expect(custom).not.toHaveProperty('default');
     });
 });

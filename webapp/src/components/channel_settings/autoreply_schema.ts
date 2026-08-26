@@ -9,7 +9,7 @@ import {ClientError} from '@mattermost/client';
 import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
-import {ChannelAutoReplyMode, ChannelAutoReplySettings, getChannelAutoReply, updateChannelAutoReply} from '@/client';
+import {ChannelAutoReplySettings, getChannelAutoReply, updateChannelAutoReply} from '@/client';
 import {LLMBot, fetchAndStoreBots, filterBotsByChannelAccess} from '@/bots';
 import {
     PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES,
@@ -19,8 +19,10 @@ import {
 import manifest from '@/manifest';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import {AutoReplyAnalysisModelField, AutoReplyInstructionsField} from './autoreply_ambient_fields';
 import {
     normalizeChannelAutoReply,
+    parseChannelAutoReplyMode,
     setChannelAutoReplyDraft,
     setChannelAutoReplySaveError,
 } from './autoreply_state';
@@ -99,18 +101,49 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
     // saved agent instead of clearing it like an empty agent list would.
     const saved = normalizeChannelAutoReply(raw, bots, channel.id);
     setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
-    return {mode: saved.mode, bot_id: saved.bot_id};
+    return {
+        mode: saved.mode,
+        bot_id: saved.bot_id,
+        instructions: saved.instructions,
+        analysis_model: saved.analysis_model,
+    };
 };
 
 export const makeOnSave = () => async (values: ChannelSettingsValues, channel: Channel): Promise<void> => {
-    const mode: ChannelAutoReplyMode = values.mode === 'root_posts' || values.mode === 'threads' ? values.mode : 'off';
-    const botId = mode === 'off' ? '' : (values.bot_id ?? '');
+    const mode = parseChannelAutoReplyMode(values.mode);
+    let botId: string;
+    let instructions: string;
+    let analysisModel: string;
+    switch (mode) {
+    case 'off':
+        botId = '';
+        instructions = '';
+        analysisModel = '';
+        break;
+    case 'root_posts':
+    case 'threads':
+    case 'ambient':
+        botId = values.bot_id ?? '';
+        instructions = values.instructions ?? '';
+        analysisModel = values.analysis_model ?? '';
+        break;
+    default: {
+        const exhaustive: never = mode;
+        throw new Error(`unhandled auto-reply mode: ${exhaustive}`);
+    }
+    }
     if (mode !== 'off' && !botId) {
         setChannelAutoReplySaveError('no_agent');
         throw new Error('no agent selected for channel auto-reply');
     }
+    const saved: ChannelAutoReplySettings = {
+        bot_id: botId,
+        mode,
+        instructions,
+        analysis_model: analysisModel,
+    };
     try {
-        await updateChannelAutoReply(channel.id, {bot_id: botId, mode});
+        await updateChannelAutoReply(channel.id, saved);
     } catch (e) {
         // The endpoints answer with a bare status code (no JSON error body),
         // so error handling keys off the status only.
@@ -121,12 +154,17 @@ export const makeOnSave = () => async (values: ChannelSettingsValues, channel: C
         // is the plugin-rendered element that displays the recorded error.
         throw e;
     }
-    setChannelAutoReplyDraft({channelId: channel.id, saved: {bot_id: botId, mode}, saveError: null});
+    setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
 };
 
 // Builds the registration passed to registry.registerChannelSettingsTab. Must
 // be called exactly once at init: the host re-runs hydration whenever the
 // schema object reference changes, which would destroy in-progress user edits.
+//
+// TODO(ambient-poc): migrate this tab to ChannelSettingsCustomTab so Reset
+// restores custom local state and Ambient extras can show/hide from live mode.
+// Schema custom settings cannot see host values or Reset. POC assumption:
+// extras stay always visible; Reset does not revert them.
 export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape): ChannelAutoReplyTabRegistration {
     return {
         uiName: intl.formatMessage({defaultMessage: 'Agents'}),
@@ -157,6 +195,11 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
                             text: intl.formatMessage({defaultMessage: 'Threads too'}),
                             helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
                         },
+                        {
+                            value: 'ambient',
+                            text: intl.formatMessage({defaultMessage: 'Ambient'}),
+                            helpText: intl.formatMessage({defaultMessage: 'The agent watches the channel and replies only when it decides a response is useful.'}),
+                        },
                     ],
                 },
                 {
@@ -168,6 +211,16 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
                     name: 'bot_id',
                     type: 'custom',
                     component: AutoReplyAgentPicker,
+                },
+                {
+                    name: 'instructions',
+                    type: 'custom',
+                    component: AutoReplyInstructionsField,
+                },
+                {
+                    name: 'analysis_model',
+                    type: 'custom',
+                    component: AutoReplyAnalysisModelField,
                 },
             ],
         }],

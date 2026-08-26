@@ -72,6 +72,12 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", err, ErrNoResponse)
 	}
 
+	if setting.Mode == autoreply.ModeAmbient {
+		if classErr := c.classifyAmbientReply(ctx, bot, setting, post); classErr != nil {
+			return classErr
+		}
+	}
+
 	autoPost := post.Clone()
 	autoPost.Message = "@" + bot.GetMMBot().Username
 	if message := strings.TrimSpace(post.Message); message != "" {

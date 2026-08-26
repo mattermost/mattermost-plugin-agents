@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -276,6 +277,13 @@ type dmTestLLM struct {
 	responses []*llm.TextStreamResult
 	callIdx   int
 	requests  []llm.CompletionRequest
+
+	noStreamResponseByOp map[string]string
+	noStreamErrByOp      map[string]error
+	noStreamDelay        time.Duration
+	lastNoStreamReq      llm.CompletionRequest
+	lastNoStreamCfg      llm.LanguageModelConfig
+	classifierCalls      int
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -294,7 +302,42 @@ func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequ
 	return resp, nil
 }
 
-func (f *dmTestLLM) ChatCompletionNoStream(_ context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+func (f *dmTestLLM) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
+	if f.noStreamDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(f.noStreamDelay):
+		}
+	} else {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+	}
+
+	var cfg llm.LanguageModelConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastNoStreamReq = request
+	f.lastNoStreamCfg = cfg
+	if request.Operation == llm.OperationAmbientClassification {
+		f.classifierCalls++
+	}
+	if err, ok := f.noStreamErrByOp[request.Operation]; ok && err != nil {
+		return "", err
+	}
+	if resp, ok := f.noStreamResponseByOp[request.Operation]; ok {
+		return resp, nil
+	}
+	if request.Operation == llm.OperationAmbientClassification {
+		return "", fmt.Errorf("no classifier response configured")
+	}
 	return "Test Title", nil
 }
 

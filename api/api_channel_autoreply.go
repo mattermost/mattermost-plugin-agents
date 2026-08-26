@@ -18,27 +18,34 @@ import (
 // (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventChannelAutoReplyUpdated = "channel_autoreply_updated"
 
-// channelAutoReplyMaxRequestBodyBytes caps the PUT body; the payload is two short strings.
-const channelAutoReplyMaxRequestBodyBytes = 1 << 10 // 1 KiB
+// channelAutoReplyMaxRequestBodyBytes caps the PUT body; ambient mode may
+// include instructions up to autoreply.MaxInstructionsRunes.
+const channelAutoReplyMaxRequestBodyBytes = 64 << 10 // 64 KiB
 
 // Wire values for the auto-reply mode enum (fixed cross-phase contract).
 const (
 	channelAutoReplyModeOff       = "off"
 	channelAutoReplyModeRootPosts = "root_posts"
 	channelAutoReplyModeThreads   = "threads"
+	channelAutoReplyModeAmbient   = "ambient"
 )
 
 // ChannelAutoReply is the request and response payload for
 // GET/PUT /channel/{channelid}/autoreply.
 type ChannelAutoReply struct {
-	BotID string `json:"bot_id"`
-	Mode  string `json:"mode"`
+	BotID         string `json:"bot_id"`
+	Mode          string `json:"mode"`
+	Instructions  string `json:"instructions,omitempty"`
+	AnalysisModel string `json:"analysis_model,omitempty"`
 }
 
 // handleGetChannelAutoReply returns the channel's auto-reply setting. Readable
 // by any channel member (PermissionReadChannel is enforced by the router
 // middleware). GET is intentionally not license-gated so the webapp can always
 // render the current state; only writing and firing are licensed.
+//
+// TODO(ambient-poc): manager-only instruction reads are deferred; any channel
+// member who can GET this route currently receives saved instructions.
 func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
@@ -51,17 +58,17 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 		c.JSON(http.StatusOK, ChannelAutoReply{BotID: "", Mode: channelAutoReplyModeOff})
 		return
 	}
-	c.JSON(http.StatusOK, ChannelAutoReply{BotID: setting.BotID, Mode: string(setting.Mode)})
+	c.JSON(http.StatusOK, channelAutoReplyFromSetting(setting))
 }
 
 // handlePutChannelAutoReply updates the channel's auto-reply setting. Requires
 // the channel-management permission matching the channel type; DM/GM channels
-// are rejected. Enabling (root_posts/threads) additionally requires a license;
-// mode "off" deletes the row and is never license-gated so an existing setting
-// stays clearable after a license downgrade. The requested setting itself is
-// validated by the auto-reply service, whose ErrValidation failures become
-// 400s. On success the new state is published as a channel-scoped websocket
-// event and echoed back.
+// are rejected. Enabling (root_posts/threads/ambient) additionally requires a
+// license; mode "off" deletes the row and is never license-gated so an existing
+// setting stays clearable after a license downgrade. The requested setting
+// itself is validated by the auto-reply service, whose ErrValidation failures
+// become 400s. On success the new state is published as a channel-scoped
+// websocket event and echoed back.
 func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
@@ -97,9 +104,13 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 
 	// Body values are recorded before validation so fail records carry them
 	// too; TruncateID clamps them since they are unvalidated request input.
+	// Instructions are never audited.
 	audit.AddParam(auditRec(c), "mode", audit.TruncateID(req.Mode))
 	if req.BotID != "" {
 		audit.AddParam(auditRec(c), "bot_user_id", audit.TruncateID(req.BotID))
+	}
+	if req.AnalysisModel != "" {
+		audit.AddParam(auditRec(c), "analysis_model", audit.TruncateID(req.AnalysisModel))
 	}
 
 	var saved ChannelAutoReply
@@ -111,14 +122,14 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 			return
 		}
 		saved = ChannelAutoReply{BotID: "", Mode: channelAutoReplyModeOff}
-	case channelAutoReplyModeRootPosts, channelAutoReplyModeThreads:
+	case channelAutoReplyModeRootPosts, channelAutoReplyModeThreads, channelAutoReplyModeAmbient:
 		if !a.licenseChecker.IsBasicsLicensed() {
 			c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 			return
 		}
 		// bot_id is validated by the auto-reply service (present, known, and
 		// allowed in this channel); its ErrValidation failures map to 400.
-		if _, err := a.autoReplyStore.Set(channel.Id, req.BotID, autoreply.Mode(req.Mode), userID); err != nil {
+		if _, err := a.autoReplyStore.Set(channel.Id, req.BotID, autoreply.Mode(req.Mode), userID, req.Instructions, req.AnalysisModel); err != nil {
 			if errors.Is(err, autoreply.ErrValidation) {
 				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid auto-reply setting: %w", err))
 				return
@@ -126,7 +137,12 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save channel auto-reply setting: %w", err))
 			return
 		}
-		saved = ChannelAutoReply{BotID: req.BotID, Mode: req.Mode}
+		saved = ChannelAutoReply{
+			BotID:         req.BotID,
+			Mode:          req.Mode,
+			Instructions:  req.Instructions,
+			AnalysisModel: req.AnalysisModel,
+		}
 	default:
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid mode: %q", req.Mode))
 		return
@@ -137,9 +153,19 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	c.JSON(http.StatusOK, saved)
 }
 
+func channelAutoReplyFromSetting(setting *autoreply.Setting) ChannelAutoReply {
+	return ChannelAutoReply{
+		BotID:         setting.BotID,
+		Mode:          string(setting.Mode),
+		Instructions:  setting.Instructions,
+		AnalysisModel: setting.AnalysisModel,
+	}
+}
+
 // publishChannelAutoReplyUpdated notifies channel members that the auto-reply
 // setting changed so open channel-settings modals can re-sync. The broadcast
-// must be non-nil (the server dereferences it).
+// must be non-nil (the server dereferences it). Payload stays channel_id,
+// bot_id, and mode only.
 func (a *API) publishChannelAutoReplyUpdated(channelID string, saved ChannelAutoReply) {
 	if a.mmClient == nil {
 		return

@@ -828,11 +828,13 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     });
 }
 
-export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads';
+export type ChannelAutoReplyMode = 'off' | 'root_posts' | 'threads' | 'ambient';
 
 export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
+    instructions: string;
+    analysis_model: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {
