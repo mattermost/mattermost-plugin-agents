@@ -25,6 +25,7 @@ func TestCanonicalMCPEndpointURL(t *testing.T) {
 		{name: "drops root slash", raw: "https://mcp.example.com/", expected: "https://mcp.example.com"},
 		{name: "trims surrounding whitespace", raw: "  https://mcp.example.com/mcp  ", expected: "https://mcp.example.com/mcp"},
 		{name: "sorts query parameters", raw: "https://mcp.example.com/mcp?b=2&a=1", expected: "https://mcp.example.com/mcp?a=1&b=2"},
+		{name: "preserves malformed query", raw: "https://mcp.example.com/mcp?x=1;y=2", expected: "https://mcp.example.com/mcp?x=1;y=2"},
 		{name: "drops fragment", raw: "https://mcp.example.com/mcp#frag", expected: "https://mcp.example.com/mcp"},
 		{name: "preserves userinfo", raw: "https://user@mcp.example.com/mcp", expected: "https://user@mcp.example.com/mcp"},
 		{name: "brackets bare ipv6 host", raw: "https://[::1]/mcp", expected: "https://[::1]/mcp"},
@@ -71,6 +72,14 @@ func TestMCPConfigValidateDuplicates(t *testing.T) {
 			servers: []MCPServerConfig{
 				{Name: "Alpha", BaseURL: "https://mcp.example.com/mcp?tenant=a"},
 				{Name: "Beta", BaseURL: "https://mcp.example.com/mcp?tenant=b"},
+			},
+			expectValid: true,
+		},
+		{
+			name: "malformed query does not collide with missing query",
+			servers: []MCPServerConfig{
+				{Name: "Alpha", BaseURL: "https://mcp.example.com/mcp?x=1;y=2"},
+				{Name: "Beta", BaseURL: "https://mcp.example.com/mcp"},
 			},
 			expectValid: true,
 		},

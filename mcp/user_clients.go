@@ -22,8 +22,13 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
-// embeddedConnectTimeout bounds one in-memory embedded MCP handshake.
-const embeddedConnectTimeout = 10 * time.Second
+const (
+	// embeddedConnectTimeout bounds one in-memory embedded MCP handshake.
+	embeddedConnectTimeout = 10 * time.Second
+	// pluginConnectTimeout bounds one plugin MCP handshake and initial tools
+	// listing. PluginHTTP has no transport-level timeout of its own.
+	pluginConnectTimeout = 30 * time.Second
+)
 
 // ToolInfo represents a tool's metadata for discovery purposes
 type ToolInfo struct {
@@ -336,7 +341,17 @@ func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerCon
 		serverName: cfg.Name,
 		retryable:  true,
 		dial: func() (*Client, error) {
-			return NewPluginClient(ctx, c.userID, cfg, sourcePluginAPI, c.log)
+			deadline := newConnectDeadline(ctx, pluginConnectTimeout)
+			client, err := NewPluginClient(deadline.context(), c.userID, cfg, sourcePluginAPI, c.log)
+			if err != nil {
+				deadline.abandon()
+				return nil, err
+			}
+			if !deadline.keep() {
+				_ = client.Close()
+				return nil, fmt.Errorf("timed out connecting to plugin MCP server %s after %s", cfg.PluginID, pluginConnectTimeout)
+			}
+			return client, nil
 		},
 	}
 }

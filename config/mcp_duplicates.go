@@ -105,7 +105,15 @@ func CanonicalMCPEndpointURL(raw string) string {
 	}
 	canonical.WriteString(host)
 	canonical.WriteString(strings.TrimSuffix(parsed.EscapedPath(), "/"))
-	if query := parsed.Query().Encode(); query != "" {
+	if parsed.RawQuery != "" {
+		query := parsed.RawQuery
+		// Normalize valid query strings so parameter order does not create
+		// distinct endpoint keys. Preserve malformed queries verbatim: URL.Query
+		// silently drops invalid pairs, which could otherwise make a malformed
+		// endpoint collide with one that has no query.
+		if values, err := url.ParseQuery(parsed.RawQuery); err == nil {
+			query = values.Encode()
+		}
 		canonical.WriteByte('?')
 		canonical.WriteString(query)
 	}

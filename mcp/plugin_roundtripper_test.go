@@ -5,9 +5,11 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/stretchr/testify/assert"
@@ -143,4 +145,34 @@ func TestPluginHTTPRoundTripper_NilPluginAPI(t *testing.T) {
 
 	_, err = rt.RoundTrip(req)
 	assert.Error(t, err)
+}
+
+func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
+	release := make(chan struct{})
+	mockAPI := mocks.NewMockClient(t)
+	mockAPI.On("PluginHTTP", mock.Anything).
+		Run(func(mock.Arguments) {
+			<-release
+		}).
+		Return(&http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Header:     http.Header{},
+		}).
+		Once()
+
+	rt := NewPluginHTTPRoundTripper("com.example.slow", "/mcp", mockAPI)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://placeholder/mcp", nil)
+	require.NoError(t, err)
+
+	start := time.Now()
+	resp, err := rt.RoundTrip(req)
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(start), time.Second)
+
+	close(release)
 }

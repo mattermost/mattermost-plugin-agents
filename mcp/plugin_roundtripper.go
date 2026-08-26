@@ -43,9 +43,32 @@ func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	}
 	r.URL.Path = "/" + p.pluginID + basePath
 
-	resp := p.pluginAPI.PluginHTTP(r)
-	if resp == nil {
-		return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
+	type result struct {
+		response *http.Response
+		err      error
 	}
-	return resp, nil
+
+	resultCh := make(chan result, 1)
+	go func() {
+		resp := p.pluginAPI.PluginHTTP(r)
+		var err error
+		if resp == nil {
+			err = fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
+		}
+
+		select {
+		case resultCh <- result{response: resp, err: err}:
+		case <-r.Context().Done():
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+		}
+	}()
+
+	select {
+	case result := <-resultCh:
+		return result.response, result.err
+	case <-r.Context().Done():
+		return nil, r.Context().Err()
+	}
 }
