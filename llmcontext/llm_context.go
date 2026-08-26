@@ -166,6 +166,8 @@ func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed bo
 	}
 
 	if !botCfg.AutoEnableNewMCPTools {
+		// Deliberately non-nil even when the agent allowlists nothing: a nil
+		// allowlist would select every server instead of none.
 		selection.AllowedOrigins = make([]string, 0, len(botCfg.EnabledMCPTools))
 		for _, tool := range botCfg.EnabledMCPTools {
 			selection.AllowedOrigins = append(selection.AllowedOrigins, tool.ServerOrigin)

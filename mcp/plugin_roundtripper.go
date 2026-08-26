@@ -30,7 +30,10 @@ func NewPluginHTTPRoundTripper(pluginID, basePath string, pluginAPI mmapi.Client
 }
 
 // RoundTrip rewrites req.URL.Path to "/{pluginID}{basePath}", the path
-// PluginHTTP dispatches on.
+// PluginHTTP dispatches on, and returns as soon as the request context is done.
+// The underlying PluginHTTP call cannot be canceled, so it keeps running on its
+// own goroutine; a response that arrives after cancellation is closed rather
+// than leaked.
 func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if p == nil || p.pluginAPI == nil {
 		return nil, fmt.Errorf("plugin MCP round tripper not initialized")
@@ -43,23 +46,13 @@ func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	}
 	r.URL.Path = "/" + p.pluginID + basePath
 
-	type result struct {
-		response *http.Response
-		err      error
-	}
-
-	// An unbuffered handoff ensures a response produced after cancellation is
-	// closed instead of being left unread in the channel.
-	resultCh := make(chan result)
+	// The handoff is unbuffered so a response the caller has stopped waiting for
+	// is closed instead of being left unread in the channel.
+	responses := make(chan *http.Response)
 	go func() {
 		resp := p.pluginAPI.PluginHTTP(r)
-		var err error
-		if resp == nil {
-			err = fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
-		}
-
 		select {
-		case resultCh <- result{response: resp, err: err}:
+		case responses <- resp:
 		case <-r.Context().Done():
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
@@ -68,8 +61,11 @@ func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	}()
 
 	select {
-	case result := <-resultCh:
-		return result.response, result.err
+	case resp := <-responses:
+		if resp == nil {
+			return nil, fmt.Errorf("PluginHTTP returned nil response for plugin %s", p.pluginID)
+		}
+		return resp, nil
 	case <-r.Context().Done():
 		return nil, r.Context().Err()
 	}

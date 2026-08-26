@@ -173,7 +173,7 @@ type proxyDiscovery struct {
 // independent of which source plugin answers first: native Mattermost tools
 // always win, and among plugins the first entry in the snapshot wins.
 func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames []string) {
-	exposed := make([]mcppkg.PluginServerConfig, 0)
+	var exposed []mcppkg.PluginServerConfig
 	for _, ps := range h.registry.ListPluginServers() {
 		if ps.Enabled && ps.ExposeExternal {
 			exposed = append(exposed, ps)
@@ -202,25 +202,25 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 		}
 		proxyTools := discovered[index].Value.tools
 		proxyHandlers := discovered[index].Value.handlers
-		for i := range proxyTools {
-			if _, enabled := policyConfig.GetToolPolicy(proxyTools[i].Name); !enabled {
+		for i, proxyTool := range proxyTools {
+			if _, enabled := policyConfig.GetToolPolicy(proxyTool.Name); !enabled {
 				continue
 			}
-			if existing, ok := toolOwners[proxyTools[i].Name]; ok {
+			if existing, taken := toolOwners[proxyTool.Name]; taken {
 				if existing == nativeMattermostToolOwner {
 					h.logger.Error("proxy tool name conflicts with native Mattermost tool; skipping",
-						"tool_name", proxyTools[i].Name,
+						"tool_name", proxyTool.Name,
 						"plugin_id", ps.PluginID)
-					continue
+				} else {
+					h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
+						"tool_name", proxyTool.Name,
+						"plugin_id", ps.PluginID,
+						"existing_plugin_id", existing)
 				}
-				h.logger.Error("duplicate proxy tool name across plugin MCP servers; skipping",
-					"tool_name", proxyTools[i].Name,
-					"plugin_id", ps.PluginID,
-					"existing_plugin_id", existing)
 				continue
 			}
-			toolOwners[proxyTools[i].Name] = ps.PluginID
-			mcpServer.AddTool(proxyTools[i], proxyHandlers[i])
+			toolOwners[proxyTool.Name] = ps.PluginID
+			mcpServer.AddTool(proxyTool, proxyHandlers[i])
 		}
 	}
 }

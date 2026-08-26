@@ -12,7 +12,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
-	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -323,9 +322,9 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	})
 
 	response := MCPToolsResponse{Servers: make([]MCPServerInfo, 0, len(rows))}
-	for index := range rows {
-		info := rows[index].info
-		if rows[index].discover != nil {
+	for index, row := range rows {
+		info := row.info
+		if row.discover != nil {
 			applyMCPDiscoveryResult(&info, discovered[index].Value, discovered[index].Err)
 		}
 		response.Servers = append(response.Servers, info)
@@ -361,13 +360,12 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDis
 	// Conflicting entries are excluded from the runtime because they share a
 	// client-map key or tools-cache entry; report the conflict here so an admin
 	// can see why the server is not working.
-	conflicts := make(map[int]config.MCPServerConflict)
+	conflictMessages := make(map[int]string)
 	for _, conflict := range mcpConfig.ServerConflicts() {
-		conflicts[conflict.Index] = conflict
+		conflictMessages[conflict.Index] = conflict.Error()
 	}
 
-	for i := range mcpConfig.Servers {
-		serverConfig := mcpConfig.Servers[i]
+	for i, serverConfig := range mcpConfig.Servers {
 		if !serverConfig.Enabled {
 			continue
 		}
@@ -381,8 +379,8 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDis
 				Enabled:    serverConfig.Enabled,
 			},
 		}
-		if conflict, conflicting := conflicts[i]; conflicting {
-			row.info.Error = utils.Ptr(conflict.Error())
+		if message, conflicting := conflictMessages[i]; conflicting {
+			row.info.Error = utils.Ptr(message)
 		} else {
 			row.discover = func() ([]MCPToolInfo, error) {
 				return a.discoverRemoteServerTools(ctx, userID, serverConfig)

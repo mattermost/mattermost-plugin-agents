@@ -306,15 +306,12 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		toolsCache:   toolsCache,
 	}
 
-	deadline := newConnectDeadline(ctx, RemoteConnectTimeout)
-	session, err := c.connectAndDiscover(deadline.ctx, serverConfig, forceRefresh)
+	session, err := connectWithDeadline(ctx, RemoteConnectTimeout, "MCP server "+serverConfig.Name,
+		func(connectCtx context.Context) (*mcp.ClientSession, error) {
+			return c.connectAndDiscover(connectCtx, serverConfig, forceRefresh)
+		})
 	if err != nil {
-		deadline.abandon()
 		return nil, err
-	}
-	if !deadline.keep() {
-		session.Close()
-		return nil, fmt.Errorf("timed out connecting to MCP server %s after %s", serverConfig.Name, RemoteConnectTimeout)
 	}
 
 	c.session = session

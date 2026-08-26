@@ -4,7 +4,6 @@
 package utils
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -44,19 +43,22 @@ func TestRunParallelReturnsResultsInInputOrder(t *testing.T) {
 	}
 }
 
+// A failing task must neither cancel its siblings nor let RunParallel return
+// before they finish.
 func TestRunParallelRunsEveryTaskDespiteFailures(t *testing.T) {
-	const count = 50
-	var executed atomic.Int64
+	const count = ParallelLimit*2 + 3
+	var finished atomic.Int64
 
 	results := RunParallel(count, func(index int) (string, error) {
-		executed.Add(1)
+		defer finished.Add(1)
 		if index%2 == 0 {
 			return "", fmt.Errorf("task %d failed", index)
 		}
 		return fmt.Sprintf("ok-%d", index), nil
 	})
 
-	require.Equal(t, int64(count), executed.Load())
+	require.Equal(t, int64(count), finished.Load(),
+		"RunParallel must not return before every task completes")
 	require.Len(t, results, count)
 	for index, result := range results {
 		if index%2 == 0 {
@@ -133,22 +135,4 @@ func TestRunParallelReportsPanicAsTaskError(t *testing.T) {
 	require.Contains(t, results[1].Err.Error(), "boom")
 	require.NoError(t, results[2].Err)
 	require.Equal(t, 2, results[2].Value)
-}
-
-func TestRunParallelWaitsForEveryTask(t *testing.T) {
-	const count = ParallelLimit * 2
-	var finished atomic.Int64
-
-	results := RunParallel(count, func(index int) (int, error) {
-		time.Sleep(time.Millisecond)
-		finished.Add(1)
-		if index == 0 {
-			return 0, errors.New("first task failed")
-		}
-		return index, nil
-	})
-
-	require.Len(t, results, count)
-	require.Equal(t, int64(count), finished.Load(),
-		"RunParallel must not return before every task completes")
 }

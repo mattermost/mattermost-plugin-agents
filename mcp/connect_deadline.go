@@ -5,73 +5,41 @@ package mcp
 
 import (
 	"context"
-	"sync"
+	"fmt"
+	"io"
 	"time"
 )
 
-// connectDeadline bounds one MCP connection sequence without shortening the
-// session it produces.
+// connectWithDeadline runs one MCP connection sequence under a context that is
+// canceled unless the sequence finishes within budget, and hands that same
+// context to the session the sequence produced. target names the server in the
+// timeout error, for example "MCP server Jira".
 //
 // A plain context.WithTimeout does not work here: the legacy HTTP+SSE transport
-// keeps its persistent GET stream on the context handed to Connect, so
+// keeps its persistent GET stream on the context passed to Connect, so
 // canceling that context after a successful handshake tears the session down.
-// A connectDeadline instead cancels only while the sequence is still in
-// progress, and is disarmed once the session is established.
-type connectDeadline struct {
-	ctx   context.Context
-	timer *time.Timer
+// Stopping the timer lifts the bound instead, but only once there is a session
+// to protect. A session that loses the race against the timer is closed and
+// reported as a timeout, because its transport may already be gone.
+func connectWithDeadline[T io.Closer](parent context.Context, budget time.Duration, target string, connect func(context.Context) (T, error)) (T, error) {
+	var zero T
 
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	expired bool
-}
-
-// newConnectDeadline arms a deadline that cancels its context unless keep is
-// called within budget.
-func newConnectDeadline(parent context.Context, budget time.Duration) *connectDeadline {
 	ctx, cancel := context.WithCancel(parent)
-	deadline := &connectDeadline{ctx: ctx, cancel: cancel}
-	deadline.timer = time.AfterFunc(budget, deadline.expire)
-	return deadline
-}
+	timer := time.AfterFunc(budget, cancel)
 
-func (d *connectDeadline) expire() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	if d.cancel == nil {
-		return
+	session, err := connect(ctx)
+	if err != nil {
+		timer.Stop()
+		cancel()
+		return zero, err
 	}
-	d.cancel()
-	d.cancel = nil
-	d.expired = true
-}
 
-// keep disarms the deadline and hands its context to the established session.
-// It reports false when the deadline already fired, in which case the caller
-// must discard the session and fail: the transport may already be torn down.
-func (d *connectDeadline) keep() bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.timer.Stop()
-	if d.expired {
-		return false
+	// Stop reports false once the timer has fired, in which case ctx is already
+	// being canceled.
+	if !timer.Stop() {
+		_ = session.Close()
+		return zero, fmt.Errorf("timed out connecting to %s after %s", target, budget)
 	}
-	d.cancel = nil
-	return true
-}
 
-// abandon cancels the sequence, releasing any in-flight network work. It is a
-// no-op once keep has succeeded.
-func (d *connectDeadline) abandon() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-
-	d.timer.Stop()
-	if d.cancel == nil {
-		return
-	}
-	d.cancel()
-	d.cancel = nil
+	return session, nil
 }

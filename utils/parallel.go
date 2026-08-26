@@ -53,11 +53,11 @@ func RunParallel[T any](count int, run func(index int) (T, error)) []ParallelRes
 	return results
 }
 
+// runGuarded turns a panicking task into a failed one. The named results are
+// still zero when a panic unwinds, so only err needs to be set.
 func runGuarded[T any](index int, run func(index int) (T, error)) (value T, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			var zero T
-			value = zero
 			err = fmt.Errorf("panic in parallel task %d: %v", index, r)
 		}
 	}()

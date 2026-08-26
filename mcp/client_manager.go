@@ -199,7 +199,6 @@ type eligibleServers struct {
 }
 
 func (m *ClientManager) resolveEligibleServers(selection ToolSelection) eligibleServers {
-	filter := selection.compile()
 	resolved := eligibleServers{origins: make(map[string]bool)}
 
 	// A duplicated name or endpoint makes every member of the group ambiguous:
@@ -211,8 +210,7 @@ func (m *ClientManager) resolveEligibleServers(selection ToolSelection) eligible
 		conflicting[conflict.Index] = true
 	}
 
-	for i := range m.config.Servers {
-		server := m.config.Servers[i]
+	for i, server := range m.config.Servers {
 		switch {
 		case !server.Enabled || server.BaseURL == "":
 			continue
@@ -220,21 +218,21 @@ func (m *ClientManager) resolveEligibleServers(selection ToolSelection) eligible
 			m.log.Warn("Skipping MCP server with a duplicate name or URL; fix the MCP configuration to enable it",
 				"serverID", server.Name, "serverOrigin", server.BaseURL)
 			continue
-		case !filter.allows(server.BaseURL):
+		case !selection.Allows(server.BaseURL):
 			continue
 		}
 		resolved.remote = append(resolved.remote, server)
 		resolved.origins[llm.NormalizeMCPServerOrigin(server.BaseURL)] = true
 	}
 
-	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled && filter.allows(EmbeddedClientKey) {
+	if m.embeddedClient != nil && m.config.EmbeddedServer.Enabled && selection.Allows(EmbeddedClientKey) {
 		resolved.embedded = true
 		resolved.origins[EmbeddedClientKey] = true
 	}
 
 	for _, cfg := range m.snapshotEnabledPluginServers() {
 		origin := pluginServerOriginKey(cfg.PluginID)
-		if !filter.allows(origin) {
+		if !selection.Allows(origin) {
 			continue
 		}
 		resolved.plugins = append(resolved.plugins, cfg)
@@ -277,17 +275,14 @@ func (m *ClientManager) buildConnectTasks(ctx context.Context, userID string, us
 	return tasks
 }
 
-// GetToolsForUser returns the MCP tools a user may use for this operation.
-// selection carries the operation's intent: runtime tool construction narrows
-// it to the servers the agent, the user, and the license allow, while
-// management and catalog surfaces pass the zero value to reach every
-// admin-enabled server.
+// GetToolsForUser returns the MCP tools a user may use for this operation, as
+// narrowed by selection (see ToolSelection).
 //
-// Eligible servers that have not been connected for this user yet are dialed
-// now, concurrently, so a cold request costs roughly the slowest server rather
+// Eligible servers this user has not connected yet are dialed now, in one
+// concurrent batch, so a cold request costs roughly the slowest server rather
 // than the sum of all of them. Servers outside the selection are never
-// contacted and never contribute tools, even if a previous request cached a
-// session for them.
+// contacted and never contribute tools, even if an earlier request cached a
+// session for one.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors) {
 	return m.getToolsForUser(ctx, userID, selection, false)
 }

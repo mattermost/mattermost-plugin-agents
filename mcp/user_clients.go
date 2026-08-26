@@ -79,6 +79,12 @@ func (a *originAttempt) finished() bool {
 // whose request is canceled while waiting gets the cancellation error instead;
 // the attempt itself keeps running because its result warms a shared cache.
 func (a *originAttempt) wait(ctx context.Context) error {
+	// An already-finished attempt reports its own outcome even to a canceled
+	// caller, so a remembered failure is reported the same way every time.
+	if a.finished() {
+		return a.err
+	}
+
 	select {
 	case <-a.done:
 		return a.err
@@ -148,29 +154,25 @@ func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask
 
 	plans := c.planConnections(tasks)
 
-	dialing := make([]int, 0, len(plans))
+	dialers := make([]*connectPlan, 0, len(plans))
 	for i := range plans {
 		if plans[i].dialing {
-			dialing = append(dialing, i)
+			dialers = append(dialers, &plans[i])
 		}
 	}
 
-	dialed := utils.RunParallel(len(dialing), func(i int) (*Client, error) {
-		return plans[dialing[i]].task.dial()
+	dialed := utils.RunParallel(len(dialers), func(i int) (*Client, error) {
+		return dialers[i].task.dial()
 	})
-	c.commitDials(plans, dialing, dialed)
-
-	// Origins another caller is already dialing resolve to that caller's
-	// result, so a user ends up with exactly one session per server.
-	for i := range plans {
-		if plans[i].dialing {
-			continue
-		}
-		plans[i].err = plans[i].attempt.wait(ctx)
-	}
+	c.commitDials(dialers, dialed)
 
 	var mcpErrors *Errors
 	for i := range plans {
+		if !plans[i].dialing {
+			// An origin another caller is already dialing resolves to that
+			// caller's result, so a user ends up with one session per server.
+			plans[i].err = plans[i].attempt.wait(ctx)
+		}
 		mcpErrors = c.recordConnectFailure(mcpErrors, plans[i])
 	}
 	return mcpErrors
@@ -211,16 +213,15 @@ func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
 
 // commitDials publishes every dial outcome under one lock so a waiter cannot
 // observe a finished attempt before its session is reachable.
-func (c *UserClients) commitDials(plans []connectPlan, dialing []int, dialed []utils.ParallelResult[*Client]) {
-	if len(dialing) == 0 {
+func (c *UserClients) commitDials(dialers []*connectPlan, dialed []utils.ParallelResult[*Client]) {
+	if len(dialers) == 0 {
 		return
 	}
 
 	var discarded []*Client
 
 	c.clientsMu.Lock()
-	for i, index := range dialing {
-		plan := &plans[index]
+	for i, plan := range dialers {
 		client, err := dialed[i].Value, dialed[i].Err
 
 		plan.err = err
@@ -228,6 +229,7 @@ func (c *UserClients) commitDials(plans []connectPlan, dialing []int, dialed []u
 
 		switch {
 		case err != nil || client == nil:
+			// Nothing to commit; the recorded error is the whole outcome.
 		case c.closed:
 			discarded = append(discarded, client)
 		default:
@@ -334,17 +336,10 @@ func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerCon
 		serverName: cfg.Name,
 		retryable:  true,
 		dial: func() (*Client, error) {
-			deadline := newConnectDeadline(ctx, pluginConnectTimeout)
-			client, err := NewPluginClient(deadline.ctx, c.userID, cfg, sourcePluginAPI, c.log)
-			if err != nil {
-				deadline.abandon()
-				return nil, err
-			}
-			if !deadline.keep() {
-				_ = client.Close()
-				return nil, fmt.Errorf("timed out connecting to plugin MCP server %s after %s", cfg.PluginID, pluginConnectTimeout)
-			}
-			return client, nil
+			return connectWithDeadline(ctx, pluginConnectTimeout, "plugin MCP server "+cfg.PluginID,
+				func(connectCtx context.Context) (*Client, error) {
+					return NewPluginClient(connectCtx, c.userID, cfg, sourcePluginAPI, c.log)
+				})
 		},
 	}
 }

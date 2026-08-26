@@ -75,6 +75,20 @@ func TestBuilderPassesServerEligibilityToMCPProvider(t *testing.T) {
 			wantToolNames: []string{"builtin", "mattermost__read_channel", "jira__get_issue"},
 		},
 		{
+			// A wildcard entry names no individual tool but still names its
+			// server, so the server stays eligible.
+			name:     "a wildcard allowlist entry selects its server",
+			licensed: true,
+			botConfig: llm.BotConfig{
+				ID: "bot-id", Name: "matty",
+				EnabledMCPTools: []llm.EnabledMCPTool{
+					{ServerOrigin: jiraOrigin, ToolName: llm.MCPServerToolWildcard},
+				},
+			},
+			wantAllowed:   []string{jiraOrigin},
+			wantToolNames: []string{"builtin", "jira__get_issue"},
+		},
+		{
 			name:     "an agent that allowlists nothing selects no servers",
 			licensed: true,
 			botConfig: llm.BotConfig{
@@ -126,28 +140,4 @@ func TestBuilderPassesServerEligibilityToMCPProvider(t *testing.T) {
 			require.ElementsMatch(t, tc.wantToolNames, toolNames(context.Tools))
 		})
 	}
-}
-
-// A wildcard allowlist entry still names the server it applies to, so the
-// server is eligible even though no individual tool is listed.
-func TestBuilderSelectionIncludesWildcardAllowlistOrigins(t *testing.T) {
-	mcpProvider := &recordingMCPToolProvider{tools: []llm.Tool{
-		testMCPTool("jira__get_issue", jiraOrigin, "fetch Jira issue details"),
-		testMCPTool("github__search", githubOrigin, "search GitHub"),
-	}}
-	builder := newLicenseTestBuilder(t, true,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		mcpProvider,
-	)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID: "bot-id", Name: "matty",
-		EnabledMCPTools: []llm.EnabledMCPTool{
-			{ServerOrigin: jiraOrigin, ToolName: llm.MCPServerToolWildcard},
-		},
-	})
-
-	context := buildToolsContext(builder, bot)
-
-	require.Equal(t, []string{jiraOrigin}, mcpProvider.selection.AllowedOrigins)
-	require.ElementsMatch(t, []string{"builtin", "jira__get_issue"}, toolNames(context.Tools))
 }
