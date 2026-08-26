@@ -1966,7 +1966,7 @@ func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -2001,7 +2001,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
 	}
 	e.setupTestBot(botConfig)
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -2061,7 +2061,7 @@ func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.
 		}),
 	).Return(true, (*model.AppError)(nil)).Once()
 
-	_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	plan, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -2080,11 +2080,11 @@ func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.
 	)
 	require.NoError(t, err)
 	require.Equal(t, 0, statusCode)
-	require.NotNil(t, llmRequest.Context)
-	require.Equal(t, []string{storedKey}, beforeHookKeys)
+	require.NotNil(t, plan.request.Context)
+	require.Equal(t, []string{storedKey}, plan.beforeHookKeys)
 
-	require.NotNil(t, llmRequest.Context.Tools)
-	scopedTool := llmRequest.Context.Tools.GetTool("eligible_tool")
+	require.NotNil(t, plan.request.Context.Tools)
+	scopedTool := plan.request.Context.Tools.GetTool("eligible_tool")
 	require.NotNil(t, scopedTool)
 	require.NotNil(t, scopedTool.CallMetadata)
 	require.NotContains(t, scopedTool.CallMetadata, "hook_plugin_id")
@@ -2159,7 +2159,7 @@ func TestPrepareAgentBridgeCompletionToolHooksNormalizeToBare(t *testing.T) {
 				}),
 			).Return(true, (*model.AppError)(nil)).Once()
 
-			_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
+			plan, statusCode, err := e.api.prepareAgentBridgeCompletion(
 				context.Background(),
 				testBotUserID,
 				bridgeclient.CompletionRequest{
@@ -2176,11 +2176,11 @@ func TestPrepareAgentBridgeCompletionToolHooksNormalizeToBare(t *testing.T) {
 			)
 			require.NoError(t, err)
 			require.Equal(t, 0, statusCode)
-			require.Equal(t, []string{storedKey}, beforeHookKeys)
+			require.Equal(t, []string{storedKey}, plan.beforeHookKeys)
 			require.Equal(t, bare, storedEntry.ToolName)
 
-			require.NotNil(t, llmRequest.Context.Tools)
-			scopedTool := llmRequest.Context.Tools.GetTool(namespaced)
+			require.NotNil(t, plan.request.Context.Tools)
+			scopedTool := plan.request.Context.Tools.GetTool(namespaced)
 			require.NotNil(t, scopedTool)
 			hooks, ok := scopedTool.CallMetadata["tool_hooks"].(map[string]any)
 			require.True(t, ok)
@@ -2215,7 +2215,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRejectsConflictingKeys(t *testing.
 		},
 	})
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -2266,7 +2266,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresUserID(t *testing.T) {
 	}
 	e.setupTestBot(botConfig)
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -2304,7 +2304,7 @@ func TestPrepareAgentBridgeCompletionToolHooksRequiresAllowedTools(t *testing.T)
 	}
 	e.setupTestBot(botConfig)
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
