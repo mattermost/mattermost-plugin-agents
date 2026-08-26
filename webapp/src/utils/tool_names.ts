@@ -52,3 +52,12 @@ export function stripWirePrefix(toolName: string): string {
     }
     return toolName.slice(idx + 2);
 }
+
+// Human-readable label for a wire tool name, e.g. "search_tools" -> "Search Tools".
+export function toolDisplayName(toolName: string): string {
+    return stripWirePrefix(toolName).
+        replace(/_/g, ' ').
+        split(' ').
+        map((word) => word.charAt(0).toUpperCase() + word.slice(1)).
+        join(' ');
+}

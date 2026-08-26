@@ -22,6 +22,41 @@ const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edit
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
 
+export type TownSquareChannel = {
+    id: string;
+    displayName: string;
+    teamDisplayName: string;
+};
+
+/**
+ * Looks up the default channel of `username`'s first team. Specs need its real
+ * ID to build tool-call arguments that the server will accept.
+ */
+export async function getTownSquareChannel(
+    mattermost: MattermostContainer,
+    username: string,
+    password: string,
+): Promise<TownSquareChannel> {
+    const client = await mattermost.getClient(username, password);
+    const teams = await client.getMyTeams();
+    const team = teams[0];
+    if (!team) {
+        throw new Error(`User ${username} is not a member of any team`);
+    }
+    const channels = await client.getMyChannels(team.id);
+    const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
+
+    if (!townSquare) {
+        throw new Error('Could not find town-square channel');
+    }
+
+    return {
+        id: townSquare.id,
+        displayName: townSquare.display_name || 'Town Square',
+        teamDisplayName: team.display_name || 'Test',
+    };
+}
+
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
     container: StartedTestContainer;

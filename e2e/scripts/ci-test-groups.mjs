@@ -26,6 +26,7 @@ const groups = {
         'tests/channel-analysis/backend-verification/real-api.spec.ts',
         'tests/system-console/live-service-full-flow.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
+        'tests/tool-activity/activity-approval.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -45,6 +46,7 @@ const groups = {
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
+        'tests/tool-activity/collapsed-activity.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',

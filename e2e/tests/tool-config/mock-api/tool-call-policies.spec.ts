@@ -14,6 +14,7 @@ import {
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 import { createBotConfigHelper } from 'helpers/bot-config';
+import { expandToolActivity } from 'helpers/llmbot-post';
 
 /**
  * Test Suite: Tool Call Policies with Mocked LLM (4.13)
@@ -396,10 +397,12 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
             const rhs = page.locator('#rhsContainer');
             const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(latestBotPost.getByText(embeddedReadPostLabel, {exact: true})).toBeVisible({timeout: 30000});
             await expect(rhs.getByText('Finished reading the unsafe post.')).toBeVisible({timeout: 45000});
 
-            await latestBotPost.getByText(embeddedReadPostLabel, {exact: true}).click();
+            const activityRounds = await expandToolActivity(latestBotPost);
+            await expect(activityRounds.getByText(embeddedReadPostLabel, {exact: true})).toBeVisible({timeout: 30000});
+
+            await activityRounds.getByText(embeddedReadPostLabel, {exact: true}).click();
             await expect(latestBotPost.getByText(seedMessage, {exact: false})).toBeVisible({timeout: 30000});
             await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
@@ -546,14 +549,18 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await acceptButton.click();
 
         const latestBotPost = botPosts.last();
-        await expect(latestBotPost.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
 
         // Completion text proves the final mock ran; wait for it before badge (post props may update after stream).
         await expect(rhs.getByText('The follow-up read_channel tool completed successfully.')).toBeVisible({timeout: 45000});
+
+        // Tool cards and the auto-approved badge only exist once the
+        // collapsed activity area is expanded.
+        const activityRounds = await expandToolActivity(latestBotPost);
+        await expect(activityRounds.getByText(embeddedReadChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
         await expect(rhs.getByText('Auto-approved')).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        await latestBotPost.getByText(embeddedReadChannelLabel, {exact: true}).click();
+        await activityRounds.getByText(embeddedReadChannelLabel, {exact: true}).click();
         // read_channel result is rendered as markdown; the seed string is not a single text node (bold, etc.).
         await expect(latestBotPost.getByText(seededMessage, {exact: false})).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
@@ -645,7 +652,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Both the original tool card and the follow-up text are visible in
         // postA; no second bot post is created.
         await expect(postA.getByText(continuationMarker)).toBeVisible({timeout: 30000});
-        await expect(postA.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        await expect((await expandToolActivity(postA)).getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
         await expect(botPosts).toHaveCount(1);
     });
 
@@ -804,6 +811,8 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /^share$/i})).not.toBeVisible();
         await expect(rhs.getByRole('button', {name: /keep private/i})).not.toBeVisible();
+
+        await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
         await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
 

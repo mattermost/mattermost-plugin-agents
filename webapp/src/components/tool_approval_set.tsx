@@ -57,6 +57,76 @@ const BatchButton = styled.button`
     }
 `;
 
+/**
+ * The tool calls in a round that still need a decision from this viewer.
+ * Returns an empty list when the viewer is not the requester, or when the
+ * server-computed stage says no decision remains.
+ */
+function selectDecisionToolCalls(
+    toolCalls: ToolCall[],
+    approvalStage: ToolApprovalStage,
+    canApprove: boolean,
+): ToolCall[] {
+    if (!canApprove) {
+        return [];
+    }
+
+    if (approvalStage === 'call') {
+        // Calls that passed the auto-execution policy run server-side once
+        // the rest of the batch is resolved — no decision needed.
+        return toolCalls.filter((call) =>
+            call.status === ToolCallStatus.Pending && !call.would_auto_execute,
+        );
+    }
+
+    if (approvalStage !== 'result') {
+        // 'done' stage — server says no decision remains, render no buttons.
+        return [];
+    }
+
+    // User-interaction results are decided at answer time (the user authored
+    // them) and auto-executed results are decided at write time, so neither
+    // needs a share/keep-private decision.
+    return toolCalls.filter((call) =>
+        !call.user_interaction &&
+        !call.decided &&
+        (call.status === ToolCallStatus.Success ||
+        call.status === ToolCallStatus.Error ||
+        call.status === ToolCallStatus.AutoApproved),
+    );
+}
+
+/**
+ * A call-stage round whose pending calls would all auto-execute but which was
+ * interrupted (e.g. a manual call elsewhere in the response). It needs a
+ * single "Run tools" confirmation rather than per-tool decisions.
+ */
+function isInterruptedAutoApprovalRound(
+    toolCalls: ToolCall[],
+    approvalStage: ToolApprovalStage,
+): boolean {
+    if (approvalStage !== 'call') {
+        return false;
+    }
+    const pending = toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
+    return pending.length > 0 && pending.every((call) => call.would_auto_execute);
+}
+
+/** True when this viewer owes the round any kind of decision. */
+export function needsViewerDecision(
+    toolCalls: ToolCall[],
+    approvalStage: ToolApprovalStage,
+    canApprove: boolean,
+): boolean {
+    // The guard covers both halves: isInterruptedAutoApprovalRound describes
+    // the round alone and has no notion of who is looking at it.
+    if (!canApprove) {
+        return false;
+    }
+    return selectDecisionToolCalls(toolCalls, approvalStage, canApprove).length > 0 ||
+        isInterruptedAutoApprovalRound(toolCalls, approvalStage);
+}
+
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
@@ -65,8 +135,6 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
-    showArguments: boolean;
-    showResults: boolean;
 }
 
 // Define a type for tool decisions
@@ -93,46 +161,21 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
-    const pendingToolCalls = useMemo(() => {
-        return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
-    }, [props.toolCalls]);
-    const isInterruptedAutoRound = isCallStage &&
-        pendingToolCalls.length > 0 &&
-        pendingToolCalls.every((call) => call.would_auto_execute);
+    const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
+
+    // Onlookers get redacted calls with neither arguments nor results, so the
+    // sections are offered only when the round actually carries them.
+    const showArguments = props.toolCalls.some((call) => call.arguments != null);
+    const showResults = props.toolCalls.some((call) => call.result != null);
 
     // Approval is per pending tool. Earlier auto-approved tools in the same
     // response should not suppress controls for later manual ones.
     const effectiveCanApprove = props.canApprove;
 
-    const decisionToolCalls = useMemo(() => {
-        if (!effectiveCanApprove) {
-            return [];
-        }
-
-        if (isCallStage) {
-            // Calls that passed the auto-execution policy run server-side
-            // once the rest of the batch is resolved — no decision needed.
-            return props.toolCalls.filter((call) =>
-                call.status === ToolCallStatus.Pending && !call.would_auto_execute,
-            );
-        }
-
-        if (!isResultStage) {
-            // 'done' stage — server says no decision remains, render no buttons.
-            return [];
-        }
-
-        // User-interaction results are decided at answer time (the user
-        // authored them) and auto-executed results are decided at write time,
-        // so neither needs a share/keep-private decision.
-        return props.toolCalls.filter((call) =>
-            !call.user_interaction &&
-            !call.decided &&
-            (call.status === ToolCallStatus.Success ||
-            call.status === ToolCallStatus.Error ||
-            call.status === ToolCallStatus.AutoApproved),
-        );
-    }, [props.toolCalls, effectiveCanApprove, isCallStage, isResultStage]);
+    const decisionToolCalls = useMemo(
+        () => selectDecisionToolCalls(props.toolCalls, props.approvalStage, effectiveCanApprove),
+        [props.toolCalls, props.approvalStage, effectiveCanApprove],
+    );
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -351,8 +394,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
                         onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
                         canExpand={props.canExpand}
-                        showArguments={props.showArguments}
-                        showResults={props.showResults}
+                        showArguments={showArguments}
+                        showResults={showResults}
                         approvalStage={props.approvalStage}
                         isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
                     />

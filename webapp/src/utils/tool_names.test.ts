@@ -6,6 +6,7 @@ import {
     sanitizeForToolName,
     stripPluginPrefix,
     stripWirePrefix,
+    toolDisplayName,
 } from './tool_names';
 
 // Mirrors external/pluginmcp/pluginmcp_test.go's TestSanitizeForToolName; keep TS and Go cases in sync.
@@ -93,5 +94,18 @@ describe('stripWirePrefix', () => {
     test('leaves names whose prefix token has invalid characters unchanged', () => {
         // "with space" doesn't match [a-zA-Z0-9_-]+, so no strip.
         expect(stripWirePrefix('with space__tool')).toBe('with space__tool');
+    });
+});
+
+describe('toolDisplayName', () => {
+    test.each([
+        ['search_tools', 'Search Tools'],
+        ['load_tool', 'Load Tool'],
+        ['create_post', 'Create Post'],
+        ['CreateJiraIssue', 'CreateJiraIssue'],
+        ['com_mattermost_plugin-mcp-demo__echo', 'Echo'],
+        ['', ''],
+    ])('%j -> %j', (input, expected) => {
+        expect(toolDisplayName(input)).toBe(expected);
     });
 });

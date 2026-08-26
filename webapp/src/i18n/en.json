@@ -329,6 +329,7 @@
   "agents.agent_mention_reminder_done": "Looped in @{botDisplayName}.",
   "agents.agent_mention_reminder_error": "Failed to loop in @{botDisplayName}. Please try again.",
   "ah95aAGi": "Action Title",
+  "ai.activity.tools_used": "Used {count, plural, one {# tool} other {# tools}}",
   "ai.question.accept": "Accept",
   "ai.question.answered": "Answered",
   "ai.question.selected_count": "{count, plural, =0 {None selected} one {# selected} other {# selected}}",

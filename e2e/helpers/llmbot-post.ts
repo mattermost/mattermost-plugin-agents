@@ -1,5 +1,126 @@
 import { Page, Locator, expect } from '@playwright/test';
 
+const TOOL_ACTIVITY_SELECTOR = '[data-testid="llm-bot-tool-activity"]';
+const TOOL_ACTIVITY_HEADER_SELECTOR = '[data-testid="llm-bot-tool-activity-header"]';
+const TOOL_ACTIVITY_CURRENT_SELECTOR = '[data-testid="llm-bot-tool-activity-current"]';
+const TOOL_ACTIVITY_ROUNDS_SELECTOR = '[data-testid="llm-bot-tool-activity-rounds"]';
+
+/** The status glyph next to a tool name, both on cards and on the collapsed row. */
+export const TOOL_STATUS_SELECTOR = '[data-testid="llm-bot-tool-status"]';
+
+/** One tool call's card: its name, status, and — when expanded — its arguments and result. */
+export const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
+
+/** The glyph ToolStatusIcon renders, exposed as its data-status attribute. */
+export type ToolStatusGlyph = 'running' | 'success' | 'error' | 'rejected';
+
+/**
+ * Bot posts collapse their tool calls into a single activity row by default;
+ * tool cards, arguments, results and the "Auto-approved" badge only exist in
+ * the DOM once the row is expanded. Expands every collapsed activity area
+ * inside `scope` (already-expanded ones are left alone) and returns the
+ * revealed rounds.
+ *
+ * Assert tool labels against the returned locator rather than the whole post:
+ * the collapsed row animates towards the newest item, so for a few hundred
+ * milliseconds after expanding it can still name a tool that the stack also
+ * shows, which would make a post-wide locator ambiguous.
+ *
+ * A round awaiting the viewer's decision renders below the activity area
+ * instead of inside it, so specs that only click Accept/Reject/Share do not
+ * need this.
+ */
+export async function expandToolActivity(scope: Locator): Promise<Locator> {
+    const areas = scope.locator(TOOL_ACTIVITY_SELECTOR);
+    await expect(areas.first()).toBeVisible({ timeout: 30000 });
+
+    const count = await areas.count();
+    for (let i = 0; i < count; i++) {
+        const area = areas.nth(i);
+        const rounds = area.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
+        if ((await rounds.count()) > 0) {
+            continue;
+        }
+
+        await area.locator(TOOL_ACTIVITY_HEADER_SELECTOR).click();
+        await expect(rounds).toHaveCount(1, { timeout: 10000 });
+    }
+
+    return scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
+}
+
+/**
+ * Re-collapses an expanded activity area, hiding the round stack again. Unlike
+ * `expandToolActivity`, this acts on the first activity area in `scope` only.
+ */
+export async function collapseToolActivity(scope: Locator): Promise<void> {
+    const area = scope.locator(TOOL_ACTIVITY_SELECTOR).first();
+    await area.locator(TOOL_ACTIVITY_HEADER_SELECTOR).click();
+    await expect(area.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0, { timeout: 10000 });
+}
+
+/**
+ * Asserts an activity area exists and is showing only its one-line header. The
+ * header check reads the first area in `scope`; the round check covers all of
+ * them, since a collapsed post has no round stack anywhere.
+ */
+export async function expectToolActivityCollapsed(scope: Locator): Promise<void> {
+    await expect(scope.locator(TOOL_ACTIVITY_HEADER_SELECTOR).first()).toBeVisible({ timeout: 30000 });
+    await expect(scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0);
+}
+
+/**
+ * Asserts the collapsed row has settled on an item naming `text`. The row
+ * steps through items as they arrive, so this retries until it catches up.
+ */
+export async function expectToolActivityCurrent(scope: Locator, text: string): Promise<void> {
+    await expect(scope.locator(TOOL_ACTIVITY_CURRENT_SELECTOR).last()).toContainText(text, { timeout: 30000 });
+}
+
+/**
+ * Asserts the finished-response summary, e.g. "Used 1 tool" / "Used 3 tools".
+ * Pass `status` to also check the glyph the summary carries, which reports the
+ * worst outcome among the tools it counts.
+ */
+export async function expectToolActivitySummary(
+    scope: Locator,
+    toolCount: number,
+    status?: ToolStatusGlyph,
+): Promise<void> {
+    const summary = toolCount === 1 ? 'Used 1 tool' : `Used ${toolCount} tools`;
+    const current = scope.locator(TOOL_ACTIVITY_CURRENT_SELECTOR).last();
+    await expect(current).toHaveText(summary, { timeout: 30000 });
+
+    if (status !== undefined) {
+        await expect(current.locator(TOOL_STATUS_SELECTOR)).toHaveAttribute('data-status', status);
+    }
+}
+
+/**
+ * Asserts no activity area at all — either nothing ran, or the only round is
+ * one the viewer owes a decision on, which renders below the activity area.
+ *
+ * `toHaveCount(0)` succeeds on the first poll if the area has not rendered
+ * yet, so callers must wait for a stable post state first (for example a
+ * visible approval button or a visible final answer).
+ */
+export async function expectNoToolActivity(scope: Locator): Promise<void> {
+    await expect(scope.locator(TOOL_ACTIVITY_SELECTOR)).toHaveCount(0);
+}
+
+/**
+ * Everything `post` shows outside its activity area. While a tool-using
+ * response streams, its text lives in the collapsed row and not here, so this
+ * is what distinguishes the two rather than a post-wide text match.
+ */
+export async function mainAreaText(post: Locator): Promise<string> {
+    return post.evaluate((el, selector) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll(selector).forEach((node) => node.remove());
+        return clone.textContent ?? '';
+    }, TOOL_ACTIVITY_SELECTOR);
+}
+
 /**
  * LLMBotPostHelper - Page object for LLMBot post component interactions
  *
@@ -91,9 +212,9 @@ export class LLMBotPostHelper {
      * @param postId - Optional post ID to scope the search
      */
     getReasoningChevron(postId?: string): Locator {
-        const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
-        // ChevronRight is inside MinimalExpandIcon or ExpandedChevron containers
-        return baseLocator.locator('[class*="MinimalExpandIcon"] svg, [class*="ExpandedChevron"] svg').first();
+        // ChevronRight sits in the shared CollapseChevron container, which the
+        // tool activity row also uses — scope to the reasoning row itself.
+        return this.getReasoningDisplay(postId).locator('[class*="CollapseChevron"] svg').first();
     }
 
     /**

@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
+import { expandToolActivity, expectNoToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -220,11 +221,18 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const firstBotPost = botPosts.last();
 
-        await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        // The ask-policy business tool needs a decision, so its approval card
+        // renders without expanding; the meta-tools that auto-ran before it
+        // are folded away, with only the newest naming the collapsed row.
+        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expectToolActivityCurrent(firstBotPost, loadToolLabel);
+        await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
+
+        const firstRounds = await expandToolActivity(firstBotPost);
+        await expect(firstRounds.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(firstRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
-        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
         const acceptButton1 = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton1).toBeVisible({timeout: 30000});
         await acceptButton1.click();
@@ -232,7 +240,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(firstBotPost.getByText(finalMarker1)).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
-        await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+        await expect((await expandToolActivity(firstBotPost)).getByText(loadToolLabel, {exact: true})).toHaveCount(1);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});
@@ -242,7 +250,15 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(botPosts).toHaveCount(2, {timeout: 45000});
         const secondBotPost = botPosts.last();
 
+        // No meta-tool prelude this time. The only round is the one awaiting a
+        // decision, which renders in full below the activity area, so there is
+        // no activity area at all.
         await expect(secondBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expectNoToolActivity(secondBotPost);
+
+        // The deriver restored the tool, so the second turn re-runs neither
+        // meta-tool. Nothing is collapsed here, so a post-wide count is the
+        // whole story.
         await expect(secondBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
         await expect(secondBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(0);
 
@@ -256,6 +272,8 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(secondBotPost.getByText(finalMarker2)).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
+        await expandToolActivity(firstBotPost);
+        await expandToolActivity(secondBotPost);
         await expect(rhs.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
         await expect(rhs.getByText(searchToolsLabel, {exact: true})).toHaveCount(1);
     });

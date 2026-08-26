@@ -6,6 +6,8 @@ import styled from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
+import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
+
 interface ReasoningDisplayProps {
     reasoningSummary: string;
     isReasoningCollapsed: boolean;
@@ -40,9 +42,9 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
     if (isReasoningCollapsed) {
         return (
             <MinimalReasoningContainer onClick={handleExpand}>
-                <MinimalExpandIcon isExpanded={false}>
+                <CollapseChevron $expanded={false}>
                     <ChevronRightIcon/>
-                </MinimalExpandIcon>
+                </CollapseChevron>
                 {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
                 <span>{'Thinking'}</span>
             </MinimalReasoningContainer>
@@ -55,9 +57,9 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
                 ref={expandedReasoningHeaderRef}
                 onClick={() => onToggleCollapse(true)}
             >
-                <ExpandedChevron>
+                <CollapseChevron $expanded={true}>
                     <ChevronRightIcon/>
-                </ExpandedChevron>
+                </CollapseChevron>
                 {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
                 <span>{'Thinking'}</span>
             </ExpandedReasoningHeader>
@@ -84,34 +86,8 @@ const ExpandedReasoningContainer = styled.div`
 	overflow: hidden;
 `;
 
-const ExpandedReasoningHeader = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
+const ExpandedReasoningHeader = styled(CollapseHeaderRow)`
 	margin-bottom: 12px;
-	font-size: 12px;
-	color: rgba(var(--center-channel-color-rgb), 0.75);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
-`;
-
-const ExpandedChevron = styled.div`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: rotate(90deg);
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
 `;
 
 const SpinnerWrapper = styled.div`
@@ -138,34 +114,8 @@ export const LoadingSpinner = styled.div`
 	}
 `;
 
-export const MinimalReasoningContainer = styled.div`
-	display: flex;
-	align-items: center;
-	gap: 8px;
+export const MinimalReasoningContainer = styled(CollapseHeaderRow)`
 	margin: 4px 0;
-	font-size: 12px;
-	color: rgba(var(--center-channel-color-rgb), 0.75);
-	cursor: pointer;
-	user-select: none;
-
-	&:hover {
-		color: rgba(var(--center-channel-color-rgb), 0.8);
-	}
-`;
-
-const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 16px;
-	height: 16px;
-	transition: transform 0.2s ease;
-	transform: ${(props) => (props.isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
-
-	svg {
-		width: 14px;
-		height: 14px;
-	}
 `;
 
 const ReasoningContent = styled.div<{collapsed: boolean}>`

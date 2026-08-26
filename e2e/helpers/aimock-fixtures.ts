@@ -71,6 +71,7 @@ export const AIMOCK_COMPATIBLE_SERVICE = {
 
 export const EMBEDDED_GET_CHANNEL_INFO_TOOL = 'mattermost__get_channel_info';
 export const EMBEDDED_CREATE_POST_TOOL = 'mattermost__create_post';
+export const EMBEDDED_READ_CHANNEL_TOOL = 'mattermost__read_channel';
 
 /** Runtime name of the built-in response-file tool (mmtools.CreateFileToolName). */
 export const CREATE_FILE_TOOL = 'CreateFile';
