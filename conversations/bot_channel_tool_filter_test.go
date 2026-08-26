@@ -52,8 +52,17 @@ type channelFollowUpTestMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
-	return p.tools, nil
+func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(_ context.Context, _ string, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	// Mirror the real client manager's contract: servers outside the selection
+	// (for example remote servers on an unlicensed installation) are never
+	// contacted, so their tools never appear in the result.
+	var tools []llm.Tool
+	for _, tool := range p.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools, nil
 }
 
 type channelFollowUpTestConfig struct {
