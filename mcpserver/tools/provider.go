@@ -36,6 +36,10 @@ type MCPToolContext struct {
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
 
+	// IsBotSession is true when the authenticated Mattermost user is a bot.
+	// True also when the user cannot be resolved, so the DM/GM guard fails closed.
+	IsBotSession bool
+
 	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
 	MMServerURL        string
 	BeforeHookResolver auth.BeforeHookResolver
@@ -262,6 +266,18 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			}, nil
 		}
 
+		if mcpContext.IsBotSession {
+			if guardErr := rejectDirectOrGroupArgs(mcpContext, req.Params.Arguments); guardErr != nil {
+				p.logger.Debug("MCP tool rejected DM/GM access", "tool", mcpTool.Name, "error", guardErr.Error())
+				return &mcp.CallToolResult{
+					Content: []mcp.Content{
+						&mcp.TextContent{Text: "Error: " + guardErr.Error()},
+					},
+					IsError: true,
+				}, nil
+			}
+		}
+
 		// Create argument getter that extracts arguments from the MCP request
 		argsGetter := func(target interface{}) error {
 			// Convert MCP arguments to the target struct
@@ -328,21 +344,24 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	var userID string
+	isBotSession := true
 	if identityProvider, ok := p.authProvider.(auth.UserIdentityProvider); ok {
 		if user, userErr := identityProvider.GetAuthenticatedUser(ctx); userErr == nil && user != nil {
 			userID = user.Id
+			isBotSession = user.IsBot
 		} else if userErr != nil {
 			p.logger.Debug("failed to resolve authenticated user for tool-call context", "error", userErr.Error())
 		}
 	}
 
 	mcpContext := &MCPToolContext{
-		Ctx:         ctx,
-		Client:      client,
-		AccessMode:  p.accessMode,
-		MMServerURL: p.mmServerURL,
-		ToolHooks:   decodeToolHooksFromMetadata(metadata),
-		UserID:      userID,
+		Ctx:          ctx,
+		Client:       client,
+		AccessMode:   p.accessMode,
+		MMServerURL:  p.mmServerURL,
+		ToolHooks:    decodeToolHooksFromMetadata(metadata),
+		UserID:       userID,
+		IsBotSession: isBotSession,
 	}
 
 	if resolver, ok := ctx.Value(auth.BeforeHookResolverContextKey).(auth.BeforeHookResolver); ok {

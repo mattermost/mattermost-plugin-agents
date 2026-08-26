@@ -220,14 +220,14 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			semanticResults, semanticErr = p.executeSemanticSearch(ctx, client, args, userID)
+			semanticResults, semanticErr = p.executeSemanticSearch(ctx, client, args, userID, mcpContext.IsBotSession)
 		}()
 	}
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		keywordResults, keywordErr = p.executeKeywordSearch(ctx, client, args)
+		keywordResults, keywordErr = p.executeKeywordSearch(ctx, client, args, mcpContext.IsBotSession)
 	}()
 
 	wg.Wait()
@@ -250,13 +250,14 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 }
 
 // executeSemanticSearch runs the semantic search and returns enriched results.
-func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string, excludeDirectAndGroup bool) ([]searchPostResult, error) {
 	opts := search.Options{
-		Limit:     args.SemanticLimit,
-		Offset:    args.SemanticOffset,
-		TeamID:    args.TeamID,
-		ChannelID: args.ChannelID,
-		UserID:    userID,
+		Limit:                 args.SemanticLimit,
+		Offset:                args.SemanticOffset,
+		TeamID:                args.TeamID,
+		ChannelID:             args.ChannelID,
+		UserID:                userID,
+		ExcludeDirectAndGroup: excludeDirectAndGroup,
 	}
 
 	results, err := p.searchService.Search(ctx, args.Query, opts)
@@ -304,7 +305,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 }
 
 // executeKeywordSearch runs the Mattermost keyword search and returns enriched results.
-func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, excludeDirectAndGroup bool) ([]searchPostResult, error) {
 	searchTerm := args.Query
 	teamID := args.TeamID
 
@@ -420,6 +421,13 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 
 		if user := userCache[post.UserId]; user != nil {
 			result.Username = user.Username
+		}
+
+		if excludeDirectAndGroup {
+			ch := channelCache[post.ChannelId]
+			if ch == nil || isDirectOrGroupChannel(ch) {
+				continue
+			}
 		}
 
 		postResults = append(postResults, result)

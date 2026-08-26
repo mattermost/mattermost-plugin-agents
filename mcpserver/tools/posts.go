@@ -813,6 +813,10 @@ func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext
 	for _, post := range postList.Posts {
 		posts = append(posts, post)
 	}
+	posts = filterPostsFromDirectAndGroup(mcpContext, posts)
+	if len(posts) == 0 {
+		return fmt.Sprintf("no %s found", noun)
+	}
 	sort.Slice(posts, func(i, j int) bool {
 		return posts[i].CreateAt < posts[j].CreateAt
 	})

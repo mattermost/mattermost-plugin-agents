@@ -480,6 +480,13 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		return "", fmt.Errorf("insufficient parameters for channel lookup")
 	}
 
+	if mcpContext.IsBotSession {
+		channels = withoutDirectAndGroup(channels)
+		if len(channels) == 0 {
+			return "No channels found matching the request.", nil
+		}
+	}
+
 	// If multiple channels found, return all with disambiguation guidance
 	if len(channels) > 1 {
 		return p.formatMultipleChannels(ctx, client, channels, mcpContext.UserID)
@@ -866,6 +873,10 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 		channels = allChannels
 	}
 
+	if mcpContext.IsBotSession {
+		channels = withoutDirectAndGroup(channels)
+	}
+
 	// Store total count before pagination
 	totalCount := len(channels)
 
@@ -1088,6 +1099,10 @@ func (p *MattermostToolProvider) toolSearchChannels(mcpContext *MCPToolContext, 
 		for _, ch := range found {
 			channels = append(channels, &ch.Channel)
 		}
+	}
+
+	if mcpContext.IsBotSession {
+		channels = withoutDirectAndGroup(channels)
 	}
 
 	return p.formatChannelList(ctx, client, channels, fmt.Sprintf("channels matching '%s'", args.Term)), nil
