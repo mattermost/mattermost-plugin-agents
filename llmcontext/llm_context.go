@@ -139,12 +139,9 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 // appears in the per-agent MCP allowlist (by ServerOrigin).
 func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
 	errOrigin := llm.NormalizeMCPServerOrigin(authErr.ServerOrigin)
-	for i := range allowlist {
-		if llm.NormalizeMCPServerOrigin(allowlist[i].ServerOrigin) == errOrigin {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(allowlist, func(enabled llm.EnabledMCPTool) bool {
+		return llm.NormalizeMCPServerOrigin(enabled.ServerOrigin) == errOrigin
+	})
 }
 
 func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []llm.EnabledMCPTool) []llm.ToolAuthError {
@@ -443,14 +440,9 @@ func filterMCPToolsByDisabledOrigins(tools []llm.Tool, disabled []string) []llm.
 		disabledSet[origin] = true
 	}
 
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		if disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)] {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return disabledSet[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)]
+	})
 }
 
 func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm.Tool {
@@ -458,13 +450,9 @@ func filterMCPToolsByPredicate(tools []llm.Tool, keep func(llm.Tool) bool) []llm
 		return tools
 	}
 
-	filtered := make([]llm.Tool, 0, len(tools))
-	for _, tool := range tools {
-		if keep(tool) {
-			filtered = append(filtered, tool)
-		}
-	}
-	return filtered
+	return slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return !keep(tool)
+	})
 }
 
 // WithLLMContextTools adds tools to the LLM context the requester can access.

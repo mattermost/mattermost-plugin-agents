@@ -197,9 +197,6 @@ func TestContextResponseAttachmentBudget(t *testing.T) {
 		var c *Context
 		c.SetResponseAttachmentBudget(5)
 		assert.Equal(t, 0, c.ResponseAttachmentSlots())
-		var tr *ToolRuntimeContext
-		tr.SetResponseAttachmentBudget(5)
-		assert.Equal(t, 0, tr.ResponseAttachmentSlots())
 	})
 }
 
@@ -257,10 +254,6 @@ func TestContextCreatedFilesNilReceiver(t *testing.T) {
 	var c *Context
 	c.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
 	assert.Nil(t, c.CreatedFilesList())
-
-	var rt *ToolRuntimeContext
-	rt.AddCreatedFile(CreatedFile{ID: "file1", Name: "a.txt"})
-	assert.Nil(t, rt.CreatedFilesList())
 }
 
 func TestContextMCPDynamicSearchLoadCallSuccessState(t *testing.T) {

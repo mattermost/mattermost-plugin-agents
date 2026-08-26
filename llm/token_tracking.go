@@ -24,7 +24,7 @@ type TokenUsagePluginLogger interface {
 
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
-	wrapped     LanguageModel
+	LanguageModel
 	botUsername string
 	sinks       *TokenUsageSinks
 	metrics     MetricsObserver
@@ -33,10 +33,10 @@ type TokenUsageLoggingWrapper struct {
 // NewTokenUsageLoggingWrapper creates a wrapper using a shared sink controller.
 func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
-		wrapped:     wrapped,
-		botUsername: botUsername,
-		sinks:       sinks,
-		metrics:     metrics,
+		LanguageModel: wrapped,
+		botUsername:   botUsername,
+		sinks:         sinks,
+		metrics:       metrics,
 	}
 }
 
@@ -76,13 +76,13 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 // ChatCompletion intercepts the streaming response to extract and log token usage
 func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	if !w.shouldTrackTokenUsage() {
-		return w.wrapped.ChatCompletion(ctx, request, opts...)
+		return w.LanguageModel.ChatCompletion(ctx, request, opts...)
 	}
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeStreaming
 	}
 
-	result, err := w.wrapped.ChatCompletion(ctx, request, opts...)
+	result, err := w.LanguageModel.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,19 +329,4 @@ func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(ctx context.Context, r
 
 func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
 	return w != nil && w.sinks != nil && w.sinks.LoggingEnabled()
-}
-
-// CountTokens delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
-	return w.wrapped.CountTokens(ctx, request, opts...)
-}
-
-// InputTokenLimit delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
-	return w.wrapped.InputTokenLimit()
-}
-
-// OutputTokenLimit delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) OutputTokenLimit() int {
-	return w.wrapped.OutputTokenLimit()
 }
