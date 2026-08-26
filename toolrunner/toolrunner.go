@@ -207,64 +207,14 @@ func (r *ToolRunner) runLoop(
 		}
 
 		// Consume the stream, forwarding non-tool-call events in real-time.
-		var text strings.Builder
-		var reasoning strings.Builder
-		var reasoningData llm.ReasoningData
-		var toolCalls []llm.ToolCall
-		var serverTools []llm.ServerToolUse
-		var usage llm.TokenUsage
-		var streamErr error
+		resp := drainStream(stream, output)
 
-		for event := range stream.Stream {
-			switch event.Type {
-			case llm.EventTypeToolCalls:
-				if tcs, ok := event.Value.([]llm.ToolCall); ok {
-					toolCalls = append(toolCalls, tcs...)
-				}
-			case llm.EventTypeServerToolUse:
-				// Cumulative snapshot of provider-executed tool activity;
-				// keep the latest so a tool round persists it (see ToolTurn).
-				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
-					serverTools = uses
-				}
-				output <- event
-			case llm.EventTypeEnd:
-				// Don't forward yet — handle after consuming the full stream.
-			case llm.EventTypeText:
-				if t, ok := event.Value.(string); ok {
-					text.WriteString(t)
-				}
-				output <- event
-			case llm.EventTypeReasoning:
-				if t, ok := event.Value.(string); ok {
-					reasoning.WriteString(t)
-				}
-				output <- event
-			case llm.EventTypeReasoningEnd:
-				if data, ok := event.Value.(llm.ReasoningData); ok {
-					reasoningData = data
-				}
-				output <- event
-			case llm.EventTypeUsage:
-				if u, ok := event.Value.(llm.TokenUsage); ok {
-					usage.InputTokens += u.InputTokens
-					usage.OutputTokens += u.OutputTokens
-				}
-				output <- event
-			case llm.EventTypeError:
-				if e, ok := event.Value.(error); ok {
-					streamErr = e
-				}
-				output <- event
-			default:
-				output <- event // annotations, etc.
-			}
-		}
-
-		if streamErr != nil {
+		if resp.err != nil {
 			r.deliverToolTurns(result, onToolTurns)
 			return
 		}
+
+		toolCalls := resp.toolCalls
 
 		// Drop any tool calls the model returned on a forced synthesis round;
 		droppedToolCalls := 0
@@ -275,7 +225,7 @@ func (r *ToolRunner) runLoop(
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
-			result.FinalText = finalAssistantText(text.String(), synthesisForced, droppedToolCalls)
+			result.FinalText = finalAssistantText(resp.text, synthesisForced, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
@@ -285,7 +235,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resolvedToolCalls, toolResults, resp.usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -336,7 +286,7 @@ func (r *ToolRunner) runLoop(
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -355,6 +305,75 @@ func (r *ToolRunner) runLoop(
 			synthesisForced = true
 		}
 	}
+}
+
+// assistantResponse holds the accumulated contents of one fully consumed
+// LLM response stream.
+type assistantResponse struct {
+	text          string
+	reasoningData llm.ReasoningData
+	toolCalls     []llm.ToolCall
+	serverTools   []llm.ServerToolUse
+	usage         llm.TokenUsage
+	err           error
+}
+
+// drainStream consumes one LLM response stream, forwarding non-tool-call
+// events to output in real-time while buffering tool calls and accumulating
+// the round's text, reasoning, and usage.
+func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent) assistantResponse {
+	var text strings.Builder
+	var reasoning strings.Builder
+	var resp assistantResponse
+
+	for event := range stream.Stream {
+		switch event.Type {
+		case llm.EventTypeToolCalls:
+			if tcs, ok := event.Value.([]llm.ToolCall); ok {
+				resp.toolCalls = append(resp.toolCalls, tcs...)
+			}
+		case llm.EventTypeServerToolUse:
+			// Cumulative snapshot of provider-executed tool activity;
+			// keep the latest so a tool round persists it (see ToolTurn).
+			if uses, ok := event.Value.([]llm.ServerToolUse); ok {
+				resp.serverTools = uses
+			}
+			output <- event
+		case llm.EventTypeEnd:
+			// Don't forward yet — handle after consuming the full stream.
+		case llm.EventTypeText:
+			if t, ok := event.Value.(string); ok {
+				text.WriteString(t)
+			}
+			output <- event
+		case llm.EventTypeReasoning:
+			if t, ok := event.Value.(string); ok {
+				reasoning.WriteString(t)
+			}
+			output <- event
+		case llm.EventTypeReasoningEnd:
+			if data, ok := event.Value.(llm.ReasoningData); ok {
+				resp.reasoningData = data
+			}
+			output <- event
+		case llm.EventTypeUsage:
+			if u, ok := event.Value.(llm.TokenUsage); ok {
+				resp.usage.InputTokens += u.InputTokens
+				resp.usage.OutputTokens += u.OutputTokens
+			}
+			output <- event
+		case llm.EventTypeError:
+			if e, ok := event.Value.(error); ok {
+				resp.err = e
+			}
+			output <- event
+		default:
+			output <- event // annotations, etc.
+		}
+	}
+
+	resp.text = text.String()
+	return resp
 }
 
 // deliverToolTurns calls the onToolTurns callback if there are accumulated turns.
@@ -402,19 +421,13 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 		}
 
 		if resolveErr != nil {
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     resolveErr.Error(),
-				IsError:    true,
-			}
-		} else {
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     result,
-				IsError:    false,
-			}
+			result = resolveErr.Error()
+		}
+		toolResults[i] = ToolResult{
+			ToolCallID: tc.ID,
+			Name:       tc.Name,
+			Result:     result,
+			IsError:    resolveErr != nil,
 		}
 	}
 	return toolResults
@@ -555,6 +568,10 @@ func appendToolTurnAndPost(
 func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) []llm.ToolCall {
 	resolved := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
+		status := llm.ToolCallStatusAutoApproved
+		if toolResults[i].IsError {
+			status = llm.ToolCallStatusError
+		}
 		resolved[i] = llm.ToolCall{
 			ID:           tc.ID,
 			Name:         tc.Name,
@@ -563,13 +580,8 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			Schema:       tc.Schema,
 			ServerOrigin: tc.ServerOrigin,
 			MCPBareName:  tc.MCPBareName,
-		}
-		if toolResults[i].IsError {
-			resolved[i].Status = llm.ToolCallStatusError
-			resolved[i].Result = toolResults[i].Result
-		} else {
-			resolved[i].Status = llm.ToolCallStatusAutoApproved
-			resolved[i].Result = toolResults[i].Result
+			Status:       status,
+			Result:       toolResults[i].Result,
 		}
 	}
 	return resolved
