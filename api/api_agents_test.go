@@ -1391,24 +1391,22 @@ func TestAgentSaveErrorsAreActionable(t *testing.T) {
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	req := CreateAgentRequest{
-		AgentRequestFields: AgentRequestFields{
-			DisplayName:           "My Agent",
-			ServiceID:             "svc-1",
-			CustomInstructions:    "Be brief",
-			ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
-			ChannelIDs:            []string{"c1", "c2"},
-			UserAccessLevel:       int(llm.UserAccessLevelBlock),
-			UserIDs:               []string{"u1"},
-			TeamIDs:               []string{"t1"},
-			AdminUserIDs:          []string{"admin-1"},
-			EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
-			MCPDynamicToolLoading: false,
-			Model:                 "gpt-4",
-			EnableVision:          true,
-			ReasoningEffort:       "high",
-			ThinkingBudget:        4096,
-		},
-		Username: "my-agent",
+		DisplayName:           "My Agent",
+		ServiceID:             "svc-1",
+		CustomInstructions:    "Be brief",
+		ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
+		ChannelIDs:            []string{"c1", "c2"},
+		UserAccessLevel:       int(llm.UserAccessLevelBlock),
+		UserIDs:               []string{"u1"},
+		TeamIDs:               []string{"t1"},
+		AdminUserIDs:          []string{"admin-1"},
+		EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
+		MCPDynamicToolLoading: false,
+		Model:                 "gpt-4",
+		EnableVision:          true,
+		ReasoningEffort:       "high",
+		ThinkingBudget:        4096,
+		Username:              "my-agent",
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
