@@ -315,7 +315,7 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string,
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.Store.CreateTurnAutoSequence(turn); err != nil {
+	if err := s.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create user turn: %w", err)
 	}
 
@@ -346,7 +346,7 @@ func (s *Service) BuildCompletionRequest(
 	context *llm.Context,
 	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
-	turns, err := s.Store.GetTurnsForConversation(conv.ID)
+	turns, err := s.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
@@ -500,7 +500,7 @@ func (s *Service) CreatePlaceholderAssistantTurn(
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.Store.CreateTurnAutoSequence(turn); err != nil {
+	if err := s.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create placeholder turn: %w", err)
 	}
 
@@ -519,11 +519,11 @@ func (s *Service) FinalizeAssistantTurn(
 		return fmt.Errorf("failed to marshal content: %w", err)
 	}
 
-	if err := s.Store.UpdateTurnContent(turnID, contentJSON); err != nil {
+	if err := s.UpdateTurnContent(turnID, contentJSON); err != nil {
 		return fmt.Errorf("failed to update turn content: %w", err)
 	}
 
-	if err := s.Store.UpdateTurnTokens(turnID, tokensIn, tokensOut); err != nil {
+	if err := s.UpdateTurnTokens(turnID, tokensIn, tokensOut); err != nil {
 		return fmt.Errorf("failed to update turn tokens: %w", err)
 	}
 
@@ -571,7 +571,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		TokensOut:      tt.TokensOut,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.Store.CreateTurnAutoSequence(assistantTurn)
+	err = s.CreateTurnAutoSequence(assistantTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create assistant tool turn: %w", err)
 	}
@@ -589,7 +589,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.Store.CreateTurnAutoSequence(resultTurn)
+	err = s.CreateTurnAutoSequence(resultTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
@@ -629,7 +629,7 @@ func (s *Service) GenerateTitle(
 
 	title = strings.Trim(title, "\n \"'")
 
-	if err := s.Store.UpdateConversationTitle(conversationID, title); err != nil {
+	if err := s.UpdateConversationTitle(conversationID, title); err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
 	}
 
@@ -656,7 +656,7 @@ func (s *Service) BuildChannelMentionRequest(
 		return s.BuildCompletionRequest(conv, context, opts...)
 	}
 
-	turns, err := s.Store.GetTurnsForConversation(conv.ID)
+	turns, err := s.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}

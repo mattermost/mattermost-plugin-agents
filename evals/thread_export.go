@@ -41,8 +41,8 @@ func (t *ThreadExport) String() string {
 	var result strings.Builder
 
 	// Header with team/channel info
-	result.WriteString(fmt.Sprintf("Thread Export: %s > %s\n", t.Team.DisplayName, t.Channel.DisplayName))
-	result.WriteString(fmt.Sprintf("Posts: %d\n\n", len(t.PostList.Order)))
+	fmt.Fprintf(&result, "Thread Export: %s > %s\n", t.Team.DisplayName, t.Channel.DisplayName)
+	fmt.Fprintf(&result, "Posts: %d\n\n", len(t.PostList.Order))
 
 	// Posts in reverse chronological order (root post first)
 	for _, postID := range slices.Backward(t.PostList.Order) {
@@ -51,18 +51,18 @@ func (t *ThreadExport) String() string {
 
 		// Post header
 		if post.RootId == "" {
-			result.WriteString(fmt.Sprintf("[ROOT] %s (@%s) - %s\n",
+			fmt.Fprintf(&result, "[ROOT] %s (@%s) - %s\n",
 				user.GetDisplayName(model.ShowFullName), user.Username,
-				time.Unix(post.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
+				time.Unix(post.CreateAt/1000, 0).Format("2006-01-02 15:04:05"))
 		} else {
-			result.WriteString(fmt.Sprintf("[REPLY] %s (@%s) - %s\n",
+			fmt.Fprintf(&result, "[REPLY] %s (@%s) - %s\n",
 				user.GetDisplayName(model.ShowFullName), user.Username,
-				time.Unix(post.CreateAt/1000, 0).Format("2006-01-02 15:04:05")))
+				time.Unix(post.CreateAt/1000, 0).Format("2006-01-02 15:04:05"))
 		}
 
 		// Post content
 		if post.Message != "" {
-			result.WriteString(fmt.Sprintf("  %s\n", post.Message))
+			fmt.Fprintf(&result, "  %s\n", post.Message)
 		}
 
 		// File attachments
@@ -70,9 +70,9 @@ func (t *ThreadExport) String() string {
 			result.WriteString("  Attachments:\n")
 			for _, fileID := range post.FileIds {
 				if fileInfo, exists := t.FileInfos[fileID]; exists {
-					result.WriteString(fmt.Sprintf("    - %s (%s)\n", fileInfo.Name, fileInfo.MimeType))
+					fmt.Fprintf(&result, "    - %s (%s)\n", fileInfo.Name, fileInfo.MimeType)
 				} else {
-					result.WriteString(fmt.Sprintf("    - File ID: %s (info not available)\n", fileID))
+					fmt.Fprintf(&result, "    - File ID: %s (info not available)\n", fileID)
 				}
 			}
 		}
