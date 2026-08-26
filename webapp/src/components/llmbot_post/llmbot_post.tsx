@@ -435,7 +435,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
     // actually resuming (continue/start still set precontent on purpose).
-    const showStarting =
+    const showWorking =
         (precontent && (generating || renderedRounds.length === 0)) ||
         (conversationLoading && !generating && renderedRounds.length === 0);
 
@@ -454,7 +454,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {showStarting && (
+            {showWorking && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>
