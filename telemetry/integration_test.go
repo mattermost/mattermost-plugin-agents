@@ -346,9 +346,11 @@ func TestParentChildSpanHierarchy(t *testing.T) {
 
 	if httpStub == nil {
 		t.Fatal("HTTP span not found")
+		return
 	}
 	if llmStub == nil {
 		t.Fatal("LLM span not found")
+		return
 	}
 
 	// Verify same trace
