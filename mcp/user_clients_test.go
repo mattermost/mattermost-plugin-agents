@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -199,6 +200,19 @@ func connectEmbeddedServer(uc *UserClients, sessionID string, embeddedClient *Em
 	}
 	ctx := context.Background()
 	return uc.ensureConnections(ctx, []connectTask{uc.embeddedConnectTask(ctx, sessionID, embeddedClient)})
+}
+
+func TestOriginAttemptWaitFinishedOutcomeWinsCanceledContext(t *testing.T) {
+	connectErr := errors.New("connection refused")
+	attempt := &originAttempt{done: make(chan struct{}), err: connectErr}
+	close(attempt.done)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for range 100 {
+		require.ErrorIs(t, attempt.wait(ctx), connectErr)
+	}
 }
 
 func TestConnectToPluginServer_HappyPath(t *testing.T) {
