@@ -1604,6 +1604,102 @@ func TestSearchExcludesDeletedPosts(t *testing.T) {
 	}
 }
 
+func TestSearchExcludeDirectAndGroup(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3})
+	require.NoError(t, err)
+
+	now := model.GetMillis()
+	userID := "user1"
+	channels := []struct {
+		id          string
+		channelType string
+		postID      string
+	}{
+		{id: "open-channel", channelType: "O", postID: "open-post"},
+		{id: "private-channel", channelType: "P", postID: "private-post"},
+		{id: "dm-channel", channelType: "D", postID: "dm-post"},
+		{id: "gm-channel", channelType: "G", postID: "gm-post"},
+	}
+
+	postIDs := make([]string, len(channels))
+	createAts := make([]int64, len(channels))
+	docs := make([]embeddings.PostDocument, len(channels))
+	embedVectors := make([][]float32, len(channels))
+	for i, ch := range channels {
+		_, err := db.Exec(
+			"INSERT INTO Channels (Id, Name, DisplayName, Type, DeleteAt) VALUES ($1, $2, $3, $4, $5)",
+			ch.id,
+			fmt.Sprintf("name-%s", ch.id),
+			fmt.Sprintf("display-%s", ch.id),
+			ch.channelType,
+			int64(0),
+		)
+		require.NoError(t, err, "Failed to insert test channel %s", ch.id)
+		addTestChannelMembers(t, db, ch.id, []string{userID})
+
+		postIDs[i] = ch.postID
+		createAts[i] = now
+		docs[i] = embeddings.PostDocument{
+			PostID:    ch.postID,
+			CreateAt:  now,
+			TeamID:    "team1",
+			ChannelID: ch.id,
+			UserID:    userID,
+			Content:   "shared content",
+		}
+		embedVectors[i] = []float32{0.5, 0.5, 0.5}
+	}
+	addTestPosts(t, db, postIDs, createAts)
+
+	ctx := context.Background()
+	err = pgVector.Store(ctx, docs, embedVectors)
+	require.NoError(t, err)
+
+	searchVector := []float32{0.5, 0.5, 0.5}
+
+	tests := []struct {
+		name                  string
+		excludeDirectAndGroup bool
+		wantPostIDs           []string
+		wantMissingPostIDs    []string
+	}{
+		{
+			name:                  "off includes D and G",
+			excludeDirectAndGroup: false,
+			wantPostIDs:           []string{"open-post", "private-post", "dm-post", "gm-post"},
+		},
+		{
+			name:                  "on excludes D and G",
+			excludeDirectAndGroup: true,
+			wantPostIDs:           []string{"open-post", "private-post"},
+			wantMissingPostIDs:    []string{"dm-post", "gm-post"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, err := pgVector.Search(ctx, searchVector, embeddings.SearchOptions{
+				UserID:                userID,
+				Limit:                 10,
+				ExcludeDirectAndGroup: tc.excludeDirectAndGroup,
+			})
+			require.NoError(t, err)
+
+			got := make([]string, 0, len(results))
+			for _, result := range results {
+				got = append(got, result.Document.PostID)
+			}
+			assert.ElementsMatch(t, tc.wantPostIDs, got)
+			for _, postID := range tc.wantMissingPostIDs {
+				assert.NotContains(t, got, postID)
+			}
+		})
+	}
+}
+
 func TestNewPGVectorValidation(t *testing.T) {
 	tests := []struct {
 		name       string

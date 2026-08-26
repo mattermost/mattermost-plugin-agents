@@ -402,6 +402,26 @@ func TestExecuteSearch(t *testing.T) {
 				require.Empty(t, results)
 			},
 		},
+		{
+			name:  "ExcludeDirectAndGroup is forwarded",
+			query: "test query",
+			opts: Options{
+				Limit:                 5,
+				UserID:                "user1",
+				ExcludeDirectAndGroup: true,
+			},
+			setupMocks: func(me *mocks.MockEmbeddingSearch, mc *mmapimocks.MockClient) {
+				me.On("Search", mock.Anything, "test query", embeddings.SearchOptions{
+					Limit:                 5,
+					UserID:                "user1",
+					ExcludeDirectAndGroup: true,
+				}).Return([]embeddings.SearchResult{}, nil)
+			},
+			expectError: "",
+			validate: func(t *testing.T, results []RAGResult) {
+				require.Empty(t, results)
+			},
+		},
 	}
 
 	for _, tc := range tests {

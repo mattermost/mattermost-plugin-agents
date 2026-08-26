@@ -62,6 +62,9 @@ type SearchOptions struct {
 	UserID        string // User ID for permission checks
 	CreatedAfter  int64
 	CreatedBefore int64
+	// ExcludeDirectAndGroup omits DM and group-message channels. Used when the
+	// searching session is a bot that belongs to every user's DM with the agent.
+	ExcludeDirectAndGroup bool
 }
 
 // EmbeddingSearch defines the high-level interface for storing and searching using embeddings

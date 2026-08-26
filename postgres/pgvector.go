@@ -385,6 +385,10 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		queryBuilder = queryBuilder.Where(sq.Eq{"e.channel_id": opts.ChannelID})
 	}
 
+	if opts.ExcludeDirectAndGroup {
+		queryBuilder = queryBuilder.Where(sq.NotEq{"c.Type": []string{"D", "G"}})
+	}
+
 	if opts.CreatedAfter != 0 {
 		queryBuilder = queryBuilder.Where(sq.Gt{"e.created_at": opts.CreatedAfter})
 	}

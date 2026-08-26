@@ -62,6 +62,9 @@ type Options struct {
 	TeamID    string
 	ChannelID string
 	UserID    string
+	// ExcludeDirectAndGroup omits DM and group-message channels. Used when the
+	// searching session is a bot that belongs to every user's DM with the agent.
+	ExcludeDirectAndGroup bool
 }
 
 // SearchResultsProp is the post prop key used to attach search results JSON to the response post.
@@ -205,11 +208,12 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 	}
 
 	searchOpts := embeddings.SearchOptions{
-		Limit:     limit,
-		Offset:    opts.Offset,
-		TeamID:    opts.TeamID,
-		ChannelID: opts.ChannelID,
-		UserID:    opts.UserID,
+		Limit:                 limit,
+		Offset:                opts.Offset,
+		TeamID:                opts.TeamID,
+		ChannelID:             opts.ChannelID,
+		UserID:                opts.UserID,
+		ExcludeDirectAndGroup: opts.ExcludeDirectAndGroup,
 	}
 
 	searchResults, err := search.Search(ctx, query, searchOpts)
