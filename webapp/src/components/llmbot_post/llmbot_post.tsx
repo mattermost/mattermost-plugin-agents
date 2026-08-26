@@ -142,6 +142,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Suppresses persistedRounds while regenerating so the prior generation
     // doesn't render alongside the new stream.
     const [regenerating, setRegenerating] = useState(false);
+    const regeneratingRef = useRef(regenerating);
+    regeneratingRef.current = regenerating;
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
@@ -187,6 +189,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setMessage((prev: string) => (prev === '' ? prev : ''));
         setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
         setIsReasoningLoading(false);
+        regeneratingRef.current = false;
         setRegenerating(false);
         setPendingRefetch(false);
     }, [conversation, pendingRefetch]);
@@ -222,9 +225,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             if (data.control === 'reasoning_summary' && data.reasoning) {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
+                setGenerating(true);
 
-                // Don't clear generating: the `generating && currentRound`
-                // gate in renderedRounds would hide the thinking block.
+                // Reasoning is substantive stream output even if start was missed.
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(true);
                 setPrecontent(false);
@@ -234,14 +237,17 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             if (data.control === 'reasoning_summary_done' && data.reasoning) {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
+                setGenerating(true);
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(false);
+                setPrecontent(false);
                 return;
             }
 
             if (data.control === 'tool_call' && data.tool_call) {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
+                setGenerating(true);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
@@ -277,6 +283,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             if (data.control === 'annotations' && data.annotations) {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
+                setGenerating(true);
                 try {
                     const parsedAnnotations = JSON.parse(data.annotations);
                     setAnnotations(parsedAnnotations);
@@ -290,6 +297,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             if (data.control === 'server_tool' && data.server_tool) {
                 progressCompleteRef.current = true;
                 setProgressPhase(null);
+                setGenerating(true);
 
                 // Cumulative provider-executed tool activity for the round;
                 // each event replaces the prior snapshot.
@@ -320,6 +328,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setStopped(false);
                 setIsReasoningLoading(false);
                 setPendingRefetch(true);
+                regeneratingRef.current = false;
                 if (conversationId) {
                     invalidateConversation(conversationId);
                 }
@@ -333,11 +342,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
+                regeneratingRef.current = false;
                 setRegenerating(false);
                 return;
             }
 
             if (data.control === 'start') {
+                if (progressCompleteRef.current && !regeneratingRef.current) {
+                    return;
+                }
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -409,6 +422,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
+        progressCompleteRef.current = false;
+        progressSequenceRef.current = 0;
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
@@ -419,6 +434,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setToolCalls([]);
         setServerTools([]);
         setLiveRounds([]);
+        regeneratingRef.current = true;
         setRegenerating(true);
         doRegenerate(props.post.id);
     };

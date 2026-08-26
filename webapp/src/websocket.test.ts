@@ -32,11 +32,16 @@ describe('PostEventListener progress buffering', () => {
             progress_phase: 'loading_conversation',
             progress_seq: 2,
         }));
+        events.handlePostUpdateWebsockets(message({
+            post_id: 'post-id',
+            control: 'start',
+        }));
 
         events.registerPostUpdateListener('post-id', 'listener-id', listener);
 
-        expect(listener).toHaveBeenCalledTimes(1);
-        expect(listener.mock.calls[0][0].data.progress_phase).toBe('preparing_request');
+        expect(listener).toHaveBeenCalledTimes(2);
+        expect(listener.mock.calls[0][0].data.control).toBe('start');
+        expect(listener.mock.calls[1][0].data.progress_phase).toBe('preparing_request');
     });
 
     test('does not replay progress after substantive stream content arrives', () => {
@@ -58,6 +63,10 @@ describe('PostEventListener progress buffering', () => {
             control: 'progress',
             progress_phase: 'connecting_provider',
             progress_seq: 4,
+        }));
+        events.handlePostUpdateWebsockets(message({
+            post_id: 'post-id',
+            control: 'start',
         }));
         events.registerPostUpdateListener('post-id', 'listener-id', listener);
 
