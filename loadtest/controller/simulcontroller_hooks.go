@@ -62,12 +62,12 @@ func (c *SimulController) RunHook(hookType ltplugins.HookType, u ltuser.User, pa
 // hookPayload extracts a hook payload delivered either by value or by non-nil pointer.
 func hookPayload[T any](payload any, hookName string) (T, error) {
 	switch p := payload.(type) {
-	case T:
-		return p, nil
 	case *T:
 		if p != nil {
 			return *p, nil
 		}
+	case T:
+		return p, nil
 	}
 	var zero T
 	return zero, fmt.Errorf("%s: expected %T, got %T", hookName, zero, payload)
