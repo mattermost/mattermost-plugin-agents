@@ -602,7 +602,7 @@ func automationChannelIDs(a Automation) []string {
 }
 
 func (p *MattermostToolProvider) requireVisibleAutomation(ctx context.Context, mcpContext *MCPToolContext, id string) error {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return nil
 	}
 	resp, err := doAutomationRequest(ctx, mcpContext.Client, http.MethodGet, p.automationAPIURL("/automations/"+id), "")
@@ -622,7 +622,7 @@ func (p *MattermostToolProvider) requireVisibleAutomation(ctx context.Context, m
 }
 
 func automationVisibleToSession(mcpContext *MCPToolContext, a Automation) bool {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return true
 	}
 	r := mcpContext.channelResolver()

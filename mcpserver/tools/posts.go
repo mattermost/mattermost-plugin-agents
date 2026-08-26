@@ -610,7 +610,7 @@ type AcknowledgePostArgs struct {
 const (
 	getPostInfoDescription     = "Get metadata and channel/team context for a single post (without the thread). Parameters: post_id (required). Use read_post to get the full thread content. Returns channel, team, type, and your membership."
 	listPinnedPostsDescription = "List the pinned posts in a channel. Parameters: channel_id (required). Returns each pinned post's author, content, and timestamp."
-	listSavedPostsDescription  = "List your saved (flagged) posts, optionally scoped to a channel or team. Parameters: channel_id (optional), team_id (optional), page, per_page. Returns matching saved posts."
+	listSavedPostsDescription  = "List your saved (flagged) posts, optionally scoped to a channel or team. Parameters: channel_id (optional), team_id (optional; agent sessions must provide one of these), page, per_page. Returns matching saved posts."
 	updatePostDescription      = "Edit the message text of an existing post. Parameters: post_id (required), message (required). Returns the updated post."
 	deletePostDescription      = "Delete (soft-remove) a post by ID. Parameters: post_id (required). This cannot be undone by the agent."
 	pinPostDescription         = "Pin a post to its channel. Parameters: post_id (required)."
@@ -646,7 +646,7 @@ func (p *MattermostToolProvider) toolListPinnedPosts(mcpContext *MCPToolContext,
 		return "", fmt.Errorf("error fetching pinned posts: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "pinned posts"), nil
+	return p.formatPostListChrono(mcpContext, postList, "pinned posts"), nil
 }
 
 // toolListSavedPosts implements the list_saved_posts tool.
@@ -665,6 +665,9 @@ func (p *MattermostToolProvider) toolListSavedPosts(mcpContext *MCPToolContext, 
 	}
 	if args.Page < 0 {
 		args.Page = 0
+	}
+	if mcpContext.IsBotSession && args.ChannelID == "" && args.TeamID == "" {
+		return "", fmt.Errorf("team_id or channel_id is required")
 	}
 
 	userID, err := p.resolveUserID(mcpContext)

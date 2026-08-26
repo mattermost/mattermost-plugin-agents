@@ -46,21 +46,15 @@ var guardedArgKeys = map[string]guardedArgKind{
 // guardedIfIDKeys are argument names that are a Mattermost ID only when the
 // value itself looks like one (e.g. search_posts "in" may be a name or an ID).
 var guardedIfIDKeys = map[string]guardedArgKind{
-	"in": guardedChannelID,
-}
-
-func isDirectOrGroupChannel(ch *model.Channel) bool {
-	return ch != nil && ch.IsGroupOrDirect()
+	"in":     guardedChannelID,
+	"before": guardedPostID,
+	"after":  guardedPostID,
 }
 
 // isVerifiedOpenOrPrivate is the allow-list for bot sessions: only explicitly
 // open or private channels pass. nil, D, G, boards, and unknown types do not.
 func isVerifiedOpenOrPrivate(ch *model.Channel) bool {
 	return ch != nil && (ch.Type == model.ChannelTypeOpen || ch.Type == model.ChannelTypePrivate)
-}
-
-func includeDirectChannels(mcpContext *MCPToolContext) bool {
-	return mcpContext == nil || !mcpContext.IsBotSession
 }
 
 func withoutDirectAndGroup(channels []*model.Channel) []*model.Channel {
@@ -159,7 +153,7 @@ func rejectIfNotOpenOrPrivate(ch *model.Channel) error {
 	if isVerifiedOpenOrPrivate(ch) {
 		return nil
 	}
-	if isDirectOrGroupChannel(ch) {
+	if ch != nil && ch.IsGroupOrDirect() {
 		return errDirectOrGroupInaccessible
 	}
 	return errUnverifiedChannelReference
@@ -169,7 +163,7 @@ func rejectIfNotOpenOrPrivate(ch *model.Channel) error {
 // rejects the call when any do not resolve to an open or private channel.
 // No-op for human sessions.
 func rejectDirectOrGroupArgs(mcpContext *MCPToolContext, arguments any) error {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return nil
 	}
 	args := argumentsMap(arguments)
@@ -292,13 +286,15 @@ func stringIDs(v any) []string {
 	return nil
 }
 
-func filterPostsFromDirectAndGroup(mcpContext *MCPToolContext, posts []*model.Post) []*model.Post {
-	if mcpContext == nil || !mcpContext.IsBotSession {
-		return posts
+// visiblePostList drops posts that are not in an open or private channel for
+// bot sessions. Human sessions get the list unchanged.
+func visiblePostList(mcpContext *MCPToolContext, postList *model.PostList) *model.PostList {
+	if postList == nil || !mcpContext.IsBotSession {
+		return postList
 	}
 	r := mcpContext.channelResolver()
-	out := make([]*model.Post, 0, len(posts))
-	for _, post := range posts {
+	out := &model.PostList{Posts: make(map[string]*model.Post, len(postList.Posts))}
+	for id, post := range postList.Posts {
 		if post == nil {
 			continue
 		}
@@ -306,36 +302,17 @@ func filterPostsFromDirectAndGroup(mcpContext *MCPToolContext, posts []*model.Po
 		if err != nil || !isVerifiedOpenOrPrivate(ch) {
 			continue
 		}
-		out = append(out, post)
+		out.Posts[id] = post
+	}
+	if len(out.Posts) == len(postList.Posts) {
+		return postList
 	}
 	return out
 }
 
-// visiblePostList drops posts that are not in an open or private channel for
-// bot sessions. Human sessions get the list unchanged.
-func visiblePostList(mcpContext *MCPToolContext, postList *model.PostList) *model.PostList {
-	if postList == nil || mcpContext == nil || !mcpContext.IsBotSession {
-		return postList
-	}
-	posts := make([]*model.Post, 0, len(postList.Posts))
-	for _, post := range postList.Posts {
-		posts = append(posts, post)
-	}
-	filtered := filterPostsFromDirectAndGroup(mcpContext, posts)
-	if len(filtered) == len(postList.Posts) {
-		return postList
-	}
-	out := &model.PostList{Posts: make(map[string]*model.Post, len(filtered))}
-	for _, post := range filtered {
-		if post != nil {
-			out.Posts[post.Id] = post
-		}
-	}
-	return out
-}
-
+// Verifies results locally; a remote includeDirectChannels flag is not trusted.
 func filterScheduledPosts(mcpContext *MCPToolContext, posts []*model.ScheduledPost) []*model.ScheduledPost {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return posts
 	}
 	r := mcpContext.channelResolver()
@@ -353,8 +330,9 @@ func filterScheduledPosts(mcpContext *MCPToolContext, posts []*model.ScheduledPo
 	return out
 }
 
+// Verifies results locally; a remote ExcludeDirect flag is not trusted.
 func filterThreads(mcpContext *MCPToolContext, threads []*model.ThreadResponse) []*model.ThreadResponse {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return threads
 	}
 	r := mcpContext.channelResolver()
@@ -373,7 +351,7 @@ func filterThreads(mcpContext *MCPToolContext, threads []*model.ThreadResponse) 
 }
 
 func filterFileInfos(mcpContext *MCPToolContext, infos []*model.FileInfo) []*model.FileInfo {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return infos
 	}
 	r := mcpContext.channelResolver()
@@ -389,7 +367,7 @@ func filterFileInfos(mcpContext *MCPToolContext, infos []*model.FileInfo) []*mod
 }
 
 func filterChannelMembers(mcpContext *MCPToolContext, members model.ChannelMembers) model.ChannelMembers {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return members
 	}
 	r := mcpContext.channelResolver()
@@ -405,7 +383,7 @@ func filterChannelMembers(mcpContext *MCPToolContext, members model.ChannelMembe
 }
 
 func filterSidebarCategories(mcpContext *MCPToolContext, categories []*model.SidebarCategoryWithChannels) []*model.SidebarCategoryWithChannels {
-	if mcpContext == nil || !mcpContext.IsBotSession {
+	if !mcpContext.IsBotSession {
 		return categories
 	}
 	r := mcpContext.channelResolver()

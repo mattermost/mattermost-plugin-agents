@@ -96,7 +96,7 @@ func (p *MattermostToolProvider) toolListScheduledPosts(mcpContext *MCPToolConte
 		return "", err
 	}
 
-	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, args.TeamID, includeDirectChannels(mcpContext))
+	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, args.TeamID, !mcpContext.IsBotSession)
 	if err != nil {
 		return "", fmt.Errorf("error fetching scheduled posts: %w", err)
 	}
@@ -231,7 +231,7 @@ func (p *MattermostToolProvider) findScheduledPost(mcpContext *MCPToolContext, c
 		teamID = teams[0].Id
 	}
 
-	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, teamID, includeDirectChannels(mcpContext))
+	byChannel, _, err := mcpContext.Client.GetUserScheduledPosts(mcpContext.Ctx, teamID, !mcpContext.IsBotSession)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching scheduled posts: %w", err)
 	}

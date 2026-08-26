@@ -386,7 +386,7 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	}
 
 	if opts.ExcludeDirectAndGroup {
-		queryBuilder = queryBuilder.Where(sq.NotEq{"c.Type": []string{"D", "G"}})
+		queryBuilder = queryBuilder.Where(sq.Eq{"c.Type": []string{"O", "P"}})
 	}
 
 	if opts.CreatedAfter != 0 {

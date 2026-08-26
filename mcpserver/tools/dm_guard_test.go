@@ -42,25 +42,6 @@ func TestIsVerifiedOpenOrPrivate(t *testing.T) {
 	}
 }
 
-func TestIsDirectOrGroupChannel(t *testing.T) {
-	tests := []struct {
-		name string
-		ch   *model.Channel
-		want bool
-	}{
-		{"nil", nil, false},
-		{"open", &model.Channel{Type: model.ChannelTypeOpen}, false},
-		{"private", &model.Channel{Type: model.ChannelTypePrivate}, false},
-		{"direct", &model.Channel{Type: model.ChannelTypeDirect}, true},
-		{"group", &model.Channel{Type: model.ChannelTypeGroup}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isDirectOrGroupChannel(tt.ch))
-		})
-	}
-}
-
 func TestWithoutDirectAndGroup(t *testing.T) {
 	open := &model.Channel{Id: "o", Type: model.ChannelTypeOpen, DisplayName: "Town Square"}
 	dm := &model.Channel{Id: "d", Type: model.ChannelTypeDirect}
@@ -130,9 +111,14 @@ func TestRejectDirectOrGroupArgs(t *testing.T) {
 		{"bot session with nested uppercase CHANNEL_ID is rejected", botCtx, map[string]any{"trigger": map[string]any{"CHANNEL_ID": dmID}}, errDirectOrGroupInaccessible},
 		{"bot session with in: DM channel ID is rejected", botCtx, map[string]any{"in": dmID}, errDirectOrGroupInaccessible},
 		{"bot session with in: channel name is not resolved as an ID", botCtx, map[string]any{"in": "town-square"}, nil},
+		{"bot session with before: DM post ID is rejected", botCtx, map[string]any{"before": dmPostID}, errDirectOrGroupInaccessible},
+		{"bot session with after: DM post ID is rejected", botCtx, map[string]any{"after": dmPostID}, errDirectOrGroupInaccessible},
+		{"bot session with before: open post ID is allowed", botCtx, map[string]any{"before": openPostID}, nil},
+		{"bot session with after: open post ID is allowed", botCtx, map[string]any{"after": openPostID}, nil},
+		{"bot session with before: date is not resolved as an ID", botCtx, map[string]any{"before": "2024-01-01"}, nil},
+		{"bot session with after: date is not resolved as an ID", botCtx, map[string]any{"after": "2024-01-31"}, nil},
 		{"bot session dm tool args (username) are not guarded", botCtx, map[string]any{"username": "alice", "message": "hi"}, nil},
 		{"bot session group_message args (usernames) are not guarded", botCtx, map[string]any{"usernames": []any{"alice", "bob"}, "message": "hi"}, nil},
-		{"nil context is a no-op", nil, map[string]any{"channel_id": dmID}, nil},
 		{"empty args are a no-op", botCtx, map[string]any{}, nil},
 	}
 
@@ -171,23 +157,41 @@ func TestCreateMCPToolContextIsBotSession(t *testing.T) {
 	human := &model.User{Id: model.NewId(), IsBot: false}
 	bot := &model.User{Id: model.NewId(), IsBot: true}
 
+	patAuth := func(t *testing.T, user *model.User) auth.AuthenticationProvider {
+		t.Helper()
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/v4/users/me" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(user)
+		}))
+		t.Cleanup(ts.Close)
+		return auth.NewTokenAuthenticationProvider(ts.URL, "", "pat-token", &testLogger{t: t})
+	}
+
 	tests := []struct {
 		name       string
-		auth       auth.AuthenticationProvider
+		auth       func(t *testing.T) auth.AuthenticationProvider
 		wantBot    bool
 		wantUserID string
 	}{
-		{"human user", identityAuthProvider{user: human}, false, human.Id},
-		{"bot user", identityAuthProvider{user: bot}, true, bot.Id},
-		{"lookup error fails closed", identityAuthProvider{err: fmt.Errorf("unavailable")}, true, ""},
-		{"nil user fails closed", identityAuthProvider{}, true, ""},
-		{"no identity provider fails closed", fakeToolAuthProvider{}, true, ""},
+		{"human user", func(*testing.T) auth.AuthenticationProvider { return identityAuthProvider{user: human} }, false, human.Id},
+		{"bot user", func(*testing.T) auth.AuthenticationProvider { return identityAuthProvider{user: bot} }, true, bot.Id},
+		{"lookup error fails closed", func(*testing.T) auth.AuthenticationProvider {
+			return identityAuthProvider{err: fmt.Errorf("unavailable")}
+		}, true, ""},
+		{"nil user fails closed", func(*testing.T) auth.AuthenticationProvider { return identityAuthProvider{} }, true, ""},
+		{"no identity provider fails closed", func(*testing.T) auth.AuthenticationProvider { return fakeToolAuthProvider{} }, true, ""},
+		{"human PAT session is not a bot session", func(t *testing.T) auth.AuthenticationProvider { return patAuth(t, human) }, false, human.Id},
+		{"bot PAT session is a bot session", func(t *testing.T) auth.AuthenticationProvider { return patAuth(t, bot) }, true, bot.Id},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := &MattermostToolProvider{
-				authProvider: tt.auth,
+				authProvider: tt.auth(t),
 				logger:       &testLogger{t: t},
 				mmServerURL:  "https://mm.example.com",
 				accessMode:   AccessModeRemote,
@@ -198,81 +202,6 @@ func TestCreateMCPToolContextIsBotSession(t *testing.T) {
 			assert.Equal(t, tt.wantUserID, mcpCtx.UserID)
 		})
 	}
-}
-
-func TestExecuteSemanticSearchSetsExcludeDirectAndGroup(t *testing.T) {
-	tests := []struct {
-		name    string
-		exclude bool
-	}{
-		{"bot session", true},
-		{"human session", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			capturing := &capturingSearchService{}
-			provider := &MattermostToolProvider{
-				logger:        &testLogger{t: t},
-				searchService: capturing,
-			}
-			_, err := provider.executeSemanticSearch(t.Context(), newTestClient("https://mm.example.com"), CombinedSearchArgs{
-				Query:         "hello",
-				SemanticLimit: 10,
-			}, "user1", tt.exclude)
-			require.NoError(t, err)
-			assert.Equal(t, tt.exclude, capturing.lastOpts.ExcludeDirectAndGroup)
-		})
-	}
-}
-
-func TestExecuteKeywordSearchFiltersDirectAndGroup(t *testing.T) {
-	openID := model.NewId()
-	dmID := model.NewId()
-	openPost := &model.Post{Id: model.NewId(), ChannelId: openID, UserId: model.NewId(), Message: "public", CreateAt: 2}
-	dmPost := &model.Post{Id: model.NewId(), ChannelId: dmID, UserId: model.NewId(), Message: "secret", CreateAt: 1}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v4/posts/search", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.PostList{
-			Order: []string{openPost.Id, dmPost.Id},
-			Posts: map[string]*model.Post{openPost.Id: openPost, dmPost.Id: dmPost},
-		})
-	})
-	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", openID), func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.Channel{Id: openID, Type: model.ChannelTypeOpen, DisplayName: "Town Square"})
-	})
-	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", dmID), func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.Channel{Id: dmID, Type: model.ChannelTypeDirect})
-	})
-	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s", openPost.UserId), func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.User{Id: openPost.UserId, Username: "alice"})
-	})
-	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s", dmPost.UserId), func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(&model.User{Id: dmPost.UserId, Username: "bob"})
-	})
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	provider := newTestProvider(t, ts.URL)
-	client := newTestClient(ts.URL)
-	args := CombinedSearchArgs{Query: "hello", KeywordLimit: 10}
-
-	t.Run("human session keeps DM posts", func(t *testing.T) {
-		got, err := provider.executeKeywordSearch(t.Context(), client, args, false)
-		require.NoError(t, err)
-		require.Len(t, got, 2)
-	})
-	t.Run("bot session drops DM posts", func(t *testing.T) {
-		got, err := provider.executeKeywordSearch(t.Context(), client, args, true)
-		require.NoError(t, err)
-		require.Len(t, got, 1)
-		assert.Equal(t, openPost.Id, got[0].Post.Id)
-	})
 }
 
 func TestToolGetUserChannelsFiltersDirectAndGroupForBot(t *testing.T) {
@@ -447,7 +376,7 @@ func TestEveryToolDeclaresDMandGMEnforcement(t *testing.T) {
 	for _, tool := range provider.mcpTools() {
 		registered[tool.Name] = true
 		if _, ok := classified[tool.Name]; !ok {
-			t.Errorf("tool %q is registered but missing from botSessionDMGMEnforcement; classify it as argument-guard, output-filter, argument-guard+output-filter, cannot-reach-dm-gm, or write-by-username", tool.Name)
+			t.Errorf("tool %q is registered but missing from botSessionDMGMEnforcement; classify it with a dmGMEnforcement constant (dmGMArgumentGuard, dmGMOutputFilter, dmGMArgumentGuardAndOutputFilter, dmGMCannotReach, or dmGMWriteByUsername)", tool.Name)
 		}
 	}
 	for name := range classified {
@@ -457,155 +386,167 @@ func TestEveryToolDeclaresDMandGMEnforcement(t *testing.T) {
 	}
 }
 
+// dmGMEnforcement is how a registered MCP tool is kept from returning DM/GM
+// data to a bot session. Invalid values fail to compile.
+type dmGMEnforcement int
+
+const (
+	dmGMArgumentGuard dmGMEnforcement = iota
+	dmGMOutputFilter
+	dmGMArgumentGuardAndOutputFilter
+	dmGMCannotReach
+	dmGMWriteByUsername
+)
+
 // botSessionDMGMEnforcement is the load-bearing inventory of how every MCP tool
 // is kept from returning DM/GM data to a bot session. A newly registered tool
 // must be added here or TestEveryToolDeclaresDMandGMEnforcement fails.
-func botSessionDMGMEnforcement() map[string]string {
-	return map[string]string{
+func botSessionDMGMEnforcement() map[string]dmGMEnforcement {
+	return map[string]dmGMEnforcement{
 		// posts
-		"read_post":           "argument-guard",
-		"create_post":         "argument-guard",
-		"dm":                  "write-by-username",
-		"group_message":       "write-by-username",
-		"get_post_info":       "argument-guard",
-		"list_pinned_posts":   "argument-guard",
-		"list_saved_posts":    "argument-guard+output-filter",
-		"update_post":         "argument-guard",
-		"delete_post":         "argument-guard",
-		"pin_post":            "argument-guard",
-		"unpin_post":          "argument-guard",
-		"save_post":           "argument-guard",
-		"acknowledge_post":    "argument-guard",
-		"create_post_as_user": "argument-guard",
+		"read_post":           dmGMArgumentGuard,
+		"create_post":         dmGMArgumentGuard,
+		"dm":                  dmGMWriteByUsername,
+		"group_message":       dmGMWriteByUsername,
+		"get_post_info":       dmGMArgumentGuard,
+		"list_pinned_posts":   dmGMArgumentGuard,
+		"list_saved_posts":    dmGMArgumentGuardAndOutputFilter,
+		"update_post":         dmGMArgumentGuard,
+		"delete_post":         dmGMArgumentGuard,
+		"pin_post":            dmGMArgumentGuard,
+		"unpin_post":          dmGMArgumentGuard,
+		"save_post":           dmGMArgumentGuard,
+		"acknowledge_post":    dmGMArgumentGuard,
+		"create_post_as_user": dmGMArgumentGuard,
 		// scheduled posts
-		"list_scheduled_posts":  "output-filter",
-		"create_scheduled_post": "argument-guard",
-		"update_scheduled_post": "argument-guard+output-filter",
-		"delete_scheduled_post": "output-filter",
-		"set_post_reminder":     "argument-guard",
+		"list_scheduled_posts":  dmGMOutputFilter,
+		"create_scheduled_post": dmGMArgumentGuard,
+		"update_scheduled_post": dmGMArgumentGuardAndOutputFilter,
+		"delete_scheduled_post": dmGMOutputFilter,
+		"set_post_reminder":     dmGMArgumentGuard,
 		// reactions
-		"get_post_reactions":  "argument-guard",
-		"get_bulk_reactions":  "argument-guard",
-		"list_custom_emoji":   "cannot-reach-dm-gm",
-		"search_custom_emoji": "cannot-reach-dm-gm",
-		"add_reaction":        "argument-guard",
-		"remove_reaction":     "argument-guard",
+		"get_post_reactions":  dmGMArgumentGuard,
+		"get_bulk_reactions":  dmGMArgumentGuard,
+		"list_custom_emoji":   dmGMCannotReach,
+		"search_custom_emoji": dmGMCannotReach,
+		"add_reaction":        dmGMArgumentGuard,
+		"remove_reaction":     dmGMArgumentGuard,
 		// threads / unreads
-		"get_threads":             "output-filter",
-		"get_mentions":            "output-filter",
-		"get_unread_counts":       "cannot-reach-dm-gm",
-		"get_channel_unread":      "argument-guard",
-		"get_posts_around_unread": "argument-guard",
-		"mark_channel_read":       "argument-guard",
-		"mark_channels_viewed":    "argument-guard",
-		"mark_post_unread":        "argument-guard",
-		"set_thread_follow":       "argument-guard",
+		"get_threads":             dmGMOutputFilter,
+		"get_mentions":            dmGMOutputFilter,
+		"get_unread_counts":       dmGMCannotReach,
+		"get_channel_unread":      dmGMArgumentGuard,
+		"get_posts_around_unread": dmGMArgumentGuard,
+		"mark_channel_read":       dmGMArgumentGuard,
+		"mark_channels_viewed":    dmGMArgumentGuard,
+		"mark_post_unread":        dmGMArgumentGuard,
+		"set_thread_follow":       dmGMArgumentGuard,
 		// channels
-		"read_channel":              "argument-guard",
-		"create_channel":            "cannot-reach-dm-gm",
-		"get_channel_info":          "argument-guard+output-filter",
-		"get_channel_members":       "argument-guard",
-		"add_channel_member":        "argument-guard",
-		"get_user_channels":         "output-filter",
-		"get_channel_stats":         "argument-guard",
-		"get_channel_member_counts": "argument-guard",
-		"search_channels":           "output-filter",
-		"list_team_channels":        "cannot-reach-dm-gm",
-		"list_archived_channels":    "cannot-reach-dm-gm",
-		"update_channel":            "argument-guard",
-		"archive_channel":           "argument-guard",
-		"restore_channel":           "argument-guard",
-		"convert_channel_privacy":   "argument-guard",
+		"read_channel":              dmGMArgumentGuard,
+		"create_channel":            dmGMCannotReach,
+		"get_channel_info":          dmGMArgumentGuardAndOutputFilter,
+		"get_channel_members":       dmGMArgumentGuard,
+		"add_channel_member":        dmGMArgumentGuard,
+		"get_user_channels":         dmGMOutputFilter,
+		"get_channel_stats":         dmGMArgumentGuard,
+		"get_channel_member_counts": dmGMArgumentGuard,
+		"search_channels":           dmGMOutputFilter,
+		"list_team_channels":        dmGMCannotReach,
+		"list_archived_channels":    dmGMCannotReach,
+		"update_channel":            dmGMArgumentGuard,
+		"archive_channel":           dmGMArgumentGuard,
+		"restore_channel":           dmGMArgumentGuard,
+		"convert_channel_privacy":   dmGMArgumentGuard,
 		// channel members
-		"get_channel_member":            "argument-guard",
-		"get_channel_members_by_ids":    "argument-guard",
-		"get_channel_members_by_status": "argument-guard",
-		"get_user_channel_memberships":  "output-filter",
-		"get_users_not_in_channel":      "argument-guard",
-		"search_users_in_channel":       "argument-guard",
-		"list_sidebar_categories":       "output-filter",
-		"add_channel_members":           "argument-guard",
-		"remove_channel_member":         "argument-guard",
-		"set_channel_mute":              "argument-guard",
-		"set_channel_favorite":          "argument-guard",
-		"update_channel_notify_props":   "argument-guard",
+		"get_channel_member":            dmGMArgumentGuard,
+		"get_channel_members_by_ids":    dmGMArgumentGuard,
+		"get_channel_members_by_status": dmGMArgumentGuard,
+		"get_user_channel_memberships":  dmGMOutputFilter,
+		"get_users_not_in_channel":      dmGMArgumentGuard,
+		"search_users_in_channel":       dmGMArgumentGuard,
+		"list_sidebar_categories":       dmGMOutputFilter,
+		"add_channel_members":           dmGMArgumentGuard,
+		"remove_channel_member":         dmGMArgumentGuard,
+		"set_channel_mute":              dmGMArgumentGuard,
+		"set_channel_favorite":          dmGMArgumentGuard,
+		"update_channel_notify_props":   dmGMArgumentGuard,
 		// bookmarks
-		"list_channel_bookmarks":  "argument-guard",
-		"create_channel_bookmark": "argument-guard",
-		"update_channel_bookmark": "argument-guard",
-		"delete_channel_bookmark": "argument-guard",
+		"list_channel_bookmarks":  dmGMArgumentGuard,
+		"create_channel_bookmark": dmGMArgumentGuard,
+		"update_channel_bookmark": dmGMArgumentGuard,
+		"delete_channel_bookmark": dmGMArgumentGuard,
 		// users
-		"get_me":                 "cannot-reach-dm-gm",
-		"get_user":               "cannot-reach-dm-gm",
-		"get_user_by_username":   "cannot-reach-dm-gm",
-		"get_user_by_email":      "cannot-reach-dm-gm",
-		"get_users_by_ids":       "cannot-reach-dm-gm",
-		"get_users_by_usernames": "cannot-reach-dm-gm",
-		"get_user_stats":         "cannot-reach-dm-gm",
-		"get_user_cpa_values":    "cannot-reach-dm-gm",
-		"list_cpa_fields":        "cannot-reach-dm-gm",
-		"update_user":            "cannot-reach-dm-gm",
-		"create_user":            "cannot-reach-dm-gm",
+		"get_me":                 dmGMCannotReach,
+		"get_user":               dmGMCannotReach,
+		"get_user_by_username":   dmGMCannotReach,
+		"get_user_by_email":      dmGMCannotReach,
+		"get_users_by_ids":       dmGMCannotReach,
+		"get_users_by_usernames": dmGMCannotReach,
+		"get_user_stats":         dmGMCannotReach,
+		"get_user_cpa_values":    dmGMCannotReach,
+		"list_cpa_fields":        dmGMCannotReach,
+		"update_user":            dmGMCannotReach,
+		"create_user":            dmGMCannotReach,
 		// status
-		"get_user_status":        "cannot-reach-dm-gm",
-		"get_users_statuses":     "cannot-reach-dm-gm",
-		"get_user_custom_status": "cannot-reach-dm-gm",
-		"set_status":             "cannot-reach-dm-gm",
-		"set_dnd":                "cannot-reach-dm-gm",
+		"get_user_status":        dmGMCannotReach,
+		"get_users_statuses":     dmGMCannotReach,
+		"get_user_custom_status": dmGMCannotReach,
+		"set_status":             dmGMCannotReach,
+		"set_dnd":                dmGMCannotReach,
 		// teams
-		"get_team_info":                     "cannot-reach-dm-gm",
-		"get_team_members":                  "cannot-reach-dm-gm",
-		"add_team_member":                   "cannot-reach-dm-gm",
-		"get_team_member":                   "cannot-reach-dm-gm",
-		"get_team_stats":                    "cannot-reach-dm-gm",
-		"get_user_teams":                    "cannot-reach-dm-gm",
-		"get_users_in_team":                 "cannot-reach-dm-gm",
-		"get_users_not_in_team":             "cannot-reach-dm-gm",
-		"get_new_users_in_team":             "cannot-reach-dm-gm",
-		"get_dm_common_teams":               "cannot-reach-dm-gm",
-		"search_teams":                      "cannot-reach-dm-gm",
-		"search_users_in_team":              "cannot-reach-dm-gm",
-		"add_team_members":                  "cannot-reach-dm-gm",
-		"remove_team_member":                "cannot-reach-dm-gm",
-		"update_team":                       "cannot-reach-dm-gm",
-		"invite_users_to_team":              "cannot-reach-dm-gm",
-		"invite_users_to_team_and_channels": "argument-guard",
-		"create_team":                       "cannot-reach-dm-gm",
+		"get_team_info":                     dmGMCannotReach,
+		"get_team_members":                  dmGMCannotReach,
+		"add_team_member":                   dmGMCannotReach,
+		"get_team_member":                   dmGMCannotReach,
+		"get_team_stats":                    dmGMCannotReach,
+		"get_user_teams":                    dmGMCannotReach,
+		"get_users_in_team":                 dmGMCannotReach,
+		"get_users_not_in_team":             dmGMCannotReach,
+		"get_new_users_in_team":             dmGMCannotReach,
+		"get_dm_common_teams":               dmGMArgumentGuard,
+		"search_teams":                      dmGMCannotReach,
+		"search_users_in_team":              dmGMCannotReach,
+		"add_team_members":                  dmGMCannotReach,
+		"remove_team_member":                dmGMCannotReach,
+		"update_team":                       dmGMCannotReach,
+		"invite_users_to_team":              dmGMCannotReach,
+		"invite_users_to_team_and_channels": dmGMArgumentGuard,
+		"create_team":                       dmGMCannotReach,
 		// search
-		"search_posts": "argument-guard+output-filter",
-		"search_users": "cannot-reach-dm-gm",
+		"search_posts": dmGMArgumentGuardAndOutputFilter,
+		"search_users": dmGMCannotReach,
 		// files
-		"read_file":      "argument-guard",
-		"get_file_info":  "argument-guard",
-		"get_post_files": "argument-guard",
-		"get_file_link":  "argument-guard",
-		"search_files":   "output-filter",
-		"upload_file":    "argument-guard",
+		"read_file":      dmGMArgumentGuard,
+		"get_file_info":  dmGMArgumentGuard,
+		"get_post_files": dmGMArgumentGuard,
+		"get_file_link":  dmGMArgumentGuard,
+		"search_files":   dmGMOutputFilter,
+		"upload_file":    dmGMArgumentGuard,
 		// integrations
-		"get_bot":                "cannot-reach-dm-gm",
-		"list_bots":              "cannot-reach-dm-gm",
-		"list_incoming_webhooks": "cannot-reach-dm-gm",
-		"list_outgoing_webhooks": "argument-guard",
+		"get_bot":                dmGMCannotReach,
+		"list_bots":              dmGMCannotReach,
+		"list_incoming_webhooks": dmGMCannotReach,
+		"list_outgoing_webhooks": dmGMCannotReach,
 		// groups
-		"get_group_info":              "cannot-reach-dm-gm",
-		"list_groups":                 "cannot-reach-dm-gm",
-		"get_user_groups":             "cannot-reach-dm-gm",
-		"get_channel_groups":          "argument-guard",
-		"get_team_groups":             "cannot-reach-dm-gm",
-		"get_users_in_group_channels": "argument-guard",
+		"get_group_info":              dmGMCannotReach,
+		"list_groups":                 dmGMCannotReach,
+		"get_user_groups":             dmGMCannotReach,
+		"get_channel_groups":          dmGMArgumentGuard,
+		"get_team_groups":             dmGMCannotReach,
+		"get_users_in_group_channels": dmGMArgumentGuard,
 		// roles
-		"get_role":                    "cannot-reach-dm-gm",
-		"get_channel_moderations":     "argument-guard",
-		"update_channel_member_roles": "argument-guard",
-		"update_team_member_roles":    "cannot-reach-dm-gm",
+		"get_role":                    dmGMCannotReach,
+		"get_channel_moderations":     dmGMArgumentGuard,
+		"update_channel_member_roles": dmGMArgumentGuard,
+		"update_team_member_roles":    dmGMCannotReach,
 		// agents
-		"list_agents": "cannot-reach-dm-gm",
+		"list_agents": dmGMCannotReach,
 		// automations
-		"list_automations":            "argument-guard+output-filter",
-		"get_automation_instructions": "cannot-reach-dm-gm",
-		"create_automation":           "argument-guard",
-		"update_automation":           "argument-guard+output-filter",
-		"delete_automation":           "output-filter",
+		"list_automations":            dmGMArgumentGuardAndOutputFilter,
+		"get_automation_instructions": dmGMCannotReach,
+		"create_automation":           dmGMArgumentGuard,
+		"update_automation":           dmGMArgumentGuardAndOutputFilter,
+		"delete_automation":           dmGMOutputFilter,
 	}
 }
 
@@ -653,6 +594,7 @@ func TestExecuteSemanticSearchFiltersDirectAndGroup(t *testing.T) {
 		got, err := provider.executeSemanticSearch(t.Context(), client, args, "user1", false)
 		require.NoError(t, err)
 		require.Len(t, got, 3)
+		assert.False(t, svc.lastOpts.ExcludeDirectAndGroup)
 	})
 	t.Run("bot session drops DM and unverified hits", func(t *testing.T) {
 		got, err := provider.executeSemanticSearch(t.Context(), client, args, "user1", true)
@@ -925,6 +867,69 @@ func TestToolListSidebarCategoriesFiltersDirectAndGroupForBot(t *testing.T) {
 		assert.NotContains(t, out, dmID)
 		assert.NotContains(t, out, "Direct Messages")
 	})
+}
+
+func TestToolListSavedPostsRequiresScopeForBot(t *testing.T) {
+	userID := model.NewId()
+	teamID := model.NewId()
+	channelID := model.NewId()
+	openPost := &model.Post{Id: model.NewId(), ChannelId: channelID, UserId: userID, Message: "saved in town square", CreateAt: 1}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/v4/users/%s/posts/flagged", userID), func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&model.PostList{
+			Order: []string{openPost.Id},
+			Posts: map[string]*model.Post{openPost.Id: openPost},
+		})
+	})
+	mux.HandleFunc(fmt.Sprintf("/api/v4/channels/%s", channelID), serveJSON(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}))
+	mux.HandleFunc("/api/v4/users/ids", serveJSON([]*model.User{{Id: userID, Username: "alice"}}))
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	provider := newTestProvider(t, ts.URL)
+	client := newTestClient(ts.URL)
+
+	tests := []struct {
+		name         string
+		ctx          *MCPToolContext
+		args         ListSavedPostsArgs
+		wantErr      string
+		wantContains string
+	}{
+		{
+			name:    "bot session without scope is rejected",
+			ctx:     &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID, IsBotSession: true},
+			args:    ListSavedPostsArgs{},
+			wantErr: "team_id or channel_id is required",
+		},
+		{
+			name:         "bot session with team_id succeeds",
+			ctx:          &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID, IsBotSession: true},
+			args:         ListSavedPostsArgs{TeamID: teamID},
+			wantContains: "saved in town square",
+		},
+		{
+			name:         "human session without scope succeeds",
+			ctx:          &MCPToolContext{Client: client, Ctx: t.Context(), UserID: userID},
+			args:         ListSavedPostsArgs{},
+			wantContains: "saved in town square",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := provider.toolListSavedPosts(tt.ctx, tt.args)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Contains(t, out, tt.wantContains)
+		})
+	}
 }
 
 func TestToolSearchFilesFiltersDirectAndGroupForBot(t *testing.T) {

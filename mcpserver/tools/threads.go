@@ -106,12 +106,9 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 	}
 
 	opts := model.GetUserThreadsOpts{
-		PageSize: uint64(args.Limit),
-		Extended: true,
-		Unread:   args.UnreadOnly,
-		// TeamOnly is the documented exclude-DM option; this Client4
-		// serializes ExcludeDirect, not TeamOnly, so both are set.
-		TeamOnly:      mcpContext.IsBotSession,
+		PageSize:      uint64(args.Limit),
+		Extended:      true,
+		Unread:        args.UnreadOnly,
 		ExcludeDirect: mcpContext.IsBotSession,
 	}
 	threads, _, err := mcpContext.Client.GetUserThreads(mcpContext.Ctx, userID, args.TeamID, opts)
@@ -279,7 +276,7 @@ func (p *MattermostToolProvider) toolGetPostsAroundUnread(mcpContext *MCPToolCon
 		return "", fmt.Errorf("error fetching posts around unread: %w", err)
 	}
 
-	return p.formatPostListChrono(mcpContext, visiblePostList(mcpContext, postList), "posts around your last-read line"), nil
+	return p.formatPostListChrono(mcpContext, postList, "posts around your last-read line"), nil
 }
 
 // toolMarkChannelRead implements the mark_channel_read tool.

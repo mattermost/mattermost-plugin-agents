@@ -1622,6 +1622,7 @@ func TestSearchExcludeDirectAndGroup(t *testing.T) {
 		{id: "private-channel", channelType: "P", postID: "private-post"},
 		{id: "dm-channel", channelType: "D", postID: "dm-post"},
 		{id: "gm-channel", channelType: "G", postID: "gm-post"},
+		{id: "unknown-channel", channelType: "X", postID: "unknown-post"},
 	}
 
 	postIDs := make([]string, len(channels))
@@ -1667,15 +1668,15 @@ func TestSearchExcludeDirectAndGroup(t *testing.T) {
 		wantMissingPostIDs    []string
 	}{
 		{
-			name:                  "off includes D and G",
+			name:                  "off includes D, G, and unknown types",
 			excludeDirectAndGroup: false,
-			wantPostIDs:           []string{"open-post", "private-post", "dm-post", "gm-post"},
+			wantPostIDs:           []string{"open-post", "private-post", "dm-post", "gm-post", "unknown-post"},
 		},
 		{
-			name:                  "on excludes D and G",
+			name:                  "on allows only O and P",
 			excludeDirectAndGroup: true,
 			wantPostIDs:           []string{"open-post", "private-post"},
-			wantMissingPostIDs:    []string{"dm-post", "gm-post"},
+			wantMissingPostIDs:    []string{"dm-post", "gm-post", "unknown-post"},
 		},
 	}
 
