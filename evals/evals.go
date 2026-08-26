@@ -40,55 +40,56 @@ type Eval struct {
 	runNumber int
 }
 
+// simpleProviders describes providers that need only an API key and a model.
+// Providers with extra requirements (azure, openaicompatible, bedrock) are
+// handled as explicit branches in createProvider.
+var simpleProviders = map[string]struct {
+	provider     schemas.ModelProvider
+	keyEnv       string
+	modelEnv     string
+	defaultModel string
+	reasoning    bool
+}{
+	"openai":    {schemas.OpenAI, "OPENAI_API_KEY", "OPENAI_MODEL", DefaultOpenAIModel, false},
+	"anthropic": {schemas.Anthropic, "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", DefaultAnthropicModel, true},
+	"mistral":   {schemas.Mistral, "MISTRAL_API_KEY", "MISTRAL_MODEL", DefaultMistralModel, false},
+	"cohere":    {schemas.Cohere, "COHERE_API_KEY", "COHERE_MODEL", "command-r-plus", false},
+}
+
+// resolveModel picks the model to use: the explicit override, then the
+// provider's model environment variable, then the provider default.
+func resolveModel(override, modelEnv, defaultModel string) string {
+	if override != "" {
+		return override
+	}
+	if model := os.Getenv(modelEnv); model != "" {
+		return model
+	}
+	return defaultModel
+}
+
 // createProvider creates an LLM provider based on the provider name using Bifrost
 // Reads configuration from environment variables with optional model override
 func createProvider(providerName string, modelOverride string) (llm.LanguageModel, error) {
 	timeout := 20 * time.Second
+	name := strings.ToLower(providerName)
 
-	switch strings.ToLower(providerName) {
-	case "openai":
-		apiKey := os.Getenv("OPENAI_API_KEY")
+	if p, ok := simpleProviders[name]; ok {
+		apiKey := os.Getenv(p.keyEnv)
 		if apiKey == "" {
-			return nil, errors.New("OPENAI_API_KEY environment variable is not set")
-		}
-
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("OPENAI_MODEL")
-			if model == "" {
-				model = DefaultOpenAIModel
-			}
+			return nil, fmt.Errorf("%s environment variable is not set", p.keyEnv)
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.OpenAI,
+			Provider:         p.provider,
 			APIKey:           apiKey,
-			DefaultModel:     model,
+			DefaultModel:     resolveModel(modelOverride, p.modelEnv, p.defaultModel),
 			StreamingTimeout: timeout,
+			ReasoningEnabled: p.reasoning,
 		})
+	}
 
-	case "anthropic":
-		apiKey := os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey == "" {
-			return nil, errors.New("ANTHROPIC_API_KEY environment variable is not set")
-		}
-
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("ANTHROPIC_MODEL")
-			if model == "" {
-				model = DefaultAnthropicModel
-			}
-		}
-
-		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Anthropic,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
-			ReasoningEnabled: true,
-		})
-
+	switch name {
 	case "azure":
 		apiKey := os.Getenv("AZURE_OPENAI_API_KEY")
 		if apiKey == "" {
@@ -100,19 +101,11 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			return nil, errors.New("AZURE_OPENAI_ENDPOINT environment variable is not set")
 		}
 
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("AZURE_OPENAI_MODEL")
-			if model == "" {
-				model = DefaultAzureModel
-			}
-		}
-
 		return bifrost.New(bifrost.Config{
 			Provider:         schemas.Azure,
 			APIKey:           apiKey,
 			APIURL:           apiURL,
-			DefaultModel:     model,
+			DefaultModel:     resolveModel(modelOverride, "AZURE_OPENAI_MODEL", DefaultAzureModel),
 			StreamingTimeout: timeout,
 		})
 
@@ -122,42 +115,16 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			return nil, errors.New("OPENAI_COMPATIBLE_API_URL environment variable is not set")
 		}
 
-		model := modelOverride
+		model := resolveModel(modelOverride, "OPENAI_COMPATIBLE_MODEL", "")
 		if model == "" {
-			model = os.Getenv("OPENAI_COMPATIBLE_MODEL")
-			if model == "" {
-				return nil, errors.New("OPENAI_COMPATIBLE_MODEL environment variable is not set")
-			}
+			return nil, errors.New("OPENAI_COMPATIBLE_MODEL environment variable is not set")
 		}
 
-		// API key is optional for local LLMs
-		apiKey := os.Getenv("OPENAI_COMPATIBLE_API_KEY")
-
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.OpenAI,
-			APIKey:           apiKey,
+			Provider: schemas.OpenAI,
+			// API key is optional for local LLMs
+			APIKey:           os.Getenv("OPENAI_COMPATIBLE_API_KEY"),
 			APIURL:           apiURL,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
-		})
-
-	case "mistral":
-		apiKey := os.Getenv("MISTRAL_API_KEY")
-		if apiKey == "" {
-			return nil, errors.New("MISTRAL_API_KEY environment variable is not set")
-		}
-
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("MISTRAL_MODEL")
-			if model == "" {
-				model = DefaultMistralModel
-			}
-		}
-
-		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Mistral,
-			APIKey:           apiKey,
 			DefaultModel:     model,
 			StreamingTimeout: timeout,
 		})
@@ -168,42 +135,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 			return nil, errors.New("AWS_BEDROCK_REGION environment variable is not set")
 		}
 
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("AWS_BEDROCK_MODEL")
-			if model == "" {
-				model = DefaultBedrockModel
-			}
-		}
-
 		return bifrost.New(bifrost.Config{
 			Provider:           schemas.Bedrock,
 			Region:             region,
 			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
 			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-			DefaultModel:       model,
+			DefaultModel:       resolveModel(modelOverride, "AWS_BEDROCK_MODEL", DefaultBedrockModel),
 			StreamingTimeout:   timeout,
-		})
-
-	case "cohere":
-		apiKey := os.Getenv("COHERE_API_KEY")
-		if apiKey == "" {
-			return nil, errors.New("COHERE_API_KEY environment variable is not set")
-		}
-
-		model := modelOverride
-		if model == "" {
-			model = os.Getenv("COHERE_MODEL")
-			if model == "" {
-				model = "command-r-plus"
-			}
-		}
-
-		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Cohere,
-			APIKey:           apiKey,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
 		})
 
 	default:
