@@ -92,7 +92,7 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - A fresh checkout does not compile: run `make apply` first to generate `server/manifest.go` (`undefined: manifest` errors otherwise).
 - The repo has three Go modules: the root, `loadtest/controller/`, and `cmd/evalviewer/`. Go version bumps, `go mod tidy`, and `go fix` must be run in each.
 - `webapp/node_modules/` contains stray Go files that `./...` matches; for sweeping Go commands use `$(go list ./... | grep -v node_modules)`.
-- Bumping the Go version: update the `go` directive in all three modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
+- Bumping the Go version: update the `go` directive in all three modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. **Check the image exists first** (tag-listing procedure in `build/fips.mk`): the `go` directive is held at 1.26.x until `cgr.dev/mattermost.com/go-msft-fips` publishes a 1.27 toolchain — do not bump past what that registry offers. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
 
 ## Pull requests and commits
 

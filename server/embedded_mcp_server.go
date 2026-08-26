@@ -47,10 +47,12 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 
 	// Create configuration for in-memory transport
 	config := mcpserver.InMemoryConfig{
-		MMServerURL: siteURL,
-		// Use the internal server URL for API communication within the container
-		MMInternalServerURL: internalServerURL,
-		DevMode:             false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: siteURL,
+			// Use the internal server URL for API communication within the container
+			MMInternalServerURL: internalServerURL,
+			DevMode:             false,
+		},
 	}
 
 	// Create a logger adapter that routes MCP server logs through the plugin's logging system

@@ -37,8 +37,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 
 	t.Run("ValidConfiguration", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -49,8 +51,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 
 	t.Run("InvalidServerURL", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         "http://invalid-server-url:9999",
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: "http://invalid-server-url:9999",
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -61,8 +65,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 
 	t.Run("InvalidToken", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: "invalid-token-12345",
 		}
 		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -73,8 +79,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 
 	t.Run("EmptyToken", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: "",
 		}
 		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -86,8 +94,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 
 	t.Run("DevModeConfiguration", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             true,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     true,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -99,8 +109,10 @@ func TestMCPServerConfiguration(t *testing.T) {
 	t.Run("StdioTransportFixed", func(t *testing.T) {
 		// STDIO constructor always uses stdio transport
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -128,8 +140,10 @@ func TestAuthentication(t *testing.T) {
 	t.Run("TokenValidationAtStartup", func(t *testing.T) {
 		// This tests the startup token validation that happens in NewMattermostMCPServer
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -155,8 +169,10 @@ func TestMCPServerStartupValidation(t *testing.T) {
 	t.Run("SuccessfulStartupValidation", func(t *testing.T) {
 		// This internally calls validateTokenAtStartup
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -167,8 +183,10 @@ func TestMCPServerStartupValidation(t *testing.T) {
 
 	t.Run("StartupValidationWithInvalidServer", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         "http://nonexistent-server:8065",
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: "http://nonexistent-server:8065",
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -179,8 +197,10 @@ func TestMCPServerStartupValidation(t *testing.T) {
 
 	t.Run("StartupValidationWithUnauthorizedToken", func(t *testing.T) {
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: "unauthorized-token-123",
 		}
 		_, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)
@@ -192,8 +212,10 @@ func TestMCPServerStartupValidation(t *testing.T) {
 	t.Run("ValidTokenAlwaysValidated", func(t *testing.T) {
 		// STDIO servers always validate tokens at startup
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         suite.serverURL,
-			DevMode:             false,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL: suite.serverURL,
+				DevMode:     false,
+			},
 			PersonalAccessToken: suite.adminToken,
 		}
 		mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, nil)

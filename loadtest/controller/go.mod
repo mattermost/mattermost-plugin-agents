@@ -1,6 +1,6 @@
 module github.com/mattermost/mattermost-plugin-agents/loadtest/controller
 
-go 1.27.0
+go 1.26.7
 
 require (
 	github.com/blang/semver v3.5.1+incompatible

@@ -760,7 +760,9 @@ func TestTimeFromMillis(t *testing.T) {
 
 func TestWriteScheduledPost(t *testing.T) {
 	sp := &model.ScheduledPost{
-		ChannelId: "chan12345678901234567890ab", Message: "scheduled hello",
+		Draft: model.Draft{
+			ChannelId: "chan12345678901234567890ab", Message: "scheduled hello",
+		},
 		ScheduledAt: 1700000000000,
 	}
 	sp.Id = "sched1234567890123456789ab"

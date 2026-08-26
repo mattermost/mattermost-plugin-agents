@@ -81,10 +81,12 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         p.provider,
-			APIKey:           apiKey,
-			DefaultModel:     resolveModel(modelOverride, p.modelEnv, p.defaultModel),
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         p.provider,
+				APIKey:           apiKey,
+				DefaultModel:     resolveModel(modelOverride, p.modelEnv, p.defaultModel),
+				StreamingTimeout: timeout,
+			},
 			ReasoningEnabled: p.reasoning,
 		})
 	}
@@ -102,11 +104,13 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:         schemas.Azure,
-			APIKey:           apiKey,
-			APIURL:           apiURL,
-			DefaultModel:     resolveModel(modelOverride, "AZURE_OPENAI_MODEL", DefaultAzureModel),
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:         schemas.Azure,
+				APIKey:           apiKey,
+				APIURL:           apiURL,
+				DefaultModel:     resolveModel(modelOverride, "AZURE_OPENAI_MODEL", DefaultAzureModel),
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "openaicompatible":
@@ -121,12 +125,14 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider: schemas.OpenAI,
-			// API key is optional for local LLMs
-			APIKey:           os.Getenv("OPENAI_COMPATIBLE_API_KEY"),
-			APIURL:           apiURL,
-			DefaultModel:     model,
-			StreamingTimeout: timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider: schemas.OpenAI,
+				// API key is optional for local LLMs
+				APIKey:           os.Getenv("OPENAI_COMPATIBLE_API_KEY"),
+				APIURL:           apiURL,
+				DefaultModel:     model,
+				StreamingTimeout: timeout,
+			},
 		})
 
 	case "bedrock":
@@ -136,12 +142,14 @@ func createProvider(providerName string, modelOverride string) (llm.LanguageMode
 		}
 
 		return bifrost.New(bifrost.Config{
-			Provider:           schemas.Bedrock,
-			Region:             region,
-			AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
-			AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
-			DefaultModel:       resolveModel(modelOverride, "AWS_BEDROCK_MODEL", DefaultBedrockModel),
-			StreamingTimeout:   timeout,
+			ProviderSettings: bifrost.ProviderSettings{
+				Provider:           schemas.Bedrock,
+				Region:             region,
+				AWSAccessKeyID:     os.Getenv("AWS_ACCESS_KEY_ID"),
+				AWSSecretAccessKey: os.Getenv("AWS_SECRET_ACCESS_KEY"),
+				DefaultModel:       resolveModel(modelOverride, "AWS_BEDROCK_MODEL", DefaultBedrockModel),
+				StreamingTimeout:   timeout,
+			},
 		})
 
 	default:

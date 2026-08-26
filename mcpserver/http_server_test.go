@@ -133,8 +133,10 @@ func TestHTTPServerSecurity(t *testing.T) {
 	defer suite.TearDown()
 
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  suite.serverURL,
-		DevMode:      false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: suite.serverURL,
+			DevMode:     false,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 	}
@@ -233,8 +235,10 @@ func TestOAuthMetadataEndpoints(t *testing.T) {
 	defer suite.TearDown()
 
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  suite.serverURL,
-		DevMode:      false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: suite.serverURL,
+			DevMode:     false,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 		SiteURL:      "https://example.com",
@@ -290,8 +294,10 @@ func TestMCPEndpoints(t *testing.T) {
 	defer suite.TearDown()
 
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  suite.serverURL,
-		DevMode:      false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: suite.serverURL,
+			DevMode:     false,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 	}
@@ -544,8 +550,10 @@ func TestSSEServerIntegration(t *testing.T) {
 	defer suite.TearDown()
 
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  suite.serverURL,
-		DevMode:      false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: suite.serverURL,
+			DevMode:     false,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 	}
@@ -574,8 +582,10 @@ func TestStreamableHTTPServerIntegration(t *testing.T) {
 	defer suite.TearDown()
 
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  suite.serverURL,
-		DevMode:      false,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: suite.serverURL,
+			DevMode:     false,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 	}
@@ -638,8 +648,10 @@ func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := mcpserver.HTTPConfig{
-				MMServerURL:  suite.serverURL,
-				DevMode:      false,
+				BaseConfig: mcpserver.BaseConfig{
+					MMServerURL: suite.serverURL,
+					DevMode:     false,
+				},
 				HTTPPort:     8080,
 				HTTPBindAddr: "127.0.0.1",
 				Stateless:    tt.stateless,
@@ -681,7 +693,9 @@ func TestHTTPServerProtocolVersionNegotiation(t *testing.T) {
 // accepted, while unknown Hosts are rejected with 403 before authentication.
 func TestHTTPServerHostValidation(t *testing.T) {
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  "http://mattermost.internal:8065",
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: "http://mattermost.internal:8065",
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 		SiteURL:      "https://mcp.public.example.com",
@@ -741,8 +755,10 @@ func TestHTTPServerHostValidation(t *testing.T) {
 // TestConfigurationMethods tests configuration getter methods
 func TestConfigurationMethods(t *testing.T) {
 	config := mcpserver.HTTPConfig{
-		MMServerURL:  "http://localhost:8065",
-		DevMode:      true,
+		BaseConfig: mcpserver.BaseConfig{
+			MMServerURL: "http://localhost:8065",
+			DevMode:     true,
+		},
 		HTTPPort:     8080,
 		HTTPBindAddr: "127.0.0.1",
 		SiteURL:      "https://example.com",

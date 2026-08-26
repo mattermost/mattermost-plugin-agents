@@ -41,10 +41,12 @@ func DefaultOptions() Options {
 // unchunked returns the content as a single non-chunk.
 func unchunked(content string) []Chunk {
 	return []Chunk{{
-		Content:     content,
-		IsChunk:     false,
-		ChunkIndex:  0,
-		TotalChunks: 1,
+		Content: content,
+		ChunkInfo: ChunkInfo{
+			IsChunk:     false,
+			ChunkIndex:  0,
+			TotalChunks: 1,
+		},
 	}}
 }
 
@@ -86,10 +88,12 @@ func ChunkText(content string, opts Options) []Chunk {
 	result := make([]Chunk, len(textChunks))
 	for i, chunk := range textChunks {
 		result[i] = Chunk{
-			Content:     chunk,
-			IsChunk:     true,
-			ChunkIndex:  i,
-			TotalChunks: len(textChunks),
+			Content: chunk,
+			ChunkInfo: ChunkInfo{
+				IsChunk:     true,
+				ChunkIndex:  i,
+				TotalChunks: len(textChunks),
+			},
 		}
 	}
 

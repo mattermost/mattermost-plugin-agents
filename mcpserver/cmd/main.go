@@ -125,10 +125,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 	case "stdio":
 		// Create STDIO transport configuration
 		stdioConfig := mcpserver.StdioConfig{
-			MMServerURL:         mmServerURL,
-			MMInternalServerURL: mmInternalServerURL,
-			DevMode:             devMode,
-			TrackAIGenerated:    trackAIGenerated,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL:         mmServerURL,
+				MMInternalServerURL: mmInternalServerURL,
+				DevMode:             devMode,
+				TrackAIGenerated:    trackAIGenerated,
+			},
 			PersonalAccessToken: token,
 		}
 
@@ -137,14 +139,16 @@ func runServer(cmd *cobra.Command, args []string) error {
 		// Create HTTP transport configuration
 		stateless, _ := cmd.Flags().GetBool("stateless")
 		httpConfig := mcpserver.HTTPConfig{
-			MMServerURL:         mmServerURL,
-			MMInternalServerURL: mmInternalServerURL,
-			DevMode:             devMode,
-			TrackAIGenerated:    trackAIGenerated,
-			HTTPPort:            httpPort,
-			HTTPBindAddr:        httpBindAddr,
-			SiteURL:             siteURL,
-			Stateless:           stateless,
+			BaseConfig: mcpserver.BaseConfig{
+				MMServerURL:         mmServerURL,
+				MMInternalServerURL: mmInternalServerURL,
+				DevMode:             devMode,
+				TrackAIGenerated:    trackAIGenerated,
+			},
+			HTTPPort:     httpPort,
+			HTTPBindAddr: httpBindAddr,
+			SiteURL:      siteURL,
+			Stateless:    stateless,
 		}
 
 		mcpServer, err = mcpserver.NewHTTPServer(httpConfig, logger)

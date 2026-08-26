@@ -210,11 +210,13 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 			defer backend.Close()
 
 			llmClient, err := New(Config{
-				Provider:           schemas.Anthropic,
-				APIKey:             "test-key",
-				APIURL:             backend.URL,
-				DefaultModel:       "claude-sonnet-4-6",
-				StreamingTimeout:   10 * time.Second,
+				ProviderSettings: ProviderSettings{
+					Provider:         schemas.Anthropic,
+					APIKey:           "test-key",
+					APIURL:           backend.URL,
+					DefaultModel:     "claude-sonnet-4-6",
+					StreamingTimeout: 10 * time.Second,
+				},
 				EnabledNativeTools: tt.enabledNativeTools,
 			})
 			require.NoError(t, err)
