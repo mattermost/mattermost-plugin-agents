@@ -185,6 +185,45 @@ func TestHandleGetMCPToolsDiscoversEveryServerTypeConcurrently(t *testing.T) {
 		elapsed, probeDelay, 6*probeDelay)
 }
 
+func TestHandleGetMCPToolsBoundsDiscoveryConcurrency(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	allowAnyPluginAPILogging(mockAPI)
+
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	const serverCount = maxConcurrentMCPDiscoveries*2 + 3
+	for i := range serverCount {
+		mgr.pluginServers = append(mgr.pluginServers, mcp.PluginServerConfig{
+			PluginID: fmt.Sprintf("com.example.%02d", i),
+			Name:     fmt.Sprintf("Plugin %02d", i),
+			Path:     "/mcp",
+			Enabled:  true,
+		})
+	}
+
+	var active atomic.Int64
+	var peak atomic.Int64
+	mgr.discoverPluginToolsFunc = func(mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			previous := peak.Load()
+			if current <= previous || peak.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		return []mcp.ToolInfo{{Name: "tool"}}, nil
+	}
+
+	response := getAdminMCPTools(t, api)
+
+	require.Len(t, response.Servers, serverCount)
+	require.Equal(t, serverCount, mgr.pluginDiscoveryCallCount())
+	require.LessOrEqual(t, peak.Load(), int64(maxConcurrentMCPDiscoveries))
+	require.Greater(t, peak.Load(), int64(1))
+}
+
 // Rows keep their configured identity and per-server outcome no matter which
 // server answers first.
 func TestHandleGetMCPToolsKeepsRowsAlignedWithConfiguration(t *testing.T) {

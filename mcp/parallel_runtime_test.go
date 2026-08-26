@@ -787,6 +787,37 @@ func TestEnsureConnectionsMergesErrorsInTaskOrder(t *testing.T) {
 	}
 }
 
+func TestEnsureConnectionsBoundsConcurrency(t *testing.T) {
+	uc := NewUserClients("alice", newTestLogService(), nil, nil, nil)
+	const taskCount = maxConcurrentConnections*2 + 3
+
+	var active atomic.Int64
+	var peak atomic.Int64
+	tasks := make([]connectTask, taskCount)
+	for i := range tasks {
+		tasks[i] = connectTask{
+			origin:   fmt.Sprintf("test://server-%d", i),
+			serverID: fmt.Sprintf("server-%d", i),
+			dial: func() (*Client, error) {
+				current := active.Add(1)
+				defer active.Add(-1)
+				for {
+					previous := peak.Load()
+					if current <= previous || peak.CompareAndSwap(previous, current) {
+						break
+					}
+				}
+				time.Sleep(10 * time.Millisecond)
+				return nil, nil
+			},
+		}
+	}
+
+	require.Nil(t, uc.ensureConnections(context.Background(), tasks))
+	require.LessOrEqual(t, peak.Load(), int64(maxConcurrentConnections))
+	require.Greater(t, peak.Load(), int64(1))
+}
+
 // A dial that finishes after the user client is closed must not leave an
 // unreachable session behind.
 func TestEnsureConnectionsClosesSessionsCommittedAfterClose(t *testing.T) {

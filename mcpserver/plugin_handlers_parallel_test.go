@@ -5,9 +5,11 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -128,6 +130,52 @@ func TestRebuildExternalServerDiscoversPluginsConcurrently(t *testing.T) {
 	require.Less(t, elapsed, 3*discoveryDelay,
 		"rebuild took %s; four %s plugins discovered sequentially would take at least %s",
 		elapsed, discoveryDelay, 4*discoveryDelay)
+}
+
+func TestRebuildExternalServerBoundsDiscoveryConcurrency(t *testing.T) {
+	target := newFakePluginMCPServer(t, 1, nil)
+	t.Cleanup(target.Close)
+
+	var active atomic.Int64
+	var peak atomic.Int64
+	mockAPI := &stubPluginAPI{pluginHTTP: func(req *http.Request) *http.Response {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for {
+			previous := peak.Load()
+			if current <= previous || peak.CompareAndSwap(previous, current) {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+		recorder := httptest.NewRecorder()
+		target.Config.Handler.ServeHTTP(recorder, req)
+		return recorder.Result()
+	}}
+
+	registry := &stubRegistry{}
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI)
+	require.NoError(t, err)
+
+	const serverCount = maxConcurrentProxyDiscoveries*2 + 3
+	servers := make([]mcppkg.PluginServerConfig, 0, serverCount)
+	for i := range serverCount {
+		servers = append(servers, mcppkg.PluginServerConfig{
+			PluginID:       fmt.Sprintf("com.example.%02d", i),
+			Name:           fmt.Sprintf("Plugin %02d", i),
+			Path:           "/mcp",
+			Enabled:        true,
+			ExposeExternal: true,
+		})
+	}
+	registry.set(servers)
+
+	handlers.RebuildExternalServer()
+
+	require.LessOrEqual(t, peak.Load(), int64(maxConcurrentProxyDiscoveries))
+	require.Greater(t, peak.Load(), int64(1))
 }
 
 // Collision winners come from the registry snapshot order, not from which

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -291,6 +292,8 @@ type MCPToolsResponse struct {
 	Servers []MCPServerInfo `json:"servers"`
 }
 
+const maxConcurrentMCPDiscoveries = 32
+
 // mcpDiscoveryRow is one row of the admin MCP tools response together with the
 // probe that fills in its tools. discover is nil for rows rendered without
 // contacting the server: disabled plugin servers, and servers excluded by a
@@ -298,6 +301,11 @@ type MCPToolsResponse struct {
 type mcpDiscoveryRow struct {
 	info     MCPServerInfo
 	discover func() ([]MCPToolInfo, error)
+}
+
+type mcpDiscoveryResult struct {
+	tools []MCPToolInfo
+	err   error
 }
 
 // handleGetMCPTools discovers and returns tools from all configured MCP servers.
@@ -314,18 +322,25 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID)
 
-	discovered := utils.RunParallel(len(rows), func(index int) ([]MCPToolInfo, error) {
-		if rows[index].discover == nil {
-			return nil, nil
-		}
-		return rows[index].discover()
-	})
+	discovered := make([]mcpDiscoveryResult, len(rows))
+	slots := make(chan struct{}, maxConcurrentMCPDiscoveries)
+	var wg sync.WaitGroup
+	for i := range rows {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if rows[i].discover != nil {
+				discovered[i].tools, discovered[i].err = rows[i].discover()
+			}
+		})
+	}
+	wg.Wait()
 
 	response := MCPToolsResponse{Servers: make([]MCPServerInfo, 0, len(rows))}
 	for index, row := range rows {
 		info := row.info
 		if row.discover != nil {
-			applyMCPDiscoveryResult(&info, discovered[index].Value, discovered[index].Err)
+			applyMCPDiscoveryResult(&info, discovered[index].tools, discovered[index].err)
 		}
 		response.Servers = append(response.Servers, info)
 	}

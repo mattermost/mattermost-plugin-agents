@@ -18,11 +18,11 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 const (
+	maxConcurrentConnections = 32
 	// embeddedConnectTimeout bounds one in-memory embedded MCP handshake.
 	embeddedConnectTimeout = 10 * time.Second
 	// pluginConnectTimeout bounds one plugin MCP handshake and initial tools
@@ -127,6 +127,11 @@ type connectPlan struct {
 	err     error
 }
 
+type connectResult struct {
+	client *Client
+	err    error
+}
+
 type userClientSnapshot struct {
 	serverID string
 	client   *Client
@@ -161,9 +166,18 @@ func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask
 		}
 	}
 
-	dialed := utils.RunParallel(len(dialers), func(i int) (*Client, error) {
-		return dialers[i].task.dial()
-	})
+	dialed := make([]connectResult, len(dialers))
+	slots := make(chan struct{}, maxConcurrentConnections)
+	var wg sync.WaitGroup
+	for i := range dialers {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			dialed[i].client, dialed[i].err = dialers[i].task.dial()
+		})
+	}
+	wg.Wait()
+
 	c.commitDials(dialers, dialed)
 
 	var mcpErrors *Errors
@@ -213,7 +227,7 @@ func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
 
 // commitDials publishes every dial outcome under one lock so a waiter cannot
 // observe a finished attempt before its session is reachable.
-func (c *UserClients) commitDials(dialers []*connectPlan, dialed []utils.ParallelResult[*Client]) {
+func (c *UserClients) commitDials(dialers []*connectPlan, dialed []connectResult) {
 	if len(dialers) == 0 {
 		return
 	}
@@ -222,7 +236,7 @@ func (c *UserClients) commitDials(dialers []*connectPlan, dialed []utils.Paralle
 
 	c.clientsMu.Lock()
 	for i, plan := range dialers {
-		client, err := dialed[i].Value, dialed[i].Err
+		client, err := dialed[i].client, dialed[i].err
 
 		plan.err = err
 		plan.attempt.err = err

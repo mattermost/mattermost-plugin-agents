@@ -17,13 +17,13 @@ import (
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
 	externalProxyDiscoveryTimeout = 10 * time.Second
+	maxConcurrentProxyDiscoveries = 32
 	nativeMattermostToolOwner     = "mattermost"
 )
 
@@ -180,9 +180,18 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 		}
 	}
 
-	discovered := utils.RunParallel(len(exposed), func(index int) (proxyDiscovery, error) {
-		return h.discoverProxyTools(exposed[index])
-	})
+	discovered := make([]proxyDiscovery, len(exposed))
+	discoveryErrs := make([]error, len(exposed))
+	slots := make(chan struct{}, maxConcurrentProxyDiscoveries)
+	var wg sync.WaitGroup
+	for i := range exposed {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			discovered[i], discoveryErrs[i] = h.discoverProxyTools(exposed[i])
+		})
+	}
+	wg.Wait()
 
 	toolOwners := make(map[string]string, len(nativeToolNames))
 	for _, toolName := range nativeToolNames {
@@ -190,7 +199,7 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 	}
 
 	for index, ps := range exposed {
-		if discovered[index].Err != nil {
+		if discoveryErrs[index] != nil {
 			continue
 		}
 
@@ -200,8 +209,8 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 			BaseURL:     "plugin://" + ps.PluginID,
 			ToolConfigs: ps.ToolConfigs,
 		}
-		proxyTools := discovered[index].Value.tools
-		proxyHandlers := discovered[index].Value.handlers
+		proxyTools := discovered[index].tools
+		proxyHandlers := discovered[index].handlers
 		for i, proxyTool := range proxyTools {
 			if _, enabled := policyConfig.GetToolPolicy(proxyTool.Name); !enabled {
 				continue
