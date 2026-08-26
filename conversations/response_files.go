@@ -4,7 +4,6 @@
 package conversations
 
 import (
-	"encoding/json"
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -138,8 +137,8 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 		if turns[i].Role != "assistant" && turns[i].Role != "tool_result" {
 			continue
 		}
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
+		blocks, err := conversation.UnmarshalBlocks(turns[i].Content)
+		if err != nil {
 			continue
 		}
 		for _, b := range blocks {
