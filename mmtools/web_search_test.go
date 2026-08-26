@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -73,7 +74,7 @@ func TestWrapSourceContentWithContext(t *testing.T) {
 		}
 
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchContextKey: []WebSearchContextValue{
 					{
 						Query: "test query",
@@ -233,7 +234,7 @@ func (m *mockLogger) Error(message string, keyValuePairs ...any) {}
 func TestWebSearchTracking(t *testing.T) {
 	t.Run("tracks executed queries", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: make(map[string]interface{}),
+			Parameters: make(map[string]any),
 		}
 
 		// Simulate first search
@@ -254,7 +255,7 @@ func TestWebSearchTracking(t *testing.T) {
 
 	t.Run("prevents duplicate queries", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchExecutedQueriesKey: []string{"test query"},
 				WebSearchCountKey:           1,
 			},
@@ -263,13 +264,7 @@ func TestWebSearchTracking(t *testing.T) {
 		executedQueries := ctx.Parameters[WebSearchExecutedQueriesKey].([]string)
 		normalizedQuery := "test query"
 
-		isDuplicate := false
-		for _, existingQuery := range executedQueries {
-			if existingQuery == normalizedQuery {
-				isDuplicate = true
-				break
-			}
-		}
+		isDuplicate := slices.Contains(executedQueries, normalizedQuery)
 
 		require.True(t, isDuplicate, "Should detect duplicate query")
 	})
@@ -292,7 +287,7 @@ func TestWebSearchTracking(t *testing.T) {
 
 	t.Run("enforces max search limit", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchExecutedQueriesKey: []string{"query1", "query2", "query3"},
 				WebSearchCountKey:           3,
 			},
@@ -304,7 +299,7 @@ func TestWebSearchTracking(t *testing.T) {
 
 	t.Run("tracks count correctly across multiple searches", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: make(map[string]interface{}),
+			Parameters: make(map[string]any),
 		}
 
 		// Start with empty tracking
@@ -330,7 +325,7 @@ func TestWebSearchTracking(t *testing.T) {
 func TestWebSearchContextPersistence(t *testing.T) {
 	t.Run("preserves web search context keys", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchContextKey:         []WebSearchContextValue{},
 				WebSearchAllowedURLsKey:     []string{"https://example.com"},
 				WebSearchExecutedQueriesKey: []string{"test query"},
@@ -352,7 +347,7 @@ func TestWebSearchContextPersistence(t *testing.T) {
 
 	t.Run("handles empty executed queries", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchExecutedQueriesKey: []string{},
 				WebSearchCountKey:           0,
 			},
@@ -367,7 +362,7 @@ func TestWebSearchContextPersistence(t *testing.T) {
 
 	t.Run("handles int count correctly", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchCountKey: 2,
 			},
 		}
@@ -380,7 +375,7 @@ func TestWebSearchContextPersistence(t *testing.T) {
 	t.Run("handles float64 count from JSON unmarshaling", func(t *testing.T) {
 		// Simulate what happens when JSON unmarshals a number
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchCountKey: float64(2),
 			},
 		}
@@ -444,7 +439,7 @@ func TestWebSearchResetBehavior(t *testing.T) {
 	t.Run("search count resets for new request cycle", func(t *testing.T) {
 		// Simulate first request cycle with 3 searches
 		firstCycleCtx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchContextKey:         []WebSearchContextValue{{Query: "first query", Results: []WebSearchResult{}}},
 				WebSearchAllowedURLsKey:     []string{"https://example.com"},
 				WebSearchExecutedQueriesKey: []string{"query1", "query2", "query3"},
@@ -458,7 +453,7 @@ func TestWebSearchResetBehavior(t *testing.T) {
 
 		// Simulate new request cycle - reset tracking but keep search results
 		secondCycleCtx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				// Keep previous results for context
 				WebSearchContextKey:     firstCycleCtx.Parameters[WebSearchContextKey],
 				WebSearchAllowedURLsKey: firstCycleCtx.Parameters[WebSearchAllowedURLsKey],
@@ -482,7 +477,7 @@ func TestWebSearchResetBehavior(t *testing.T) {
 	t.Run("allows same query in new request cycle", func(t *testing.T) {
 		// First cycle executes "kubernetes features"
 		firstCycleCtx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchExecutedQueriesKey: []string{"kubernetes features"},
 				WebSearchCountKey:           1,
 			},
@@ -493,7 +488,7 @@ func TestWebSearchResetBehavior(t *testing.T) {
 
 		// New request cycle - same query should be allowed
 		secondCycleCtx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchExecutedQueriesKey: []string{}, // Reset
 				WebSearchCountKey:           0,          // Reset
 			},
@@ -510,7 +505,7 @@ func TestWebSearchResetBehavior(t *testing.T) {
 	t.Run("preserves search results across cycles", func(t *testing.T) {
 		// Build up search results across multiple request cycles
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchContextKey: []WebSearchContextValue{
 					{Query: "first question", Results: []WebSearchResult{{Index: 1, Title: "Result 1"}}},
 				},
@@ -580,7 +575,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 
 	t.Run("allows whitelisted URL", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchAllowedURLsKey: []string{"https://allowed.com/page"},
 			},
 		}
@@ -601,7 +596,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 
 	t.Run("rejects url not in whitelist", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{
+			Parameters: map[string]any{
 				WebSearchAllowedURLsKey: []string{"https://allowed.com/page"},
 			},
 		}
@@ -622,7 +617,7 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 
 	t.Run("rejects when no whitelist exists", func(t *testing.T) {
 		ctx := &llm.Context{
-			Parameters: map[string]interface{}{},
+			Parameters: map[string]any{},
 		}
 
 		argsGetter := func(v any) error {

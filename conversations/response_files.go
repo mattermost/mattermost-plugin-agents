@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -116,14 +117,14 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 	// Exclusive lower bound of the scan: the initiating user turn's sequence.
 	// When no user turn qualifies, the whole conversation is scanned.
 	windowStart, windowFound := 0, false
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role != "user" {
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role != "user" {
 			continue
 		}
-		if anchorFound && turns[i].Sequence >= anchorSeq {
+		if anchorFound && turn.Sequence >= anchorSeq {
 			continue
 		}
-		windowStart, windowFound = turns[i].Sequence, true
+		windowStart, windowFound = turn.Sequence, true
 		break
 	}
 

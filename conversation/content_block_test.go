@@ -53,7 +53,7 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				ServerOrigin: "https://mcp.example.com",
 				Input:        json.RawMessage(`{"city":"NYC"}`),
 				Status:       StatusSuccess,
-				Shared:       BoolPtr(true),
+				Shared:       new(true),
 			},
 			expected: `{"type":"tool_use","id":"tc_01","name":"get_weather","server_origin":"https://mcp.example.com","input":{"city":"NYC"},"status":"success","shared":true}`,
 		},
@@ -64,7 +64,7 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				ToolUseID: "tc_01",
 				Content:   "72F, sunny",
 				Status:    StatusSuccess,
-				Shared:    BoolPtr(true),
+				Shared:    new(true),
 			},
 			expected: `{"type":"tool_result","tool_use_id":"tc_01","content":"72F, sunny","status":"success","shared":true}`,
 		},
@@ -108,7 +108,7 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				Name:   "read_file",
 				Input:  json.RawMessage(`{"path":"/etc/passwd"}`),
 				Status: StatusPending,
-				Shared: BoolPtr(false),
+				Shared: new(false),
 			},
 			expected: `{"type":"tool_use","id":"tc_02","name":"read_file","input":{"path":"/etc/passwd"},"status":"pending","shared":false}`,
 		},
@@ -147,8 +147,8 @@ func TestContentBlockSliceRoundTrip(t *testing.T) {
 	blocks := []ContentBlock{
 		{Type: BlockTypeThinking, Text: "thinking...", Signature: "sig"},
 		{Type: BlockTypeText, Text: "Hello"},
-		{Type: BlockTypeToolUse, ID: "tc_01", Name: "search", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(false)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc_01", Content: "result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc_01", Name: "search", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: new(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc_01", Content: "result", Status: StatusSuccess, Shared: new(true)},
 		{Type: BlockTypeFile, Filename: "f.txt", MimeType: "text/plain", Content: "data"},
 		{Type: BlockTypeImage, Filename: "img.png", MimeType: "image/png", FileID: "file1"},
 		{Type: BlockTypeAnnotations, WebSearchContext: &WebSearchContext{Count: 3, Results: json.RawMessage(`[]`), ExecutedQueries: json.RawMessage(`[]`)}},
@@ -185,7 +185,7 @@ func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName:  "get_issue",
 		Status:       StatusPending,
-		Shared:       BoolPtr(false),
+		Shared:       new(false),
 	}
 
 	data, err := json.Marshal(block)
@@ -214,7 +214,7 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 		Input:       json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName: "get_issue",
 		Status:      StatusPending,
-		Shared:      BoolPtr(false),
+		Shared:      new(false),
 	}}
 
 	result := FilterForNonRequester(blocks)
@@ -244,10 +244,10 @@ func TestFilterForNonRequester(t *testing.T) {
 		{
 			name: "strips input from tool_use where shared is false",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"secret"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"secret"}`), Status: StatusSuccess, Shared: new(false)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: nil, Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: nil, Status: StatusSuccess, Shared: new(false)},
 			},
 		},
 		{
@@ -262,21 +262,21 @@ func TestFilterForNonRequester(t *testing.T) {
 		{
 			name: "strips content from tool_result where shared is false",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "sensitive data", Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "sensitive data", Status: StatusSuccess, Shared: new(false)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: new(false)},
 			},
 		},
 		{
 			name: "leaves shared=true tool blocks untouched",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: new(true)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: new(true)},
 			},
 		},
 		{
@@ -315,17 +315,17 @@ func TestFilterForNonRequester(t *testing.T) {
 			name: "mixed blocks only private tool blocks are redacted",
 			blocks: []ContentBlock{
 				{Type: BlockTypeText, Text: "response"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{"x":1}`), Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret", Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{"x":1}`), Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret", Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: new(true)},
 			},
 			expected: []ContentBlock{
 				{Type: BlockTypeText, Text: "response"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: nil, Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: nil, Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: new(true)},
 			},
 		},
 		{
@@ -377,8 +377,8 @@ func TestSanitizeForDisplayServerTool(t *testing.T) {
 
 func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 	original := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc1", Input: json.RawMessage(`{"secret":"val"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret result", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc1", Input: json.RawMessage(`{"secret":"val"}`), Status: StatusSuccess, Shared: new(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret result", Status: StatusSuccess, Shared: new(false)},
 	}
 
 	originalInputCopy := make(json.RawMessage, len(original[0].Input))

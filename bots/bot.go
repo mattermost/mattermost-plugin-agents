@@ -4,6 +4,8 @@
 package bots
 
 import (
+	"slices"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -58,12 +60,7 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 			return false
 		}
 	}
-	for _, tool := range b.cfg.EnabledNativeTools {
-		if tool == llm.NativeToolWebSearch {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(b.cfg.EnabledNativeTools, llm.NativeToolWebSearch)
 }
 
 func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {

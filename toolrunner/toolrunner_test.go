@@ -911,7 +911,7 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	require.Len(t, capturedOpts, llm.DefaultMaxToolTurns)
 
 	// Earlier calls must not have tools disabled.
-	for round := 0; round < llm.DefaultMaxToolTurns-1; round++ {
+	for round := range llm.DefaultMaxToolTurns - 1 {
 		var cfg llm.LanguageModelConfig
 		for _, opt := range capturedOpts[round] {
 			opt(&cfg)
@@ -1007,7 +1007,7 @@ func TestToolRunner_FinalText_OmitsToolRoundPreamble(t *testing.T) {
 
 func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
 	responses := make([]testResponse, llm.DefaultMaxToolTurns)
-	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
+	for i := range llm.DefaultMaxToolTurns - 1 {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeText, Value: fmt.Sprintf("preamble %d ", i)},

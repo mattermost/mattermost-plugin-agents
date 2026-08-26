@@ -43,24 +43,20 @@ func ChunkText(content string, opts Options) []Chunk {
 	// If content is empty, return a single non-chunk
 	if strings.TrimSpace(content) == "" {
 		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
+			Content:     content,
+			IsChunk:     false,
+			ChunkIndex:  0,
+			TotalChunks: 1,
 		}}
 	}
 
 	// If chunk size is zero or negative, return the original as non-chunk
 	if opts.ChunkSize <= 0 {
 		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
+			Content:     content,
+			IsChunk:     false,
+			ChunkIndex:  0,
+			TotalChunks: 1,
 		}}
 	}
 
@@ -98,12 +94,10 @@ func ChunkText(content string, opts Options) []Chunk {
 	if err != nil || (len(textChunks) == 1 && textChunks[0] == content) {
 		// Return as non-chunk
 		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
+			Content:     content,
+			IsChunk:     false,
+			ChunkIndex:  0,
+			TotalChunks: 1,
 		}}
 	}
 
@@ -111,12 +105,10 @@ func ChunkText(content string, opts Options) []Chunk {
 	result := make([]Chunk, len(textChunks))
 	for i, chunk := range textChunks {
 		result[i] = Chunk{
-			Content: chunk,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     true,
-				ChunkIndex:  i,
-				TotalChunks: len(textChunks),
-			},
+			Content:     chunk,
+			IsChunk:     true,
+			ChunkIndex:  i,
+			TotalChunks: len(textChunks),
 		}
 	}
 

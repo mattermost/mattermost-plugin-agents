@@ -19,7 +19,7 @@ type Server struct {
 type ErrorLoggerWrapper struct {
 }
 
-func (el *ErrorLoggerWrapper) Println(v ...interface{}) {
+func (el *ErrorLoggerWrapper) Println(v ...any) {
 	logrus.Warn("metric server error", v)
 }
 

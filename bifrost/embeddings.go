@@ -46,11 +46,9 @@ type EmbeddingConfig struct {
 // NewEmbeddingProvider creates a new EmbeddingProvider.
 func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 	account := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: cfg.Provider,
-			APIKey:   cfg.APIKey,
-			APIURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
-		},
+		Provider: cfg.Provider,
+		APIKey:   cfg.APIKey,
+		APIURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)
@@ -75,12 +73,12 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 		Provider: p.provider,
 		Model:    p.model,
 		Input: &schemas.EmbeddingInput{
-			Text: Ptr(text),
+			Text: new(text),
 		},
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 
@@ -130,7 +128,7 @@ func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []s
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 

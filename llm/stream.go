@@ -3,6 +3,8 @@
 
 package llm
 
+import "strings"
+
 import "fmt"
 
 // MaxPostAttachments is the Mattermost per-post attachment limit. It bounds
@@ -142,12 +144,12 @@ func NewStreamFromString(text string) *TextStreamResult {
 }
 
 func (t *TextStreamResult) ReadAll() (string, error) {
-	result := ""
+	var result strings.Builder
 	for event := range t.Stream {
 		switch event.Type {
 		case EventTypeText:
 			if textChunk, ok := event.Value.(string); ok {
-				result += textChunk
+				result.WriteString(textChunk)
 			}
 		case EventTypeError:
 			if err, ok := event.Value.(error); ok {
@@ -158,7 +160,7 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 			}
 			return "", fmt.Errorf("unknown stream error")
 		case EventTypeEnd:
-			return result, nil
+			return result.String(), nil
 		case EventTypeToolCalls:
 			// Tool calls may appear as progress events from auto-run tools; skip them.
 			continue
@@ -168,5 +170,5 @@ func (t *TextStreamResult) ReadAll() (string, error) {
 		}
 	}
 
-	return result, nil
+	return result.String(), nil
 }

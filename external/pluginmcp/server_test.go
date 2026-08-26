@@ -302,7 +302,7 @@ func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 	var wg sync.WaitGroup
 	const N = 10
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			defer wg.Done()
 			rec := httptest.NewRecorder()

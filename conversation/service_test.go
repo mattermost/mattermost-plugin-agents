@@ -109,7 +109,8 @@ func (t *testLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...l
 func (t *testLLM) InputTokenLimit() int  { return 100000 }
 func (t *testLLM) OutputTokenLimit() int { return 8192 }
 
-func stringPtr(s string) *string { return &s }
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }
 
 func setupTestService(t *testing.T) (*Service, *store.Store) {
 	t.Helper()
@@ -149,12 +150,12 @@ func TestCreateConversation(t *testing.T) {
 			params: CreateConversationParams{
 				UserID:       model.NewId(),
 				BotID:        model.NewId(),
-				ChannelID:    stringPtr("chan1"),
-				RootPostID:   stringPtr("root1"),
+				ChannelID:    new("chan1"),
+				RootPostID:   new("root1"),
 				Operation:    "conversation",
 				SystemPrompt: "You are a helpful assistant",
 				UserMessage:  "Hello!",
-				UserPostID:   stringPtr("post1"),
+				UserPostID:   new("post1"),
 			},
 			validate: func(t *testing.T, svc *Service, s *store.Store, result *CreateConversationResult, err error) {
 				require.NoError(t, err)
@@ -281,7 +282,7 @@ func TestGetOrCreateConversation_MultipleUsersSameThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "hi from A",
-		UserPostID:   stringPtr("post_A"),
+		UserPostID:   new("post_A"),
 	})
 	require.NoError(t, err, "userA should create a conversation without error")
 	require.True(t, resultA.IsNew)
@@ -294,7 +295,7 @@ func TestGetOrCreateConversation_MultipleUsersSameThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "hi from B",
-		UserPostID:   stringPtr("post_B"),
+		UserPostID:   new("post_B"),
 	})
 	require.NoError(t, err, "userB in the same thread must not hit 'conversation vanished after conflict'")
 	require.True(t, resultB.IsNew)
@@ -314,7 +315,7 @@ func TestGetOrCreateConversation_New(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "You are helpful",
 		UserMessage:  "Hello",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 
 	require.NoError(t, err)
@@ -343,7 +344,7 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt",
 		UserMessage:  "first message",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 	require.NoError(t, err)
 
@@ -356,7 +357,7 @@ func TestGetOrCreateConversation_Existing(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt (ignored for existing)",
 		UserMessage:  "second message",
-		UserPostID:   stringPtr("post2"),
+		UserPostID:   new("post2"),
 	})
 
 	require.NoError(t, err)
@@ -532,7 +533,7 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	assistantContent, _ := json.Marshal(assistantBlocks)
@@ -553,7 +554,7 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	resultContent, _ := json.Marshal(resultBlocks)
@@ -621,7 +622,7 @@ func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) 
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
@@ -642,7 +643,7 @@ func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) 
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
@@ -704,16 +705,16 @@ func TestBuildCompletionRequest_MultipleToolRoundsMerged(t *testing.T) {
 	}
 
 	addTurn("assistant", 2, []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("tool_result", 3, []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "first result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "first result", Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("assistant", 4, []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc2", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc2", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 	})
 	addTurn("tool_result", 5, []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "second result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "second result", Status: StatusSuccess, Shared: new(true)},
 	})
 
 	conv, err := s.GetConversation(convID)
@@ -760,8 +761,8 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 
 	// Two tool calls, one shared, one unshared.
 	assistantBlocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc-shared", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(false)},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
 	require.NoError(t, err)
@@ -772,8 +773,8 @@ func TestBuildCompletionRequest_RedactsUnsharedToolContentByDefault(t *testing.T
 	require.NoError(t, err)
 
 	resultBlocks := []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc-shared", Content: "PUBLIC DATA", Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-shared", Content: "PUBLIC DATA", Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: new(false)},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	require.NoError(t, err)
@@ -844,7 +845,7 @@ func TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault(t *testi
 
 	// Prior mention executed a tool; user kept the result private.
 	assistantBlocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc-private", Name: "read_dm", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(false)},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
 	require.NoError(t, err)
@@ -855,7 +856,7 @@ func TestBuildChannelMentionRequest_RedactsUnsharedToolContentByDefault(t *testi
 	require.NoError(t, err)
 
 	resultBlocks := []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc-private", Content: "PRIVATE SECRET", Status: StatusSuccess, Shared: new(false)},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	require.NoError(t, err)
@@ -915,7 +916,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "user1",
-		UserPostID:   stringPtr("user_post1"),
+		UserPostID:   new("user_post1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -925,7 +926,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp1"),
+		PostID:         new("resp1"),
 		Role:           "assistant",
 		Content:        assistantContent1,
 		Sequence:       2,
@@ -938,7 +939,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("user_post2"),
+		PostID:         new("user_post2"),
 		Role:           "user",
 		Content:        userContent2,
 		Sequence:       3,
@@ -951,7 +952,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp2"),
+		PostID:         new("resp2"),
 		Role:           "assistant",
 		Content:        assistantContent2,
 		Sequence:       4,
@@ -989,7 +990,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "user1",
-		UserPostID:   stringPtr("user_post1"),
+		UserPostID:   new("user_post1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -997,7 +998,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	// Demoted prior anchor (left behind by a continuation finalize).
 	demotedContent, _ := json.Marshal([]ContentBlock{
 		{Type: BlockTypeText, Text: "Let me search."},
-		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Status: StatusSuccess, Shared: new(true)},
 	})
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
@@ -1011,7 +1012,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	require.NoError(t, err)
 
 	resultContent, _ := json.Marshal([]ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "5 channels found", Shared: new(true)},
 	})
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
@@ -1028,7 +1029,7 @@ func TestBuildCompletionRequest_ExcludeAfterPostID_ToolApprovalContinuationLeave
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("resp_post"),
+		PostID:         new("resp_post"),
 		Role:           "assistant",
 		Content:        anchorContent,
 		Sequence:       4,
@@ -1062,7 +1063,7 @@ func TestCreatePlaceholderAssistantTurn(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	turnID, err := svc.CreatePlaceholderAssistantTurn(result.ConversationID, stringPtr("response_post"))
+	turnID, err := svc.CreatePlaceholderAssistantTurn(result.ConversationID, new("response_post"))
 	require.NoError(t, err)
 	require.NotEmpty(t, turnID)
 
@@ -1384,7 +1385,7 @@ func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system prompt",
 		UserMessage:  "hello bot",
-		UserPostID:   stringPtr("post1"),
+		UserPostID:   new("post1"),
 	})
 	require.NoError(t, err)
 
@@ -1393,7 +1394,7 @@ func TestBuildChannelMentionRequest_BotTurnsOnly(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("post2"),
+		PostID:         new("post2"),
 		Role:           "assistant",
 		Content:        assistantContent,
 		Sequence:       2,
@@ -1442,7 +1443,7 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "question from A",
-		UserPostID:   stringPtr("postA1"),
+		UserPostID:   new("postA1"),
 	})
 	require.NoError(t, err)
 
@@ -1451,7 +1452,7 @@ func TestBuildChannelMentionRequest_MixedThread(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("postBot1"),
+		PostID:         new("postBot1"),
 		Role:           "assistant",
 		Content:        assistantContent,
 		Sequence:       2,
@@ -1508,7 +1509,7 @@ func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "@aibot look at the earlier post",
-		UserPostID:   stringPtr(currentPostID),
+		UserPostID:   new(currentPostID),
 	})
 	require.NoError(t, err)
 
@@ -1558,7 +1559,7 @@ func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "hello bots",
-		UserPostID:   stringPtr("postU1"),
+		UserPostID:   new("postU1"),
 	})
 	require.NoError(t, err)
 
@@ -1567,7 +1568,7 @@ func TestBuildChannelMentionRequest_MultiBotThread(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: result.ConversationID,
-		PostID:         stringPtr("postBotA1"),
+		PostID:         new("postBotA1"),
 		Role:           "assistant",
 		Content:        aContent,
 		Sequence:       2,
@@ -1651,7 +1652,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "system",
 		UserMessage:  "what's the weather?",
-		UserPostID:   stringPtr("postU1"),
+		UserPostID:   new("postU1"),
 	})
 	require.NoError(t, err)
 	convID := result.ConversationID
@@ -1664,7 +1665,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 			Name:   "get_weather",
 			Input:  json.RawMessage(`{"city":"NYC"}`),
 			Status: StatusSuccess,
-			Shared: BoolPtr(true),
+			Shared: new(true),
 		},
 	}
 	toolUseContent, _ := json.Marshal(toolUseBlocks)
@@ -1685,7 +1686,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 			ToolUseID: "tc1",
 			Content:   "72F, sunny",
 			Status:    StatusSuccess,
-			Shared:    BoolPtr(true),
+			Shared:    new(true),
 		},
 	}
 	toolResultContent, _ := json.Marshal(toolResultBlocks)
@@ -1705,7 +1706,7 @@ func TestBuildChannelMentionRequest_ToolRoundsMerged(t *testing.T) {
 	err = s.CreateTurn(&store.Turn{
 		ID:             model.NewId(),
 		ConversationID: convID,
-		PostID:         stringPtr("postBot1"),
+		PostID:         new("postBot1"),
 		Role:           "assistant",
 		Content:        finalContent,
 		Sequence:       4,
@@ -1764,7 +1765,7 @@ func TestSequenceNumbering_Concurrent(t *testing.T) {
 	convID := result.ConversationID
 
 	// Rapidly create several turns and verify sequences remain consistent.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, placeholderErr := svc.CreatePlaceholderAssistantTurn(convID, nil)
 		require.NoError(t, placeholderErr)
 	}
@@ -1826,7 +1827,7 @@ func TestGetOrCreateConversation_RaceConflict(t *testing.T) {
 		Operation:    "conversation",
 		SystemPrompt: "prompt (ignored)",
 		UserMessage:  "second message",
-		UserPostID:   stringPtr("post2"),
+		UserPostID:   new("post2"),
 	})
 	require.NoError(t, err)
 	assert.False(t, result.IsNew)
@@ -2211,7 +2212,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "channel mention body",
-			UserPostID:   stringPtr(userPostID),
+			UserPostID:   new(userPostID),
 			FileIDs:      []string{"img1", "doc1"},
 		})
 		require.NoError(t, err)
@@ -2279,7 +2280,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "no vision channel mention",
-			UserPostID:   stringPtr(userPostID),
+			UserPostID:   new(userPostID),
 			FileIDs:      []string{"img1", "doc1"},
 		})
 		require.NoError(t, err)
@@ -2333,11 +2334,11 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
 			BotID:        botID,
-			RootPostID:   stringPtr(rootPostID),
+			RootPostID:   new(rootPostID),
 			Operation:    "conversation",
 			SystemPrompt: "system",
 			UserMessage:  "@aibot what do you think?",
-			UserPostID:   stringPtr(mentionPostID),
+			UserPostID:   new(mentionPostID),
 		})
 		require.NoError(t, err)
 

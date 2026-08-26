@@ -109,10 +109,14 @@ type WebSearchContext struct {
 }
 
 // BoolPtr returns a pointer to the given bool value.
-func BoolPtr(b bool) *bool { return &b }
+//
+//go:fix inline
+func BoolPtr(b bool) *bool { return new(b) }
 
 // Int64Ptr returns a pointer to the given int64 value.
-func Int64Ptr(v int64) *int64 { return &v }
+//
+//go:fix inline
+func Int64Ptr(v int64) *int64 { return new(v) }
 
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have their Input

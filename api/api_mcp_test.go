@@ -647,12 +647,12 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient
@@ -897,12 +897,12 @@ func TestPublishMCPConnectionUpdatedEmitsUserScopedEvent(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient

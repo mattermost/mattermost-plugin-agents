@@ -121,7 +121,7 @@ func toolUseBlocks(
 			Input:           tc.Arguments,
 			MCPBareName:     tc.MCPBareName,
 			Status:          StatusToString(tc.Status),
-			Shared:          BoolPtr(shared),
+			Shared:          new(shared),
 			UserInteraction: tc.UserInteraction,
 		})
 	}
@@ -146,8 +146,8 @@ func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlo
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    BoolPtr(shared),
-			DecidedAt: Int64Ptr(now),
+			Shared:    new(shared),
+			DecidedAt: new(now),
 		}
 	}
 	return blocks

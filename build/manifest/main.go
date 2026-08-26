@@ -127,8 +127,8 @@ func findManifest() (*model.Manifest, error) {
 	// commit, and use the first version we find (to prevent causing errors)
 	if manifest.Version == "" {
 		var version string
-		tags := strings.Fields(BuildTagCurrent)
-		for _, t := range tags {
+		tags := strings.FieldsSeq(BuildTagCurrent)
+		for t := range tags {
 			if strings.HasPrefix(t, "v") {
 				version = t
 				break

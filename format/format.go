@@ -41,7 +41,7 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 }
 
 func ThreadData(data *mmapi.ThreadData) string {
-	result := ""
+	var result strings.Builder
 	for _, post := range data.Posts {
 		username := "unknown"
 		if user := data.UsersByID[post.UserId]; user != nil {
@@ -49,13 +49,13 @@ func ThreadData(data *mmapi.ThreadData) string {
 		}
 		if post.CreateAt > 0 {
 			t := time.Unix(post.CreateAt/1000, (post.CreateAt%1000)*int64(time.Millisecond))
-			result += fmt.Sprintf("%s (%s): %s\n\n", username, t.UTC().Format(time.RFC3339), PostBody(post))
+			result.WriteString(fmt.Sprintf("%s (%s): %s\n\n", username, t.UTC().Format(time.RFC3339), PostBody(post)))
 		} else {
-			result += fmt.Sprintf("%s: %s\n\n", username, PostBody(post))
+			result.WriteString(fmt.Sprintf("%s: %s\n\n", username, PostBody(post)))
 		}
 	}
 
-	return result
+	return result.String()
 }
 
 func PostBody(post *model.Post) string {

@@ -439,8 +439,7 @@ func (c *Client) oauthNeededError(err error) error {
 		return nil
 	}
 
-	var mcpAuthErr *mcpUnauthorized
-	if errors.As(err, &mcpAuthErr) {
+	if mcpAuthErr, ok := errors.AsType[*mcpUnauthorized](err); ok {
 		md := mcpAuthErr.MetadataURL()
 		return &OAuthNeededError{
 			authURL:     c.oauthNeededRedirectURL(md, mcpAuthErr.Scope()),

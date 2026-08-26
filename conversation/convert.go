@@ -267,7 +267,7 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 			Input:        tc.Arguments,
 			MCPBareName:  tc.MCPBareName,
 			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
+			Shared:       new(shared),
 		})
 
 		if tc.Result != "" {
@@ -276,7 +276,7 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 				ToolUseID: tc.ID,
 				Content:   tc.Result,
 				Status:    StatusToString(tc.Status),
-				Shared:    BoolPtr(shared),
+				Shared:    new(shared),
 			})
 		}
 	}

@@ -23,17 +23,17 @@ import (
 
 // Client defines the minimal client interface needed for streaming operations.
 type Client interface {
-	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
+	PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)
 	UpdatePost(post *model.Post) error
 	CreatePost(post *model.Post) error
 	DM(senderID, receiverID string, post *model.Post) error
 	GetUser(userID string) (*model.User, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetConfig() *model.Config
-	KVSet(key string, value interface{}) error
-	LogError(msg string, keyValuePairs ...interface{})
-	LogWarn(msg string, keyValuePairs ...interface{})
-	LogDebug(msg string, keyValuePairs ...interface{})
+	KVSet(key string, value any) error
+	LogError(msg string, keyValuePairs ...any)
+	LogWarn(msg string, keyValuePairs ...any)
+	LogDebug(msg string, keyValuePairs ...any)
 }
 
 // maxPostAttachments independently caps file IDs merged onto a streamed post
@@ -171,7 +171,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			ServerOrigin:     tc.ServerOrigin,
 			Input:            tc.Arguments,
 			Status:           conversation.StatusToString(tc.Status),
-			Shared:           conversation.BoolPtr(a.isDM),
+			Shared:           new(a.isDM),
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
 		})
@@ -285,21 +285,21 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 }
 
 func (p *MMPostStreamService) sendPostStreamingUpdateEventWithBroadcast(post *model.Post, message string, broadcast *model.WebsocketBroadcast) {
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id": post.Id,
 		"next":    message,
 	}, broadcast)
 }
 
 func (p *MMPostStreamService) sendPostStreamingControlEventWithBroadcast(post *model.Post, control string, broadcast *model.WebsocketBroadcast) {
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id": post.Id,
 		"control": control,
 	}, broadcast)
 }
 
 func (p *MMPostStreamService) sendPostStreamingReasoningEventWithBroadcast(post *model.Post, reasoning string, control string, broadcast *model.WebsocketBroadcast) {
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":   post.Id,
 		"control":   control,
 		"reasoning": reasoning,
@@ -307,7 +307,7 @@ func (p *MMPostStreamService) sendPostStreamingReasoningEventWithBroadcast(post 
 }
 
 func (p *MMPostStreamService) sendPostStreamingAnnotationsEventWithBroadcast(post *model.Post, annotations string, broadcast *model.WebsocketBroadcast) {
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":     post.Id,
 		"control":     "annotations",
 		"annotations": annotations,
@@ -319,7 +319,7 @@ func (p *MMPostStreamService) sendPostStreamingAnnotationsEventWithBroadcast(pos
 // server tool activity shares the post text's visibility, so it goes to the
 // whole channel unredacted.
 func (p *MMPostStreamService) sendPostStreamingServerToolEventWithBroadcast(post *model.Post, serverTools string, broadcast *model.WebsocketBroadcast) {
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":     post.Id,
 		"control":     "server_tool",
 		"server_tool": serverTools,
@@ -422,7 +422,7 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		p.mmClient.LogError("Failed to marshal tool calls", "error", err)
 		return
 	}
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":   post.Id,
 		"control":   "tool_call",
 		"tool_call": string(fullJSON),
@@ -439,7 +439,7 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 		p.mmClient.LogError("Failed to marshal redacted tool calls", "error", err)
 		return
 	}
-	p.mmClient.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	p.mmClient.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":   post.Id,
 		"control":   "tool_call",
 		"tool_call": string(redactedJSON),
@@ -722,7 +722,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 			case llm.EventTypeAnnotations:
 				// Handle annotations - might include cleaned message for web search citations
-				if annotationMap, ok := event.Value.(map[string]interface{}); ok {
+				if annotationMap, ok := event.Value.(map[string]any); ok {
 					// Web search annotations with cleaned message
 					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
 						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {

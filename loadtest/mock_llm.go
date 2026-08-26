@@ -82,8 +82,8 @@ func applyOptions(opts []llm.LanguageModelOption) llm.LanguageModelConfig {
 func countToolRounds(posts []llm.Post) int {
 	var n int
 	start := 0
-	for i := len(posts) - 1; i >= 0; i-- {
-		if posts[i].Role == llm.PostRoleUser {
+	for i, post := range slices.Backward(posts) {
+		if post.Role == llm.PostRoleUser {
 			start = i + 1
 			break
 		}
@@ -126,10 +126,7 @@ func splitIntoChunks(text string, chunkCount int) []string {
 		if i < rem {
 			add++
 		}
-		end := start + add
-		if end > len(runes) {
-			end = len(runes)
-		}
+		end := min(start+add, len(runes))
 		out = append(out, string(runes[start:end]))
 		start = end
 	}
@@ -358,10 +355,7 @@ func (m *MockLLM) ChatCompletion(ctx context.Context, req llm.CompletionRequest,
 			nChunks = 1
 		}
 		chunks := splitIntoChunks(text, nChunks)
-		remMs := sr.WallTimeMs - sr.TTFTMs
-		if remMs < 0 {
-			remMs = 0
-		}
+		remMs := max(sr.WallTimeMs-sr.TTFTMs, 0)
 		var gap time.Duration
 		if len(chunks) > 1 {
 			per := remMs / (len(chunks) - 1)
@@ -433,10 +427,7 @@ func countTextTokens(text string) int {
 	if len(text) == 0 {
 		return 0
 	}
-	n := (len(text) + 3) / 4
-	if n < 1 {
-		n = 1
-	}
+	n := max((len(text)+3)/4, 1)
 	return n
 }
 

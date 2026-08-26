@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"math"
 	"strings"
 
@@ -90,9 +91,7 @@ func isValidLoadTestMockConfig(raw json.RawMessage) bool {
 		if len(ov.ProfileWeights) == 0 {
 			profileWeights = map[string]float64{}
 		} else {
-			for name, weight := range ov.ProfileWeights {
-				profileWeights[name] = weight
-			}
+			maps.Copy(profileWeights, ov.ProfileWeights)
 		}
 	}
 
@@ -101,9 +100,7 @@ func isValidLoadTestMockConfig(raw json.RawMessage) bool {
 		if len(ov.ToolWeights) == 0 {
 			toolWeights = map[string]float64{}
 		} else {
-			for name, weight := range ov.ToolWeights {
-				toolWeights[name] = weight
-			}
+			maps.Copy(toolWeights, ov.ToolWeights)
 		}
 	}
 

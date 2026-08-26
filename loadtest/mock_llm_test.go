@@ -42,7 +42,7 @@ func TestDeterministicRepeatNewInstances(t *testing.T) {
 	base.ReasoningSkipProbability = 1.0
 
 	var first []llm.EventType
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		m := NewMockLLM(base)
 		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
@@ -333,7 +333,7 @@ func TestProfileWeightConvergence(t *testing.T) {
 
 	hist := map[int]int{}
 	m := NewMockLLM(p)
-	for i := 0; i < 4000; i++ {
+	for range 4000 {
 		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		n := 0
@@ -357,10 +357,8 @@ func TestConcurrentChatCompletionRace(t *testing.T) {
 	m := NewMockLLM(p)
 	var wg sync.WaitGroup
 	errCh := make(chan error, 64)
-	for i := 0; i < 64; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 64 {
+		wg.Go(func() {
 			res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{}, llm.WithReasoningDisabled())
 			if err != nil {
 				errCh <- err
@@ -369,7 +367,7 @@ func TestConcurrentChatCompletionRace(t *testing.T) {
 			for event := range res.Stream {
 				_ = event
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -458,7 +456,7 @@ func TestToolArgumentsVaryBySeed(t *testing.T) {
 	args := map[string]struct{}{}
 	limits := map[int]struct{}{}
 	m := NewMockLLM(p)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		res, err := m.ChatCompletion(context.Background(), llm.CompletionRequest{Context: ctx}, llm.WithReasoningDisabled())
 		require.NoError(t, err)
 		for ev := range res.Stream {
@@ -491,7 +489,6 @@ func TestCountTokens(t *testing.T) {
 		{name: "five characters", input: "abcde", want: 2},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, tt.want, countTextTokens(tt.input))

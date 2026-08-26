@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"unicode"
@@ -67,7 +68,7 @@ type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgu
 // Bound parameters are:
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
-func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
+func (t Tool) WithBoundParams(params map[string]any) Tool {
 	cloned := t
 	cloned.Schema = removeSchemaProperties(t.Schema, params)
 	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
@@ -85,15 +86,13 @@ func (t Tool) WithCallMetadata(meta map[string]any) Tool {
 		return cloned
 	}
 	cloned.CallMetadata = make(map[string]any, len(meta))
-	for k, v := range meta {
-		cloned.CallMetadata[k] = v
-	}
+	maps.Copy(cloned.CallMetadata, meta)
 	return cloned
 }
 
 // removeSchemaProperties removes the specified properties from a JSON schema.
 // It returns a modified copy of the schema, leaving the original unchanged.
-func removeSchemaProperties(schema any, params map[string]interface{}) any {
+func removeSchemaProperties(schema any, params map[string]any) any {
 	if schema == nil || len(params) == 0 {
 		return schema
 	}
@@ -132,7 +131,7 @@ func removeSchemaProperties(schema any, params map[string]interface{}) any {
 }
 
 // wrapResolverWithBoundParams creates a wrapped resolver that injects bound parameters
-func wrapResolverWithBoundParams(original ToolResolver, params map[string]interface{}) ToolResolver {
+func wrapResolverWithBoundParams(original ToolResolver, params map[string]any) ToolResolver {
 	if original == nil || len(params) == 0 {
 		return original
 	}
@@ -151,13 +150,13 @@ func wrapResolverWithBoundParams(original ToolResolver, params map[string]interf
 }
 
 // injectBoundParams injects bound parameter values into the args struct or map
-func injectBoundParams(args any, params map[string]interface{}) error {
+func injectBoundParams(args any, params map[string]any) error {
 	if len(params) == 0 {
 		return nil
 	}
 
 	val := reflect.ValueOf(args)
-	if val.Kind() != reflect.Ptr || val.IsNil() {
+	if val.Kind() != reflect.Pointer || val.IsNil() {
 		return fmt.Errorf("args must be a non-nil pointer, got %T", args)
 	}
 

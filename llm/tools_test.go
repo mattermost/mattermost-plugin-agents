@@ -466,7 +466,7 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 		},
 	}
 
-	bound := original.WithBoundParams(map[string]interface{}{"key": "value"})
+	bound := original.WithBoundParams(map[string]any{"key": "value"})
 
 	assert.Equal(t, original.ServerOrigin, bound.ServerOrigin)
 	assert.Equal(t, original.Name, bound.Name)

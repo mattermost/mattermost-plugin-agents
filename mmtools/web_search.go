@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -241,11 +243,9 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 		return "web search is disabled", errors.New("web search disabled")
 	}
 
-	previousParameters := map[string]interface{}{}
+	previousParameters := map[string]any{}
 	if llmContext != nil && llmContext.Parameters != nil {
-		for k, v := range llmContext.Parameters {
-			previousParameters[k] = v
-		}
+		maps.Copy(previousParameters, llmContext.Parameters)
 	}
 
 	// Check search count limit
@@ -321,7 +321,7 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 	// Track executed query and increment search count even if no results found
 	// This prevents the LLM from retrying the same unsuccessful query
 	if llmContext.Parameters == nil {
-		llmContext.Parameters = map[string]interface{}{}
+		llmContext.Parameters = map[string]any{}
 	}
 	executedQueries = append(executedQueries, query)
 	llmContext.Parameters[WebSearchExecutedQueriesKey] = executedQueries
@@ -471,13 +471,7 @@ func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llm
 	if llmContext != nil && llmContext.Parameters != nil {
 		if raw, ok := llmContext.Parameters[WebSearchAllowedURLsKey]; ok {
 			if allowedURLs, ok := raw.([]string); ok {
-				isAllowed := false
-				for _, allowed := range allowedURLs {
-					if allowed == pageURL {
-						isAllowed = true
-						break
-					}
-				}
+				isAllowed := slices.Contains(allowedURLs, pageURL)
 				if !isAllowed {
 					s.logWarn("source fetch rejected: URL not in whitelist", "url", pageURL)
 					return "you can only fetch URLs that were returned from web search results", errors.New("url not in whitelist")
@@ -834,7 +828,7 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 				if len(annotations) > 0 {
 					output <- llm.TextStreamEvent{
 						Type: llm.EventTypeAnnotations,
-						Value: map[string]interface{}{
+						Value: map[string]any{
 							"annotations":    annotations,
 							"cleanedMessage": cleanedMessage,
 						},

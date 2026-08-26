@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -172,9 +173,9 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}

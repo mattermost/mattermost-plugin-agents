@@ -508,7 +508,7 @@ func (b *Builder) WithLLMContextNoTools() llm.ContextOption {
 	}
 }
 
-func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.ContextOption {
+func (b *Builder) WithLLMContextParameters(params map[string]any) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.Parameters = params
 	}

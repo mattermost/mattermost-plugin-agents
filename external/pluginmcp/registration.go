@@ -28,11 +28,9 @@ var unregisterTimeout = 5 * time.Second
 // returns immediately. The background goroutine is tracked via s.regWG so
 // Unregister() can wait for it to drain before posting /unregister.
 func (s *Server) Register() error {
-	s.regWG.Add(1)
-	go func() {
-		defer s.regWG.Done()
+	s.regWG.Go(func() {
 		s.registerWithBackoff(s.regCtx)
-	}()
+	})
 	return nil
 }
 

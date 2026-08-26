@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +100,7 @@ func mockUnlicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, nil)
 }
 
-func doRequest(api *API, method, path string, body interface{}, userID string) *httptest.ResponseRecorder {
+func doRequest(api *API, method, path string, body any, userID string) *httptest.ResponseRecorder {
 	var reqBody io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -126,9 +127,7 @@ func createAgentBody(overrides map[string]any) map[string]any {
 		"autoEnableNewMCPTools": true,
 		"mcpDynamicToolLoading": true,
 	}
-	for k, v := range overrides {
-		body[k] = v
-	}
+	maps.Copy(body, overrides)
 	return body
 }
 
@@ -160,9 +159,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"structuredOutputEnabled": cfg.StructuredOutputEnabled,
 		"maxToolTurns":            cfg.MaxToolTurns,
 	}
-	for k, v := range overrides {
-		body[k] = v
-	}
+	maps.Copy(body, overrides)
 	return body
 }
 

@@ -515,7 +515,7 @@ func ensureDMWebSearchTracking(llmContext *llm.Context) {
 		return
 	}
 	if llmContext.Parameters == nil {
-		llmContext.Parameters = make(map[string]interface{})
+		llmContext.Parameters = make(map[string]any)
 	}
 	if _, hasCount := llmContext.Parameters[mmtools.WebSearchCountKey]; !hasCount {
 		llmContext.Parameters[mmtools.WebSearchCountKey] = 0

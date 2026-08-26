@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -172,9 +171,9 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		addTestPosts(t, db, []string{"dup"}, []int64{now})
 		docs := []embeddings.PostDocument{
 			{PostID: "dup", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 0",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 0, TotalChunks: 2}},
+				IsChunk: true, ChunkIndex: 0, TotalChunks: 2},
 			{PostID: "dup", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 1",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 1, TotalChunks: 2}},
+				IsChunk: true, ChunkIndex: 1, TotalChunks: 2},
 		}
 		require.NoError(t, pgVector.Store(ctx, docs, [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}}))
 

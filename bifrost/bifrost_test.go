@@ -92,7 +92,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2048),
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
@@ -136,7 +136,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
+			checkEffort:      new("high"),
 		},
 		{
 			name:             "Gemini with thinking budget prefers MaxTokens",
@@ -145,14 +145,14 @@ func TestBuildChatReasoning(t *testing.T) {
 			thinkingBudget:   4096,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(4096),
+			checkMaxTokens:   new(4096),
 		},
 		{
 			name:             "Gemini default effort when nothing set",
 			provider:         schemas.Gemini,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
+			checkEffort:      new("medium"),
 		},
 		{
 			name:             "Vertex with thinking budget prefers MaxTokens",
@@ -160,7 +160,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   2000,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2000),
+			checkMaxTokens:   new(2000),
 		},
 		{
 			name:             "ReasoningDisabled returns nil",
@@ -182,7 +182,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   8192,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(8191),
+			checkMaxTokens:   new(8191),
 		},
 		{
 			name:             "no valid budget below the minimum returns nil",
@@ -204,7 +204,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			checkEffort:      Ptr("high"),
+			checkEffort:      new("high"),
 		},
 	}
 
@@ -708,8 +708,8 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Gemini with thinking budget prefers max_tokens and summary",
@@ -718,16 +718,16 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			thinkingBudget:   4096,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(4096),
-			checkSummary:     Ptr("auto"),
+			checkMaxTokens:   new(4096),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Gemini default effort when nothing set",
 			provider:         schemas.Gemini,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("medium"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Vertex with thinking budget",
@@ -735,15 +735,15 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   2000,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2000),
-			checkSummary:     Ptr("auto"),
+			checkMaxTokens:   new(2000),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Anthropic uses MaxTokens, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2048),
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "Anthropic budget >= maxTokens is clamped below max_tokens",
@@ -751,7 +751,7 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   8192,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(8191),
+			checkMaxTokens:   new(8191),
 		},
 		{
 			name:             "Anthropic with no valid budget below the minimum returns nil",
@@ -766,16 +766,16 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Azure uses Effort with summary",
 			provider:         schemas.Azure,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("medium"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Mistral returns nil (no reasoning_effort support)",
@@ -826,8 +826,8 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 	}
 
@@ -868,13 +868,11 @@ func TestBuildResponsesReasoning(t *testing.T) {
 func TestGetKeysForProviderVertex(t *testing.T) {
 	saJSON := `{"type":"service_account","project_id":"x"}`
 	acc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "us-west1",
-			VertexProjectID:       "my-gcp-project",
-			VertexProjectNumber:   "123456789012",
-			VertexAuthCredentials: saJSON,
-		},
+		Provider:              schemas.Vertex,
+		Region:                "us-west1",
+		VertexProjectID:       "my-gcp-project",
+		VertexProjectNumber:   "123456789012",
+		VertexAuthCredentials: saJSON,
 	}
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Vertex)
@@ -888,13 +886,11 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, saJSON, vc.AuthCredentials.Val)
 
 	adc := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              schemas.Vertex,
-			Region:                "europe-west1",
-			VertexProjectID:       "adc-project",
-			VertexProjectNumber:   "",
-			VertexAuthCredentials: "",
-		},
+		Provider:              schemas.Vertex,
+		Region:                "europe-west1",
+		VertexProjectID:       "adc-project",
+		VertexProjectNumber:   "",
+		VertexAuthCredentials: "",
 	}
 	keysADC, err := adc.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.NoError(t, err)
@@ -904,9 +900,7 @@ func TestGetKeysForProviderVertex(t *testing.T) {
 	assert.Equal(t, "", keysADC[0].VertexKeyConfig.AuthCredentials.Val)
 
 	other := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-		},
+		Provider: schemas.OpenAI,
 	}
 	_, err = other.GetKeysForProvider(context.Background(), schemas.Vertex)
 	require.Error(t, err)
@@ -1149,7 +1143,7 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("hello")},
 				},
 			},
 			expected: 1,
@@ -1159,11 +1153,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("msg1")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("msg2")},
 				},
 			},
 			expected: 1,
@@ -1178,19 +1172,19 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("resp1")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool1")}},
+							{ID: new("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: new("tool1")}},
 						},
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("resp2")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool2")}},
+							{ID: new("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: new("tool2")}},
 						},
 					},
 				},
@@ -1207,11 +1201,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("question")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("question")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("answer")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("answer")},
 				},
 			},
 			expected: 2,
@@ -1221,16 +1215,16 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("result1")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc1"),
+						ToolCallID: new("tc1"),
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("result2")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc2"),
+						ToolCallID: new("tc2"),
 					},
 				},
 			},
@@ -1241,11 +1235,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleSystem,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("system prompt")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("system prompt")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("hello")},
 				},
 			},
 			expected: 2,
@@ -1323,8 +1317,11 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 	}
 }
 
-func intPtr(i int) *int       { return &i }
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func intPtr(i int) *int { return new(i) }
+
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func TestConvertBifrostAnnotation(t *testing.T) {
 	tests := []struct {
@@ -1351,11 +1348,11 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "OpenAI fields used when present",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:       "url_citation",
-				StartIndex: intPtr(10),
-				EndIndex:   intPtr(50),
-				URL:        strPtr("https://example.com"),
-				Title:      strPtr("Example"),
-				Text:       strPtr("cited text"),
+				StartIndex: new(10),
+				EndIndex:   new(50),
+				URL:        new("https://example.com"),
+				Title:      new("Example"),
+				Text:       new("cited text"),
 			},
 			index: 1,
 			expected: &llm.Annotation{
@@ -1372,8 +1369,8 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "nil StartIndex and EndIndex default to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:  "url_citation",
-				URL:   strPtr("https://anthropic.com"),
-				Title: strPtr("Anthropic"),
+				URL:   new("https://anthropic.com"),
+				Title: new("Anthropic"),
 			},
 			index: 3,
 			expected: &llm.Annotation{
@@ -1387,7 +1384,7 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "all position fields nil defaults to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type: "url_citation",
-				URL:  strPtr("https://example.com"),
+				URL:  new("https://example.com"),
 			},
 			index: 1,
 			expected: &llm.Annotation{
@@ -1555,10 +1552,10 @@ func TestConvertToBifrostRequestStructuredOutput(t *testing.T) {
 				require.NotNil(t, req.Params.ResponseFormat)
 				data, err := json.Marshal(*req.Params.ResponseFormat)
 				require.NoError(t, err)
-				var format map[string]interface{}
+				var format map[string]any
 				require.NoError(t, json.Unmarshal(data, &format))
 				assert.Equal(t, "json_schema", format["type"])
-				jsonSchema, ok := format["json_schema"].(map[string]interface{})
+				jsonSchema, ok := format["json_schema"].(map[string]any)
 				require.True(t, ok)
 				assert.Equal(t, "response", jsonSchema["name"])
 				assert.Equal(t, true, jsonSchema["strict"])
@@ -1634,12 +1631,10 @@ func TestConvertToBifrostResponsesRequestStructuredOutput(t *testing.T) {
 func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-			APIURL:   "https://api.openai.com",
-			OrgID:    "org-123",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
+		APIURL:   "https://api.openai.com",
+		OrgID:    "org-123",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1659,16 +1654,12 @@ func TestMultiProviderAccount_SingleProvider(t *testing.T) {
 func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Anthropic,
-			APIKey:   "anthropic-key",
-		},
+		Provider: schemas.Anthropic,
+		APIKey:   "anthropic-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1690,10 +1681,8 @@ func TestMultiProviderAccount_MultipleProviders(t *testing.T) {
 func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "openai-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "openai-key",
 	})
 
 	_, err := acc.GetKeysForProvider(context.Background(), schemas.Anthropic)
@@ -1706,17 +1695,13 @@ func TestMultiProviderAccount_UnknownProvider(t *testing.T) {
 func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "first-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "first-key",
 	})
 	// Second add with same provider should be silently skipped (first wins)
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "second-key",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "second-key",
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -1732,11 +1717,9 @@ func TestMultiProviderAccount_DuplicateProvider(t *testing.T) {
 func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.Azure,
-			APIKey:   "azure-key",
-			APIURL:   "https://myservice.openai.azure.com",
-		},
+		Provider: schemas.Azure,
+		APIKey:   "azure-key",
+		APIURL:   "https://myservice.openai.azure.com",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Azure)
@@ -1749,13 +1732,11 @@ func TestMultiProviderAccount_AzureKeyConfig(t *testing.T) {
 func TestMultiProviderAccount_BedrockKeyConfig(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:           schemas.Bedrock,
-			APIKey:             "bedrock-key",
-			Region:             "us-east-1",
-			AWSAccessKeyID:     "AKIA123",
-			AWSSecretAccessKey: "secret123",
-		},
+		Provider:           schemas.Bedrock,
+		APIKey:             "bedrock-key",
+		Region:             "us-east-1",
+		AWSAccessKeyID:     "AKIA123",
+		AWSSecretAccessKey: "secret123",
 	})
 
 	keys, err := acc.GetKeysForProvider(context.Background(), schemas.Bedrock)
@@ -2533,20 +2514,16 @@ func TestServiceConfigToFallbackEntry_VertexCredsAndKeyless(t *testing.T) {
 func TestMultiProviderAccount_CustomProviderKeepsDistinctSlot(t *testing.T) {
 	acc := newMultiProviderAccount()
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIKey:   "cloud",
-			APIURL:   "https://api.openai.com",
-		},
+		Provider: schemas.OpenAI,
+		APIKey:   "cloud",
+		APIURL:   "https://api.openai.com",
 	})
 	customName := customProviderName(schemas.OpenAI, "local")
 	acc.addProvider(&providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
-		name:    customName,
-		keyless: true,
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
+		name:     customName,
+		keyless:  true,
 	})
 
 	providers, err := acc.GetConfiguredProviders()
@@ -2628,10 +2605,8 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 // Responses → chat), while a non-chat-only custom provider leaves it unset.
 func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	chatOnly := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "http://localhost:11434",
-		},
+		Provider: schemas.OpenAI,
+		APIURL:   "http://localhost:11434",
 		name:     customProviderName(schemas.OpenAI, "local"),
 		chatOnly: true,
 	}
@@ -2647,11 +2622,9 @@ func TestProviderAccount_ChatOnlyCustomConfig(t *testing.T) {
 	// A custom provider that does support the Responses API leaves AllowedRequests
 	// unset so all operations remain available.
 	responsesCapable := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: schemas.OpenAI,
-			APIURL:   "https://api.example.com",
-		},
-		name: customProviderName(schemas.OpenAI, "other"),
+		Provider: schemas.OpenAI,
+		APIURL:   "https://api.example.com",
+		name:     customProviderName(schemas.OpenAI, "other"),
 	}
 	cfg, err = responsesCapable.GetConfigForProvider(responsesCapable.registeredName())
 	require.NoError(t, err)
@@ -2836,13 +2809,11 @@ func TestEnvProxyRouting(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", proxy.URL)
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-4",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2923,13 +2894,11 @@ func TestCountTokensReturnsCount(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -2958,13 +2927,11 @@ func TestCountTokensOmitsMaxOutputTokens(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.OpenAI,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "gpt-5.4",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.OpenAI,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "gpt-5.4",
+		StreamingTimeout: 10 * time.Second,
 		OutputTokenLimit: 8192, // produces MaxGeneratedTokens > 0 → MaxOutputTokens in the request
 	})
 	require.NoError(t, err)
@@ -3000,13 +2967,11 @@ func TestCountTokensOmitsNativeServerTools(t *testing.T) {
 	// the production "Server tools are not supported in the count_tokens
 	// endpoint" error.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:           schemas.Anthropic,
+		APIKey:             "test-key",
+		APIURL:             backend.URL,
+		DefaultModel:       "claude-sonnet-4-6",
+		StreamingTimeout:   10 * time.Second,
 		EnabledNativeTools: []string{llm.NativeToolWebSearch},
 	})
 	require.NoError(t, err)
@@ -3040,20 +3005,18 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
 
 	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
-		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]interface{}{"type": "object"}},
+		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]any{"type": "object"}},
 	})
 
 	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{
@@ -3080,13 +3043,11 @@ func TestCountTokensUnsupportedProvider(t *testing.T) {
 	// "unsupported_operation" error synchronously. CountTokens must classify
 	// that as ErrUnsupportedTokenCount without contacting the backend.
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Mistral,
-			APIKey:           "test-key",
-			APIURL:           backend.URL,
-			DefaultModel:     "mistral-large-latest",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Mistral,
+		APIKey:           "test-key",
+		APIURL:           backend.URL,
+		DefaultModel:     "mistral-large-latest",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()
@@ -3109,13 +3070,11 @@ func TestCountTokensScrubsAPIKeyFromError(t *testing.T) {
 	defer backend.Close()
 
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           secret,
-			APIURL:           backend.URL,
-			DefaultModel:     "claude-sonnet-4-5",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           secret,
+		APIURL:           backend.URL,
+		DefaultModel:     "claude-sonnet-4-5",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.client.Shutdown()

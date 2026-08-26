@@ -180,7 +180,7 @@ func TestCreateFileResolverValidation(t *testing.T) {
 			name: "per-reply cap reached",
 			llmCtx: func() *llm.Context {
 				ctx := validChannelCtx()
-				for i := 0; i < maxCreatedFilesPerTurn; i++ {
+				for i := range maxCreatedFilesPerTurn {
 					ctx.AddCreatedFile(llm.CreatedFile{ID: model.NewId(), Name: fmt.Sprintf("f%d.txt", i)})
 				}
 				return ctx

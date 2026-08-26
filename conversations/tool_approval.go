@@ -202,7 +202,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
-			block.Shared = conversation.BoolPtr(true)
+			block.Shared = new(true)
 			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
@@ -238,7 +238,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// tool contract. Shared because the decline is user-authored, not
 			// private tool output.
 			block.Status = conversation.StatusRejected
-			block.Shared = conversation.BoolPtr(true)
+			block.Shared = new(true)
 			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
@@ -256,7 +256,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
 			executedAny = true
-			block.Shared = conversation.BoolPtr(true)
+			block.Shared = new(true)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -329,10 +329,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    conversation.BoolPtr(terminal),
+			Shared:    new(terminal),
 		}
 		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
-			rb.DecidedAt = conversation.Int64Ptr(now)
+			rb.DecidedAt = new(now)
 		} else {
 			needsShareDecision = true
 		}
@@ -542,19 +542,19 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 			case conversation.BlockTypeToolUse:
 				if acceptedSet[blocks[i].ID] {
 					if _, ok := clickedPostToolUseIDs[blocks[i].ID]; ok {
-						blocks[i].Shared = conversation.BoolPtr(true)
+						blocks[i].Shared = new(true)
 						modified = true
 					}
 				}
 			case conversation.BlockTypeToolResult:
 				if acceptedSet[blocks[i].ToolUseID] {
 					if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok {
-						blocks[i].Shared = conversation.BoolPtr(true)
+						blocks[i].Shared = new(true)
 						modified = true
 					}
 				}
 				if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok && blocks[i].DecidedAt == nil {
-					blocks[i].DecidedAt = conversation.Int64Ptr(now)
+					blocks[i].DecidedAt = new(now)
 					modified = true
 				}
 			}

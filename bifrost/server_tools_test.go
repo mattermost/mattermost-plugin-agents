@@ -210,13 +210,11 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 			defer backend.Close()
 
 			llmClient, err := New(Config{
-				ProviderSettings: ProviderSettings{
-					Provider:         schemas.Anthropic,
-					APIKey:           "test-key",
-					APIURL:           backend.URL,
-					DefaultModel:     "claude-sonnet-4-6",
-					StreamingTimeout: 10 * time.Second,
-				},
+				Provider:           schemas.Anthropic,
+				APIKey:             "test-key",
+				APIURL:             backend.URL,
+				DefaultModel:       "claude-sonnet-4-6",
+				StreamingTimeout:   10 * time.Second,
 				EnabledNativeTools: tt.enabledNativeTools,
 			})
 			require.NoError(t, err)
@@ -279,10 +277,10 @@ func TestMapServerToolStatus(t *testing.T) {
 		want   string
 	}{
 		{"nil defaults to in progress", nil, llm.ServerToolStatusInProgress},
-		{"in_progress stays in progress", Ptr("in_progress"), llm.ServerToolStatusInProgress},
-		{"completed maps to success", Ptr("completed"), llm.ServerToolStatusSuccess},
-		{"failed maps to error", Ptr("failed"), llm.ServerToolStatusError},
-		{"incomplete is terminal error", Ptr("incomplete"), llm.ServerToolStatusError},
+		{"in_progress stays in progress", new("in_progress"), llm.ServerToolStatusInProgress},
+		{"completed maps to success", new("completed"), llm.ServerToolStatusSuccess},
+		{"failed maps to error", new("failed"), llm.ServerToolStatusError},
+		{"incomplete is terminal error", new("incomplete"), llm.ServerToolStatusError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -950,9 +950,7 @@ func TestBridgeCompletionEndpointsRejectInvalidPrincipalIDs(t *testing.T) {
 	}
 
 	for _, invoker := range invokers {
-		invoker := invoker
 		for _, scenario := range scenarios {
-			scenario := scenario
 			t.Run(invoker.name+"/"+scenario.name, func(t *testing.T) {
 				e := SetupTestEnvironment(t)
 				defer e.Cleanup(t)

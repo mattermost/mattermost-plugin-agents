@@ -19,7 +19,6 @@ import (
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
-	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/pgvector/pgvector-go"
 )
@@ -340,7 +339,7 @@ func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, e
 }
 
 // sqlNullInt returns NULL if the condition is false, otherwise the value
-func sqlNullInt(condition bool, val int) interface{} {
+func sqlNullInt(condition bool, val int) any {
 	if !condition {
 		return nil
 	}
@@ -422,7 +421,7 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	}
 
 	// Need to append the embedding to the args slice from the select
-	args = append([]interface{}{pv.bindEmbedding(embedding)}, args...)
+	args = append([]any{pv.bindEmbedding(embedding)}, args...)
 
 	rows, err := pv.db.QueryxContext(ctx, query, args...)
 	if err != nil {
@@ -477,9 +476,7 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 			ChannelID: channelID,
 			UserID:    userID,
 			Content:   content,
-			ChunkInfo: chunking.ChunkInfo{
-				IsChunk: isChunk,
-			},
+			IsChunk:   isChunk,
 		}
 
 		if isChunk {

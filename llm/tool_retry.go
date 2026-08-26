@@ -5,6 +5,7 @@ package llm
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -44,8 +45,8 @@ func IsToolRetryExempt(name string) bool {
 func CountTrailingFailedToolCalls(posts []Post) int {
 	failures := 0
 
-	for i := len(posts) - 1; i >= 0; i-- {
-		post := posts[i]
+	for _, post := range slices.Backward(posts) {
+
 		if post.Role == PostRoleSystem {
 			continue
 		}

@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -67,14 +66,14 @@ type JobStatus struct {
 	Status        string    `json:"status"`
 	Error         string    `json:"error,omitempty"`
 	StartedAt     time.Time `json:"started_at"`
-	CompletedAt   time.Time `json:"completed_at,omitempty"`
+	CompletedAt   time.Time `json:"completed_at"`
 	ProcessedRows int64     `json:"processed_rows"`
 	TotalRows     int64     `json:"total_rows"`
 	Resumable     bool      `json:"resumable"`
 	ErrorCount    int       `json:"error_count"`
 	NodeID        string    `json:"node_id,omitempty"`
 	CutoffAt      int64     `json:"cutoff_at,omitempty"`
-	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
+	LastUpdatedAt time.Time `json:"last_updated_at"`
 	IsStale       bool      `json:"is_stale"`
 	// Phase is a short-lived UI hint (e.g. JobPhaseBuildingIndex); empty otherwise.
 	Phase string `json:"phase,omitempty"`
@@ -570,7 +569,7 @@ func (s *Indexer) persistProvenIndexRetentionDays(days int) {
 	if err != nil {
 		stored = ModelInfo{}
 	}
-	stored.IndexRetentionDays = utils.Ptr(days)
+	stored.IndexRetentionDays = new(days)
 	if saveErr := s.SaveModelInfo(stored); saveErr != nil {
 		s.pluginAPI.LogError("Failed to save index retention days after catch-up", "error", saveErr)
 	}
@@ -671,7 +670,7 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		return
 	}
 
-	var oldValue interface{}
+	var oldValue any
 	if err == nil {
 		oldValue = current
 	}
@@ -736,7 +735,7 @@ func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
 		}
 		newStatus.CompletedAt = time.Now()
 
-		var oldValue interface{}
+		var oldValue any
 		if err == nil {
 			oldValue = current
 		}

@@ -134,11 +134,11 @@ func convertToMockOption(opt pluginapi.ListKeysOption) func(*mockListKeysOptions
 // mockLogService implements pluginapi.LogService for testing
 type mockLogService struct{}
 
-func (m *mockLogService) Debug(msg string, keyValuePairs ...interface{}) {}
-func (m *mockLogService) Info(msg string, keyValuePairs ...interface{})  {}
-func (m *mockLogService) Warn(msg string, keyValuePairs ...interface{})  {}
-func (m *mockLogService) Error(msg string, keyValuePairs ...interface{}) {}
-func (m *mockLogService) Flush() error                                   { return nil }
+func (m *mockLogService) Debug(msg string, keyValuePairs ...any) {}
+func (m *mockLogService) Info(msg string, keyValuePairs ...any)  {}
+func (m *mockLogService) Warn(msg string, keyValuePairs ...any)  {}
+func (m *mockLogService) Error(msg string, keyValuePairs ...any) {}
+func (m *mockLogService) Flush() error                           { return nil }
 
 func createTestTools() map[string]*mcp.Tool {
 	return map[string]*mcp.Tool{
@@ -293,7 +293,7 @@ func TestConcurrentAccess(t *testing.T) {
 	done := make(chan bool)
 
 	// Writer goroutines
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
 			serverID := "server_" + string(rune('0'+id))
 			tools := createTestTools()
@@ -303,7 +303,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// Reader goroutines
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		go func(id int) {
 			serverID := "server_" + string(rune('0'+id))
 			cache.GetTools(serverID)
@@ -312,7 +312,7 @@ func TestConcurrentAccess(t *testing.T) {
 	}
 
 	// Wait for all goroutines
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		<-done
 	}
 

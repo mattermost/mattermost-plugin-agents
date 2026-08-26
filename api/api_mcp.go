@@ -266,8 +266,7 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 
 	var prefs mcp.UserToolProviderPreferences
 	if err := c.ShouldBindJSON(&prefs); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
@@ -347,7 +346,7 @@ func (a *API) publishMCPDisconnected(userID, serverName string) {
 		return
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"status":     "disconnected",
 		"serverName": serverName,
 	}

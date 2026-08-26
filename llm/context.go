@@ -46,7 +46,7 @@ type Context struct {
 
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
-	Parameters        map[string]interface{}
+	Parameters        map[string]any
 
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext

@@ -1065,7 +1065,7 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 
 	// Create a large result set
 	var largeResults []RAGResult
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		largeResults = append(largeResults, RAGResult{
 			PostID:      fmt.Sprintf("post%d", i),
 			ChannelID:   fmt.Sprintf("channel%d", i),

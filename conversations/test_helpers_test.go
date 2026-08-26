@@ -21,7 +21,7 @@ import (
 type fakeMMClient struct {
 	users                map[string]*model.User
 	postThreads          map[string]*model.PostList
-	kv                   map[string]interface{}
+	kv                   map[string]any
 	createdPosts         []*model.Post
 	allowCreatePost      bool
 	updatedPosts         []*model.Post
@@ -67,7 +67,7 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	return nil
 }
 
-func (c *fakeMMClient) KVGet(key string, value interface{}) error {
+func (c *fakeMMClient) KVGet(key string, value any) error {
 	stored, ok := c.kv[key]
 	if !ok {
 		return errors.New("not found")
@@ -79,21 +79,21 @@ func (c *fakeMMClient) KVGet(key string, value interface{}) error {
 	return json.Unmarshal(data, value)
 }
 
-func (c *fakeMMClient) KVSet(key string, value interface{}) error {
+func (c *fakeMMClient) KVSet(key string, value any) error {
 	if c.kv == nil {
-		c.kv = make(map[string]interface{})
+		c.kv = make(map[string]any)
 	}
 	c.kv[key] = value
 	return nil
 }
 
-func (c *fakeMMClient) KVSetWithExpiry(key string, value interface{}, _ time.Duration) error {
+func (c *fakeMMClient) KVSetWithExpiry(key string, value any, _ time.Duration) error {
 	return c.KVSet(key, value)
 }
 
-func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	if c.kv == nil {
-		c.kv = make(map[string]interface{})
+		c.kv = make(map[string]any)
 	}
 	current, ok := c.kv[key]
 	if oldValue == nil {
@@ -121,7 +121,7 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{
 	return true, nil
 }
 
-func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, _ time.Duration) (bool, error) {
+func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
 	return c.KVCompareAndSet(key, oldValue, newValue)
 }
 
@@ -173,14 +173,14 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) PublishWebSocketEvent(string, map[string]interface{}, *model.WebsocketBroadcast) {
+func (c *fakeMMClient) PublishWebSocketEvent(string, map[string]any, *model.WebsocketBroadcast) {
 }
 
 func (c *fakeMMClient) GetConfig() *model.Config {
 	return &model.Config{}
 }
 
-func (c *fakeMMClient) LogError(msg string, _ ...interface{}) {
+func (c *fakeMMClient) LogError(msg string, _ ...any) {
 	c.logMu.Lock()
 	defer c.logMu.Unlock()
 	c.logErrors = append(c.logErrors, msg)
@@ -193,7 +193,7 @@ func (c *fakeMMClient) loggedErrors() []string {
 	return append([]string(nil), c.logErrors...)
 }
 
-func (c *fakeMMClient) LogWarn(string, ...interface{}) {}
+func (c *fakeMMClient) LogWarn(string, ...any) {}
 
 func (c *fakeMMClient) GetUserByUsername(string) (*model.User, error) {
 	return nil, errors.New("not implemented")
@@ -215,7 +215,7 @@ func (c *fakeMMClient) PluginHTTP(*http.Request) *http.Response {
 	return nil
 }
 
-func (c *fakeMMClient) LogDebug(string, ...interface{}) {}
+func (c *fakeMMClient) LogDebug(string, ...any) {}
 
 func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, error) {
 	return nil, errors.New("not implemented")

@@ -215,7 +215,7 @@ func TestRefreshSerializedByLease(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([]string, goroutines)
 	errs := make([]error, goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
@@ -230,7 +230,7 @@ func TestRefreshSerializedByLease(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, int32(1), refreshCalls.Load(), "the lease must serialize the refresh to a single token-endpoint call")
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		require.NoError(t, errs[i])
 		require.Equal(t, "rotated-access", results[i])
 	}

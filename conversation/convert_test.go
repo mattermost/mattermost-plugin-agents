@@ -35,7 +35,7 @@ func TestBlocksToPost(t *testing.T) {
 		{
 			name: "tool_use blocks to ToolUse",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: new(true)},
 			},
 			role: "assistant",
 			expected: llm.Post{
@@ -178,8 +178,8 @@ func TestBlocksToPost(t *testing.T) {
 
 func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	blocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: new(true)},
 		{
 			Type:        BlockTypeToolUse,
 			ID:          "t-private",
@@ -187,9 +187,9 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 			Input:       json.RawMessage(`{"channel":"secret-dm"}`),
 			MCPBareName: "read_dm",
 			Status:      StatusSuccess,
-			Shared:      BoolPtr(false),
+			Shared:      new(false),
 		},
-		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: new(false)},
 		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
 		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
 	}
@@ -283,7 +283,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
 		Status:       StatusPending,
-		Shared:       BoolPtr(true),
+		Shared:       new(true),
 	}}
 	toolStore := llm.NewToolStore()
 	schema := json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)
@@ -338,7 +338,7 @@ func TestPostToBlocks(t *testing.T) {
 			},
 			shared: false,
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: new(false)},
 			},
 		},
 		{
@@ -351,8 +351,8 @@ func TestPostToBlocks(t *testing.T) {
 			},
 			shared: true,
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "found it", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "found it", Status: StatusSuccess, Shared: new(true)},
 			},
 		},
 		{
@@ -370,7 +370,7 @@ func TestPostToBlocks(t *testing.T) {
 			expected: []ContentBlock{
 				{Type: BlockTypeThinking, Text: "Let me think", Signature: "sig"},
 				{Type: BlockTypeText, Text: "Here is the answer"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: new(false)},
 			},
 		},
 		{
@@ -390,9 +390,9 @@ func TestPostToBlocks(t *testing.T) {
 			},
 			shared: true,
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool1", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "r1", Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool1", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "r1", Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: new(true)},
 			},
 		},
 	}
@@ -858,7 +858,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			blocks: []ContentBlock{
 				{Type: BlockTypeText, Text: "hello"},
 				{Type: BlockTypeThinking, Text: "reason", Signature: "sig"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 			},
 			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
 				assert.Equal(t, "hello", post.Message)

@@ -15,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -222,7 +221,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 		ModelName:          cfg.GetModelName(),
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -347,8 +346,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		// Try to connect to the server and discover tools
 		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
 		if err != nil {
-			var oauthErr *mcp.OAuthNeededError
-			if errors.As(err, &oauthErr) {
+			if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
 				serverInfo.NeedsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {

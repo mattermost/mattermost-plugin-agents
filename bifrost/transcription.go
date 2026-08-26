@@ -36,11 +36,9 @@ type TranscriptionConfig struct {
 // NewTranscriber creates a new Transcriber.
 func NewTranscriber(cfg TranscriptionConfig) (*Transcriber, error) {
 	account := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: cfg.Provider,
-			APIKey:   cfg.APIKey,
-			APIURL:   cfg.APIURL,
-		},
+		Provider: cfg.Provider,
+		APIKey:   cfg.APIKey,
+		APIURL:   cfg.APIURL,
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)
@@ -79,7 +77,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 			File: data,
 		},
 		Params: &schemas.TranscriptionParameters{
-			ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
+			ResponseFormat: new("vtt"), // Use VTT format for timed transcription
 		},
 	}
 

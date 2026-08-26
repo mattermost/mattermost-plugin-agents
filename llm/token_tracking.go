@@ -52,7 +52,7 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 		Format: "json",
 		Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
 	}
-	jsonFileOptions := map[string]interface{}{
+	jsonFileOptions := map[string]any{
 		"filename": "logs/agents/token_usage.log",
 		"max_size": 100,  // MB
 		"compress": true, // compress rotated files

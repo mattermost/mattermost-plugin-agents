@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -235,9 +236,7 @@ func ParseProfile(raw json.RawMessage) (MockProfile, error) {
 		if len(ov.ProfileWeights) == 0 {
 			base.ProfileWeights = map[string]float64{}
 		} else {
-			for k, v := range ov.ProfileWeights {
-				base.ProfileWeights[k] = v
-			}
+			maps.Copy(base.ProfileWeights, ov.ProfileWeights)
 		}
 	}
 	if ov.ReasoningSkipProbability != nil {
@@ -253,9 +252,7 @@ func ParseProfile(raw json.RawMessage) (MockProfile, error) {
 		if len(ov.ToolWeights) == 0 {
 			base.ToolWeights = map[string]float64{}
 		} else {
-			for k, v := range ov.ToolWeights {
-				base.ToolWeights[k] = v
-			}
+			maps.Copy(base.ToolWeights, ov.ToolWeights)
 		}
 	}
 	if ov.MaxToolRounds != nil {
@@ -265,9 +262,7 @@ func ParseProfile(raw json.RawMessage) (MockProfile, error) {
 		if base.ToolArgumentProfiles == nil {
 			base.ToolArgumentProfiles = map[string]ToolArgumentProfile{}
 		}
-		for k, v := range ov.ToolArgumentProfiles {
-			base.ToolArgumentProfiles[k] = v
-		}
+		maps.Copy(base.ToolArgumentProfiles, ov.ToolArgumentProfiles)
 	}
 	if ov.FinalResponseTemplates != nil {
 		base.FinalResponseTemplates = ov.FinalResponseTemplates
@@ -495,9 +490,7 @@ func cloneLatencyProfiles(in map[string]LatencyProfile) map[string]LatencyProfil
 		return nil
 	}
 	out := make(map[string]LatencyProfile, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -506,9 +499,7 @@ func cloneFloatMap(in map[string]float64) map[string]float64 {
 		return nil
 	}
 	out := make(map[string]float64, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

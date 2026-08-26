@@ -147,7 +147,7 @@ VALUES ($1, $2, $3, $4, $5, $6, $7,
 RETURNING Sequence`
 
 	var lastErr error
-	for attempt := 0; attempt < maxAutoSequenceRetries; attempt++ {
+	for range maxAutoSequenceRetries {
 		var seq int
 		lastErr = s.db.QueryRow(query,
 			turn.ID, turn.ConversationID, turn.PostID, turn.Role,

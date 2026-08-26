@@ -91,7 +91,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
 	var container *mmcontainer.MattermostContainer
 	var err error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		container, err = mmcontainer.RunContainer(ctx,
 			mmcontainer.WithLicense(""),
 		)
@@ -164,10 +164,8 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, searchService to
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
 
 	stdioConfig := mcpserver.StdioConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: suite.serverURL,
-			DevMode:     devMode,
-		},
+		MMServerURL:         suite.serverURL,
+		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
 	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, searchService, fileContentService)

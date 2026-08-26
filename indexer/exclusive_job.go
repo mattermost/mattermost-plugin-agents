@@ -42,8 +42,7 @@ func (e *jobAlreadyRunningError) Error() string {
 }
 
 func asJobAlreadyRunning(err error) (JobStatus, bool) {
-	var conflict *jobAlreadyRunningError
-	if errors.As(err, &conflict) {
+	if conflict, ok := errors.AsType[*jobAlreadyRunningError](err); ok {
 		return conflict.status, true
 	}
 	return JobStatus{}, false
@@ -102,7 +101,7 @@ func (s *Indexer) beginExclusiveJob() (*exclusiveJobSession, error) {
 }
 
 func (s *exclusiveJobSession) commit(idx *Indexer, newStatus JobStatus) error {
-	var oldValue interface{}
+	var oldValue any
 	if s.hasExisting {
 		oldValue = s.existing
 	}

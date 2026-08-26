@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,8 +45,8 @@ func (t *ThreadExport) String() string {
 	result.WriteString(fmt.Sprintf("Posts: %d\n\n", len(t.PostList.Order)))
 
 	// Posts in reverse chronological order (root post first)
-	for i := len(t.PostList.Order) - 1; i >= 0; i-- {
-		postID := t.PostList.Order[i]
+	for _, postID := range slices.Backward(t.PostList.Order) {
+
 		post := t.PostList.Posts[postID]
 		user := t.Users[post.UserId]
 

@@ -27,11 +27,11 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "token usage logging disabled overrides env settings",
 			cfg: &Config{
 				EnableTokenUsageLogging:     false,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(true),
 			},
-			pluginEnv:  stringPtr("true"),
-			fileEnv:    stringPtr("true"),
+			pluginEnv:  new("true"),
+			fileEnv:    new("true"),
 			wantPlugin: false,
 			wantFile:   false,
 		},
@@ -39,8 +39,8 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "legacy defaults apply when env vars are not set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(false),
 			},
 			wantPlugin: false,
 			wantFile:   true,
@@ -49,10 +49,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "only plugin env var set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(false),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(false),
+				EnableTokenUsageLogToFile:   new(false),
 			},
-			pluginEnv:  stringPtr("true"),
+			pluginEnv:  new("true"),
 			wantPlugin: true,
 			wantFile:   true,
 		},
@@ -60,10 +60,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "only file env var set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(false),
 			},
-			fileEnv:    stringPtr("false"),
+			fileEnv:    new("false"),
 			wantPlugin: false,
 			wantFile:   false,
 		},
@@ -72,10 +72,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
 				EnableTokenUsageLogToPlugin: nil,
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToFile:   new(true),
 			},
-			pluginEnv:  stringPtr("true"),
-			fileEnv:    stringPtr("false"),
+			pluginEnv:  new("true"),
+			fileEnv:    new("false"),
 			wantPlugin: true,
 			wantFile:   false,
 		},
@@ -84,8 +84,8 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			cfg: &Config{
 				EnableTokenUsageLogging: true,
 			},
-			pluginEnv:  stringPtr("notabool"),
-			fileEnv:    stringPtr("notabool"),
+			pluginEnv:  new("notabool"),
+			fileEnv:    new("notabool"),
 			wantPlugin: false,
 			wantFile:   true,
 		},
@@ -222,8 +222,8 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 			name: "explicit sink values are serialized",
 			cfg: Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(false),
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToPlugin: new(false),
+				EnableTokenUsageLogToFile:   new(true),
 			},
 			expectPluginField: true,
 			expectFileField:   true,
@@ -255,10 +255,12 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 	}
 }
 
+//go:fix inline
 func boolPtr(value bool) *bool {
-	return &value
+	return new(value)
 }
 
+//go:fix inline
 func stringPtr(value string) *string {
-	return &value
+	return new(value)
 }

@@ -466,10 +466,9 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	}
 
 	// Determine status based on 1% tolerance
-	tolerance := int64(float64(result.DBPostCount) * 0.01)
-	if tolerance < 10 {
-		tolerance = 10 // Minimum tolerance of 10 posts
-	}
+	tolerance := max(int64(float64(result.DBPostCount)*0.01),
+		// Minimum tolerance of 10 posts
+		10)
 
 	switch {
 	case result.MissingPosts > tolerance:

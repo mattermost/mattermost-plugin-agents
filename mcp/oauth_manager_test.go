@@ -769,5 +769,5 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 		"credentials must be load-only at callback time; no registration fallback")
 
 	expectedMsg := "Static OAuth credentials were expected but server config not found"
-	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []interface{}{"serverID", serverID})
+	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []any{"serverID", serverID})
 }

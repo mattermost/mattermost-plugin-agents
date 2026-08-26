@@ -15,7 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func stringPtr(s string) *string { return &s }
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }
 
 func assistantTurnWithPending(t *testing.T, id, postID string, seq int) store.Turn {
 	t.Helper()
@@ -26,7 +27,7 @@ func assistantTurnWithPending(t *testing.T, id, postID string, seq int) store.Tu
 	require.NoError(t, err)
 	return store.Turn{
 		ID:       id,
-		PostID:   stringPtr(postID),
+		PostID:   new(postID),
 		Role:     "assistant",
 		Content:  content,
 		Sequence: seq,
@@ -72,7 +73,7 @@ func TestFindPendingToolTurn(t *testing.T) {
 		content, err := json.Marshal(resolvedBlocks)
 		require.NoError(t, err)
 		resolved := store.Turn{
-			ID: "a-resolved", PostID: stringPtr("post-resolved"), Role: "assistant",
+			ID: "a-resolved", PostID: new("post-resolved"), Role: "assistant",
 			Content: content, Sequence: 5,
 		}
 		turnsWithResolved := append([]store.Turn{}, turns...)
@@ -107,7 +108,7 @@ func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
 		content, err := json.Marshal(resolvedBlocks)
 		require.NoError(t, err)
 		resolved := store.Turn{
-			ID: "a-resolved", PostID: stringPtr("post-resolved"), Role: "assistant",
+			ID: "a-resolved", PostID: new("post-resolved"), Role: "assistant",
 			Content: content, Sequence: 5,
 		}
 		turnsWithResolved := append([]store.Turn{}, turns...)

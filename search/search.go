@@ -246,7 +246,7 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 		}
 		promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
-	promptCtx.Parameters = map[string]interface{}{
+	promptCtx.Parameters = map[string]any{
 		"Query":   query,
 		"Results": ragResults,
 	}

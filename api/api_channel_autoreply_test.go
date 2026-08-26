@@ -490,14 +490,14 @@ func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 
 	type wsEvent struct {
 		name      string
-		payload   map[string]interface{}
+		payload   map[string]any
 		broadcast *model.WebsocketBroadcast
 	}
 	var events []wsEvent
 	mmClient := mmapimocks.NewMockClient(t)
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
-			payload, _ := args.Get(1).(map[string]interface{})
+			payload, _ := args.Get(1).(map[string]any)
 			broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
 			events = append(events, wsEvent{name: args.String(0), payload: payload, broadcast: broadcast})
 		}).Return()

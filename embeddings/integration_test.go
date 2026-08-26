@@ -385,7 +385,7 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up multiple channels
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		addTestChannel(t, db, fmt.Sprintf("channel%d", i), "team1", "O", []string{"user1"})
 	}
 
@@ -393,7 +393,7 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 
 	// Create initial posts
 	var initialDocs []embeddings.PostDocument
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		postID := fmt.Sprintf("initial_post_%d", i)
 		channelID := fmt.Sprintf("channel%d", i%5)
 		message := fmt.Sprintf("Initial post content number %d about various topics", i)
@@ -421,8 +421,8 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 
 	// Pre-create all concurrent posts in the database first (needed for foreign key)
 	var concurrentDocs []embeddings.PostDocument
-	for i := 0; i < 5; i++ {
-		for j := 0; j < 10; j++ {
+	for i := range 5 {
+		for j := range 10 {
 			postID := fmt.Sprintf("concurrent_post_%d_%d", i, j)
 			channelID := fmt.Sprintf("channel%d", i%5)
 			message := fmt.Sprintf("Concurrent indexed content %d-%d about testing", i, j)
@@ -442,11 +442,11 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	}
 
 	// Start concurrent indexing goroutines
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				docIdx := idx*10 + j
 				doc := concurrentDocs[docIdx]
 
@@ -460,12 +460,12 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	}
 
 	// Start concurrent search goroutines
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			queries := []string{"initial content", "various topics", "testing concurrent", "post number"}
-			for j := 0; j < 5; j++ {
+			for j := range 5 {
 				query := queries[j%len(queries)]
 				_, searchErr := search.Search(ctx, query, embeddings.SearchOptions{
 					Limit:  10,

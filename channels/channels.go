@@ -93,13 +93,13 @@ func (c *Channels) AnalyzeChannel(
 	if !ok {
 		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
 	}
-	boundReadChannel := readChannel.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+	boundReadChannel := readChannel.WithBoundParams(map[string]any{"channel_id": channelID})
 
 	getChannelInfo, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "get_channel_info")
 	if !ok {
 		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
 	}
-	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]interface{}{"channel_id": channelID})
+	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]any{"channel_id": channelID})
 
 	// Create scoped tool store with bound tools
 	scopedTools := llm.NewToolStore()
