@@ -5,7 +5,6 @@ import React, {ChangeEvent, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
-//@ts-ignore it exists
 import aiIcon from 'src/../../assets/bot_icon.png';
 
 import {getBotProfilePictureUrl} from '@/client';
