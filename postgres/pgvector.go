@@ -235,23 +235,6 @@ func (pv *PGVector) CheckSchema(ctx context.Context) error {
 	return fmt.Errorf("embedding column type or dimensions do not match configuration; run Full Reindex to recreate the table")
 }
 
-func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
-	var exists bool
-	err := pv.db.GetContext(ctx, &exists, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM pg_catalog.pg_class c
-			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-			WHERE c.relname = $1
-				AND n.nspname = current_schema()
-				AND c.relkind = 'i'
-		)`, vectorIndexName)
-	if err != nil {
-		return false, fmt.Errorf("failed to check vector index existence: %w", err)
-	}
-	return exists, nil
-}
-
 func (pv *PGVector) Store(ctx context.Context, docs []embeddings.PostDocument, embeddings [][]float32) error {
 	if err := pv.CheckSchema(ctx); err != nil {
 		return err

@@ -6,7 +6,6 @@ package search
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
@@ -54,7 +53,7 @@ type OpenAIEmbeddingConfig struct {
 }
 
 // newEmbeddingProvider creates a new embedding provider based on the provided configuration
-func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int, httpClient *http.Client) (embeddings.EmbeddingProvider, error) {
+func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int) (embeddings.EmbeddingProvider, error) {
 	switch config.Type {
 	case embeddings.ProviderTypeBifrost:
 		var bifrostConfig BifrostEmbeddingConfig
@@ -123,7 +122,7 @@ func mapEmbeddingProvider(provider string) (schemas.ModelProvider, error) {
 
 // InitEmbeddingsSearch initializes embedding search. skipVectorIndex must be
 // true while a deferred reindex owns the ANN index (see DeferredIndexRebuildActive).
-func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker, skipVectorIndex bool) (embeddings.EmbeddingSearch, error) {
+func InitEmbeddingsSearch(db *sqlx.DB, cfg embeddings.EmbeddingSearchConfig, licenseChecker *enterprise.LicenseChecker, skipVectorIndex bool) (embeddings.EmbeddingSearch, error) {
 	if cfg.Type == "" {
 		// Search is intentionally disabled, not an error
 		return nil, nil
@@ -143,7 +142,7 @@ func InitEmbeddingsSearch(db *sqlx.DB, httpClient *http.Client, cfg embeddings.E
 		if err != nil {
 			return nil, err
 		}
-		embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, cfg.Dimensions, httpClient)
+		embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, cfg.Dimensions)
 		if err != nil {
 			return nil, err
 		}

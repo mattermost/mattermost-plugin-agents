@@ -480,11 +480,8 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 	s.pluginAPI.LogWarn(spec.completeLog, "processed_posts", jobStatus.ProcessedRows)
 }
 
-// filterAndCreateDocs filters posts and creates PostDocuments
-func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocument {
-	return s.filterAndCreateDocsWithFloor(posts, 0)
-}
-
+// filterAndCreateDocsWithFloor filters posts and creates PostDocuments,
+// skipping posts with CreateAt below the retention floor (0 means no floor).
 func (s *Indexer) filterAndCreateDocsWithFloor(posts []PostRecord, floor int64) []embeddings.PostDocument {
 	docs := make([]embeddings.PostDocument, 0, len(posts))
 	for _, post := range posts {

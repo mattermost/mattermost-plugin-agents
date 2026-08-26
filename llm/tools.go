@@ -368,13 +368,6 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 	return schema
 }
 
-func NewNoTools() *ToolStore {
-	return &ToolStore{
-		tools:      make(map[string]Tool),
-		authErrors: []ToolAuthError{},
-	}
-}
-
 func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),

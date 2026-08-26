@@ -250,7 +250,7 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 				BotName:     "agent",
 				BotUsername: "agent",
 				BotModel:    "model-x",
-				Tools:       llm.NewNoTools(),
+				Tools:       llm.NewToolStore(),
 				ToolCatalog: llm.ToolCatalogContext{MCPDynamicToolLoading: true},
 			},
 			notContains: dynamicWorkflowText,
@@ -282,7 +282,7 @@ func renderStandardPersonalityWithoutLocale(t *testing.T, context *llm.Context) 
 }
 
 func dynamicMetaToolStore() *llm.ToolStore {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{
 			Name:        "search_tools",

@@ -52,10 +52,6 @@ func SupportsNativeTools(serviceType string) bool {
 	return supportsNativeToolsProvider(provider)
 }
 
-func supportsNativeTools(serviceType string) bool {
-	return SupportsNativeTools(serviceType)
-}
-
 func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 	switch provider {
 	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:

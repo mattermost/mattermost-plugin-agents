@@ -555,15 +555,6 @@ func (b *MMBots) getTrasncriberBot() *Bot {
 	return nil
 }
 
-func (b *MMBots) GetBotConfig(botUsername string) (llm.BotConfig, error) {
-	bot := b.GetBotByUsername(botUsername)
-	if bot == nil {
-		return llm.BotConfig{}, fmt.Errorf("bot not found")
-	}
-
-	return bot.cfg, nil
-}
-
 // GetBotByUsername retrieves the bot associated with the given bot username
 func (b *MMBots) GetBotByUsername(botUsername string) *Bot {
 	b.botsLock.RLock()

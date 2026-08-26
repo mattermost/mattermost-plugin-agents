@@ -17,7 +17,6 @@ import (
 // MattermostStdioMCPServer wraps MattermostMCPServer for STDIO transport
 type MattermostStdioMCPServer struct {
 	*MattermostMCPServer
-	config StdioConfig
 }
 
 // NewStdioServer creates a new STDIO transport MCP server.
@@ -44,7 +43,6 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 			logger: logger,
 			config: config,
 		},
-		config: config,
 	}
 
 	// Create authentication provider

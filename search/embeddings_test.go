@@ -5,7 +5,6 @@ package search
 
 import (
 	"encoding/json"
-	"net/http"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
@@ -108,7 +107,7 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			licenseChecker := createLicenseChecker(t, tc.licensed)
 
-			search, err := InitEmbeddingsSearch(nil, &http.Client{}, tc.cfg, licenseChecker, false)
+			search, err := InitEmbeddingsSearch(nil, tc.cfg, licenseChecker, false)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -270,7 +269,7 @@ func TestNewEmbeddingProvider(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			provider, err := newEmbeddingProvider(tc.config, tc.dimensions, &http.Client{})
+			provider, err := newEmbeddingProvider(tc.config, tc.dimensions)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -350,7 +349,7 @@ func TestEmbeddingProviderConfigUnmarshalEdgeCases(t *testing.T) {
 				Parameters: tc.parameters,
 			}
 
-			provider, err := newEmbeddingProvider(config, 1536, &http.Client{})
+			provider, err := newEmbeddingProvider(config, 1536)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -467,7 +466,7 @@ func TestMockProviderDimensions(t *testing.T) {
 				Parameters: json.RawMessage(`{}`),
 			}
 
-			provider, err := newEmbeddingProvider(config, tc.dimensions, &http.Client{})
+			provider, err := newEmbeddingProvider(config, tc.dimensions)
 			require.NoError(t, err)
 			require.NotNil(t, provider)
 			require.Equal(t, tc.expectedDimensions, provider.Dimensions())

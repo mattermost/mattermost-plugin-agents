@@ -382,7 +382,7 @@ func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convService := conversation.NewService(convStore, nil, nil, nil)
 	lm := &loadedStateLLM{}
 	c := &Conversations{convService: convService}
-	llmContext := &llm.Context{Tools: llm.NewNoTools()}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext, 0)
 	require.NoError(t, err)

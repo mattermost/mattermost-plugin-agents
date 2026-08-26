@@ -108,7 +108,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	opts := []llm.ContextOption{
 		a.contextBuilder.WithLLMContextPreloadedMCPTools(channelAnalysisRequiredMCPTools),
-		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
+		a.contextBuilder.WithLLMContextTools(c.Request.Context(), toolBot),
 	}
 
 	// If the channel is a DM/GM and we have a team ID from the client, use it for context
@@ -161,7 +161,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID for streaming turn persistence
-	analysisPost := a.makeAnalysisPost(user.Locale, "", data.AnalysisType, result.ConversationID)
+	analysisPost := makeAnalysisPost("", data.AnalysisType, result.ConversationID)
 
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)

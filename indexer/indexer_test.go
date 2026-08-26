@@ -254,7 +254,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			docs := indexer.filterAndCreateDocs(tt.posts)
+			docs := indexer.filterAndCreateDocsWithFloor(tt.posts, 0)
 			assert.Equal(t, tt.expectedCount, len(docs))
 		})
 	}
@@ -272,7 +272,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Contains(t, docs[0].Content, "attachment content")
 	})
@@ -290,7 +290,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Contains(t, docs[0].Content, "Hello")
 		assert.Contains(t, docs[0].Content, "T")
@@ -310,7 +310,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Equal(t, "Hello", docs[0].Content)
 	})
@@ -328,7 +328,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Equal(t, "Hello", docs[0].Content)
 	})

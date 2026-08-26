@@ -228,18 +228,18 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	// Check for nil bot, which is unexpected
 	if bot == nil {
 		b.pluginAPI.Log.Error("Unexpected nil bot when getting tool store for user", "userID", userID)
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
 	// Check for empty userID, which is unexpected
 	if userID == "" {
 		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
 	// Check if tools are disabled for this bot
 	if bot.GetConfig().DisableTools {
-		return llm.NewNoTools()
+		return llm.NewToolStore()
 	}
 
 	// Create a tool store that requires user approval for tool calls
@@ -494,17 +494,12 @@ func (b *Builder) WithLLMContextConcreteTools(ctx stdcontext.Context, bot *bots.
 	}
 }
 
-// WithLLMContextDefaultTools adds default tools to the LLM context for the requesting user
-func (b *Builder) WithLLMContextDefaultTools(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
-	return b.WithLLMContextTools(ctx, bot)
-}
-
 // WithLLMContextNoTools explicitly disables tools for this context session only,
 // overriding the bot's DisableTools configuration. This allows inter-plugin requests
 // to work with tool-enabled bots by bypassing tools for non-streaming calls.
 func (b *Builder) WithLLMContextNoTools() llm.ContextOption {
 	return func(c *llm.Context) {
-		c.Tools = llm.NewNoTools()
+		c.Tools = llm.NewToolStore()
 	}
 }
 

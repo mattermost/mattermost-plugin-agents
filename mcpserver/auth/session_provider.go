@@ -15,9 +15,8 @@ import (
 // This provider uses existing Mattermost session tokens passed through context,
 // eliminating the need for separate OAuth flows for embedded MCP servers
 type SessionAuthenticationProvider struct {
-	mmServerURL         string // Mattermost server URL for API communication
-	mmInternalServerURL string // Internal server URL (may be different for containerized deployments)
-	logger              logger.Logger
+	mmServerURL string // Mattermost server URL for API communication
+	logger      logger.Logger
 }
 
 // NewSessionAuthenticationProvider creates a new session authentication provider for in-memory transport
@@ -30,9 +29,8 @@ func NewSessionAuthenticationProvider(externalURL, internalURL string, logger lo
 	}
 
 	return &SessionAuthenticationProvider{
-		mmServerURL:         mmServerURL,
-		mmInternalServerURL: internalURL,
-		logger:              logger,
+		mmServerURL: mmServerURL,
+		logger:      logger,
 	}
 }
 

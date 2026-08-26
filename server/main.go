@@ -273,7 +273,6 @@ func (p *Plugin) OnActivate() error {
 	// Skip constructor CREATE while a deferred reindex owns the ANN index.
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
-		llmUpstreamHTTPClient,
 		p.configuration.EmbeddingSearchConfig(),
 		licenseChecker,
 		indexer.DeferredIndexRebuildActive(mmClient),
@@ -336,7 +335,6 @@ func (p *Plugin) OnActivate() error {
 	p.configuration.RegisterUpdateListener(func() {
 		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
 			dbClient.DB,
-			llmUpstreamHTTPClient,
 			p.configuration.EmbeddingSearchConfig(),
 			licenseChecker,
 			indexer.DeferredIndexRebuildActive(mmClient),

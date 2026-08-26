@@ -92,7 +92,7 @@ type testToolDef struct {
 
 // newTestToolStore creates a ToolStore with the given test tools.
 func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	llmTools := make([]llm.Tool, len(tools))
 	for i, t := range tools {
 		result := t.result
@@ -165,7 +165,7 @@ func TestToolRunner_NoToolCalls(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "Hi"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -472,7 +472,7 @@ func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	shouldExecuteCalls := 0
@@ -550,7 +550,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Name:      "WebSearch",
 				Arguments: json.RawMessage(`{"query":"docs"}`),
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 		{
 			name: "unknown MCP-like name with server origin",
@@ -560,7 +560,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Arguments:    json.RawMessage(`{"key":"MM-1"}`),
 				ServerOrigin: "https://mcp.example.com",
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 		{
 			name: "nil tool store",
@@ -578,7 +578,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Name:      "",
 				Arguments: json.RawMessage(`{}`),
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 	}
 
@@ -635,7 +635,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	}
 
 	resolverCalls := 0
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "dangerous_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -730,7 +730,7 @@ func TestToolRunner_LLMError(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -752,7 +752,7 @@ func TestToolRunner_LLMStreamError(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -784,7 +784,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)

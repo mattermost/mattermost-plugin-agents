@@ -51,11 +51,6 @@ type LanguageModelConfig struct {
 
 type LanguageModelOption func(*LanguageModelConfig)
 
-func WithModel(model string) LanguageModelOption {
-	return func(cfg *LanguageModelConfig) {
-		cfg.Model = model
-	}
-}
 func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.MaxGeneratedTokens = maxGeneratedTokens

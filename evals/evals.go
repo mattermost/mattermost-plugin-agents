@@ -315,19 +315,14 @@ func getProvidersToTest() []string {
 		return []string{"openai", "anthropic", "azure", "mistral", "bedrock", "cohere"}
 	}
 
-	// Handle comma-separated list
-	if strings.Contains(providerEnv, ",") {
-		providers := strings.Split(providerEnv, ",")
-		result := make([]string, 0, len(providers))
-		for _, p := range providers {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				result = append(result, p)
-			}
+	// Handle comma-separated list (a single provider is a one-element list)
+	providers := strings.Split(providerEnv, ",")
+	result := make([]string, 0, len(providers))
+	for _, p := range providers {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
 		}
-		return result
 	}
-
-	// Single provider
-	return []string{providerEnv}
+	return result
 }

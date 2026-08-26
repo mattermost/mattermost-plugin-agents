@@ -179,6 +179,25 @@ func cleanupDB(t *testing.T, db *sqlx.DB) {
 	dropTestDB(t)
 }
 
+// vectorIndexExists is a test-only observation helper reporting whether the
+// HNSW index currently exists in the database catalog.
+func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
+	var exists bool
+	err := pv.db.GetContext(ctx, &exists, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = $1
+				AND n.nspname = current_schema()
+				AND c.relkind = 'i'
+		)`, vectorIndexName)
+	if err != nil {
+		return false, fmt.Errorf("failed to check vector index existence: %w", err)
+	}
+	return exists, nil
+}
+
 // addTestPosts adds test posts to the Posts table
 func addTestPosts(t *testing.T, db *sqlx.DB, postIDs []string, createAts []int64) {
 	for i, postID := range postIDs {

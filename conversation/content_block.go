@@ -108,16 +108,6 @@ type WebSearchContext struct {
 	Count           int             `json:"count"`
 }
 
-// BoolPtr returns a pointer to the given bool value.
-//
-//go:fix inline
-func BoolPtr(b bool) *bool { return new(b) }
-
-// Int64Ptr returns a pointer to the given int64 value.
-//
-//go:fix inline
-func Int64Ptr(v int64) *int64 { return new(v) }
-
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have their Input
 // field set to nil. Tool result blocks with shared != true have their Content

@@ -795,7 +795,7 @@ func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 		dmMakeTextStream("I cannot use that tool"),
 	)
 
-	llmCtx := &llm.Context{Tools: llm.NewNoTools()}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	post := &model.Post{
 		Id:        "post1",
 		UserId:    env.userID,

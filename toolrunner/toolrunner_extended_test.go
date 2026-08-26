@@ -173,7 +173,7 @@ func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	callbackCalled := false
@@ -201,7 +201,7 @@ func TestToolRunner_UnloadedMCPToolReturnsLoadFirstError(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	shouldExecuteCalls := 0
@@ -247,7 +247,7 @@ func TestToolRunnerUnloadedToolErrorTelemetry(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 	telemetry := &fakeMCPDynamicTelemetry{}
 
@@ -360,7 +360,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 		},
 	}
 	resolverCalls := 0
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -406,7 +406,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 			"summary": map[string]any{"type": "string"},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__create_issue",
 		Description:  "Create a Jira issue",
@@ -439,7 +439,7 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 }
 
 func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 		{Name: "github__create_issue", Description: "Create a GitHub issue", ServerOrigin: "https://github.example.com"},
@@ -474,7 +474,7 @@ func TestToolRunner_AutoExecutesScopedBareToolCall(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{
 			Name:         "jira__create_issue",
@@ -526,7 +526,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 	})
 
 	inner := &testLLM{responses: responses}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -554,7 +554,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 }
 
 func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	results := New(nil).executeTools(context.Background(), []llm.ToolCall{{

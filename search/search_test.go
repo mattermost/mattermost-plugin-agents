@@ -415,7 +415,7 @@ func TestExecuteSearch(t *testing.T) {
 			}
 
 			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
-			results, err := s.executeSearch(context.Background(), tc.query, tc.opts)
+			results, err := s.Search(context.Background(), tc.query, tc.opts)
 
 			if tc.expectError != "" {
 				require.Error(t, err)
@@ -486,7 +486,7 @@ func TestExecuteSearchReturnsIndexedRowsOutsideWriteWindow(t *testing.T) {
 	store := &createdAfterSearch{docs: []embeddings.PostDocument{stale, fresh}}
 	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, nil, nil, nil, nil)
 
-	results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+	results, err := s.Search(context.Background(), "test query", Options{Limit: 5})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 	require.Equal(t, "stale", results[0].PostID)
@@ -584,7 +584,7 @@ func TestBuildPrompt(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			s := New(nil, nil, promptsObj, nil, nil, nil)
-			req, err := s.buildPrompt("", nil, tc.query, "", "", tc.results, "")
+			req, err := s.buildPrompt("", nil, tc.query, "", tc.results, "")
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -757,14 +757,14 @@ func mockDeferredReindexActive(m *mmapimocks.MockClient) {
 }
 
 func TestSearchUnavailableDuringDeferredReindex(t *testing.T) {
-	t.Run("executeSearch returns ErrSearchUnavailable without querying the store", func(t *testing.T) {
+	t.Run("Search returns ErrSearchUnavailable without querying the store", func(t *testing.T) {
 		// Strict mock: any Search call on the store fails the test.
 		mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 		mockClient := mmapimocks.NewMockClient(t)
 		mockDeferredReindexActive(mockClient)
 
 		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, nil, nil, nil, nil)
-		results, err := s.executeSearch(context.Background(), "test query", Options{Limit: 5})
+		results, err := s.Search(context.Background(), "test query", Options{Limit: 5})
 
 		require.ErrorIs(t, err, ErrSearchUnavailable)
 		require.Nil(t, results)
@@ -1052,7 +1052,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 func TestBuildPromptWithNilPrompts(t *testing.T) {
 	// Test that buildPrompt fails gracefully when prompts are nil
 	s := New(nil, nil, nil, nil, nil, nil)
-	_, err := s.buildPrompt("", nil, "test query", "", "", []RAGResult{}, "")
+	_, err := s.buildPrompt("", nil, "test query", "", []RAGResult{}, "")
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to format prompt")
@@ -1078,7 +1078,7 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 	}
 
 	s := New(nil, nil, promptsObj, nil, nil, nil)
-	req, err := s.buildPrompt("", nil, "test query with many results", "", "", largeResults, "")
+	req, err := s.buildPrompt("", nil, "test query with many results", "", largeResults, "")
 
 	// Should succeed - prompt size is handled by the template
 	require.NoError(t, err)
@@ -1091,10 +1091,10 @@ func TestBuildPromptWithLargeResults(t *testing.T) {
 }
 
 func TestExecuteSearchNotConfigured(t *testing.T) {
-	// Test executeSearch when getSearch() returns nil
+	// Test Search when getSearch() returns nil
 	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, nil, nil, nil, nil)
 
-	results, err := s.executeSearch(context.Background(), "test query", Options{})
+	results, err := s.Search(context.Background(), "test query", Options{})
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "embedding search not configured")

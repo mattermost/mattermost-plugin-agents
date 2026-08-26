@@ -148,10 +148,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 
 		mcpServer, err = mcpserver.NewHTTPServer(httpConfig, logger)
-	default:
-		logger.Error("unsupported transport type", "transport", transport)
-		logger.Flush()
-		return fmt.Errorf("unsupported transport type: %s", transport)
 	}
 	if err != nil {
 		logger.Error("failed to create MCP server", "error", err)

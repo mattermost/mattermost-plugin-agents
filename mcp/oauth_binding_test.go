@@ -377,17 +377,17 @@ func TestDCRPublicClientCredentials(t *testing.T) {
 		Run(func(args mock.Arguments) { storedCreds = args.Get(1).([]byte) }).
 		Return(nil)
 
-	first, err := manager.createOAuthConfig(context.Background(), serverURL, "", nil)
+	first, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, "public-client-1", first.ClientID)
-	require.Empty(t, first.ClientSecret, "public clients have no secret")
+	require.Equal(t, "public-client-1", first.config.ClientID)
+	require.Empty(t, first.config.ClientSecret, "public clients have no secret")
 	require.Equal(t, 1, registerCalls)
 
 	// A second resolution must reuse the stored public-client credentials
 	// instead of re-registering (which would change the client_id and break
 	// any in-flight exchange).
-	second, err := manager.createOAuthConfig(context.Background(), serverURL, "", nil)
+	second, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", nil)
 	require.NoError(t, err)
-	require.Equal(t, "public-client-1", second.ClientID)
+	require.Equal(t, "public-client-1", second.config.ClientID)
 	require.Equal(t, 1, registerCalls, "stored public-client credentials must be reused, not re-registered")
 }

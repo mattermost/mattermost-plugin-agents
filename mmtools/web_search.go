@@ -229,10 +229,6 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 		return fmt.Sprintf("query must be at least %d characters", minQueryLength), errors.New("web search query too short")
 	}
 
-	if query == "" {
-		return "query cannot be empty", errors.New("query cannot be empty")
-	}
-
 	cfg := s.cfgGetter()
 	if cfg == nil {
 		return "web search is not configured", errors.New("web search config unavailable")
@@ -939,9 +935,4 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 	}
 
 	return annotations, cleanedMessage.String()
-}
-
-func buildWebSearchAnnotations(message string, results []WebSearchResult) []llm.Annotation {
-	annotations, _ := buildWebSearchAnnotationsAndCleanText(message, results)
-	return annotations
 }

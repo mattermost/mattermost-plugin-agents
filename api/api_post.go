@@ -170,7 +170,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID
-	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
+	analysisPost := makeAnalysisPost(post.Id, data.AnalysisType, analyzeResult.ConversationID)
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -495,7 +495,7 @@ func loopInAgentHTTPStatus(err error) int {
 }
 
 // makeAnalysisPost creates a post for thread analysis results
-func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
+func makeAnalysisPost(postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)

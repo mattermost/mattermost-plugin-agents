@@ -123,7 +123,7 @@ func TestFindPendingToolTurn_StaleClickErrorsAreTyped(t *testing.T) {
 
 func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
 	called := false
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
@@ -155,7 +155,7 @@ func TestResolveApprovedToolUseBlockUsesPersistedMetadata(t *testing.T) {
 
 func TestResolveApprovedToolUseBlockRejectsServerOriginMismatch(t *testing.T) {
 	called := false
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://evil.example.com",
@@ -179,7 +179,7 @@ func TestResolveApprovedToolUseBlockRejectsServerOriginMismatch(t *testing.T) {
 
 func TestResolveApprovedToolUseBlockRejectsBareNameMismatch(t *testing.T) {
 	called := false
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
@@ -202,7 +202,7 @@ func TestResolveApprovedToolUseBlockRejectsBareNameMismatch(t *testing.T) {
 }
 
 func TestResolveApprovedToolUseBlockLoadedStateMissingFailsSafely(t *testing.T) {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: store}, conversation.ContentBlock{
@@ -217,7 +217,7 @@ func TestResolveApprovedToolUseBlockLoadedStateMissingFailsSafely(t *testing.T) 
 }
 
 func TestResolveApprovedToolUseBlockNoLongerAvailable(t *testing.T) {
-	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: llm.NewNoTools()}, conversation.ContentBlock{
+	_, err := resolveApprovedToolUseBlock(context.Background(), &llm.Context{Tools: llm.NewToolStore()}, conversation.ContentBlock{
 		Name:  "jira__get_issue",
 		Input: json.RawMessage(`{}`),
 	})
@@ -228,7 +228,7 @@ func TestResolveApprovedToolUseBlockNoLongerAvailable(t *testing.T) {
 
 func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testing.T) {
 	called := false
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",
@@ -253,7 +253,7 @@ func TestResolveApprovedToolUseBlockSchemaDriftDoesNotBlockMatchingTool(t *testi
 
 func TestResolveApprovedToolUseBlockAllowsOldBlockWithoutNewMetadata(t *testing.T) {
 	called := false
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		ServerOrigin: "https://jira.example.com",

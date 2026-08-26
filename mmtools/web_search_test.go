@@ -166,21 +166,21 @@ func TestBuildWebSearchAnnotations(t *testing.T) {
 
 	t.Run("ignores text without markers", func(t *testing.T) {
 		message := "This is plain text without any citations."
-		annotations := buildWebSearchAnnotations(message, results)
+		annotations, _ := buildWebSearchAnnotationsAndCleanText(message, results)
 
 		require.Empty(t, annotations)
 	})
 
 	t.Run("ignores malformed markers", func(t *testing.T) {
 		message := "This has !!CITE without closing, and [1] old format, and !!CITE!! without number."
-		annotations := buildWebSearchAnnotations(message, results)
+		annotations, _ := buildWebSearchAnnotationsAndCleanText(message, results)
 
 		require.Empty(t, annotations)
 	})
 
 	t.Run("handles multiple citations of same source", func(t *testing.T) {
 		message := "First mention !!CITE1!! and second mention !!CITE1!! again."
-		annotations := buildWebSearchAnnotations(message, results)
+		annotations, _ := buildWebSearchAnnotationsAndCleanText(message, results)
 
 		require.Len(t, annotations, 2)
 		require.Equal(t, 1, annotations[0].Index)
@@ -189,7 +189,7 @@ func TestBuildWebSearchAnnotations(t *testing.T) {
 
 	t.Run("handles UTF-8 characters correctly", func(t *testing.T) {
 		message := "Unicode text 你好 !!CITE1!! más text 🎉 !!CITE2!! end."
-		annotations := buildWebSearchAnnotations(message, results)
+		annotations, _ := buildWebSearchAnnotationsAndCleanText(message, results)
 
 		require.Len(t, annotations, 2)
 		require.Greater(t, annotations[0].StartIndex, 0)

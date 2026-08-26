@@ -19,7 +19,6 @@ import (
 // This server runs embedded within the plugin process and uses session-based authentication
 type MattermostInMemoryMCPServer struct {
 	*MattermostMCPServer
-	config InMemoryConfig
 }
 
 // NewInMemoryServer creates a new in-memory transport MCP server
@@ -44,7 +43,6 @@ func NewInMemoryServer(config InMemoryConfig, logger loggerlib.Logger, searchSer
 			logger: logger,
 			config: config,
 		},
-		config: config,
 	}
 
 	// Create session authentication provider for in-memory transport

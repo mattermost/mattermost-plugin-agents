@@ -1432,7 +1432,7 @@ func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock 
 	}
 
 	for _, file := range post.Files {
-		if !isValidImageType(file.MimeType) {
+		if !llm.IsSupportedImageMimeType(file.MimeType) {
 			parts = append(parts, schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,
 				Text: new(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
@@ -1608,18 +1608,6 @@ func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesText
 	}, nil
 }
 
-// isValidImageType checks if the MIME type is supported.
-func isValidImageType(mimeType string) bool {
-	return llm.IsSupportedImageMimeType(mimeType)
-}
-
-// Ptr is a helper function to create a pointer to a value.
-//
-//go:fix inline
-func Ptr[T any](v T) *T {
-	return new(v)
-}
-
 func (b *LLM) providerSupportsNativeTools() bool {
 	return supportsNativeToolsProvider(b.provider)
 }
@@ -1681,7 +1669,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 		switch post.Role {
 		case llm.PostRoleSystem:
 			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleSystem),
+				Role: new(schemas.ResponsesInputMessageRoleSystem),
 				Content: &schemas.ResponsesMessageContent{
 					ContentStr: new(post.Message),
 				},
@@ -1693,7 +1681,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				// Multimodal message with images
 				parts := b.createResponsesMultimodalContent(post)
 				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
+					Role: new(schemas.ResponsesInputMessageRoleUser),
 					Content: &schemas.ResponsesMessageContent{
 						ContentBlocks: parts,
 					},
@@ -1701,7 +1689,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				messages = append(messages, msg)
 			} else {
 				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
+					Role: new(schemas.ResponsesInputMessageRoleUser),
 					Content: &schemas.ResponsesMessageContent{
 						ContentStr: new(post.Message),
 					},
@@ -1714,7 +1702,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			if len(post.ToolUse) > 0 {
 				if post.Message != "" {
 					messages = append(messages, schemas.ResponsesMessage{
-						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+						Role: new(schemas.ResponsesInputMessageRoleAssistant),
 						Content: &schemas.ResponsesMessageContent{
 							ContentStr: new(post.Message),
 						},
@@ -1722,7 +1710,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				}
 				for _, tc := range post.ToolUse {
 					funcCallMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
+						Type: new(schemas.ResponsesMessageTypeFunctionCall),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
 							CallID:    new(tc.ID),
 							Name:      new(tc.Name),
@@ -1732,7 +1720,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					messages = append(messages, funcCallMsg)
 
 					funcOutputMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
+						Type: new(schemas.ResponsesMessageTypeFunctionCallOutput),
 						ResponsesToolMessage: &schemas.ResponsesToolMessage{
 							CallID: new(tc.ID),
 							Output: &schemas.ResponsesToolMessageOutputStruct{
@@ -1744,7 +1732,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 				}
 			} else if post.Message != "" {
 				messages = append(messages, schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+					Role: new(schemas.ResponsesInputMessageRoleAssistant),
 					Content: &schemas.ResponsesMessageContent{
 						ContentStr: new(post.Message),
 					},
@@ -1768,7 +1756,7 @@ func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.Response
 	}
 
 	for _, file := range post.Files {
-		if !isValidImageType(file.MimeType) {
+		if !llm.IsSupportedImageMimeType(file.MimeType) {
 			parts = append(parts, schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
 				Text: new(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
@@ -1838,13 +1826,6 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 		case llm.NativeToolWebFetch:
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
-		case llm.NativeToolFileSearch:
-			// Currently unreachable: SupportedNativeToolsForServiceType
-			// withholds file_search until the plugin can configure the
-			// vector_store_ids OpenAI requires on the tool definition.
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeFileSearch,
-			})
 		case llm.NativeToolCodeInterpreter:
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeCodeInterpreter,

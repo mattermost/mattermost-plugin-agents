@@ -448,20 +448,6 @@ func (p *MattermostToolProvider) toolDeleteAutomation(mcpContext *MCPToolContext
 
 // --- Helpers ---
 
-// triggerChannelID extracts the channel ID from any trigger variant.
-func triggerChannelID(t AutomationTrigger) string {
-	if t.MessagePosted != nil {
-		return t.MessagePosted.ChannelID
-	}
-	if t.Schedule != nil {
-		return t.Schedule.ChannelID
-	}
-	if t.MembershipChanged != nil {
-		return t.MembershipChanged.ChannelID
-	}
-	return ""
-}
-
 // handleAutomationHTTPError returns a user-friendly error message for automation API failures.
 // The Mattermost client's DoAPIRequestWithHeaders consumes the response body for non-2xx
 // status codes, so resp.Body is typically empty. The original body content is available
