@@ -79,21 +79,28 @@ func EnsureToolRejectionUserMessage(posts []Post) []Post {
 }
 
 // HasRejectedToolCall reports whether the most recent tool-bearing post
-// includes a user-rejected tool call. Earlier rejections do not count, so a
-// later successful or failed execution is not treated as a rejection follow-up.
+// includes a human rejection of a regular tool. Earlier rejections do not
+// count, so a later success or execution error is not treated as a rejection
+// follow-up. Skipped user-interaction tools (UserInteraction set) and
+// policy-denied auto-exec tools (WouldAutoExecute still set) are not human
+// rejections.
 func HasRejectedToolCall(posts []Post) bool {
 	for i := len(posts) - 1; i >= 0; i-- {
 		if len(posts[i].ToolUse) == 0 {
 			continue
 		}
 		for _, tc := range posts[i].ToolUse {
-			if tc.Status == ToolCallStatusRejected {
+			if isHumanRejectedToolCall(tc) {
 				return true
 			}
 		}
 		return false
 	}
 	return false
+}
+
+func isHumanRejectedToolCall(tc ToolCall) bool {
+	return tc.Status == ToolCallStatusRejected && tc.UserInteraction == "" && !tc.WouldAutoExecute
 }
 
 // ensureSystemMessage appends message to the first existing system post, or

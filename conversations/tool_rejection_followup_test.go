@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -116,6 +117,29 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{"jira unavailable"},
 		},
+		{
+			name:    "skipped AskUserQuestion continues without rejection guidance",
+			channel: dmChannel,
+			blocks: []conversation.ContentBlock{{
+				Type: conversation.BlockTypeToolUse,
+				ID:   "q-1",
+				Name: "AskUserQuestion",
+				Input: json.RawMessage(`{
+					"question": "Which channel should I post in?",
+					"options": [{"label": "UX Design"}, {"label": "Design team"}]
+				}`),
+				Status:          conversation.StatusPending,
+				UserInteraction: llm.UserInteractionSelect,
+				Shared:          conversation.BoolPtr(true),
+			}},
+			wantFollowUp:       true,
+			wantGuidance:       false,
+			wantRequestHas:     []string{"User skipped the question"},
+			wantRequestOmits:   []string{llm.ToolRejectionUserMessage},
+			wantToolUseShared:  []bool{true},
+			wantResultShared:   []bool{true},
+			wantResultContents: []string{"User skipped the question"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -175,11 +199,10 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			require.Len(t, lm.requests, 1, "expected one immediate continuation")
 			requestText := completionRequestText(lm.requests[0])
 			if tc.wantGuidance {
-				assert.Equal(t, 1, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
-					"rejection guidance must appear exactly once")
+				requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
 			} else {
 				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
-					"execution errors must not receive rejection guidance")
+					"non-human-rejection continuations must not receive rejection guidance")
 			}
 			for _, want := range tc.wantRequestHas {
 				assert.Contains(t, requestText, want)
@@ -253,8 +276,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 
 	require.Len(t, lm.requests, 1)
 	requestText := completionRequestText(lm.requests[0])
-	assert.Equal(t, 1, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
-		"mixed rejection must receive the same guidance exactly once")
+	requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
 	assert.Contains(t, requestText, "Tool call rejected by user")
 	assert.Contains(t, requestText, "restored-result")
 	assert.NotContains(t, requestText, plantedRejectionArg)
@@ -309,6 +331,218 @@ func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
 
 	require.NoError(t, c.HandleToolResult(context.Background(), "user-id", clickedPost, channel, nil))
 	assert.Empty(t, lm.requests, "rejected-only share-stage must not start a follow-up")
+}
+
+func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
+	humanReject := conversation.ContentBlock{
+		Type:   conversation.BlockTypeToolUse,
+		ID:     "human-1",
+		Name:   "jira__get_issue",
+		Input:  json.RawMessage(`{}`),
+		Status: conversation.StatusRejected,
+		Shared: conversation.BoolPtr(true),
+	}
+	humanRejectResult := conversation.ContentBlock{
+		Type:      conversation.BlockTypeToolResult,
+		ToolUseID: "human-1",
+		Content:   "Tool call rejected by user",
+		Status:    conversation.StatusError,
+		Shared:    conversation.BoolPtr(true),
+	}
+	success := conversation.ContentBlock{
+		Type:   conversation.BlockTypeToolUse,
+		ID:     "ok-1",
+		Name:   "jira__get_issue",
+		Input:  json.RawMessage(`{}`),
+		Status: conversation.StatusSuccess,
+		Shared: conversation.BoolPtr(true),
+	}
+	successResult := conversation.ContentBlock{
+		Type:      conversation.BlockTypeToolResult,
+		ToolUseID: "ok-1",
+		Content:   "restored-result",
+		Status:    conversation.StatusSuccess,
+		Shared:    conversation.BoolPtr(true),
+	}
+	execError := conversation.ContentBlock{
+		Type:   conversation.BlockTypeToolUse,
+		ID:     "err-1",
+		Name:   "jira__get_issue",
+		Input:  json.RawMessage(`{}`),
+		Status: conversation.StatusError,
+		Shared: conversation.BoolPtr(true),
+	}
+	execErrorResult := conversation.ContentBlock{
+		Type:      conversation.BlockTypeToolResult,
+		ToolUseID: "err-1",
+		Content:   "jira unavailable",
+		Status:    conversation.StatusError,
+		Shared:    conversation.BoolPtr(true),
+	}
+	skip := conversation.ContentBlock{
+		Type:            conversation.BlockTypeToolUse,
+		ID:              "q-1",
+		Name:            "AskUserQuestion",
+		Status:          conversation.StatusRejected,
+		UserInteraction: llm.UserInteractionSelect,
+		Shared:          conversation.BoolPtr(true),
+	}
+	skipResult := conversation.ContentBlock{
+		Type:      conversation.BlockTypeToolResult,
+		ToolUseID: "q-1",
+		Content:   "User skipped the question",
+		Status:    conversation.StatusError,
+		Shared:    conversation.BoolPtr(true),
+	}
+	policyDenied := conversation.ContentBlock{
+		Type:             conversation.BlockTypeToolUse,
+		ID:               "auto-1",
+		Name:             "jira__get_issue",
+		Input:            json.RawMessage(`{}`),
+		Status:           conversation.StatusRejected,
+		WouldAutoExecute: true,
+		Shared:           conversation.BoolPtr(true),
+	}
+	policyDeniedResult := conversation.ContentBlock{
+		Type:      conversation.BlockTypeToolResult,
+		ToolUseID: "auto-1",
+		Content:   "Tool call rejected by user",
+		Status:    conversation.StatusError,
+		Shared:    conversation.BoolPtr(true),
+	}
+
+	cases := []struct {
+		name         string
+		rounds       [][]conversation.ContentBlock
+		wantGuidance bool
+	}{
+		{
+			name:         "empty conversation",
+			wantGuidance: false,
+		},
+		{
+			name:         "success only",
+			rounds:       [][]conversation.ContentBlock{{success, successResult}},
+			wantGuidance: false,
+		},
+		{
+			name:         "execution error only",
+			rounds:       [][]conversation.ContentBlock{{execError, execErrorResult}},
+			wantGuidance: false,
+		},
+		{
+			name:         "interaction skip only",
+			rounds:       [][]conversation.ContentBlock{{skip, skipResult}},
+			wantGuidance: false,
+		},
+		{
+			name:         "policy-denied auto-exec only",
+			rounds:       [][]conversation.ContentBlock{{policyDenied, policyDeniedResult}},
+			wantGuidance: false,
+		},
+		{
+			name:         "latest mixed success and human rejection",
+			rounds:       [][]conversation.ContentBlock{{success, humanReject, successResult, humanRejectResult}},
+			wantGuidance: true,
+		},
+		{
+			name: "older human rejection then later success",
+			rounds: [][]conversation.ContentBlock{
+				{humanReject, humanRejectResult},
+				{success, successResult},
+			},
+			wantGuidance: false,
+		},
+		{
+			name: "older human rejection then later execution error",
+			rounds: [][]conversation.ContentBlock{
+				{humanReject, humanRejectResult},
+				{execError, execErrorResult},
+			},
+			wantGuidance: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			seq := 1
+			for i, blocks := range tc.rounds {
+				appendToolRoundTurns(t, convStore, conv.ID, fmt.Sprintf("post-%d", i+1), &seq, blocks)
+			}
+
+			lm := &loadedStateLLM{}
+			streamingService := &loadedStateStreamingService{}
+			c := newRejectionFollowUpConversations(t, convStore, lm, streamingService, false)
+
+			err := c.streamToolFollowUp(
+				context.Background(),
+				loadedStateBot(lm),
+				&model.User{Id: "user-id", Username: "user"},
+				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+				&model.Post{Id: "post-1"},
+				conv,
+				true,
+				nil,
+			)
+			require.NoError(t, err)
+			streamingService.waitForStreaming()
+			require.Len(t, lm.requests, 1)
+			if tc.wantGuidance {
+				requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
+			} else {
+				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage))
+			}
+		})
+	}
+}
+
+func appendToolRoundTurns(t *testing.T, convStore *loadedStateFlowStore, convID, postID string, seq *int, blocks []conversation.ContentBlock) {
+	t.Helper()
+
+	var toolUses, results []conversation.ContentBlock
+	for _, block := range blocks {
+		switch block.Type {
+		case conversation.BlockTypeToolUse:
+			toolUses = append(toolUses, block)
+		case conversation.BlockTypeToolResult:
+			results = append(results, block)
+		}
+	}
+
+	useContent, err := json.Marshal(toolUses)
+	require.NoError(t, err)
+	postIDCopy := postID
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "assistant-" + postID,
+		ConversationID: convID,
+		PostID:         &postIDCopy,
+		Role:           "assistant",
+		Content:        useContent,
+		Sequence:       *seq,
+	}))
+	*seq++
+
+	resultContent, err := json.Marshal(results)
+	require.NoError(t, err)
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "result-" + postID,
+		ConversationID: convID,
+		Role:           "tool_result",
+		Content:        resultContent,
+		Sequence:       *seq,
+	}))
+	*seq++
+}
+
+func requireRejectionGuidanceIsFinalUserPost(t *testing.T, posts []llm.Post) {
+	t.Helper()
+	require.NotEmpty(t, posts)
+	assert.Equal(t, 1, countUserMessagesContaining(posts, llm.ToolRejectionUserMessage),
+		"rejection guidance must appear exactly once")
+	last := posts[len(posts)-1]
+	require.Equal(t, llm.PostRoleUser, last.Role, "rejection guidance must be the final user post")
+	require.Equal(t, llm.ToolRejectionUserMessage, last.Message)
 }
 
 func newRejectionFollowUpConversations(

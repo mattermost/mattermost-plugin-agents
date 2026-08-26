@@ -200,6 +200,8 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 
 			if tc.wantFollowUp {
 				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
+					"answered or skipped questions must not receive tool-rejection guidance")
 			} else {
 				assert.Empty(t, lm.requests, "expected no follow-up LLM request")
 			}
@@ -401,16 +403,17 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 	const origin = "https://jira.example.com"
 
 	cases := []struct {
-		name              string
-		wouldAutoExecute  bool
-		includeQuestion   bool
-		unlicensed        bool
-		policyChecker     mapPolicyChecker
-		wantToolStatus    string
-		wantToolResult    string
-		wantToolUseShared bool
-		wantResultShared  bool
-		wantFollowUp      bool
+		name                  string
+		wouldAutoExecute      bool
+		includeQuestion       bool
+		unlicensed            bool
+		policyChecker         mapPolicyChecker
+		wantToolStatus        string
+		wantToolResult        string
+		wantToolUseShared     bool
+		wantResultShared      bool
+		wantFollowUp          bool
+		wantRejectionGuidance bool
 	}{
 		{
 			name:             "interrupted all-auto batch resumes with empty accepted list",
@@ -418,11 +421,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:    conversation.StatusAutoApproved,
-			wantToolResult:    "restored-result",
-			wantToolUseShared: true,
-			wantResultShared:  true,
-			wantFollowUp:      true,
+			wantToolStatus:        conversation.StatusAutoApproved,
+			wantToolResult:        "restored-result",
+			wantToolUseShared:     true,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: false,
 		},
 		{
 			name:             "interrupted all-auto resume rejects when policy was disabled",
@@ -430,11 +434,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
-			wantToolStatus:    conversation.StatusRejected,
-			wantToolResult:    "Tool call rejected by user",
-			wantToolUseShared: false,
-			wantResultShared:  true,
-			wantFollowUp:      true,
+			wantToolStatus:        conversation.StatusRejected,
+			wantToolResult:        "Tool call rejected by user",
+			wantToolUseShared:     false,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: false,
 		},
 		{
 			// Remote MCP tools are license-gated at supply time: an
@@ -447,11 +452,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:    conversation.StatusRejected,
-			wantToolResult:    "Tool call rejected by user",
-			wantToolUseShared: false,
-			wantResultShared:  true,
-			wantFollowUp:      true,
+			wantToolStatus:        conversation.StatusRejected,
+			wantToolResult:        "Tool call rejected by user",
+			wantToolUseShared:     false,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: false,
 		},
 		{
 			name:             "auto_run_everywhere policy executes on resume",
@@ -460,11 +466,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:    conversation.StatusAutoApproved,
-			wantToolResult:    "restored-result",
-			wantToolUseShared: true,
-			wantResultShared:  true,
-			wantFollowUp:      true,
+			wantToolStatus:        conversation.StatusAutoApproved,
+			wantToolResult:        "restored-result",
+			wantToolUseShared:     true,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: false,
 		},
 		{
 			name:             "policy disabled since the pause rejects instead",
@@ -473,11 +480,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
-			wantToolStatus:    conversation.StatusRejected,
-			wantToolResult:    "Tool call rejected by user",
-			wantToolUseShared: false,
-			wantResultShared:  true,
-			wantFollowUp:      true, // the answered question still warrants a follow-up
+			wantToolStatus:        conversation.StatusRejected,
+			wantToolResult:        "Tool call rejected by user",
+			wantToolUseShared:     false,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: false,
 		},
 		{
 			name:             "unmarked tool does not auto-run even if policy flipped to auto",
@@ -486,11 +494,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			policyChecker: mapPolicyChecker{
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
-			wantToolStatus:    conversation.StatusRejected,
-			wantToolResult:    "Tool call rejected by user",
-			wantToolUseShared: false,
-			wantResultShared:  true,
-			wantFollowUp:      true,
+			wantToolStatus:        conversation.StatusRejected,
+			wantToolResult:        "Tool call rejected by user",
+			wantToolUseShared:     false,
+			wantResultShared:      true,
+			wantFollowUp:          true,
+			wantRejectionGuidance: true,
 		},
 	}
 
@@ -606,6 +615,12 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 
 			if tc.wantFollowUp {
 				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				if tc.wantRejectionGuidance {
+					requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
+				} else {
+					assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
+						"policy denial and auto-exec must not receive user-rejection guidance")
+				}
 			} else {
 				assert.Empty(t, lm.requests)
 			}
