@@ -174,7 +174,9 @@ func dropNilTools(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
-func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[string]*mcp.Tool, err error) {
+// ListSessionTools lists every tool available on session in wire order,
+// following pagination and skipping nil entries.
+func ListSessionTools(ctx context.Context, session *mcp.ClientSession) (tools []*mcp.Tool, err error) {
 	// The known nil-tool panic is prevented by the dropNilTools middleware on
 	// clients built via NewSDKClient; keep the recover as defense-in-depth so
 	// no future SDK panic can crash the whole plugin process.
@@ -185,7 +187,6 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[st
 		}
 	}()
 
-	tools = make(map[string]*mcp.Tool)
 	for tool, iterErr := range session.Tools(ctx, &mcp.ListToolsParams{}) {
 		if iterErr != nil {
 			return nil, iterErr
@@ -193,9 +194,50 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (tools map[st
 		if tool == nil {
 			continue
 		}
+		tools = append(tools, tool)
+	}
+	return tools, nil
+}
+
+func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*mcp.Tool, error) {
+	toolList, err := ListSessionTools(ctx, session)
+	if err != nil {
+		return nil, err
+	}
+	tools := make(map[string]*mcp.Tool, len(toolList))
+	for _, tool := range toolList {
 		tools[tool.Name] = tool
 	}
 	return tools, nil
+}
+
+// adoptSession lists the tools available on session and, when at least one is
+// found, installs the session and tools on c. On failure the session is
+// closed and c is left unmodified.
+func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, serverLabel string) error {
+	discoveredTools, err := listAllTools(ctx, session)
+	if err != nil {
+		session.Close()
+		return fmt.Errorf("failed to list tools: %w", err)
+	}
+	if len(discoveredTools) == 0 {
+		session.Close()
+		return fmt.Errorf("no tools found on MCP server %s for user %s", serverLabel, c.userID)
+	}
+
+	c.toolsMu.Lock()
+	c.session = session
+	c.tools = discoveredTools
+	c.toolsMu.Unlock()
+
+	for _, tool := range discoveredTools {
+		c.log.Debug("Registered MCP tool",
+			"userID", c.userID,
+			"name", tool.Name,
+			"description", tool.Description,
+			"server", serverLabel)
+	}
+	return nil
 }
 
 // CreateClient creates an embedded MCP client using session ID for authentication.
@@ -241,7 +283,6 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 
 	// Create client instance
 	client := &Client{
-		session:        mcpSession,
 		config:         ServerConfig{Name: EmbeddedClientKey, BaseURL: EmbeddedClientKey, Enabled: true},
 		tools:          make(map[string]*mcp.Tool),
 		userID:         userID,
@@ -251,28 +292,8 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		embeddedClient: c,         // Store client helper for reconnection
 		sessionID:      sessionID, // Store session ID for reconnection
 	}
-	// Initialize tools
-	discoveredTools, err := listAllTools(ctx, mcpSession)
-	if err != nil {
-		mcpSession.Close()
-		return nil, fmt.Errorf("failed to list tools: %w", err)
-	}
-
-	if len(discoveredTools) == 0 {
-		mcpSession.Close()
-		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", EmbeddedClientKey, userID)
-	}
-
-	// Store the tools for this server
-	client.toolsMu.Lock()
-	client.tools = discoveredTools
-	client.toolsMu.Unlock()
-	for _, tool := range discoveredTools {
-		c.log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", EmbeddedClientKey)
+	if err := client.adoptSession(ctx, mcpSession, EmbeddedClientKey); err != nil {
+		return nil, err
 	}
 
 	c.log.Debug("Successfully connected to embedded MCP server",
@@ -325,40 +346,20 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	}
 
 	// Cache miss - fetch tools from server
-	discoveredTools, err := listAllTools(ctx, session)
-	if err != nil {
-		session.Close()
+	if err := c.adoptSession(ctx, session, serverConfig.Name); err != nil {
 		if oauthErr := c.oauthNeededError(err); oauthErr != nil {
 			return nil, oauthErr
 		}
-		return nil, fmt.Errorf("failed to list tools: %w", err)
-	}
-
-	if len(discoveredTools) == 0 {
-		session.Close()
-		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", serverConfig.Name, userID)
-	}
-
-	// Store the tools for this server
-	c.toolsMu.Lock()
-	c.tools = discoveredTools
-	c.toolsMu.Unlock()
-	for _, tool := range discoveredTools {
-		log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", serverConfig.Name)
+		return nil, err
 	}
 
 	// Update the global cache with fetched tools.
 	if toolsCache != nil && useSharedToolsCache {
-		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, discoveredTools, time.Now()); err != nil {
+		if err := toolsCache.SetTools(serverID, serverConfig.Name, serverConfig.BaseURL, c.Tools(), time.Now()); err != nil {
 			log.Warn("Failed to update tools cache", "server", serverConfig.Name, "error", err)
 		}
 	}
 
-	c.session = session
 	return c, nil
 }
 
@@ -370,13 +371,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 	}
 
 	originKey := pluginServerOriginKey(cfg.PluginID)
-	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
-	httpClient := &http.Client{
-		Transport: &headerTransport{
-			base:    roundTripper,
-			headers: map[string]string{MMUserIDHeader: userID},
-		},
-	}
+	httpClient := PluginServerHTTPClient(NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI), userID)
 
 	pluginCfg := ServerConfig{
 		Name:    cfg.Name,
@@ -392,43 +387,13 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	mcpClient := NewSDKClient(
-		&mcp.Implementation{
-			Name:    "mattermost-agents-plugin-bridge",
-			Version: "1.0",
-		},
-		nil,
-	)
-
-	session, err := mcpClient.Connect(ctx, &mcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: httpClient,
-	}, nil)
+	session, err := ConnectPluginServer(ctx, "mattermost-agents-plugin-bridge", cfg.Path, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
-	discoveredTools, err := listAllTools(ctx, session)
-	if err != nil {
-		session.Close()
-		return nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
-	}
-	if len(discoveredTools) == 0 {
-		session.Close()
-		return nil, fmt.Errorf("no tools found on plugin MCP server %s for user %s", cfg.PluginID, userID)
-	}
-
-	client.session = session
-	client.toolsMu.Lock()
-	client.tools = discoveredTools
-	client.toolsMu.Unlock()
-
-	for _, tool := range discoveredTools {
-		log.Debug("Registered MCP tool",
-			"userID", userID,
-			"name", tool.Name,
-			"description", tool.Description,
-			"server", originKey)
+	if err := client.adoptSession(ctx, session, originKey); err != nil {
+		return nil, fmt.Errorf("plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
 	return client, nil
@@ -623,23 +588,12 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 				if reconnectErr != nil {
 					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
 				}
-				discoveredTools, listErr := listAllTools(ctx, newSession)
-				if listErr != nil {
-					newSession.Close()
-					return "", fmt.Errorf("failed to list tools after reconnecting to MCP server %s: %w", c.config.Name, listErr)
+				if adoptErr := c.adoptSession(ctx, newSession, c.config.Name); adoptErr != nil {
+					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
 				}
-				if len(discoveredTools) == 0 {
-					newSession.Close()
-					return "", fmt.Errorf("no tools found after reconnecting to MCP server %s for user %s", c.config.Name, c.userID)
-				}
-
-				c.toolsMu.Lock()
-				c.session = newSession
-				c.tools = discoveredTools
-				c.toolsMu.Unlock()
 
 				if c.toolsCache != nil && shouldUseSharedToolsCache(c.config) {
-					if cacheErr := c.toolsCache.SetTools(c.config.Name, c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
+					if cacheErr := c.toolsCache.SetTools(c.config.Name, c.config.Name, c.config.BaseURL, c.Tools(), time.Now()); cacheErr != nil {
 						c.log.Warn("Failed to update tools cache after MCP reconnect",
 							"server", c.config.Name,
 							"userID", c.userID,
