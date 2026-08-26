@@ -94,25 +94,33 @@ func (c *Container) Config() *Config {
 	return c.cfg.Load()
 }
 
+// load returns the current configuration, or a zero-value configuration when
+// none has been stored yet, so accessors are safe to call at any time.
+func (c *Container) load() *Config {
+	if cfg := c.cfg.Load(); cfg != nil {
+		return cfg
+	}
+	return &Config{}
+}
+
 func (c *Container) GetTranscriptGenerator() string {
-	return c.cfg.Load().TranscriptGenerator
+	return c.load().TranscriptGenerator
 }
 
 func (c *Container) GetBots() []llm.BotConfig {
-	return c.cfg.Load().Bots
+	return c.load().Bots
 }
 
 func (c *Container) GetDefaultBotName() string {
-	return c.cfg.Load().DefaultBotName
+	return c.load().DefaultBotName
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {
-	return c.cfg.Load().EnableTokenUsageLogging
+	return c.load().EnableTokenUsageLogging
 }
 
 func (c *Container) EnableTokenUsageLogToPlugin() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.load().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -124,8 +132,7 @@ func (c *Container) EnableTokenUsageLogToPlugin() bool {
 }
 
 func (c *Container) EnableTokenUsageLogToFile() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.load().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -151,34 +158,19 @@ func parseBooleanEnv(key string) (bool, bool) {
 }
 
 func (c *Container) MCP() MCPConfig {
-	return c.cfg.Load().MCP
+	return c.load().MCP
 }
 
 func (c *Container) AllowUnsafeLinks() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.AllowUnsafeLinks
+	return c.load().AllowUnsafeLinks
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.EnableChannelMentionToolCalling
+	return c.load().EnableChannelMentionToolCalling
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.AllowNativeWebSearchInChannels
+	return c.load().AllowNativeWebSearchInChannels
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {
@@ -186,16 +178,12 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 }
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
-	return c.cfg.Load().EmbeddingSearchConfig
+	return c.load().EmbeddingSearchConfig
 }
 
 // GetServiceByID returns the service configuration for the given ID
 func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return llm.ServiceConfig{}, false
-	}
-	return cfg.GetServiceByID(id)
+	return c.load().GetServiceByID(id)
 }
 
 // Updates the current configuration
