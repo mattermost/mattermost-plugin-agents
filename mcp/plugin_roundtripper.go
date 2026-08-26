@@ -48,7 +48,9 @@ func (p *PluginHTTPRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 		err      error
 	}
 
-	resultCh := make(chan result, 1)
+	// An unbuffered handoff ensures a response produced after cancellation is
+	// closed instead of being left unread in the channel.
+	resultCh := make(chan result)
 	go func() {
 		resp := p.pluginAPI.PluginHTTP(r)
 		var err error

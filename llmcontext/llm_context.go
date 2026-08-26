@@ -166,21 +166,13 @@ func mcpToolSelection(botCfg llm.BotConfig, c *llm.Context, remoteMCPLicensed bo
 	}
 
 	if !botCfg.AutoEnableNewMCPTools {
-		selection.AllowedOrigins = enabledMCPToolOrigins(botCfg.EnabledMCPTools)
+		selection.AllowedOrigins = make([]string, 0, len(botCfg.EnabledMCPTools))
+		for _, tool := range botCfg.EnabledMCPTools {
+			selection.AllowedOrigins = append(selection.AllowedOrigins, tool.ServerOrigin)
+		}
 	}
 
 	return selection
-}
-
-// enabledMCPToolOrigins returns the server origins an agent allowlist mentions.
-// The result is deliberately non-nil even when empty: an agent that allowlists
-// nothing gets no MCP servers, rather than all of them.
-func enabledMCPToolOrigins(allowlist []llm.EnabledMCPTool) []string {
-	origins := make([]string, 0, len(allowlist))
-	for _, entry := range allowlist {
-		origins = append(origins, entry.ServerOrigin)
-	}
-	return origins
 }
 
 func (b *Builder) WithLLMContextDisabledMCPServers(origins []string) llm.ContextOption {

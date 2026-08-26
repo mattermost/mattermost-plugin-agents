@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"sort"
 	"strings"
 )
 
@@ -131,35 +130,34 @@ func isDefaultPortForScheme(scheme, port string) bool {
 // safely picked over the others. Entries with a blank name or URL are skipped;
 // they are already unusable for other reasons.
 func (c MCPConfig) ServerConflicts() []MCPServerConflict {
-	byName := make(map[string][]int, len(c.Servers))
-	byURL := make(map[string][]int, len(c.Servers))
+	nameCounts := make(map[string]int, len(c.Servers))
+	urlCounts := make(map[string]int, len(c.Servers))
 
 	for i := range c.Servers {
 		name := strings.TrimSpace(c.Servers[i].Name)
 		if name != "" {
-			byName[name] = append(byName[name], i)
+			nameCounts[name]++
 		}
 		if canonical := CanonicalMCPEndpointURL(c.Servers[i].BaseURL); canonical != "" {
-			byURL[canonical] = append(byURL[canonical], i)
+			urlCounts[canonical]++
 		}
 	}
 
-	reasons := make(map[int]MCPServerConflictReason, len(c.Servers))
-	// Name conflicts are recorded second so they win the reason when an entry
-	// duplicates both, which is the more actionable of the two messages.
-	for _, indexes := range byURL {
-		markConflicts(reasons, indexes, MCPServerConflictDuplicateURL)
-	}
-	for _, indexes := range byName {
-		markConflicts(reasons, indexes, MCPServerConflictDuplicateName)
-	}
+	var conflicts []MCPServerConflict
+	for index := range c.Servers {
+		name := strings.TrimSpace(c.Servers[index].Name)
+		canonicalURL := CanonicalMCPEndpointURL(c.Servers[index].BaseURL)
 
-	if len(reasons) == 0 {
-		return nil
-	}
+		var reason MCPServerConflictReason
+		switch {
+		case name != "" && nameCounts[name] > 1:
+			reason = MCPServerConflictDuplicateName
+		case canonicalURL != "" && urlCounts[canonicalURL] > 1:
+			reason = MCPServerConflictDuplicateURL
+		default:
+			continue
+		}
 
-	conflicts := make([]MCPServerConflict, 0, len(reasons))
-	for index, reason := range reasons {
 		conflicts = append(conflicts, MCPServerConflict{
 			Index:   index,
 			Name:    c.Servers[index].Name,
@@ -167,20 +165,8 @@ func (c MCPConfig) ServerConflicts() []MCPServerConflict {
 			Reason:  reason,
 		})
 	}
-	sort.Slice(conflicts, func(i, j int) bool {
-		return conflicts[i].Index < conflicts[j].Index
-	})
 
 	return conflicts
-}
-
-func markConflicts(reasons map[int]MCPServerConflictReason, indexes []int, reason MCPServerConflictReason) {
-	if len(indexes) < 2 {
-		return
-	}
-	for _, index := range indexes {
-		reasons[index] = reason
-	}
 }
 
 // Validate reports duplicate remote MCP server names and endpoint URLs. It is

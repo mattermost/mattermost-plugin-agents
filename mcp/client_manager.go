@@ -398,23 +398,15 @@ func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOver
 	return overrides
 }
 
-// snapshotEnabledPluginServers returns a copy of enabled plugin configs so
-// callers can iterate (and do HTTP work) without holding pluginServersMu.
-// The result is ordered by plugin ID so batched connects report their errors in
-// a stable order rather than one derived from map iteration.
 func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
-	m.pluginServersMu.RLock()
-	defer m.pluginServersMu.RUnlock()
-	out := make([]PluginServerConfig, 0, len(m.pluginServers))
-	for _, cfg := range m.pluginServers {
+	servers := m.ListPluginServers()
+	enabled := make([]PluginServerConfig, 0, len(servers))
+	for _, cfg := range servers {
 		if cfg.Enabled {
-			out = append(out, cfg)
+			enabled = append(enabled, cfg)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].PluginID < out[j].PluginID
-	})
-	return out
+	return enabled
 }
 
 // InvalidateUserClients closes and removes cached MCP clients for a user.
@@ -540,13 +532,19 @@ func (m *ClientManager) UnregisterPluginServer(pluginID string) {
 	})
 }
 
+// ListPluginServers returns a stable snapshot without holding the registry lock
+// during caller work.
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
+
 	out := make([]PluginServerConfig, 0, len(m.pluginServers))
 	for _, cfg := range m.pluginServers {
 		out = append(out, cfg)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PluginID < out[j].PluginID
+	})
 	return out
 }
 

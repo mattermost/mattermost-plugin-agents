@@ -66,10 +66,6 @@ type originAttempt struct {
 	err  error
 }
 
-func newOriginAttempt() *originAttempt {
-	return &originAttempt{done: make(chan struct{})}
-}
-
 func (a *originAttempt) finished() bool {
 	select {
 	case <-a.done:
@@ -83,9 +79,6 @@ func (a *originAttempt) finished() bool {
 // whose request is canceled while waiting gets the cancellation error instead;
 // the attempt itself keeps running because its result warms a shared cache.
 func (a *originAttempt) wait(ctx context.Context) error {
-	if a.finished() {
-		return a.err
-	}
 	select {
 	case <-a.done:
 		return a.err
@@ -208,7 +201,7 @@ func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
 			}
 		}
 
-		attempt := newOriginAttempt()
+		attempt := &originAttempt{done: make(chan struct{})}
 		c.attempts[task.origin] = attempt
 		plans = append(plans, connectPlan{task: task, attempt: attempt, dialing: true})
 	}
@@ -342,7 +335,7 @@ func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerCon
 		retryable:  true,
 		dial: func() (*Client, error) {
 			deadline := newConnectDeadline(ctx, pluginConnectTimeout)
-			client, err := NewPluginClient(deadline.context(), c.userID, cfg, sourcePluginAPI, c.log)
+			client, err := NewPluginClient(deadline.ctx, c.userID, cfg, sourcePluginAPI, c.log)
 			if err != nil {
 				deadline.abandon()
 				return nil, err

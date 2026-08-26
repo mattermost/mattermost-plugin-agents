@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,20 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type closeTrackingBody struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *closeTrackingBody) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (b *closeTrackingBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
 
 func TestPluginHTTPRoundTripper_RewritesURLPath(t *testing.T) {
 	tests := []struct {
@@ -149,6 +164,7 @@ func TestPluginHTTPRoundTripper_NilPluginAPI(t *testing.T) {
 
 func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
 	release := make(chan struct{})
+	bodyClosed := make(chan struct{})
 	mockAPI := mocks.NewMockClient(t)
 	mockAPI.On("PluginHTTP", mock.Anything).
 		Run(func(mock.Arguments) {
@@ -156,7 +172,7 @@ func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
 		}).
 		Return(&http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Body:       &closeTrackingBody{closed: bodyClosed},
 			Header:     http.Header{},
 		}).
 		Once()
@@ -175,4 +191,9 @@ func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second)
 
 	close(release)
+	select {
+	case <-bodyClosed:
+	case <-time.After(time.Second):
+		t.Fatal("response body was not closed after cancellation")
+	}
 }

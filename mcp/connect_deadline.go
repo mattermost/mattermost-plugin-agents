@@ -35,11 +35,6 @@ func newConnectDeadline(parent context.Context, budget time.Duration) *connectDe
 	return deadline
 }
 
-// context returns the context the connection sequence must run under.
-func (d *connectDeadline) context() context.Context {
-	return d.ctx
-}
-
 func (d *connectDeadline) expire() {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -307,7 +307,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	}
 
 	deadline := newConnectDeadline(ctx, RemoteConnectTimeout)
-	session, err := c.connectAndDiscover(deadline.context(), serverConfig, forceRefresh)
+	session, err := c.connectAndDiscover(deadline.ctx, serverConfig, forceRefresh)
 	if err != nil {
 		deadline.abandon()
 		return nil, err

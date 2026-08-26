@@ -444,17 +444,7 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 	if err != nil {
 		return nil, err
 	}
-
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -465,17 +455,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 	if err != nil {
 		return nil, err
 	}
-
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -518,6 +498,10 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
+	return toMCPToolInfos(toolInfos), nil
+}
+
+func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
@@ -526,8 +510,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 			InputSchema: toolInfo.InputSchema,
 		})
 	}
-
-	return tools, nil
+	return tools
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

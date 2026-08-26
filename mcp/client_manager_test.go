@@ -173,11 +173,11 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
 	cfgB := PluginServerConfig{PluginID: "b", Name: "B", Path: "/mcp", Enabled: false}
 
-	m.RegisterPluginServer(cfgA)
 	m.RegisterPluginServer(cfgB)
+	m.RegisterPluginServer(cfgA)
 
 	list := m.ListPluginServers()
-	require.Len(t, list, 2)
+	require.Equal(t, []PluginServerConfig{cfgA, cfgB}, list)
 
 	cfgA2 := PluginServerConfig{PluginID: "a", Name: "A prime", Path: "/mcp", Enabled: true}
 	m.RegisterPluginServer(cfgA2)

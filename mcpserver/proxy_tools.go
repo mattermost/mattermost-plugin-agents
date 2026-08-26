@@ -19,42 +19,6 @@ import (
 // mmUserIDHeader propagates the calling Mattermost user ID through PluginHTTP.
 const mmUserIDHeader = "X-Mattermost-UserID"
 
-// boundedRoundTripper bounds how long Agents waits on PluginHTTP, but it cannot
-// cancel the underlying PluginHTTP execution once started.
-type boundedRoundTripper struct {
-	base http.RoundTripper
-}
-
-func (b *boundedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	if b == nil || b.base == nil {
-		return nil, fmt.Errorf("bounded round tripper not initialized")
-	}
-
-	type roundTripResult struct {
-		resp *http.Response
-		err  error
-	}
-
-	respCh := make(chan roundTripResult, 1)
-	go func() {
-		resp, err := b.base.RoundTrip(req)
-		select {
-		case respCh <- roundTripResult{resp: resp, err: err}:
-		case <-req.Context().Done():
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-		}
-	}()
-
-	select {
-	case result := <-respCh:
-		return result.resp, result.err
-	case <-req.Context().Done():
-		return nil, req.Context().Err()
-	}
-}
-
 // headerInjector sets fixed headers on every outbound request.
 type headerInjector struct {
 	base    http.RoundTripper
@@ -70,9 +34,7 @@ func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) *http.Client {
-	transport := http.RoundTripper(&boundedRoundTripper{
-		base: mcppkg.NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI),
-	})
+	transport := http.RoundTripper(mcppkg.NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI))
 	if callerUserID != "" {
 		transport = &headerInjector{
 			base:    transport,
@@ -134,7 +96,6 @@ func BuildProxyTools(
 		}
 		tools = append(tools, t)
 
-		pluginCfg := cfg
 		toolName := t.Name
 		handlers = append(handlers, func(hctx context.Context, req *gosdkmcp.CallToolRequest) (*gosdkmcp.CallToolResult, error) {
 			callerUserID, ok := hctx.Value(auth.UserIDContextKey).(string)
@@ -142,7 +103,7 @@ func BuildProxyTools(
 				return nil, fmt.Errorf("proxy tool %s: authenticated user ID not found in context", toolName)
 			}
 
-			session, err := connectProxySession(hctx, pluginCfg, sourcePluginAPI, callerUserID)
+			session, err := connectProxySession(hctx, cfg, sourcePluginAPI, callerUserID)
 			if err != nil {
 				return nil, fmt.Errorf("proxy tool %s: connect failed: %w", toolName, err)
 			}
