@@ -295,7 +295,7 @@ func TestServeHTTP_InjectsUserID(t *testing.T) {
 	assert.Equal(t, "uxyz", capturedUserID)
 }
 
-// TestServeHTTP_HandlerLazyInit exercises s.mu under -race.
+// TestServeHTTP_HandlerLazyInit exercises lazy handler init under -race.
 func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
@@ -313,10 +313,7 @@ func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 	}
 	wg.Wait()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	assert.True(t, s.handlerBuiltOK, "handler should have been built")
-	assert.NotNil(t, s.handler, "handler should be non-nil after lazy init")
+	assert.NotNil(t, s.streamableHandler(), "handler should be non-nil after lazy init")
 }
 
 // TestServeHTTPEnforcesRequestBodyLimit pins the request body size limit

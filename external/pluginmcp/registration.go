@@ -37,7 +37,7 @@ func (s *Server) Register() error {
 func (s *Server) registerWithBackoff(ctx context.Context) {
 	delay := s.retry.baseDelay
 	for attempt := 1; attempt <= s.retry.maxAttempts; attempt++ {
-		retriable, err := s.registerOnce(ctx)
+		retriable, err := s.postRegistration(ctx, registerPath, s.config)
 		if err == nil {
 			return
 		}
@@ -61,12 +61,8 @@ func (s *Server) registerWithBackoff(ctx context.Context) {
 	}
 }
 
-// registerOnce performs a single POST attempt. retriable is meaningless
+// postRegistration performs a single POST attempt. retriable is meaningless
 // when err is nil; 404/429/5xx are retriable, other 4xx are permanent.
-func (s *Server) registerOnce(ctx context.Context) (bool, error) {
-	return s.postRegistration(ctx, registerPath, s.config)
-}
-
 func (s *Server) postRegistration(ctx context.Context, path string, body any) (bool, error) {
 	if s.pluginAPI == nil {
 		return false, errors.New("pluginmcp: PluginAPI is required for registration")
