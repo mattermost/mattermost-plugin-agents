@@ -477,7 +477,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const isGenerationInProgress = generating || isReasoningLoading;
 
-    let precontentMessage = intl.formatMessage({defaultMessage: 'Starting...'});
+    let precontentMessage = intl.formatMessage({defaultMessage: 'Working...'});
     switch (progressPhase) {
     case 'checking_mcp':
         precontentMessage = intl.formatMessage({defaultMessage: 'Checking MCP connections and tools...'});
@@ -523,6 +523,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     };
 
+    // Tool-only posts leave post.message empty, so precontent stays true on
+    // remount. Hide Working... once rounds exist, except while generation is
+    // actually resuming (continue/start still set precontent on purpose).
+    const showWorking =
+        (precontent && (generating || renderedRounds.length === 0)) ||
+        (conversationLoading && !generating && renderedRounds.length === 0);
+
     return (
         <PostBody
             data-testid='llm-bot-post'
@@ -538,7 +545,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {(precontent || (conversationLoading && !generating && renderedRounds.length === 0)) && (
+            {showWorking && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
                     <span>{precontentMessage}</span>
