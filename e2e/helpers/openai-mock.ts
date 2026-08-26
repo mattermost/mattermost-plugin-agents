@@ -230,6 +230,11 @@ export class OpenAIMockContainer {
 		})
 	}
 
+	getMocks = async (): Promise<unknown> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/mocks`);
+		return response.json();
+	}
+
 	// Add error mock for testing error handling
 	addErrorMock = async (statusCode: number, errorMessage: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
@@ -280,8 +285,9 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
 }
 
 /**
- * Single Smocker rule for POST /chat/completions. Rules are evaluated in order — register
- * more specific body matchers before catch-all rules.
+ * Single Smocker rule for POST /chat/completions. Smocker stores mocks in a stack:
+ * the last registered mock has the highest priority. Register catch-all rules first
+ * and more specific body matchers last.
  */
 export function buildChatCompletionMockRule(
     sseBody: string,

@@ -109,13 +109,33 @@ async function putAutoReply(
 const ambientClassifierPrompt = 'You classify whether an agent should automatically reply in a Mattermost channel.';
 
 async function mockAmbientClassifierThenReply(shouldReply: boolean): Promise<void> {
-    await openAIMock.addMocks([
-        buildChatCompletionMockRule(buildJSONObjectResponse({should_reply: shouldReply}), {
-            bodyContains: ambientClassifierPrompt,
-            times: 1,
-        }),
-        buildChatCompletionMockRule(responseTest),
-    ]);
+    const classifierRule = buildChatCompletionMockRule(buildJSONObjectResponse({should_reply: shouldReply}), {
+        bodyContains: ambientClassifierPrompt,
+        times: 1,
+    });
+    const catchAllRule = buildChatCompletionMockRule(responseTest);
+    // Smocker last-registered = highest priority. Catch-all must come first so the
+    // classifier JSON rule actually matches the classification request.
+    const ruleOrder = [catchAllRule, classifierRule];
+    await openAIMock.addMocks(ruleOrder);
+}
+
+type SmockerMockState = {
+    request?: {body?: {value?: string}};
+    state?: {times_count?: number};
+};
+
+/** Fail unless Smocker served the classifier JSON mock (not the catch-all SSE). */
+async function expectMatchedAmbientDecision(shouldReply: boolean): Promise<void> {
+    const mocks = await openAIMock.getMocks() as SmockerMockState[];
+    const list = Array.isArray(mocks) ? mocks : [];
+    const classifier = list.find((m) => m.request?.body?.value === ambientClassifierPrompt);
+    const catchAll = list.find((m) => !m.request?.body);
+    expect(classifier, 'classifier JSON Smocker rule must be registered').toBeTruthy();
+    expect(classifier!.state?.times_count, 'classifier JSON Smocker rule must have been matched').toBeGreaterThan(0);
+    if (!shouldReply) {
+        expect(catchAll?.state?.times_count ?? 0, 'classifier false must not fall through to the catch-all SSE').toBe(0);
+    }
 }
 
 /** Poll the channel posts API until the given user's post with this exact message appears. */
@@ -342,6 +362,7 @@ test.describe('Per-channel agent auto-reply', () => {
         await mmPage.expectBotThreadReplyFromApi(
             client, channel.id, botUser.id, rootPost.id, responseTestText,
         );
+        await expectMatchedAmbientDecision(true);
     });
 
     test('ambient mode: classifier false produces no bot post', async ({ page }) => {
@@ -361,5 +382,6 @@ test.describe('Per-channel agent auto-reply', () => {
             message: 'Ambient false should stay silent',
         });
         await mmPage.expectNoBotDmReplyFromApi(client, channel.id, botUser.id, sinceMs, { observeDurationMs: 15000 });
+        await expectMatchedAmbientDecision(false);
     });
 });
