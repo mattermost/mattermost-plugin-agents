@@ -3,8 +3,18 @@
 
 # Microsoft Go FIPS toolchain image, digest-pinned. The Go version must satisfy
 # the go directive in go.mod. To bump: set the new tag without a digest, let the
-# build-fips CI job pull it, then pin the digest CI resolves.
-FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.27.0-dev
+# build-fips CI job pull it, then pin the digest CI resolves. Tags follow
+# microsoft/go releases (vX.Y.Z-N -> X.Y.Z.N-dev). To list available tags, the
+# registry needs CI's Chainguard credentials; temporarily add this recipe line:
+#   CREDS=$$(printf 'cgr.dev' | docker-credential-cgr get); \
+#   TOKEN=$$(curl -s -u "$$(echo $$CREDS | jq -r .Username):$$(echo $$CREDS | jq -r .Secret)" \
+#     "https://cgr.dev/token?scope=repository:mattermost.com/go-msft-fips:pull" | jq -r .token); \
+#   curl -s -H "Authorization: Bearer $$TOKEN" "https://cgr.dev/v2/mattermost.com/go-msft-fips/tags/list"
+#
+# NOTE (2026-08-26): the 1.27.0.1 image is not published yet (registry tops out
+# at 1.26.7.1); build-fips stays red until Chainguard builds msgo v1.27.0-1,
+# then pin the digest.
+FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.27.0.1-dev
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
 
