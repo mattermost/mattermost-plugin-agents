@@ -433,9 +433,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     );
     const anchorRound: Round | null = (isPersistedAnchor || livePendingForRequester) ? lastRendered : null;
     const anchorRoundId = anchorRound?.id ?? null;
-    // Accept must wait for End: HandleToolCall looks up the persisted pending
-    // turn, and finalizeTurn runs in the streaming defer before that event.
-    const anchorStage: ToolApprovalStage = livePendingForRequester && !isGenerationInProgress ? 'call' : persistedAnchorStage;
+
+    // Call-stage even while generating: a dropped End would otherwise hide
+    // Accept after finalizeTurn has already persisted the pending turn.
+    const anchorStage: ToolApprovalStage = livePendingForRequester ? 'call' : persistedAnchorStage;
 
     // Parsed defensively: search_results is a free-form post prop, so a
     // malformed value yields an empty list instead of throwing during render.
