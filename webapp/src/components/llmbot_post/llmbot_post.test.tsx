@@ -647,6 +647,61 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Search Tools');
         expect(screen.queryByText('Used 1 tool')).toBeNull();
     });
+
+    // A pending tool_call can land over the websocket before refetch persists
+    // the round. That live round must stay out of the activity area so the
+    // requester still sees the approval card, not a collapsed "create_post".
+    test('keeps a live pending tool call out of the activity area for the requester', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: {
+                id: WELL_FORMED_ID,
+                user_id: 'user_1',
+                bot_id: 'bot_1',
+                channel_id: 'channel_1',
+                root_post_id: 'root_1',
+                title: '',
+                operation: 'conversation',
+                turns: [
+                    {
+                        id: 'u1',
+                        post_id: 'user_post',
+                        role: 'user',
+                        sequence: 1,
+                        tokens_in: 0,
+                        tokens_out: 0,
+                        content: [{type: 'text', text: 'post that for me'}],
+                    },
+                ],
+            },
+            loading: false,
+            error: null,
+        });
+
+        let listener: PostUpdateHandler | undefined;
+        renderPost(makePost(), (postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Let me look that up'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'tool_call',
+                tool_call: JSON.stringify([{id: 'tc_search', name: 'search_tools', description: '', status: ToolCallStatus.Success}]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'I will post that'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'tool_call',
+                tool_call: JSON.stringify([{id: 'tc_a', name: 'create_post', description: '', status: ToolCallStatus.Pending}]),
+            }));
+        });
+
+        expect(screen.getByText('I will post that')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).not.toBe('Create Post');
+    });
 });
 
 describe('LLMBotPost server tool activity rendering', () => {

@@ -20,7 +20,7 @@ import {ServerToolUse} from '@/types/conversation';
 
 import {SearchSources, parseSearchSources} from '../search_sources';
 import {needsViewerDecision} from '../tool_approval_set';
-import {ToolApprovalStage, ToolCall} from '../tool_types';
+import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
@@ -41,6 +41,16 @@ const SearchResultsPropKey = 'search_results';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
+
+/** Pending client tool calls the requester still has to Accept/Reject. */
+function liveRoundNeedsRequesterDecision(round: Round, canApprove: boolean): boolean {
+    if (!canApprove) {
+        return false;
+    }
+    return round.toolCalls.some((call) =>
+        call.status === ToolCallStatus.Pending && !call.would_auto_execute,
+    );
+}
 
 export interface PostUpdateWebsocketMessage {
     post_id: string
@@ -409,12 +419,21 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // Only the post anchor (latest persisted round, when nothing live follows
     // it) gets a real approval stage; every other round renders as 'done'.
-    const anchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
+    // A live pending tool_call that has not been persisted yet is also an
+    // anchor: otherwise deriveActivity folds it into the activity row and the
+    // requester loses the approval card until refetch lands.
+    const persistedAnchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
     const lastRenderedIdx = renderedRounds.length - 1;
-    const anchorRound: Round | null = lastRenderedIdx >= 0 && lastRenderedIdx === stablePersisted.length - 1 ?
-        renderedRounds[lastRenderedIdx] :
-        null;
+    const lastRendered = lastRenderedIdx >= 0 ? renderedRounds[lastRenderedIdx] : null;
+    const isPersistedAnchor = lastRenderedIdx >= 0 && lastRenderedIdx === stablePersisted.length - 1;
+    const livePendingForRequester = Boolean(
+        lastRendered &&
+        lastRendered.id === LIVE_ROUND_ID &&
+        liveRoundNeedsRequesterDecision(lastRendered, requesterIsCurrentUser),
+    );
+    const anchorRound: Round | null = (isPersistedAnchor || livePendingForRequester) ? lastRendered : null;
     const anchorRoundId = anchorRound?.id ?? null;
+    const anchorStage: ToolApprovalStage = livePendingForRequester && !isGenerationInProgress ? 'call' : persistedAnchorStage;
 
     // Parsed defensively: search_results is a free-form post prop, so a
     // malformed value yields an empty list instead of throwing during render.
@@ -431,9 +450,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // of the activity area so the approval card renders in full, below the
     // collapsed row and next to the text that asked for it. Onlookers owe no
     // decision, so for them the round folds in like any other.
-    const awaitingDecision = anchorRound !== null &&
-        needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser);
-    const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
+    const awaitingDecision = (anchorRound !== null &&
+        needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser)) ||
+        livePendingForRequester;
+    const pendingDecisionRoundId = awaitingDecision && anchorRound ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
     // A reader who expanded the area asked to watch the whole thing, so
     // nothing is rerouted for them; see deriveActivity for why the trailing
