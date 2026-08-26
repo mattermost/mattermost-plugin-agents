@@ -45,7 +45,7 @@ func NewMockLLM(profile MockProfile) *MockLLM {
 	if err := profile.Validate(); err != nil {
 		panic(fmt.Sprintf("invalid loadtest mock profile: %v", err))
 	}
-	profile = cloneMockProfile(profile)
+	profile = profile.Clone()
 	return &MockLLM{
 		profile: profile,
 		rg:      rand.New(rand.NewSource(profile.Seed)), // #nosec G404 -- deterministic load simulation uses seeded math/rand.
