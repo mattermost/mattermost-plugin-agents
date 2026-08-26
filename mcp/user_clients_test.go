@@ -236,7 +236,6 @@ func TestConnectToPluginServer_HappyPath(t *testing.T) {
 	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
 
 	originKey := "plugin://" + cfg.PluginID
-	require.True(t, uc.hasClient(originKey))
 	snapshot := uc.snapshotClients()
 	require.Len(t, snapshot, 1)
 	require.Equal(t, originKey, snapshot[0].client.config.BaseURL)

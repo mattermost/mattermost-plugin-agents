@@ -16,7 +16,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -223,7 +222,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 		ModelName:          cfg.GetModelName(),
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -301,9 +300,7 @@ const maxConcurrentMCPDiscoveries = 32
 type mcpDiscoveryRow struct {
 	info     MCPServerInfo
 	discover func() ([]MCPToolInfo, error)
-}
-
-type mcpDiscoveryResult struct {
+	// tools and err hold discover's outcome.
 	tools []MCPToolInfo
 	err   error
 }
@@ -322,25 +319,25 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 
 	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID)
 
-	discovered := make([]mcpDiscoveryResult, len(rows))
 	slots := make(chan struct{}, maxConcurrentMCPDiscoveries)
 	var wg sync.WaitGroup
 	for i := range rows {
+		if rows[i].discover == nil {
+			continue
+		}
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
-			if rows[i].discover != nil {
-				discovered[i].tools, discovered[i].err = rows[i].discover()
-			}
+			rows[i].tools, rows[i].err = rows[i].discover()
 		})
 	}
 	wg.Wait()
 
 	response := MCPToolsResponse{Servers: make([]MCPServerInfo, 0, len(rows))}
-	for index, row := range rows {
+	for _, row := range rows {
 		info := row.info
 		if row.discover != nil {
-			applyMCPDiscoveryResult(&info, discovered[index].tools, discovered[index].err)
+			applyMCPDiscoveryResult(&info, row.tools, row.err)
 		}
 		response.Servers = append(response.Servers, info)
 	}
@@ -395,7 +392,7 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDis
 			},
 		}
 		if message, conflicting := conflictMessages[i]; conflicting {
-			row.info.Error = utils.Ptr(message)
+			row.info.Error = new(message)
 		} else {
 			row.discover = func() ([]MCPToolInfo, error) {
 				return a.discoverRemoteServerTools(ctx, userID, serverConfig)
@@ -441,14 +438,13 @@ func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error
 		return
 	}
 
-	var oauthErr *mcp.OAuthNeededError
-	if errors.As(err, &oauthErr) {
+	if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
 		info.NeedsOAuth = true
 		info.OAuthURL = oauthErr.AuthURL()
 		return
 	}
 
-	info.Error = utils.Ptr(err.Error())
+	info.Error = new(err.Error())
 }
 
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools

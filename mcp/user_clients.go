@@ -124,12 +124,8 @@ type connectPlan struct {
 	// dialing reports whether this caller owns the attempt. When false the
 	// attempt belongs to an earlier or concurrent caller and is only waited on.
 	dialing bool
+	client  *Client
 	err     error
-}
-
-type connectResult struct {
-	client *Client
-	err    error
 }
 
 type userClientSnapshot struct {
@@ -166,19 +162,18 @@ func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask
 		}
 	}
 
-	dialed := make([]connectResult, len(dialers))
 	slots := make(chan struct{}, maxConcurrentConnections)
 	var wg sync.WaitGroup
-	for i := range dialers {
+	for _, plan := range dialers {
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
-			dialed[i].client, dialed[i].err = dialers[i].task.dial()
+			plan.client, plan.err = plan.task.dial()
 		})
 	}
 	wg.Wait()
 
-	c.commitDials(dialers, dialed)
+	c.commitDials(dialers)
 
 	var mcpErrors *Errors
 	for i := range plans {
@@ -227,7 +222,7 @@ func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
 
 // commitDials publishes every dial outcome under one lock so a waiter cannot
 // observe a finished attempt before its session is reachable.
-func (c *UserClients) commitDials(dialers []*connectPlan, dialed []connectResult) {
+func (c *UserClients) commitDials(dialers []*connectPlan) {
 	if len(dialers) == 0 {
 		return
 	}
@@ -235,22 +230,19 @@ func (c *UserClients) commitDials(dialers []*connectPlan, dialed []connectResult
 	var discarded []*Client
 
 	c.clientsMu.Lock()
-	for i, plan := range dialers {
-		client, err := dialed[i].client, dialed[i].err
-
-		plan.err = err
-		plan.attempt.err = err
+	for _, plan := range dialers {
+		plan.attempt.err = plan.err
 
 		switch {
-		case err != nil || client == nil:
+		case plan.err != nil || plan.client == nil:
 			// Nothing to commit; the recorded error is the whole outcome.
 		case c.closed:
-			discarded = append(discarded, client)
+			discarded = append(discarded, plan.client)
 		default:
 			if previous := c.clients[plan.task.serverID]; previous != nil {
 				discarded = append(discarded, previous)
 			}
-			c.clients[plan.task.serverID] = client
+			c.clients[plan.task.serverID] = plan.client
 		}
 
 		close(plan.attempt.done)
@@ -279,8 +271,7 @@ func (c *UserClients) recordConnectFailure(mcpErrors *Errors, plan connectPlan) 
 		mcpErrors = &Errors{}
 	}
 
-	var oauthErr *OAuthNeededError
-	if errors.As(plan.err, &oauthErr) {
+	if oauthErr, ok := errors.AsType[*OAuthNeededError](plan.err); ok {
 		mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
 			ServerName:   plan.task.serverName,
 			ServerOrigin: plan.task.origin,
@@ -369,13 +360,6 @@ func (c *UserClients) needsEmbeddedReconnect(sessionID string) bool {
 	defer c.clientsMu.RUnlock()
 	existing := c.clients[EmbeddedClientKey]
 	return existing == nil || existing.sessionID != sessionID
-}
-
-func (c *UserClients) hasClient(serverID string) bool {
-	c.clientsMu.RLock()
-	defer c.clientsMu.RUnlock()
-	_, exists := c.clients[serverID]
-	return exists
 }
 
 func (c *UserClients) snapshotClients() []userClientSnapshot {

@@ -161,10 +161,12 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 	return mcpServer
 }
 
-// proxyDiscovery is one source plugin's discovered proxy tools.
+// proxyDiscovery is one source plugin's discovered proxy tools, or the error
+// that prevented discovery.
 type proxyDiscovery struct {
 	tools    []*mcp.Tool
 	handlers []mcp.ToolHandler
+	err      error
 }
 
 // addProxyTools discovers every externally-exposed plugin server concurrently
@@ -181,14 +183,13 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 	}
 
 	discovered := make([]proxyDiscovery, len(exposed))
-	discoveryErrs := make([]error, len(exposed))
 	slots := make(chan struct{}, maxConcurrentProxyDiscoveries)
 	var wg sync.WaitGroup
 	for i := range exposed {
 		slots <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-slots }()
-			discovered[i], discoveryErrs[i] = h.discoverProxyTools(exposed[i])
+			discovered[i] = h.discoverProxyTools(exposed[i])
 		})
 	}
 	wg.Wait()
@@ -199,7 +200,7 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 	}
 
 	for index, ps := range exposed {
-		if discoveryErrs[index] != nil {
+		if discovered[index].err != nil {
 			continue
 		}
 
@@ -237,7 +238,7 @@ func (h *PluginMCPHandlers) addProxyTools(mcpServer *mcp.Server, nativeToolNames
 // discoverProxyTools lists one source plugin's tools under the per-plugin
 // discovery timeout. A plugin that fails or times out is skipped; healthy
 // plugins are unaffected.
-func (h *PluginMCPHandlers) discoverProxyTools(ps mcppkg.PluginServerConfig) (proxyDiscovery, error) {
+func (h *PluginMCPHandlers) discoverProxyTools(ps mcppkg.PluginServerConfig) proxyDiscovery {
 	discoveryCtx, cancel := context.WithTimeout(context.Background(), h.proxyDiscoveryTimeout)
 	defer cancel()
 
@@ -250,10 +251,10 @@ func (h *PluginMCPHandlers) discoverProxyTools(ps mcppkg.PluginServerConfig) (pr
 			h.logger.Error("failed to build proxy tools for plugin server; skipping",
 				"plugin_id", ps.PluginID, "error", err.Error())
 		}
-		return proxyDiscovery{}, err
+		return proxyDiscovery{err: err}
 	}
 
-	return proxyDiscovery{tools: proxyTools, handlers: proxyHandlers}, nil
+	return proxyDiscovery{tools: proxyTools, handlers: proxyHandlers}
 }
 
 // RebuildExternalServer reconstructs the underlying *mcp.Server from the
