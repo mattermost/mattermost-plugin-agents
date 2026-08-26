@@ -196,7 +196,7 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 			licensed:              false,
 			accept:                false,
 			wantStatus:            conversation.StatusRejected,
-			wantResult:            "Tool call rejected by user",
+			wantResult:            toolCallRejectedByUserResult,
 			wantFollowUp:          true,
 			wantRejectionGuidance: true,
 		},

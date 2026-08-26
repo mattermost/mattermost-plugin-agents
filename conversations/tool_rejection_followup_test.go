@@ -64,10 +64,10 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			blocks:             []conversation.ContentBlock{pendingJira("tool-use-1", true)},
 			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, "Tool call rejected by user"},
+			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
-			wantResultContents: []string{"Tool call rejected by user"},
+			wantResultContents: []string{toolCallRejectedByUserResult},
 		},
 		{
 			name:               "lone channel rejection continues with visible reason and private args",
@@ -75,11 +75,11 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			blocks:             []conversation.ContentBlock{pendingJira("tool-use-1", false)},
 			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, "Tool call rejected by user"},
+			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
 			wantRequestOmits:   []string{plantedRejectionArg},
 			wantToolUseShared:  []bool{false},
 			wantResultShared:   []bool{true},
-			wantResultContents: []string{"Tool call rejected by user"},
+			wantResultContents: []string{toolCallRejectedByUserResult},
 		},
 		{
 			name:    "mixed DM accept and reject includes rejection guidance",
@@ -98,10 +98,10 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			acceptedIDs:        []string{"tool-use-1"},
 			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, "Tool call rejected by user", "restored-result"},
+			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult, "restored-result"},
 			wantToolUseShared:  []bool{true, true},
 			wantResultShared:   []bool{true, true},
-			wantResultContents: []string{"restored-result", "Tool call rejected by user"},
+			wantResultContents: []string{"restored-result", toolCallRejectedByUserResult},
 		},
 		{
 			name:               "execution error continues without rejection guidance",
@@ -116,6 +116,26 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{"jira unavailable"},
+		},
+		{
+			name:    "policy-denied auto-exec continues without blaming the user",
+			channel: dmChannel,
+			blocks: []conversation.ContentBlock{{
+				Type:             conversation.BlockTypeToolUse,
+				ID:               "tool-use-1",
+				Name:             "jira__get_issue",
+				Input:            json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
+				Status:           conversation.StatusPending,
+				WouldAutoExecute: true,
+				Shared:           conversation.BoolPtr(true),
+			}},
+			wantFollowUp:       true,
+			wantGuidance:       false,
+			wantRequestHas:     []string{toolCallPolicyDeniedResult},
+			wantRequestOmits:   []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
+			wantToolUseShared:  []bool{true},
+			wantResultShared:   []bool{true},
+			wantResultContents: []string{toolCallPolicyDeniedResult},
 		},
 		{
 			name:    "skipped AskUserQuestion continues without rejection guidance",
@@ -269,7 +289,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 	assert.False(t, *resultBlocks[0].Shared)
 	assert.NotNil(t, resultBlocks[1].DecidedAt)
 	assert.True(t, *resultBlocks[1].Shared)
-	assert.Equal(t, "Tool call rejected by user", resultBlocks[1].Content)
+	assert.Equal(t, toolCallRejectedByUserResult, resultBlocks[1].Content)
 
 	require.NoError(t, c.HandleToolResult(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
 	streamingService.waitForStreaming()
@@ -277,7 +297,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 	require.Len(t, lm.requests, 1)
 	requestText := completionRequestText(lm.requests[0])
 	requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
-	assert.Contains(t, requestText, "Tool call rejected by user")
+	assert.Contains(t, requestText, toolCallRejectedByUserResult)
 	assert.Contains(t, requestText, "restored-result")
 	assert.NotContains(t, requestText, plantedRejectionArg)
 }
@@ -297,7 +317,7 @@ func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
 	resultBlocks := []conversation.ContentBlock{{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "tool-use-1",
-		Content:   "Tool call rejected by user",
+		Content:   toolCallRejectedByUserResult,
 		Status:    conversation.StatusError,
 		Shared:    conversation.BoolPtr(true),
 	}}
@@ -345,7 +365,7 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 	humanRejectResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "human-1",
-		Content:   "Tool call rejected by user",
+		Content:   toolCallRejectedByUserResult,
 		Status:    conversation.StatusError,
 		Shared:    conversation.BoolPtr(true),
 	}
@@ -406,7 +426,7 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 	policyDeniedResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "auto-1",
-		Content:   "Tool call rejected by user",
+		Content:   toolCallPolicyDeniedResult,
 		Status:    conversation.StatusError,
 		Shared:    conversation.BoolPtr(true),
 	}

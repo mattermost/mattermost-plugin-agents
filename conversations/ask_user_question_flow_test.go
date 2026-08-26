@@ -397,8 +397,8 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 // TestHandleToolCallAutoExecutesPolicyEligiblePendingTools pins the deferred
 // auto-execution contract: marked tools run server-side without appearing in
 // accepted_tool_ids, including when an interrupted all-auto batch is resumed
-// with an empty list. A policy disabled since the pause must fall back to
-// rejection.
+// with an empty list. A policy or license change since the pause must fall
+// back to a non-user-rejection result so the follow-up cannot blame the user.
 func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 	const origin = "https://jira.example.com"
 
@@ -435,7 +435,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
 			wantToolStatus:        conversation.StatusRejected,
-			wantToolResult:        "Tool call rejected by user",
+			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
 			wantFollowUp:          true,
@@ -453,7 +453,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
 			wantToolStatus:        conversation.StatusRejected,
-			wantToolResult:        "Tool call rejected by user",
+			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
 			wantFollowUp:          true,
@@ -481,7 +481,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: false}},
 			},
 			wantToolStatus:        conversation.StatusRejected,
-			wantToolResult:        "Tool call rejected by user",
+			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
 			wantFollowUp:          true,
@@ -495,7 +495,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				origin: {"get_issue": {policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}},
 			},
 			wantToolStatus:        conversation.StatusRejected,
-			wantToolResult:        "Tool call rejected by user",
+			wantToolResult:        toolCallRejectedByUserResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
 			wantFollowUp:          true,
@@ -596,6 +596,8 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			var updatedBlocks []conversation.ContentBlock
 			require.NoError(t, json.Unmarshal(turns[2].Content, &updatedBlocks))
 			assert.Equal(t, tc.wantToolStatus, updatedBlocks[0].Status)
+			assert.Equal(t, tc.wouldAutoExecute, updatedBlocks[0].WouldAutoExecute,
+				"WouldAutoExecute must stay on the block so follow-up guidance can distinguish policy denial from a user rejection")
 			require.NotNil(t, updatedBlocks[0].Shared)
 			assert.Equal(t, tc.wantToolUseShared, *updatedBlocks[0].Shared)
 			if tc.includeQuestion {
@@ -614,12 +616,17 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			}
 
 			if tc.wantFollowUp {
-				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				require.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				requestText := completionRequestText(lm.requests[0])
+				assert.Contains(t, requestText, tc.wantToolResult)
 				if tc.wantRejectionGuidance {
 					requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
 				} else {
 					assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
 						"policy denial and auto-exec must not receive user-rejection guidance")
+					if tc.wantToolResult != toolCallRejectedByUserResult {
+						assert.NotContains(t, requestText, toolCallRejectedByUserResult)
+					}
 				}
 			} else {
 				assert.Empty(t, lm.requests)

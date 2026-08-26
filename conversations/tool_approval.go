@@ -61,6 +61,14 @@ var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool 
 // entirely on unlicensed servers.
 var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
 
+// Canned tool_result content for non-executing resolutions. These are shown
+// to the LLM (and, when terminal, in channels); they must not include tool
+// arguments or blame the user for an administrative policy/license change.
+const (
+	toolCallRejectedByUserResult = "Tool call rejected by user"
+	toolCallPolicyDeniedResult   = "Tool call was not executed because it is no longer permitted by policy or license"
+)
+
 // isRemoteMCPLicensed reports whether the server license covers remote MCP
 // servers. A nil license checker fails closed.
 func (c *Conversations) isRemoteMCPLicensed() bool {
@@ -278,6 +286,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 					IsError:    false,
 				})
 			}
+		case block.WouldAutoExecute:
+			// Fresh policy/license check failed. Keep StatusRejected and the
+			// WouldAutoExecute marker so HasRejectedToolCall does not treat
+			// this as a human rejection, but record an accurate result so
+			// the follow-up cannot blame the user for an admin change.
+			rejectedToolNames = append(rejectedToolNames, block.Name)
+			block.Status = conversation.StatusRejected
+			resolvedAny = true
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     toolCallPolicyDeniedResult,
+				IsError:    true,
+			})
 		default:
 			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
@@ -287,7 +309,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "Tool call rejected by user",
+				Result:     toolCallRejectedByUserResult,
 				IsError:    true,
 			})
 		}
@@ -330,8 +352,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		// Interaction results (answered or skipped) are user-authored, so they
 		// are terminal and shared with no separate share/keep-private step.
-		// Rejected results share only the canned rejection reason; tool_use
-		// arguments stay unshared so they are not paraphrased into a channel reply.
+		// Rejected results (user rejection or policy/license denial) share only
+		// the canned reason; tool_use arguments stay unshared so they are not
+		// paraphrased into a channel reply.
 		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
 		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
 		rb := conversation.ContentBlock{
