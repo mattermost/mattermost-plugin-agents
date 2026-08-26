@@ -36,6 +36,7 @@ type fakeConvStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn // keyed by conversationID
 	allTurns      map[string]*store.Turn  // keyed by turn ID
+	lookupErr     error
 }
 
 func newFakeConvStore() *fakeConvStore {
@@ -76,6 +77,9 @@ func (s *fakeConvStore) GetConversation(id string) (*store.Conversation, error) 
 func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
 	for _, conv := range s.conversations {
 		if conv.RootPostID != nil && *conv.RootPostID == rootPostID &&
 			conv.BotID == botID && conv.UserID == userID && conv.DeleteAt == 0 {
@@ -284,6 +288,7 @@ type dmTestLLM struct {
 	lastNoStreamReq      llm.CompletionRequest
 	lastNoStreamCfg      llm.LanguageModelConfig
 	classifierCalls      int
+	onChat               func()
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -294,6 +299,9 @@ func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequ
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
+	if f.onChat != nil {
+		f.onChat()
+	}
 	if f.callIdx >= len(f.responses) {
 		return nil, fmt.Errorf("no more responses configured")
 	}
@@ -404,6 +412,7 @@ type dmTestEnv struct {
 	mockAPI       *plugintest.API
 	mmClient      *fakeMMClient
 	mcpMgr        *testMCPClientManager
+	botService    *bots.MMBots
 	botID         string
 	userID        string
 	channelID     string
@@ -520,6 +529,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		mockAPI:       mockAPI,
 		mmClient:      mmClient,
 		mcpMgr:        mcpMgr,
+		botService:    botsService,
 		botID:         botID,
 		userID:        userID,
 		channelID:     channelID,
@@ -530,11 +540,15 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 
 // testMCPClientManager implements llmcontext.MCPClientManager for testing.
 type testMCPClientManager struct {
-	tools  []llm.Tool
-	errors *mcp.Errors
+	tools      []llm.Tool
+	errors     *mcp.Errors
+	onGetTools func()
 }
 
 func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	if m.onGetTools != nil {
+		m.onGetTools()
+	}
 	return m.tools, m.errors
 }
 

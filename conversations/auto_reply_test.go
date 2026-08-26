@@ -63,6 +63,8 @@ type autoReplyTestEnv struct {
 	mmClient      *fakeMMClient
 	mockAPI       *plugintest.API
 	botService    *bots.MMBots
+	fakeLLM       *dmTestLLM
+	mcpMgr        *testMCPClientManager
 	settings      *fakeAutoReplySettings
 	channel       *model.Channel
 	llm           *dmTestLLM
@@ -139,7 +141,8 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 		allowCreatePost: true,
 	}
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, nil, &mockConfigProvider{})
+	mcpMgr := &testMCPClientManager{}
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, mcpMgr, &mockConfigProvider{})
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
@@ -169,6 +172,8 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 		mmClient:      mmClient,
 		mockAPI:       mockAPI,
 		botService:    botService,
+		fakeLLM:       fLLM,
+		mcpMgr:        mcpMgr,
 		settings:      settings,
 		channel:       channel,
 		llm:           fLLM,

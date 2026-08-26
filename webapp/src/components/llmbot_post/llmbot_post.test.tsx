@@ -8,6 +8,7 @@ import {useSelector} from 'react-redux';
 
 import {useConversation} from '@/hooks/use_conversation';
 import {PluginWebSocketMessage} from '@/types';
+import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import {MAX_SEARCH_SOURCES} from '../search_sources';
 
@@ -94,6 +95,68 @@ function makePost(message = '', props: Record<string, unknown> = {}) {
     };
 }
 
+function makeTurn(overrides: Partial<Turn> = {}): Turn {
+    return {
+        id: 'turn_1',
+        post_id: 'post_1',
+        role: 'assistant',
+        content: [],
+        tokens_in: 0,
+        tokens_out: 0,
+        sequence: 1,
+        ...overrides,
+    };
+}
+
+function makeConversation(turns: Turn[], userId = 'user_1'): ConversationResponse {
+    return {
+        id: WELL_FORMED_ID,
+        user_id: userId,
+        bot_id: 'bot_1',
+        channel_id: 'channel_1',
+        root_post_id: 'root_1',
+        title: '',
+        operation: 'conversation',
+        turns,
+    };
+}
+
+function makeToolOnlyConversation(
+    approvalState: NonNullable<Turn['approval_state']>,
+    toolStatus: 'rejected' | 'pending',
+    userId = 'user_1',
+): ConversationResponse {
+    const assistantTurn = makeTurn({
+        post_id: 'post_1',
+        approval_state: approvalState,
+        content: [{
+            type: 'tool_use',
+            id: 'tc_1',
+            name: 'mattermost__get_channel_info',
+            status: toolStatus,
+        }],
+    });
+
+    if (toolStatus !== 'rejected') {
+        return makeConversation([assistantTurn], userId);
+    }
+
+    return makeConversation([
+        assistantTurn,
+        makeTurn({
+            id: 'turn_2',
+            post_id: null,
+            role: 'tool_result',
+            sequence: 2,
+            content: [{
+                type: 'tool_result',
+                tool_use_id: 'tc_1',
+                content: 'Tool call rejected by user',
+            }],
+        }),
+    ], userId);
+}
+
 // Builds a search source entry with a unique well-formed post id.
 function makeSource(i: number) {
     return {
@@ -158,7 +221,7 @@ describe('LLMBotPost streaming fallback rendering', () => {
 
         renderPost(makePost(), websocketRegister);
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
         expect(listener).toBeDefined();
 
         act(() => {
@@ -173,14 +236,14 @@ describe('LLMBotPost streaming fallback rendering', () => {
         });
 
         expect(screen.getByText(errorText)).toBeTruthy();
-        expect(screen.queryByText('Starting...')).toBeNull();
+        expect(screen.queryByText('Working...')).toBeNull();
     });
 
     test('renders updated post message when the streaming text websocket was missed', async () => {
         const errorText = 'Sorry! An error occurred while accessing the LLM.';
         const {rerender} = renderPost(makePost());
 
-        expect(screen.getByText('Starting...')).toBeTruthy();
+        expect(screen.getByText('Working...')).toBeTruthy();
 
         rerender(
             <IntlProvider locale='en'>
@@ -194,6 +257,102 @@ describe('LLMBotPost streaming fallback rendering', () => {
         await waitFor(() => {
             expect(screen.getByText(errorText)).toBeTruthy();
         });
+        expect(screen.queryByText('Working...')).toBeNull();
+    });
+});
+
+describe('LLMBotPost setup progress', () => {
+    test('advances phases in order and ignores regressions', () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'checking_mcp',
+                progress_seq: 1,
+            }));
+        });
+        expect(screen.getByText('Checking MCP connections and tools...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'preparing_request',
+                progress_seq: 3,
+            }));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'loading_conversation',
+                progress_seq: 2,
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+        expect(screen.getByText('Preparing request...')).toBeTruthy();
+        expect(screen.queryByText('Loading conversation context...')).toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Connecting to provider...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Hello'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Hello')).toBeTruthy();
+        expect(screen.queryByText('Connecting to provider...')).toBeNull();
+    });
+
+    test('shows reasoning when start was missed and ignores a late start', () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'progress',
+                progress_phase: 'connecting_provider',
+                progress_seq: 4,
+            }));
+        });
+        expect(screen.getByText('Connecting to provider...')).toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Reasoning before text',
+            }));
+        });
+        expect(screen.getByText('Thinking')).toBeTruthy();
+        expect(screen.queryByText('Connecting to provider...')).toBeNull();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+        });
+        expect(screen.getByText('Thinking')).toBeTruthy();
         expect(screen.queryByText('Starting...')).toBeNull();
     });
 });
@@ -267,6 +426,83 @@ describe('LLMBotPost server tool activity rendering', () => {
         await waitFor(() => {
             expect(screen.queryByText('Fetched example.com')).toBeNull();
         });
+    });
+});
+
+describe('LLMBotPost remount of empty-message tool-only posts', () => {
+    test.each([
+        {
+            name: 'rejected tool_use',
+            approvalState: 'done' as const,
+            toolStatus: 'rejected' as const,
+            userId: 'user_1',
+        },
+        {
+            name: 'pending tool_use',
+            approvalState: 'call' as const,
+            toolStatus: 'pending' as const,
+            userId: 'user_1',
+        },
+        {
+            name: 'pending tool_use as an onlooker',
+            approvalState: 'call' as const,
+            toolStatus: 'pending' as const,
+            userId: 'other_user',
+        },
+    ])('does not show Working... when conversation already has a $name', ({approvalState, toolStatus, userId}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeToolOnlyConversation(approvalState, toolStatus, userId),
+            loading: false,
+            error: null,
+        });
+
+        renderPost(makePost());
+
+        expect(screen.queryByText('Working...')).toBeNull();
+    });
+
+    test('shows Working... after continue while generation resumes over persisted rounds', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeToolOnlyConversation('call', 'pending', 'other_user'),
+            loading: false,
+            error: null,
+        });
+
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        expect(screen.queryByText('Working...')).toBeNull();
+        expect(listener).toBeDefined();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'continue'}));
+        });
+
+        expect(screen.getByText('Working...')).toBeTruthy();
+    });
+
+    test('still shows Working... when the conversation is loaded but this post has no rounds yet', () => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({
+                    id: 'user_turn',
+                    post_id: 'root_1',
+                    role: 'user',
+                    sequence: 1,
+                    content: [{type: 'text', text: 'hello'}],
+                }),
+            ]),
+            loading: false,
+            error: null,
+        });
+
+        renderPost(makePost());
+
+        expect(screen.getByText('Working...')).toBeTruthy();
     });
 });
 
