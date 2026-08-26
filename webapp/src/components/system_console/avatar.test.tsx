@@ -5,13 +5,13 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import AvatarItem from './avatar';
-
 // Same module id avatar.tsx imports. The suite-wide asset mapper stubs pngs;
 // asserting against this value is stable whether the file runs alone or with
 // the rest of the suite.
 // @ts-ignore it exists
 import aiIcon from 'src/../../assets/bot_icon.png';
+
+import AvatarItem from './avatar';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
