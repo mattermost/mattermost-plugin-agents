@@ -254,13 +254,3 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 		})
 	}
 }
-
-//go:fix inline
-func boolPtr(value bool) *bool {
-	return new(value)
-}
-
-//go:fix inline
-func stringPtr(value string) *string {
-	return new(value)
-}

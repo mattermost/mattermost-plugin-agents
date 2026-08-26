@@ -11,11 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:fix inline
-func stringPtr(s string) *string {
-	return new(s)
-}
-
 func makeConversation(overrides ...func(*Conversation)) *Conversation {
 	conv := &Conversation{
 		ID:        model.NewId(),

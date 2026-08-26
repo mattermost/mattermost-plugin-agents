@@ -109,9 +109,6 @@ func (t *testLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...l
 func (t *testLLM) InputTokenLimit() int  { return 100000 }
 func (t *testLLM) OutputTokenLimit() int { return 8192 }
 
-//go:fix inline
-func stringPtr(s string) *string { return new(s) }
-
 func setupTestService(t *testing.T) (*Service, *store.Store) {
 	t.Helper()
 

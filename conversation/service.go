@@ -141,7 +141,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 		CreatedAt:      now,
 	}
 
-	if err := s.Store.CreateTurn(turn); err != nil {
+	if err := s.CreateTurn(turn); err != nil {
 		return nil, fmt.Errorf("failed to create user turn: %w", err)
 	}
 
@@ -153,7 +153,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
-	return s.Store.GetTurnsForConversation(conversationID)
+	return s.GetTurnsForConversation(conversationID)
 }
 
 // GetInitiatingUserTurn returns the user turn that started the agent run
@@ -162,7 +162,7 @@ func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 // the original trace. Returns nil if no matching assistant turn or no
 // preceding user turn is found.
 func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.Turn, error) {
-	turns, err := s.Store.GetTurnsForConversation(conversationID)
+	turns, err := s.GetTurnsForConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,7 +190,7 @@ func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.T
 // run's trace, so consecutive invocations in the same conversation are
 // navigable in Tempo.
 func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) (*store.Turn, error) {
-	turns, err := s.Store.GetTurnsForConversation(conversationID)
+	turns, err := s.GetTurnsForConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.Store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
@@ -265,7 +265,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	})
 	if errors.Is(err, store.ErrConversationConflict) {
 		// Another request created the conversation concurrently. Look it up and append the user turn.
-		raceConv, lookupErr := s.Store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+		raceConv, lookupErr := s.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 		if lookupErr != nil && !errors.Is(lookupErr, store.ErrConversationNotFound) {
 			return nil, fmt.Errorf("failed to look up conversation after conflict: %w", lookupErr)
 		}
@@ -286,7 +286,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		return nil, err
 	}
 
-	conv, err := s.Store.GetConversation(createResult.ConversationID)
+	conv, err := s.GetConversation(createResult.ConversationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get newly created conversation: %w", err)
 	}

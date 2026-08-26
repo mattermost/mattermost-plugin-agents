@@ -54,7 +54,6 @@ func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int
 	b.Posts = make([]Post, 0, len(oldPosts))
 	var totalTokens int
 	for _, post := range slices.Backward(oldPosts) {
-
 		if totalTokens >= maxTokens {
 			slices.Reverse(b.Posts)
 			return true

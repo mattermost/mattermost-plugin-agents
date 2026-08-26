@@ -46,7 +46,6 @@ func (t *ThreadExport) String() string {
 
 	// Posts in reverse chronological order (root post first)
 	for _, postID := range slices.Backward(t.PostList.Order) {
-
 		post := t.PostList.Posts[postID]
 		user := t.Users[post.UserId]
 

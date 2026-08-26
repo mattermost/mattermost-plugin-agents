@@ -3,9 +3,10 @@
 
 package llm
 
-import "strings"
-
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // MaxPostAttachments is the Mattermost per-post attachment limit. It bounds
 // how many files tools may create for or attach to a single post.

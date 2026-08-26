@@ -31,7 +31,6 @@ func (c *Conversations) extractWebSearchContext(currentPost *model.Post) map[str
 	// Search through posts in reverse order (most recent first) for web search context
 	// We want the most recent context in case multiple searches occurred
 	for _, post := range slices.Backward(threadData.Posts) {
-
 		webSearchContextProp := post.GetProp(streaming.WebSearchContextProp)
 		if webSearchContextProp == nil {
 			continue

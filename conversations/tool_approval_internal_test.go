@@ -15,9 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:fix inline
-func stringPtr(s string) *string { return new(s) }
-
 func assistantTurnWithPending(t *testing.T, id, postID string, seq int) store.Turn {
 	t.Helper()
 	blocks := []conversation.ContentBlock{

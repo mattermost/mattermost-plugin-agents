@@ -46,7 +46,6 @@ func CountTrailingFailedToolCalls(posts []Post) int {
 	failures := 0
 
 	for _, post := range slices.Backward(posts) {
-
 		if post.Role == PostRoleSystem {
 			continue
 		}

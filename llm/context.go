@@ -259,20 +259,20 @@ func (c *Context) ResponseAttachmentSlots() int {
 
 func (c Context) String() string {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))
+	fmt.Fprintf(&result, "Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName)
 	if c.RequestingUser != nil {
-		result.WriteString(fmt.Sprintf("\nRequestingUser: %v", c.RequestingUser.Username))
+		fmt.Fprintf(&result, "\nRequestingUser: %v", c.RequestingUser.Username)
 	}
 	if c.Channel != nil {
-		result.WriteString(fmt.Sprintf("\nChannel: %v", c.Channel.Name))
+		fmt.Fprintf(&result, "\nChannel: %v", c.Channel.Name)
 	}
 	if c.Team != nil {
-		result.WriteString(fmt.Sprintf("\nTeam: %v", c.Team.Name))
+		fmt.Fprintf(&result, "\nTeam: %v", c.Team.Name)
 	}
 
 	result.WriteString("\n--- Parameters ---\n")
 	for key := range c.Parameters {
-		result.WriteString(fmt.Sprintf(" %v", key))
+		fmt.Fprintf(&result, " %v", key)
 	}
 
 	if c.Tools != nil {

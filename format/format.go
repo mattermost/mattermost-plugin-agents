@@ -27,11 +27,11 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Found %d agent(s):\n\n", len(agents)))
+	fmt.Fprintf(&b, "Found %d agent(s):\n\n", len(agents))
 	for i, a := range agents {
-		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, a.DisplayName))
-		b.WriteString(fmt.Sprintf("   ID: %s\n", a.ID))
-		b.WriteString(fmt.Sprintf("   Username: @%s\n", a.Username))
+		fmt.Fprintf(&b, "%d. %s\n", i+1, a.DisplayName)
+		fmt.Fprintf(&b, "   ID: %s\n", a.ID)
+		fmt.Fprintf(&b, "   Username: @%s\n", a.Username)
 		if currentBotUserID != "" && a.ID == currentBotUserID {
 			b.WriteString("   ** This is YOU (the current agent) **\n")
 		}
@@ -48,9 +48,9 @@ func ThreadData(data *mmapi.ThreadData) string {
 			username = user.Username
 		}
 		if post.CreateAt > 0 {
-			result.WriteString(fmt.Sprintf("%s (%s): %s\n\n", username, TimeFromMillis(post.CreateAt), PostBody(post)))
+			fmt.Fprintf(&result, "%s (%s): %s\n\n", username, TimeFromMillis(post.CreateAt), PostBody(post))
 		} else {
-			result.WriteString(fmt.Sprintf("%s: %s\n\n", username, PostBody(post)))
+			fmt.Fprintf(&result, "%s: %s\n\n", username, PostBody(post))
 		}
 	}
 

@@ -216,7 +216,6 @@ func Run(t *testing.T, name string, f func(e *EvalT)) {
 
 	// Run evaluations for each provider
 	for _, providerName := range providers {
-
 		// Try to create eval for this provider
 		eval, err := NewEvalWithProvider(providerName)
 		if err != nil {

@@ -1317,12 +1317,6 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 	}
 }
 
-//go:fix inline
-func intPtr(i int) *int { return new(i) }
-
-//go:fix inline
-func strPtr(s string) *string { return new(s) }
-
 func TestConvertBifrostAnnotation(t *testing.T) {
 	tests := []struct {
 		name     string

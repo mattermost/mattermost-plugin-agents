@@ -276,7 +276,7 @@ func (b *MMBots) EnsureBots() error {
 	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
 	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
 	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
-	currentBotCfgs, _, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
+	_, _, _, unchanged, err := b.snapshotForEnsure()
 	if err != nil {
 		return err
 	}
@@ -293,8 +293,7 @@ func (b *MMBots) EnsureBots() error {
 	defer mtx.Unlock()
 
 	// Re-check after acquiring lock - another node may have already handled this
-	var activeDBBotUsernames map[string]struct{}
-	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, unchanged, err = b.snapshotForEnsure()
+	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
 	if err != nil {
 		return err
 	}

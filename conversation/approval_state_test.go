@@ -11,9 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:fix inline
-func postPtr(s string) *string { return new(s) }
-
 func blockJSON(t *testing.T, blocks []ContentBlock) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(blocks)
