@@ -207,9 +207,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
-		failedStatus.Status = JobStatusFailed
-		failedStatus.Error = deferErr.Error()
-		failedStatus.CompletedAt = time.Now()
+		failedStatus.fail(deferErr.Error())
 		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
 			s.pluginAPI.LogError("Failed to record reindex job failure", "error", casErr)
 		}

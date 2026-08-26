@@ -5,13 +5,14 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-var errVectorStoreNoBulkIndex = fmt.Errorf("vector store does not support rebuilding the index")
+var errVectorStoreNoBulkIndex = errors.New("vector store does not support rebuilding the index")
 
 // StartRebuildVectorIndex drops and rebuilds the HNSW index with the current
 // m without clearing or re-embedding posts. Search is gated while the index
@@ -62,9 +63,7 @@ func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error
 	deferRun, deferErr := s.claimRebuildVectorIndex(newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
-		failedStatus.Status = JobStatusFailed
-		failedStatus.Error = deferErr.Error()
-		failedStatus.CompletedAt = time.Now()
+		failedStatus.fail(deferErr.Error())
 		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
 			s.pluginAPI.LogError("Failed to record vector index rebuild failure", "error", casErr)
 		}

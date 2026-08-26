@@ -193,7 +193,7 @@ func TestNewEmbeddingProvider(t *testing.T) {
 			},
 			dimensions:    1536,
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI config",
+			errorContains: "failed to unmarshal openai embedding config",
 		},
 		{
 			name: "OpenAI-compatible type with invalid JSON returns unmarshal error",
@@ -203,7 +203,7 @@ func TestNewEmbeddingProvider(t *testing.T) {
 			},
 			dimensions:    1536,
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI-compatible config",
+			errorContains: "failed to unmarshal openai-compatible embedding config",
 		},
 		{
 			name: "unsupported embedding provider type returns error",
@@ -310,7 +310,7 @@ func TestEmbeddingProviderConfigUnmarshalEdgeCases(t *testing.T) {
 			providerType:  embeddings.ProviderTypeOpenAI,
 			parameters:    nil,
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI config",
+			errorContains: "failed to unmarshal openai embedding config",
 		},
 		{
 			name:          "OpenAI-compatible with empty parameters succeeds",
@@ -324,21 +324,21 @@ func TestEmbeddingProviderConfigUnmarshalEdgeCases(t *testing.T) {
 			providerType:  embeddings.ProviderTypeOpenAICompatible,
 			parameters:    nil,
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI-compatible config",
+			errorContains: "failed to unmarshal openai-compatible embedding config",
 		},
 		{
 			name:          "OpenAI with truncated JSON fails",
 			providerType:  embeddings.ProviderTypeOpenAI,
 			parameters:    json.RawMessage(`{"apiKey": "test`),
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI config",
+			errorContains: "failed to unmarshal openai embedding config",
 		},
 		{
 			name:          "OpenAI-compatible with array instead of object fails",
 			providerType:  embeddings.ProviderTypeOpenAICompatible,
 			parameters:    json.RawMessage(`["not", "an", "object"]`),
 			expectError:   true,
-			errorContains: "failed to unmarshal OpenAI-compatible config",
+			errorContains: "failed to unmarshal openai-compatible embedding config",
 		},
 	}
 

@@ -18,23 +18,23 @@ import (
 
 // newVectorStore creates a new vector store based on the provided configuration
 func newVectorStore(db *sqlx.DB, config embeddings.UpstreamConfig, dimensions, hnswM int, vectorElementType string, skipVectorIndex bool) (embeddings.VectorStore, error) {
-	switch config.Type { //nolint:gocritic
-	case embeddings.VectorStoreTypePGVector:
-		pgVectorConfig := postgres.PGVectorConfig{
-			Dimensions: dimensions,
-		}
-		if err := json.Unmarshal(config.Parameters, &pgVectorConfig); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal pgvector config: %w", err)
-		}
-		// Apply after unmarshal so a stale parameters blob cannot override
-		// top-level fields.
-		pgVectorConfig.HNSWM = hnswM
-		pgVectorConfig.VectorElementType = vectorElementType
-		pgVectorConfig.SkipVectorIndex = skipVectorIndex
-		return postgres.NewPGVector(db, pgVectorConfig)
+	// Reject unknown types: configs stored by older versions may carry other values.
+	if config.Type != embeddings.VectorStoreTypePGVector {
+		return nil, fmt.Errorf("unsupported vector store type: %s", config.Type)
 	}
 
-	return nil, fmt.Errorf("unsupported vector store type: %s", config.Type)
+	pgVectorConfig := postgres.PGVectorConfig{
+		Dimensions: dimensions,
+	}
+	if err := json.Unmarshal(config.Parameters, &pgVectorConfig); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal pgvector config: %w", err)
+	}
+	// Apply after unmarshal so a stale parameters blob cannot override
+	// top-level fields.
+	pgVectorConfig.HNSWM = hnswM
+	pgVectorConfig.VectorElementType = vectorElementType
+	pgVectorConfig.SkipVectorIndex = skipVectorIndex
+	return postgres.NewPGVector(db, pgVectorConfig)
 }
 
 // BifrostEmbeddingConfig holds configuration for Bifrost-based embeddings
@@ -73,22 +73,10 @@ func newEmbeddingProvider(config embeddings.UpstreamConfig, dimensions int) (emb
 			Model:      bifrostConfig.Model,
 			Dimensions: dimensions,
 		})
-	case embeddings.ProviderTypeOpenAICompatible:
-		var compatibleConfig OpenAIEmbeddingConfig
-		if err := json.Unmarshal(config.Parameters, &compatibleConfig); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal OpenAI-compatible config: %w", err)
-		}
-		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
-			Provider:   schemas.OpenAI,
-			APIKey:     compatibleConfig.APIKey,
-			APIURL:     compatibleConfig.APIURL,
-			Model:      compatibleConfig.Model,
-			Dimensions: dimensions,
-		})
-	case embeddings.ProviderTypeOpenAI:
+	case embeddings.ProviderTypeOpenAI, embeddings.ProviderTypeOpenAICompatible:
 		var openaiConfig OpenAIEmbeddingConfig
 		if err := json.Unmarshal(config.Parameters, &openaiConfig); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal OpenAI config: %w", err)
+			return nil, fmt.Errorf("failed to unmarshal %s embedding config: %w", config.Type, err)
 		}
 		return bifrost.NewEmbeddingProvider(bifrost.EmbeddingConfig{
 			Provider:   schemas.OpenAI,
@@ -136,25 +124,25 @@ func InitEmbeddingsSearch(db *sqlx.DB, cfg embeddings.EmbeddingSearchConfig, lic
 		return nil, fmt.Errorf("embedding dimensions must be greater than 0, got %d", cfg.Dimensions)
 	}
 
-	switch cfg.Type { //nolint:gocritic
-	case embeddings.SearchTypeComposite:
-		vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions, cfg.GetHNSWM(), cfg.GetVectorElementType(), skipVectorIndex)
-		if err != nil {
-			return nil, err
-		}
-		embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, cfg.Dimensions)
-		if err != nil {
-			return nil, err
-		}
-
-		// Check if we have specific chunking options configured
-		chunkingOpts := cfg.ChunkingOptions
-		if chunkingOpts.ChunkSize == 0 {
-			chunkingOpts = chunking.DefaultOptions()
-		}
-
-		return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts, cfg.GetRecencyBiasSettings()), nil
+	// Reject unknown types: configs stored by older versions may carry other values.
+	if cfg.Type != embeddings.SearchTypeComposite {
+		return nil, fmt.Errorf("unsupported search type: %s", cfg.Type)
 	}
 
-	return nil, fmt.Errorf("unsupported search type: %s", cfg.Type)
+	vector, err := newVectorStore(db, cfg.VectorStore, cfg.Dimensions, cfg.GetHNSWM(), cfg.GetVectorElementType(), skipVectorIndex)
+	if err != nil {
+		return nil, err
+	}
+	embeddor, err := newEmbeddingProvider(cfg.EmbeddingProvider, cfg.Dimensions)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if we have specific chunking options configured
+	chunkingOpts := cfg.ChunkingOptions
+	if chunkingOpts.ChunkSize == 0 {
+		chunkingOpts = chunking.DefaultOptions()
+	}
+
+	return embeddings.NewCompositeSearch(vector, embeddor, chunkingOpts, cfg.GetRecencyBiasSettings()), nil
 }
