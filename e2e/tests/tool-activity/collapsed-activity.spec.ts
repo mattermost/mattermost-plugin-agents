@@ -26,6 +26,9 @@ import {RunToolConfigAIMockContainer, setupRegularTestUser} from 'helpers/tool-c
  * auto-run tools so nothing ever waits on a decision. Animation timing is
  * covered by unit tests; these cases only assert what is on screen once the
  * row has settled.
+ *
+ * The spec filename is kebab-case, matching neighboring Playwright specs
+ * under e2e/tests (not the product-source snake_case rule).
  */
 
 const username = 'regularuser';
