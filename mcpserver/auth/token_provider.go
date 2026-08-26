@@ -36,29 +36,37 @@ func NewTokenAuthenticationProvider(externalURL, internalURL, token string, logg
 
 // ValidateAuth validates authentication
 func (p *TokenAuthenticationProvider) ValidateAuth(ctx context.Context) error {
-	// Get authenticated client and validate token (single GetMe call)
 	_, err := p.GetAuthenticatedMattermostClient(ctx)
 	return err
 }
 
 // GetAuthenticatedMattermostClient returns an authenticated Mattermost client
 func (p *TokenAuthenticationProvider) GetAuthenticatedMattermostClient(ctx context.Context) (*model.Client4, error) {
+	client, _, err := p.authenticatedClientAndUser(ctx)
+	return client, err
+}
+
+// GetAuthenticatedUser returns the Mattermost user for the configured PAT.
+func (p *TokenAuthenticationProvider) GetAuthenticatedUser(ctx context.Context) (*model.User, error) {
+	_, user, err := p.authenticatedClientAndUser(ctx)
+	return user, err
+}
+
+func (p *TokenAuthenticationProvider) authenticatedClientAndUser(ctx context.Context) (*model.Client4, *model.User, error) {
 	if p.token == "" {
-		return nil, fmt.Errorf("no authentication token available")
+		return nil, nil, fmt.Errorf("no authentication token available")
 	}
 
-	// Create client with configured token
 	client := model.NewAPIv4Client(p.mmServerURL)
 	client.SetToken(p.token)
 
-	// Validate token by getting current user (single validation call)
 	user, _, err := client.GetMe(ctx, "")
 	if err != nil {
 		p.logger.Error("failed to validate token", "error", err)
-		return nil, fmt.Errorf("invalid authentication token: %w", err)
+		return nil, nil, fmt.Errorf("invalid authentication token: %w", err)
 	}
 
 	p.logger.Debug("validated token for user", "user_id", user.Id, "username", user.Username)
 
-	return client, nil
+	return client, user, nil
 }
