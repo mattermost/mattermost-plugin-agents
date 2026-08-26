@@ -216,6 +216,16 @@ IMPORTANT: Before calling this tool, you MUST call get_automation_instructions t
 required format for triggers, actions, and allowed_tools. Then present a summary to the user
 and get their confirmation before creating.`
 
+const listAutomationsToolDescription = `List or get channel automations (trigger-action workflows).
+Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
+Returns the full JSON for each automation including trigger configuration and action pipeline.`
+
+const updateAutomationToolDescription = `Update an existing channel automation. Replaces the full definition — any field you
+omit will be cleared. Always call list_automations first to fetch the current JSON, then modify
+only what needs to change and pass the full updated automation back. Call get_automation_instructions
+for trigger/action format details.
+IMPORTANT: Show the user what will change and get their confirmation first.`
+
 func (p *MattermostToolProvider) fetchAutomationInstructions(ctx context.Context, client *model.Client4) (automationInstructionsAPIResponse, error) {
 	var out automationInstructionsAPIResponse
 	if client == nil {
@@ -234,49 +244,26 @@ func (p *MattermostToolProvider) fetchAutomationInstructions(ctx context.Context
 
 // getAutomationTools returns all automation-related tools.
 func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
-	return []MCPTool{
-		{
-			Name: "list_automations",
-			Description: `List or get channel automations (trigger-action workflows).
-Provide automation_id to get a specific automation, or use optional channel_id to filter by trigger channel.
-Returns the full JSON for each automation including trigger configuration and action pipeline.`,
-			Schema:    NewJSONSchemaForAccessMode[ListAutomationsArgs](string(p.accessMode)),
-			Resolver:  typed("list_automations", p.toolListAutomations),
-			Available: p.isAutomationPluginInstalled,
-		},
+	// get_automation_instructions deliberately has no schema (it takes no
+	// arguments), so it is registered as a literal rather than via mcpTool.
+	automationTools := []MCPTool{
+		mcpTool(p, "list_automations", listAutomationsToolDescription, p.toolListAutomations),
 		{
 			Name:        "get_automation_instructions",
 			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
-			Schema:      nil,
 			Resolver:    typed("get_automation_instructions", p.toolGetAutomationInstructions),
-			Available:   p.isAutomationPluginInstalled,
 		},
-		{
-			Name:        "create_automation",
-			Description: createAutomationToolDescription,
-			Schema:      NewJSONSchemaForAccessMode[CreateAutomationArgs](string(p.accessMode)),
-			Resolver:    typed("create_automation", p.toolCreateAutomation),
-			Available:   p.isAutomationPluginInstalled,
-		},
-		{
-			Name: "update_automation",
-			Description: `Update an existing channel automation. Replaces the full definition — any field you
-omit will be cleared. Always call list_automations first to fetch the current JSON, then modify
-only what needs to change and pass the full updated automation back. Call get_automation_instructions
-for trigger/action format details.
-IMPORTANT: Show the user what will change and get their confirmation first.`,
-			Schema:    NewJSONSchemaForAccessMode[UpdateAutomationArgs](string(p.accessMode)),
-			Resolver:  typed("update_automation", p.toolUpdateAutomation),
-			Available: p.isAutomationPluginInstalled,
-		},
-		{
-			Name:        "delete_automation",
-			Description: "Delete a channel automation by ID. This is permanent and cannot be undone.",
-			Schema:      NewJSONSchemaForAccessMode[DeleteAutomationArgs](string(p.accessMode)),
-			Resolver:    typed("delete_automation", p.toolDeleteAutomation),
-			Available:   p.isAutomationPluginInstalled,
-		},
+		mcpTool(p, "create_automation", createAutomationToolDescription, p.toolCreateAutomation),
+		mcpTool(p, "update_automation", updateAutomationToolDescription, p.toolUpdateAutomation),
+		mcpTool(p, "delete_automation", "Delete a channel automation by ID. This is permanent and cannot be undone.", p.toolDeleteAutomation),
 	}
+
+	// Every automation tool is hidden from tools/list when the channel-automation
+	// plugin is absent.
+	for i := range automationTools {
+		automationTools[i].Available = p.isAutomationPluginInstalled
+	}
+	return automationTools
 }
 
 // --- Resolvers ---
@@ -527,13 +514,13 @@ func formatAutomationJSON(a Automation) (string, error) {
 // Each entry contains the exact JSON expected by update_automation.
 func formatAutomationsJSON(automations []Automation) (string, error) {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d automation(s):\n\n", len(automations)))
+	fmt.Fprintf(&result, "Found %d automation(s):\n\n", len(automations))
 	for i, a := range automations {
 		jsonStr, err := marshalAutomationJSON(a)
 		if err != nil {
 			return "", err
 		}
-		result.WriteString(fmt.Sprintf("%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr))
+		fmt.Fprintf(&result, "%d. %s (ID: %s)\n%s\n\n", i+1, a.Name, a.ID, jsonStr)
 	}
 	return result.String(), nil
 }

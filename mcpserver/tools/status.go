@@ -47,11 +47,11 @@ const (
 // getStatusTools returns the presence and custom-status tools.
 func (p *MattermostToolProvider) getStatusTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_user_status", Description: getUserStatusDescription, Schema: NewJSONSchemaForAccessMode[GetUserStatusArgs](string(p.accessMode)), Resolver: typed("get_user_status", p.toolGetUserStatus)},
-		{Name: "get_users_statuses", Description: getUsersStatusesDescription, Schema: NewJSONSchemaForAccessMode[GetUsersStatusesArgs](string(p.accessMode)), Resolver: typed("get_users_statuses", p.toolGetUsersStatuses)},
-		{Name: "get_user_custom_status", Description: getUserCustomStatusDescription, Schema: NewJSONSchemaForAccessMode[GetUserCustomStatusArgs](string(p.accessMode)), Resolver: typed("get_user_custom_status", p.toolGetUserCustomStatus)},
-		{Name: "set_status", Description: setStatusDescription, Schema: NewJSONSchemaForAccessMode[SetStatusArgs](string(p.accessMode)), Resolver: typed("set_status", p.toolSetStatus)},
-		{Name: "set_dnd", Description: setDndDescription, Schema: NewJSONSchemaForAccessMode[SetDndArgs](string(p.accessMode)), Resolver: typed("set_dnd", p.toolSetDnd)},
+		mcpTool(p, "get_user_status", getUserStatusDescription, p.toolGetUserStatus),
+		mcpTool(p, "get_users_statuses", getUsersStatusesDescription, p.toolGetUsersStatuses),
+		mcpTool(p, "get_user_custom_status", getUserCustomStatusDescription, p.toolGetUserCustomStatus),
+		mcpTool(p, "set_status", setStatusDescription, p.toolSetStatus),
+		mcpTool(p, "set_dnd", setDndDescription, p.toolSetDnd),
 	}
 }
 
@@ -74,13 +74,8 @@ func (p *MattermostToolProvider) toolGetUserStatus(mcpContext *MCPToolContext, a
 
 // toolGetUsersStatuses implements the get_users_statuses tool.
 func (p *MattermostToolProvider) toolGetUsersStatuses(mcpContext *MCPToolContext, args GetUsersStatusesArgs) (string, error) {
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 	statuses, _, err := mcpContext.Client.GetUsersStatusesByIds(mcpContext.Ctx, args.UserIDs)
 	if err != nil {
@@ -90,7 +85,7 @@ func (p *MattermostToolProvider) toolGetUsersStatuses(mcpContext *MCPToolContext
 		return "no statuses found", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Statuses for %d user(s):\n\n", len(statuses)))
+	fmt.Fprintf(&result, "Statuses for %d user(s):\n\n", len(statuses))
 	for i, status := range statuses {
 		format.WriteStatus(&result, format.StatusEntry{
 			HeaderLabel: fmt.Sprintf("Status %d", i+1),
