@@ -122,6 +122,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [error, setError] = useState('');
     const progressSequenceRef = useRef(0);
     const progressCompleteRef = useRef(props.post.message !== '');
+    const reasoningSeenRef = useRef(false);
 
     // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
     // Needs a ref because of the useEffect closure.
@@ -224,6 +225,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'reasoning_summary' && data.reasoning) {
                 progressCompleteRef.current = true;
+                reasoningSeenRef.current = true;
                 setProgressPhase(null);
                 setGenerating(true);
 
@@ -236,6 +238,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'reasoning_summary_done' && data.reasoning) {
                 progressCompleteRef.current = true;
+                reasoningSeenRef.current = true;
                 setProgressPhase(null);
                 setGenerating(true);
                 setReasoningSummary(data.reasoning);
@@ -348,9 +351,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'start') {
-                if (progressCompleteRef.current && !regeneratingRef.current) {
+                if (reasoningSeenRef.current && !regeneratingRef.current) {
                     return;
                 }
+                reasoningSeenRef.current = false;
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -367,6 +371,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'continue') {
+                reasoningSeenRef.current = false;
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
                 setGenerating(true);
@@ -424,6 +429,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const regnerate = () => {
         progressCompleteRef.current = false;
         progressSequenceRef.current = 0;
+        reasoningSeenRef.current = false;
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
