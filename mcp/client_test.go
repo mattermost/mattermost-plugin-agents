@@ -4,12 +4,20 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -311,4 +319,61 @@ func TestInvalidateSharedToolsCacheForOAuthDiscoveryKeepsCacheWithStoredToken(t 
 	}, true)
 
 	require.NotNil(t, cache.GetTools(serverID))
+}
+
+func newTestPluginLogService(t *testing.T) pluginapi.LogService {
+	t.Helper()
+	mockAPI := &plugintest.API{}
+	anyArgs := make([]interface{}, 20)
+	for i := range anyArgs {
+		anyArgs[i] = mock.Anything
+	}
+	mockAPI.On("LogDebug", anyArgs...).Maybe()
+	mockAPI.On("LogInfo", anyArgs...).Maybe()
+	mockAPI.On("LogWarn", anyArgs...).Maybe()
+	mockAPI.On("LogError", anyArgs...).Maybe()
+	return pluginapi.NewClient(mockAPI, nil).Log
+}
+
+func TestNewClientDoesNotOpenStandaloneSSE(t *testing.T) {
+	var getCalls atomic.Int32
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "test-mcp-server",
+		Version: "1.0.0",
+	}, nil)
+	server.AddTool(&mcp.Tool{
+		Name:        "tool_1",
+		Description: "Test tool tool_1",
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: "tool_1 ok"}},
+		}, nil
+	})
+
+	streamableHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCalls.Add(1)
+		}
+		streamableHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	oauthManager, mockClient := setupTestOAuthManager(t)
+	mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
+
+	log := &mockLogService{}
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "remote",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestPluginLogService(t), oauthManager, httpServer.Client(), NewToolsCache(newMockKVService(), log))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.Contains(t, client.Tools(), "tool_1")
+	require.Zero(t, getCalls.Load())
 }
