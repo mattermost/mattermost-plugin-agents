@@ -395,13 +395,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
-func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
-	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
-	if err != nil {
-		return nil, err
-	}
-
+// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
+func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
@@ -410,8 +405,17 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 			InputSchema: toolInfo.InputSchema,
 		})
 	}
+	return tools
+}
 
-	return tools, nil
+// discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
+func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
+	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
+	if err != nil {
+		return nil, err
+	}
+
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -423,16 +427,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -475,16 +470,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

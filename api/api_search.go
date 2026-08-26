@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,7 +30,8 @@ const (
 	maxSearchQueryLength = 4000
 )
 
-func (a *API) handleRunSearch(c *gin.Context) {
+// handleBotSearch validates a SearchRequest and responds with the result of run.
+func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error)) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
@@ -61,7 +63,7 @@ func (a *API) handleRunSearch(c *gin.Context) {
 		req.MaxResults = maxMaxResults
 	}
 
-	result, err := a.searchService.RunSearch(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
+	result, err := run(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
 	if err != nil {
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
@@ -74,49 +76,16 @@ func (a *API) handleRunSearch(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+func (a *API) handleRunSearch(c *gin.Context) {
+	a.handleBotSearch(c, func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error) {
+		return a.searchService.RunSearch(ctx, userID, bot, query, teamID, channelID, maxResults)
+	})
+}
+
 func (a *API) handleSearchQuery(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
-	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-
-	if !a.searchService.Enabled() {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
-		return
-	}
-
-	var req SearchRequest
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))
-		return
-	}
-
-	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query cannot be empty"))
-		return
-	}
-	if len(req.Query) > maxSearchQueryLength {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("query exceeds maximum length of %d characters", maxSearchQueryLength))
-		return
-	}
-
-	// Validate MaxResults
-	if req.MaxResults <= 0 {
-		req.MaxResults = defaultMaxResults
-	} else if req.MaxResults > maxMaxResults {
-		req.MaxResults = maxMaxResults
-	}
-
-	response, err := a.searchService.SearchQuery(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
-	if err != nil {
-		if errors.Is(err, search.ErrSearchUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
-		}
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
-
-	c.JSON(http.StatusOK, response)
+	a.handleBotSearch(c, func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error) {
+		return a.searchService.SearchQuery(ctx, userID, bot, query, teamID, channelID, maxResults)
+	})
 }
 
 // RawSearchRequest represents the request body for the raw semantic search endpoint
