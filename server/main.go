@@ -574,6 +574,8 @@ func (p *Plugin) applyTelemetryConfig() {
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
+	p.conversationsService.MessageHasBeenPosted(c, post)
+
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
@@ -586,8 +588,6 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 			}
 		}
 	}
-
-	p.conversationsService.MessageHasBeenPosted(c, post)
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {

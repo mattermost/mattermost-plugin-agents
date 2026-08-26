@@ -494,6 +494,32 @@ func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
 	}
 }
 
+func TestNewClientDoesNotOpenStandaloneSSE(t *testing.T) {
+	var getCalls atomic.Int32
+	server := newTestMCPServer(0, "tool_1")
+	streamableHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCalls.Add(1)
+		}
+		streamableHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "remote",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), newTestToolsCache(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.Contains(t, client.Tools(), "tool_1")
+	require.Zero(t, getCalls.Load())
+}
+
 func TestRemoteReconnectRefreshesToolCatalog(t *testing.T) {
 	server := newTestMCPServer(0, "tool_1")
 	httpServer := startStreamableMCPServer(t, server)

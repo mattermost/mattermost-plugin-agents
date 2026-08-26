@@ -200,6 +200,17 @@ func (c *Conversations) ProcessDMRequest(
 	llmCtx *llm.Context,
 	maxToolTurns int,
 ) (*DMStreamResult, error) {
+	return c.processDMRequest(ctx, convID, lm, llmCtx, maxToolTurns, nil)
+}
+
+func (c *Conversations) processDMRequest(
+	ctx stdcontext.Context,
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+	maxToolTurns int,
+	beforeProvider func(),
+) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
 
@@ -219,6 +230,9 @@ func (c *Conversations) ProcessDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
+	if beforeProvider != nil {
+		beforeProvider()
+	}
 	runResult, err := c.runToolLoop(ctx, lm, maxToolTurns, *completionReq,
 		c.shouldAutoExecuteTool(llmCtx, true),
 		convID,
