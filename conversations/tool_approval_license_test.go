@@ -120,13 +120,15 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 	mmClient := mocks.NewMockClient(t)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Maybe()
+	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 
 	return &Conversations{
-		mmClient:       mmClient,
-		contextBuilder: toolLicenseTestBuilder(t, licensed),
-		bots:           botsService,
-		licenseChecker: licenseChecker,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
+		mmClient:         mmClient,
+		contextBuilder:   toolLicenseTestBuilder(t, licensed),
+		bots:             botsService,
+		licenseChecker:   licenseChecker,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: &loadedStateStreamingService{},
 	}
 }
 

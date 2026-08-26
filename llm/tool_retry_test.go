@@ -181,6 +181,54 @@ func TestEnsureToolIterationLimitUserMessage(t *testing.T) {
 	}
 }
 
+func TestEnsureToolRejectionUserMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		posts    []Post
+		expected []Post
+	}{
+		{
+			name: "appends a user post when none exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message already exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message is embedded",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolRejectionUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolRejectionUserMessage},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EnsureToolRejectionUserMessage(tt.posts)
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expected, EnsureToolRejectionUserMessage(result),
+				"calling Ensure twice must not duplicate the guidance")
+		})
+	}
+}
+
 func TestCountTrailingFailedToolCallsIgnoresFailedMetaTools(t *testing.T) {
 	posts := []Post{{
 		Role: PostRoleBot,

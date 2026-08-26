@@ -277,6 +277,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		default:
 			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
+			// Resume the LLM loop so the model can ask for clarification or
+			// take a different approach instead of silently ending.
+			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -323,7 +326,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		// Interaction results (answered or skipped) are user-authored, so they
 		// are terminal and shared with no separate share/keep-private step.
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
+		// Rejected results share only the canned rejection reason; tool_use
+		// arguments stay unshared so they are not paraphrased into a channel reply.
+		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
@@ -331,7 +337,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			Status:    status,
 			Shared:    conversation.BoolPtr(terminal),
 		}
-		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+		if terminal {
 			rb.DecidedAt = conversation.Int64Ptr(now)
 		} else {
 			needsShareDecision = true
@@ -359,9 +365,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 	// In channels the follow-up is a channel-visible post that may paraphrase tool
 	// output, so it must not stream until the requester approves sharing in
-	// HandleToolResult. When no share decision remains (every executed result
-	// was a user-interaction answer), HandleToolResult will never fire, so
-	// stream the follow-up now.
+	// HandleToolResult. When no share decision remains (every result is
+	// rejected, a user-interaction answer, or otherwise terminal),
+	// HandleToolResult will never fire, so stream the follow-up now.
 	if !isDM && needsShareDecision {
 		return nil
 	}
@@ -647,6 +653,9 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
+	}
+	if llm.HasRejectedToolCall(completionReq.Posts) {
+		completionReq.Posts = llm.EnsureToolRejectionUserMessage(completionReq.Posts)
 	}
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
