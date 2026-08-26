@@ -2,8 +2,9 @@
 # mattermost-server's FIPS release path supports.
 
 # Microsoft Go FIPS toolchain image, digest-pinned. The Go version must satisfy
-# the go directive in go.mod.
-FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.5-dev@sha256:e0f0ffe519632d12bbf1665ede963f85776608d9316c1babb689e91231371f2f
+# the go directive in go.mod. To bump: set the new tag without a digest, let the
+# build-fips CI job pull it, then pin the digest CI resolves.
+FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.27.0-dev
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
 
