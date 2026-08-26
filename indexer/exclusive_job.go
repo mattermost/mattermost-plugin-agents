@@ -28,17 +28,33 @@ var (
 	// ErrRebuildIncompleteReindex is returned when rebuild is requested after
 	// a failed or canceled full reindex. Rebuild does not re-embed.
 	ErrRebuildIncompleteReindex = errors.New("cannot rebuild vector index after an incomplete reindex; finish or restart the reindex (rebuild does not re-embed)")
+	// ErrJobAlreadyRunning is reported when an exclusive indexer job is
+	// already active.
+	ErrJobAlreadyRunning = errors.New("job already running")
+	// ErrNotRunning is returned when a cancel is requested and no job is
+	// running.
+	ErrNotRunning = errors.New("not running")
+	// ErrNoPreviousIndex is returned when catch-up is requested before any
+	// full reindex has completed.
+	ErrNoPreviousIndex = errors.New("no previous index found, run a full reindex first")
+	// ErrNotConfigured is returned when search functionality is not
+	// configured.
+	ErrNotConfigured = errors.New("search functionality is not configured")
 )
 
 // jobAlreadyRunningError is returned when an exclusive indexer job is
-// already active. Error() is "job already running" so existing API
-// string matches keep working.
+// already active. It wraps ErrJobAlreadyRunning and carries the blocking
+// job's status.
 type jobAlreadyRunningError struct {
 	status JobStatus
 }
 
 func (e *jobAlreadyRunningError) Error() string {
-	return "job already running"
+	return ErrJobAlreadyRunning.Error()
+}
+
+func (e *jobAlreadyRunningError) Unwrap() error {
+	return ErrJobAlreadyRunning
 }
 
 func asJobAlreadyRunning(err error) (JobStatus, bool) {

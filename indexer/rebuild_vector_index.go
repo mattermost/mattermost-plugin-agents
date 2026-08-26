@@ -19,7 +19,7 @@ var errVectorStoreNoBulkIndex = errors.New("vector store does not support rebuil
 // is dropped/building; live writes skip during building and are repaired after.
 func (s *Indexer) StartRebuildVectorIndex(ctx context.Context) (JobStatus, error) {
 	if s.getSearch == nil || s.getSearch() == nil {
-		return JobStatus{}, fmt.Errorf("search functionality is not configured")
+		return JobStatus{}, ErrNotConfigured
 	}
 
 	sess, err := s.beginExclusiveJob()

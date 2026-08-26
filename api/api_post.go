@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/react"
@@ -228,8 +229,8 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
 	if err != nil {
-		if err.Error() == "not a calls or zoom bot post" {
-			c.AbortWithError(http.StatusBadRequest, errors.New("not a calls or zoom bot post"))
+		if errors.Is(err, meetings.ErrNotMeetingBotPost) {
+			c.AbortWithError(http.StatusBadRequest, err)
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to summarize transcription: %w", err))
@@ -447,7 +448,7 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
-		if err.Error() == "post missing reference to transcription post ID" {
+		if errors.Is(err, meetings.ErrNoTranscriptionPostReference) {
 			c.AbortWithError(http.StatusBadRequest, err)
 		} else {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to post back summary: %w", err))

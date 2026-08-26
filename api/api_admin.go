@@ -55,7 +55,7 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -115,8 +115,8 @@ func (a *API) handleCancelJob(c *gin.Context) {
 			})
 			return
 		}
-		switch err.Error() {
-		case "not running":
+		switch {
+		case errors.Is(err, indexer.ErrNotRunning):
 			audit.AddParam(auditRec(c), "job_status", "not_running")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
@@ -150,12 +150,12 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case err.Error() == "no previous index found, run a full reindex first":
+		case errors.Is(err, indexer.ErrNoPreviousIndex):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:
@@ -181,7 +181,7 @@ func (a *API) handleRebuildVectorIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
@@ -205,7 +205,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
 	if err != nil {
-		if err.Error() == "search functionality is not configured" {
+		if errors.Is(err, indexer.ErrNotConfigured) {
 			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 			return
 		}
