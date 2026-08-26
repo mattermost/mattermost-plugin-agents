@@ -362,14 +362,3 @@ func (s *Store) DeleteAgent(id string) error {
 
 	return nil
 }
-
-// Compile-time check that *Store satisfies the AgentStore interface.
-var _ interface {
-	CreateAgent(cfg *llm.BotConfig) error
-	GetAgent(id string) (*llm.BotConfig, error)
-	ListAgents() ([]*llm.BotConfig, error)
-	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
-	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
-	DeleteAgent(id string) error
-} = (*Store)(nil)
