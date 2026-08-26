@@ -431,22 +431,19 @@ func TestExecuteSearch(t *testing.T) {
 	}
 }
 
-type createdAfterSearch struct {
+type fixedDocsSearch struct {
 	docs []embeddings.PostDocument
 }
 
-func (s *createdAfterSearch) Store(context.Context, []embeddings.PostDocument) error { return nil }
-func (s *createdAfterSearch) Delete(context.Context, []string) error                 { return nil }
-func (s *createdAfterSearch) Clear(context.Context) error                            { return nil }
-func (s *createdAfterSearch) DeleteOrphaned(context.Context, int64, int64) (int64, error) {
+func (s *fixedDocsSearch) Store(context.Context, []embeddings.PostDocument) error { return nil }
+func (s *fixedDocsSearch) Delete(context.Context, []string) error                 { return nil }
+func (s *fixedDocsSearch) Clear(context.Context) error                            { return nil }
+func (s *fixedDocsSearch) DeleteOrphaned(context.Context, int64, int64) (int64, error) {
 	return 0, nil
 }
-func (s *createdAfterSearch) Search(_ context.Context, _ string, opts embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
-	var out []embeddings.SearchResult
+func (s *fixedDocsSearch) Search(context.Context, string, embeddings.SearchOptions) ([]embeddings.SearchResult, error) {
+	out := make([]embeddings.SearchResult, 0, len(s.docs))
 	for _, d := range s.docs {
-		if opts.CreatedAfter > 0 && d.CreateAt <= opts.CreatedAfter {
-			continue
-		}
 		out = append(out, embeddings.SearchResult{Document: d, Score: 1})
 	}
 	return out, nil
@@ -483,7 +480,7 @@ func TestExecuteSearchReturnsIndexedRowsOutsideWriteWindow(t *testing.T) {
 		Username: "testuser",
 	}, nil).Maybe()
 
-	store := &createdAfterSearch{docs: []embeddings.PostDocument{stale, fresh}}
+	store := &fixedDocsSearch{docs: []embeddings.PostDocument{stale, fresh}}
 	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, nil, nil, nil, nil)
 
 	results, err := s.Search(context.Background(), "test query", Options{Limit: 5})

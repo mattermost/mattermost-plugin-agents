@@ -235,17 +235,6 @@ func TestBasicIndexAndSearchMechanics(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, results, 3, "Should return all indexed posts")
-
-	// Test time filter works
-	results2, err := search.Search(ctx, "query", embeddings.SearchOptions{
-		Limit:        5,
-		UserID:       "user1",
-		CreatedAfter: now + 500,
-	})
-	require.NoError(t, err)
-	for _, result := range results2 {
-		assert.Greater(t, result.Document.CreateAt, now+500, "All results should be after filter time")
-	}
 }
 
 // TestRecencyBiasEndToEnd verifies the over-fetch + rerank path against real

@@ -9,7 +9,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	"math"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -40,12 +40,7 @@ func uniqueSortedPostIDs(docs []embeddings.PostDocument) []string {
 	for _, doc := range docs {
 		seen[doc.PostID] = struct{}{}
 	}
-	out := make([]string, 0, len(seen))
-	for id := range seen {
-		out = append(out, id)
-	}
-	slices.Sort(out)
-	return out
+	return slices.Sorted(maps.Keys(seen))
 }
 
 // vectorIndexName is the HNSW ANN index; dropped/rebuilt around deferred bulk loads.
@@ -83,16 +78,6 @@ type PGVectorConfig struct {
 	SkipVectorIndex bool `json:"-"`
 }
 
-func clampHNSWM(m int) int {
-	if m <= 0 {
-		return embeddings.DefaultHNSWM
-	}
-	if m < embeddings.MinHNSWM {
-		return embeddings.MinHNSWM
-	}
-	return min(m, embeddings.MaxHNSWM)
-}
-
 func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 	if config.Dimensions <= 0 {
 		return nil, fmt.Errorf("pgvector dimensions must be greater than 0, got %d", config.Dimensions)
@@ -106,7 +91,7 @@ func NewPGVector(db *sqlx.DB, config PGVectorConfig) (*PGVector, error) {
 	pv := &PGVector{
 		db:              db,
 		dimensions:      config.Dimensions,
-		hnswM:           clampHNSWM(config.HNSWM),
+		hnswM:           embeddings.ClampHNSWM(config.HNSWM),
 		elementType:     embeddings.NormalizeVectorElementType(config.VectorElementType),
 		skipVectorIndex: config.SkipVectorIndex,
 	}
@@ -367,24 +352,6 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 		queryBuilder = queryBuilder.Where(sq.Eq{"e.channel_id": opts.ChannelID})
 	}
 
-	if opts.CreatedAfter != 0 {
-		queryBuilder = queryBuilder.Where(sq.Gt{"e.created_at": opts.CreatedAfter})
-	}
-
-	if opts.CreatedBefore != 0 {
-		queryBuilder = queryBuilder.Where(sq.Lt{"e.created_at": opts.CreatedBefore})
-	}
-
-	// Filter by MinScore in SQL when specified
-	// Convert minScore to L2 distance threshold: L2 = sqrt(2(1 - score))
-	if opts.MinScore > 0 {
-		maxDistanceSquared := 2 * (1 - opts.MinScore)
-		if maxDistanceSquared > 0 {
-			maxDistance := float32(math.Sqrt(float64(maxDistanceSquared)))
-			queryBuilder = queryBuilder.Where("(e.embedding <-> ?) < ?", pv.bindEmbedding(embedding), maxDistance)
-		}
-	}
-
 	queryBuilder = queryBuilder.OrderBy("similarity ASC")
 
 	// Apply limit with sensible default/max (shared store cap)
@@ -412,11 +379,11 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 	}
 	defer rows.Close()
 
-	return scanSearchResults(rows, opts.MinScore)
+	return scanSearchResults(rows)
 }
 
 // scanSearchResults extracts search results from query rows
-func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchResult, error) {
+func scanSearchResults(rows *sqlx.Rows) ([]embeddings.SearchResult, error) {
 	var results []embeddings.SearchResult
 	for rows.Next() {
 		var postID, teamID, channelID, userID, content string
@@ -446,10 +413,6 @@ func scanSearchResults(rows *sqlx.Rows, minScore float32) ([]embeddings.SearchRe
 		score := 1 - (similarity*similarity)/2
 		if score < 0 {
 			score = 0
-		}
-
-		if score < minScore {
-			continue
 		}
 
 		doc := embeddings.PostDocument{
