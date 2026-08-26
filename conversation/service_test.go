@@ -444,7 +444,7 @@ func TestBuildCompletionRequest_NewConversation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.Store.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
@@ -896,7 +896,7 @@ func TestBuildCompletionRequest_SystemPromptIsFirst(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.Store.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
@@ -1619,7 +1619,7 @@ func TestBuildChannelMentionRequest_NoThreadPosts(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	conv, err := svc.store.GetConversation(result.ConversationID)
+	conv, err := svc.Store.GetConversation(result.ConversationID)
 	require.NoError(t, err)
 
 	// Nil threadData should fall back to BuildCompletionRequest behavior.

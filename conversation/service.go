@@ -19,19 +19,32 @@ import (
 )
 
 // Store is the subset of store.Store that the conversation service needs.
+// It is embedded in Service, so its methods are part of the Service API.
 type Store interface {
 	CreateConversation(conv *store.Conversation) error
+	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
+	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
+	// UpdateConversationRootPostID sets the RootPostID on a conversation.
+	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
+	// CreateTurn persists a new turn in the store with an explicit sequence.
 	CreateTurn(turn *store.Turn) error
+	// CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
 	GetTurnByPostID(postID string) (*store.Turn, error)
+	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
+	// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+	// turns between it and the originating user turn. Callers must build any
+	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
@@ -47,8 +60,9 @@ type BotLookup interface {
 
 // Service manages conversation entities: creation, continuation,
 // CompletionRequest building, turn writing, and title generation.
+// The embedded Store's methods are promoted onto Service.
 type Service struct {
-	store    Store
+	Store
 	prompts  *llm.Prompts
 	mmClient mmapi.Client
 	bots     BotLookup
@@ -62,7 +76,7 @@ func NewService(
 	bots BotLookup,
 ) *Service {
 	return &Service{
-		store:    s,
+		Store:    s,
 		prompts:  prompts,
 		mmClient: mmClient,
 		bots:     bots,
@@ -107,7 +121,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 		DeleteAt:     0,
 	}
 
-	if err := s.store.CreateConversation(conv); err != nil {
+	if err := s.Store.CreateConversation(conv); err != nil {
 		return nil, fmt.Errorf("failed to create conversation: %w", err)
 	}
 
@@ -127,7 +141,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 		CreatedAt:      now,
 	}
 
-	if err := s.store.CreateTurn(turn); err != nil {
+	if err := s.Store.CreateTurn(turn); err != nil {
 		return nil, fmt.Errorf("failed to create user turn: %w", err)
 	}
 
@@ -137,14 +151,9 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}, nil
 }
 
-// GetConversation retrieves a conversation by ID. Returns an error if not found.
-func (s *Service) GetConversation(id string) (*store.Conversation, error) {
-	return s.store.GetConversation(id)
-}
-
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
-	return s.store.GetTurnsForConversation(conversationID)
+	return s.Store.GetTurnsForConversation(conversationID)
 }
 
 // GetInitiatingUserTurn returns the user turn that started the agent run
@@ -153,7 +162,7 @@ func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 // the original trace. Returns nil if no matching assistant turn or no
 // preceding user turn is found.
 func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.Turn, error) {
-	turns, err := s.store.GetTurnsForConversation(conversationID)
+	turns, err := s.Store.GetTurnsForConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +190,7 @@ func (s *Service) GetInitiatingUserTurn(conversationID, postID string) (*store.T
 // run's trace, so consecutive invocations in the same conversation are
 // navigable in Tempo.
 func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) (*store.Turn, error) {
-	turns, err := s.store.GetTurnsForConversation(conversationID)
+	turns, err := s.Store.GetTurnsForConversation(conversationID)
 	if err != nil {
 		return nil, err
 	}
@@ -197,49 +206,6 @@ func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) 
 		prev = &t
 	}
 	return nil, nil
-}
-
-// UpdateTurnContent updates the content JSON of a turn.
-func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
-	return s.store.UpdateTurnContent(turnID, content)
-}
-
-// CreateTurn persists a new turn in the store with an explicit sequence.
-func (s *Service) CreateTurn(turn *store.Turn) error {
-	return s.store.CreateTurn(turn)
-}
-
-// CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
-func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
-	return s.store.CreateTurnAutoSequence(turn)
-}
-
-// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
-func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
-	return s.store.GetTurnByPostID(postID)
-}
-
-// UpdateTurnPostID sets or clears the PostID on a turn.
-func (s *Service) UpdateTurnPostID(id string, postID *string) error {
-	return s.store.UpdateTurnPostID(id, postID)
-}
-
-// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
-// turns between it and the originating user turn. Callers must build any
-// completion request before calling this — ExcludeAfterPostID needs the anchor.
-func (s *Service) DeleteResponseTurns(conversationID, postID string) error {
-	return s.store.DeleteResponseTurns(conversationID, postID)
-}
-
-// UpdateConversationRootPostID sets the RootPostID on a conversation.
-// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
-func (s *Service) UpdateConversationRootPostID(id string, rootPostID string) error {
-	return s.store.UpdateConversationRootPostID(id, rootPostID)
-}
-
-// UpdateConversationTitle updates the title of a conversation.
-func (s *Service) UpdateConversationTitle(id, title string) error {
-	return s.store.UpdateConversationTitle(id, title)
 }
 
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
@@ -265,7 +231,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.Store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}
@@ -299,7 +265,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	})
 	if errors.Is(err, store.ErrConversationConflict) {
 		// Another request created the conversation concurrently. Look it up and append the user turn.
-		raceConv, lookupErr := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+		raceConv, lookupErr := s.Store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
 		if lookupErr != nil && !errors.Is(lookupErr, store.ErrConversationNotFound) {
 			return nil, fmt.Errorf("failed to look up conversation after conflict: %w", lookupErr)
 		}
@@ -320,7 +286,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		return nil, err
 	}
 
-	conv, err := s.store.GetConversation(createResult.ConversationID)
+	conv, err := s.Store.GetConversation(createResult.ConversationID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get newly created conversation: %w", err)
 	}
@@ -349,7 +315,7 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string,
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.store.CreateTurnAutoSequence(turn); err != nil {
+	if err := s.Store.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create user turn: %w", err)
 	}
 
@@ -380,7 +346,7 @@ func (s *Service) BuildCompletionRequest(
 	context *llm.Context,
 	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
-	turns, err := s.store.GetTurnsForConversation(conv.ID)
+	turns, err := s.Store.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
@@ -491,12 +457,12 @@ func turnsToLLMPosts(
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
-		blocks, err := unmarshalBlocks(turn.Content)
+		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
 		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
+			nextBlocks, err := UnmarshalBlocks(turns[i+1].Content)
 			if err != nil {
 				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
 			}
@@ -534,7 +500,7 @@ func (s *Service) CreatePlaceholderAssistantTurn(
 		CreatedAt:      model.GetMillis(),
 	}
 
-	if err := s.store.CreateTurnAutoSequence(turn); err != nil {
+	if err := s.Store.CreateTurnAutoSequence(turn); err != nil {
 		return "", fmt.Errorf("failed to create placeholder turn: %w", err)
 	}
 
@@ -553,11 +519,11 @@ func (s *Service) FinalizeAssistantTurn(
 		return fmt.Errorf("failed to marshal content: %w", err)
 	}
 
-	if err := s.store.UpdateTurnContent(turnID, contentJSON); err != nil {
+	if err := s.Store.UpdateTurnContent(turnID, contentJSON); err != nil {
 		return fmt.Errorf("failed to update turn content: %w", err)
 	}
 
-	if err := s.store.UpdateTurnTokens(turnID, tokensIn, tokensOut); err != nil {
+	if err := s.Store.UpdateTurnTokens(turnID, tokensIn, tokensOut); err != nil {
 		return fmt.Errorf("failed to update turn tokens: %w", err)
 	}
 
@@ -605,7 +571,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		TokensOut:      tt.TokensOut,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.store.CreateTurnAutoSequence(assistantTurn)
+	err = s.Store.CreateTurnAutoSequence(assistantTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create assistant tool turn: %w", err)
 	}
@@ -623,7 +589,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		Content:        resultContent,
 		CreatedAt:      model.GetMillis(),
 	}
-	err = s.store.CreateTurnAutoSequence(resultTurn)
+	err = s.Store.CreateTurnAutoSequence(resultTurn)
 	if err != nil {
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
@@ -663,7 +629,7 @@ func (s *Service) GenerateTitle(
 
 	title = strings.Trim(title, "\n \"'")
 
-	if err := s.store.UpdateConversationTitle(conversationID, title); err != nil {
+	if err := s.Store.UpdateConversationTitle(conversationID, title); err != nil {
 		return fmt.Errorf("failed to save title: %w", err)
 	}
 
@@ -690,7 +656,7 @@ func (s *Service) BuildChannelMentionRequest(
 		return s.BuildCompletionRequest(conv, context, opts...)
 	}
 
-	turns, err := s.store.GetTurnsForConversation(conv.ID)
+	turns, err := s.Store.GetTurnsForConversation(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get turns: %w", err)
 	}
