@@ -33,36 +33,24 @@ var turnColumns = []string{
 // CreateTurn inserts a new turn row.
 // The caller must set ID, ConversationID, Role, Content, Sequence, and CreatedAt before calling.
 func (s *Store) CreateTurn(turn *Turn) error {
-	query, args, err := s.builder.Insert("LLM_Turns").
+	return s.execBuilder(s.builder.Insert("LLM_Turns").
 		Columns(turnColumns...).
 		Values(turn.ID, turn.ConversationID, turn.PostID, turn.Role, string(turn.Content),
-			turn.TokensIn, turn.TokensOut, turn.Sequence, turn.CreatedAt).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build create turn query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to create turn: %w", err)
-	}
-	return nil
+			turn.TokensIn, turn.TokensOut, turn.Sequence, turn.CreatedAt),
+		"create turn")
 }
 
 // GetTurnsForConversation retrieves all turns for a conversation ordered by Sequence ascending.
 // Returns an empty slice (not nil) if no turns exist.
 func (s *Store) GetTurnsForConversation(conversationID string) ([]Turn, error) {
-	query, args, err := s.builder.
+	var turns []Turn
+	if err := s.selectBuilder(&turns, s.builder.
 		Select(turnColumns...).
 		From("LLM_Turns").
 		Where(sq.Eq{"ConversationID": conversationID}).
-		OrderBy("Sequence ASC").
-		ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build get turns query: %w", err)
-	}
-	var turns []Turn
-	if err := s.db.Select(&turns, query, args...); err != nil {
-		return nil, fmt.Errorf("failed to get turns for conversation: %w", err)
+		OrderBy("Sequence ASC"),
+		"get turns for conversation"); err != nil {
+		return nil, err
 	}
 	if turns == nil {
 		turns = []Turn{}
@@ -72,35 +60,23 @@ func (s *Store) GetTurnsForConversation(conversationID string) ([]Turn, error) {
 
 // UpdateTurnContent replaces the Content JSONB column for a specific turn.
 func (s *Store) UpdateTurnContent(id string, content json.RawMessage) error {
-	query, args, err := s.builder.
+	return s.execBuilder(s.builder.
 		Update("LLM_Turns").
 		Set("Content", string(content)).
-		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build update turn content query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update turn content: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"ID": id}),
+		"update turn content")
 }
 
 // GetMaxSequenceForConversation returns the maximum sequence number for turns in the
 // given conversation, or 0 if no turns exist.
 func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error) {
-	query, args, err := s.builder.
+	var maxSeq int
+	if err := s.getBuilder(&maxSeq, s.builder.
 		Select("COALESCE(MAX(Sequence), 0)").
 		From("LLM_Turns").
-		Where(sq.Eq{"ConversationID": conversationID}).
-		ToSql()
-	if err != nil {
-		return 0, fmt.Errorf("failed to build max sequence query: %w", err)
-	}
-	var maxSeq int
-	if err := s.db.Get(&maxSeq, query, args...); err != nil {
-		return 0, fmt.Errorf("failed to get max sequence: %w", err)
+		Where(sq.Eq{"ConversationID": conversationID}),
+		"get max sequence"); err != nil {
+		return 0, err
 	}
 	return maxSeq, nil
 }
@@ -108,20 +84,16 @@ func (s *Store) GetMaxSequenceForConversation(conversationID string) (int, error
 // GetTurnByPostID retrieves a turn by its PostID.
 // Returns nil, nil if no turn with the given PostID exists.
 func (s *Store) GetTurnByPostID(postID string) (*Turn, error) {
-	query, args, err := s.builder.
+	var turn Turn
+	if err := s.getBuilder(&turn, s.builder.
 		Select(turnColumns...).
 		From("LLM_Turns").
-		Where(sq.Eq{"PostID": postID}).
-		ToSql()
-	if err != nil {
-		return nil, fmt.Errorf("failed to build get turn by post ID query: %w", err)
-	}
-	var turn Turn
-	if err := s.db.Get(&turn, query, args...); err != nil {
+		Where(sq.Eq{"PostID": postID}),
+		"get turn by post ID"); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("failed to get turn by post ID: %w", err)
+		return nil, err
 	}
 	return &turn, nil
 }
@@ -169,19 +141,11 @@ RETURNING Sequence`
 // UpdateTurnPostID sets or clears the PostID column for a turn. The webapp's
 // anchor lookup expects at most one assistant turn per post_id.
 func (s *Store) UpdateTurnPostID(id string, postID *string) error {
-	query, args, err := s.builder.
+	return s.execBuilder(s.builder.
 		Update("LLM_Turns").
 		Set("PostID", postID).
-		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build update turn post id query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update turn post id: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"ID": id}),
+		"update turn post id")
 }
 
 // DeleteResponseTurns removes the post's anchor turn and any assistant or
@@ -214,18 +178,10 @@ WHERE ConversationID = $1
 
 // UpdateTurnTokens updates the TokensIn and TokensOut fields on a turn.
 func (s *Store) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {
-	query, args, err := s.builder.
+	return s.execBuilder(s.builder.
 		Update("LLM_Turns").
 		Set("TokensIn", tokensIn).
 		Set("TokensOut", tokensOut).
-		Where(sq.Eq{"ID": id}).
-		ToSql()
-	if err != nil {
-		return fmt.Errorf("failed to build update turn tokens query: %w", err)
-	}
-	_, err = s.db.Exec(query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to update turn tokens: %w", err)
-	}
-	return nil
+		Where(sq.Eq{"ID": id}),
+		"update turn tokens")
 }
