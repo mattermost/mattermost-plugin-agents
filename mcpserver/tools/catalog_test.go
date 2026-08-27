@@ -28,6 +28,15 @@ func TestToolCatalogNoDuplicateNames(t *testing.T) {
 	}
 }
 
+func TestToolCatalogDoesNotContainBulkReactions(t *testing.T) {
+	provider := &MattermostToolProvider{
+		logger:     &testLogger{t: t},
+		accessMode: AccessModeRemote,
+	}
+
+	require.NotContains(t, provider.ToolNames(), "get_bulk_reactions")
+}
+
 // TestToolCatalogContainsExpectedFamilies verifies a representative tool from
 // each new domain family is registered, so a missing group wiring is caught.
 func TestToolCatalogContainsExpectedFamilies(t *testing.T) {

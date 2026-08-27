@@ -28,9 +28,6 @@ func TestReactionToolsValidation(t *testing.T) {
 		{"get_post_reactions bad id", func() (string, error) {
 			return provider.toolGetPostReactions(mcpCtx, GetPostReactionsArgs{PostID: "bad"})
 		}, "must be a valid ID"},
-		{"get_bulk_reactions empty", func() (string, error) {
-			return provider.toolGetBulkReactions(mcpCtx, GetBulkReactionsArgs{})
-		}, "cannot be empty"},
 		{"add_reaction bad id", func() (string, error) {
 			return provider.toolAddReaction(mcpCtx, AddReactionArgs{PostID: "bad", EmojiName: "x"})
 		}, "must be a valid ID"},
