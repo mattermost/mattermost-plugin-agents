@@ -207,6 +207,7 @@ func TestSeedVettedToolConfigsSpotChecks(t *testing.T) {
 		requireToolConfig(t, configs, "get_post_info", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_user", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "get_channel_member", ToolPolicyAutoRunInDM, true)
+		requireToolConfig(t, configs, "get_post_reactions", ToolPolicyAutoRunInDM, true)
 		requireToolConfig(t, configs, "search_files", ToolPolicyAutoRunInDM, true)
 		requireNoToolConfig(t, configs, "get_bulk_reactions")
 		// Write tools are never seeded.
