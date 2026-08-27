@@ -89,25 +89,46 @@ func (c *UserClients) ConnectToRemoteServers(servers []ServerConfig) *Errors {
 	return mcpErrors
 }
 
-// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided
+// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
 
-	// Check if we already have an embedded server connection
-	if _, exists := c.clients[EmbeddedClientKey]; exists {
-		return nil // Already connected
+	if sessionID == "" {
+		return nil
 	}
 
-	// Connect if session ID is provided
-	if sessionID != "" {
-		ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := c.connectToEmbeddedServerWithClient(ctxWithTimeout, c.userID, sessionID, embeddedClient); err != nil {
-			c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
-			return fmt.Errorf("failed to connect to embedded server: %w", err)
+	existingClient := c.clients[EmbeddedClientKey]
+	if existingClient != nil && existingClient.sessionID == sessionID {
+		return nil
+	}
+
+	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	serverClient, err := embeddedClient.CreateClient(ctxWithTimeout, c.userID, sessionID)
+	if err != nil {
+		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
+		return fmt.Errorf("failed to connect to embedded server: %w", err)
+	}
+
+	existingClient = c.clients[EmbeddedClientKey]
+	if existingClient != nil && existingClient.sessionID == sessionID {
+		if err := serverClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
 		}
+		return nil
+	}
+
+	c.clients[EmbeddedClientKey] = serverClient
+
+	if existingClient != nil {
+		if err := existingClient.Close(); err != nil {
+			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
+		}
+		c.log.Debug("Reconnected to embedded MCP server with refreshed session", "userID", c.userID)
+	} else {
 		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
 	}
 
@@ -121,16 +142,6 @@ func (c *UserClients) connectToServer(ctx context.Context, serverID string, serv
 		return err
 	}
 	c.clients[serverID] = serverClient
-	return nil
-}
-
-// connectToEmbeddedServerWithClient establishes a connection to the embedded server using the embedded client helper
-func (c *UserClients) connectToEmbeddedServerWithClient(ctx context.Context, userID, sessionID string, embeddedClient *EmbeddedServerClient) error {
-	serverClient, err := embeddedClient.CreateClient(ctx, userID, sessionID)
-	if err != nil {
-		return err
-	}
-	c.clients[EmbeddedClientKey] = serverClient
 	return nil
 }
 
