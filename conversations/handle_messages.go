@@ -350,7 +350,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
-	bindConversationResume(llmContext, convResult.Conversation.ID, responsePost.Id)
+	llmContext.ResponsePostID = responsePost.Id
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -493,7 +493,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
-	bindConversationResume(llmContext, convResult.ConversationID, responsePost.Id)
+	llmContext.ResponsePostID = responsePost.Id
 
 	// Anchor this run's trace to the user turn ID. Link to the previous user
 	// turn (if any) so consecutive DMs are navigable in Tempo.

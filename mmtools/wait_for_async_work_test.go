@@ -4,14 +4,12 @@
 package mmtools
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,18 +22,14 @@ func waitArgsGetter(t *testing.T, args WaitForAsyncWorkArgs) llm.ToolArgumentGet
 	}
 }
 
-func validWaitLLMContext() *llm.Context {
-	return &llm.Context{
-		ConversationID: "conv-id",
-		PostID:         "post-id",
-		BotUserID:      "bot-id",
-		RequestingUser: &model.User{Id: "user-id"},
-		Channel:        &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-	}
+type scheduledWake struct {
+	postID string
+	reason string
+	wait   time.Duration
 }
 
 func TestNewWaitForAsyncWorkTool(t *testing.T) {
-	tool := NewWaitForAsyncWorkTool(&WakeScheduler{})
+	tool := NewWaitForAsyncWorkTool(func(string, string, time.Duration) error { return nil })
 
 	require.Equal(t, WaitForAsyncWorkToolName, tool.Name)
 	require.True(t, tool.AutoExecute)
@@ -46,95 +40,85 @@ func TestNewWaitForAsyncWorkTool(t *testing.T) {
 	require.NotNil(t, tool.Resolver)
 }
 
-func TestWaitForAsyncWorkResolverValidation(t *testing.T) {
-	now := time.Date(2026, 8, 28, 12, 0, 0, 0, time.UTC)
-
+func TestWaitForAsyncWorkResolver(t *testing.T) {
 	tests := []struct {
 		name        string
 		args        WaitForAsyncWorkArgs
 		badArgs     bool
 		llmCtx      *llm.Context
-		nilSched    bool
+		scheduleErr error
 		wantResult  string
 		wantErr     bool
-		wantMinutes int
-		wantReason  string
+		wantWake    *scheduledWake
 	}{
 		{
-			name:        "clamps minutes below minimum",
-			args:        WaitForAsyncWorkArgs{Minutes: 0, Reason: "poll agent"},
-			llmCtx:      validWaitLLMContext(),
-			wantResult:  WaitSuccessMessage(1, "poll agent"),
-			wantMinutes: 1,
-			wantReason:  "poll agent",
+			name:       "clamps minutes below minimum",
+			args:       WaitForAsyncWorkArgs{Minutes: 0, Reason: "poll agent"},
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
+			wantResult: waitSuccessMessage(1, "poll agent"),
+			wantWake:   &scheduledWake{postID: "post-id", reason: "poll agent", wait: time.Minute},
 		},
 		{
-			name:        "clamps minutes above maximum",
-			args:        WaitForAsyncWorkArgs{Minutes: 90, Reason: "poll agent"},
-			llmCtx:      validWaitLLMContext(),
-			wantResult:  WaitSuccessMessage(30, "poll agent"),
-			wantMinutes: 30,
-			wantReason:  "poll agent",
+			name:       "clamps minutes above maximum",
+			args:       WaitForAsyncWorkArgs{Minutes: 90, Reason: "poll agent"},
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
+			wantResult: waitSuccessMessage(30, "poll agent"),
+			wantWake:   &scheduledWake{postID: "post-id", reason: "poll agent", wait: 30 * time.Minute},
 		},
 		{
-			name:        "in-range minutes",
-			args:        WaitForAsyncWorkArgs{Minutes: 5, Reason: "cursor cloud agent"},
-			llmCtx:      validWaitLLMContext(),
-			wantResult:  WaitSuccessMessage(5, "cursor cloud agent"),
-			wantMinutes: 5,
-			wantReason:  "cursor cloud agent",
+			name:       "in-range minutes",
+			args:       WaitForAsyncWorkArgs{Minutes: 5, Reason: "cursor cloud agent"},
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
+			wantResult: waitSuccessMessage(5, "cursor cloud agent"),
+			wantWake:   &scheduledWake{postID: "post-id", reason: "cursor cloud agent", wait: 5 * time.Minute},
 		},
 		{
-			name:        "trims reason",
-			args:        WaitForAsyncWorkArgs{Minutes: 2, Reason: "  check status  "},
-			llmCtx:      validWaitLLMContext(),
-			wantResult:  WaitSuccessMessage(2, "check status"),
-			wantMinutes: 2,
-			wantReason:  "check status",
+			name:       "trims reason",
+			args:       WaitForAsyncWorkArgs{Minutes: 2, Reason: "  check status  "},
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
+			wantResult: waitSuccessMessage(2, "check status"),
+			wantWake:   &scheduledWake{postID: "post-id", reason: "check status", wait: 2 * time.Minute},
 		},
 		{
 			name:       "empty reason",
 			args:       WaitForAsyncWorkArgs{Minutes: 5, Reason: "   "},
-			llmCtx:     validWaitLLMContext(),
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
 			wantResult: "reason is required",
 			wantErr:    true,
 		},
 		{
 			name:       "invalid arguments",
 			badArgs:    true,
-			llmCtx:     validWaitLLMContext(),
+			llmCtx:     &llm.Context{ResponsePostID: "post-id"},
 			wantResult: "invalid parameters to function",
 			wantErr:    true,
 		},
 		{
-			name:       "missing conversation resume ids",
+			name:       "missing response post",
 			args:       WaitForAsyncWorkArgs{Minutes: 5, Reason: "poll agent"},
-			llmCtx:     &llm.Context{RequestingUser: &model.User{Id: "user-id"}, Channel: &model.Channel{Id: "ch"}, BotUserID: "bot"},
+			llmCtx:     &llm.Context{},
 			wantResult: "waiting is not available in this context",
 			wantErr:    true,
 		},
 		{
-			name:       "nil scheduler",
-			args:       WaitForAsyncWorkArgs{Minutes: 5, Reason: "poll agent"},
-			llmCtx:     validWaitLLMContext(),
-			nilSched:   true,
-			wantResult: "waiting is not available",
-			wantErr:    true,
+			name:        "schedule failure",
+			args:        WaitForAsyncWorkArgs{Minutes: 5, Reason: "poll agent"},
+			llmCtx:      &llm.Context{ResponsePostID: "post-id"},
+			scheduleErr: fmt.Errorf("kv unavailable"),
+			wantResult:  "failed to schedule wait",
+			wantErr:     true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := newMemoryWakeStore()
-			var scheduled []time.Duration
-			var scheduler *WakeScheduler
-			if !tt.nilSched {
-				scheduler = NewWakeScheduler(store, nopWakeLog{}, WakeSchedulerOptions{
-					Now: func() time.Time { return now },
-					AfterFunc: func(d time.Duration, _ func()) {
-						scheduled = append(scheduled, d)
-					},
-				})
+			var scheduled []scheduledWake
+			schedule := func(postID, reason string, wait time.Duration) error {
+				if tt.scheduleErr != nil {
+					return tt.scheduleErr
+				}
+				scheduled = append(scheduled, scheduledWake{postID: postID, reason: reason, wait: wait})
+				return nil
 			}
 
 			var getter llm.ToolArgumentGetter
@@ -144,7 +128,7 @@ func TestWaitForAsyncWorkResolverValidation(t *testing.T) {
 				getter = waitArgsGetter(t, tt.args)
 			}
 
-			result, err := resolveWaitForAsyncWork(context.Background(), scheduler, tt.llmCtx, getter)
+			result, err := resolveWaitForAsyncWork(schedule, tt.llmCtx, getter)
 			require.Equal(t, tt.wantResult, result)
 			if tt.wantErr {
 				require.Error(t, err)
@@ -152,23 +136,7 @@ func TestWaitForAsyncWorkResolverValidation(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, scheduled, 1)
-			require.Equal(t, time.Duration(tt.wantMinutes)*time.Minute, scheduled[0])
-
-			keys, listErr := store.ListPrefix(wakeKVKeyPrefix)
-			require.NoError(t, listErr)
-			require.Len(t, keys, 1)
-
-			var rec WakeRecord
-			require.NoError(t, store.Get(keys[0], &rec))
-			require.Equal(t, tt.wantReason, rec.Reason)
-			require.Equal(t, now.Add(time.Duration(tt.wantMinutes)*time.Minute).UnixMilli(), rec.FireAt)
-			require.Equal(t, "conv-id", rec.ConversationID)
-			require.Equal(t, "post-id", rec.PostID)
-			require.Equal(t, "bot-id", rec.BotID)
-			require.Equal(t, "user-id", rec.UserID)
-			require.Equal(t, "channel-id", rec.ChannelID)
-			require.True(t, rec.IsDM)
+			require.Equal(t, []scheduledWake{*tt.wantWake}, scheduled)
 		})
 	}
 }
@@ -189,7 +157,7 @@ func TestClampWaitMinutes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("minutes=%d", tt.in), func(t *testing.T) {
-			require.Equal(t, tt.want, ClampWaitMinutes(tt.in))
+			require.Equal(t, tt.want, clampWaitMinutes(tt.in))
 		})
 	}
 }
@@ -205,7 +173,7 @@ func TestWaitMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			success := WaitSuccessMessage(7, tt.reason)
+			success := waitSuccessMessage(7, tt.reason)
 			require.Contains(t, success, tt.reason)
 			require.Contains(t, success, "~7 minutes")
 			require.Contains(t, success, "Wrap up your current response")
@@ -240,7 +208,7 @@ func TestGetToolsWaitForAsyncWorkCatalog(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewMMToolProvider(nil, nil)
 			if tt.scheduler {
-				provider.SetWakeScheduler(&WakeScheduler{})
+				provider.SetScheduleWake(func(string, string, time.Duration) error { return nil })
 			}
 
 			names := []string{}

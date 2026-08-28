@@ -257,7 +257,6 @@ func (c *Conversations) regenerateViaConversation(
 		c.contextBuilder.WithLLMContextInteractive(),
 		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
-	bindConversationResume(llmContext, conv.ID, post.Id)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM
@@ -265,6 +264,7 @@ func (c *Conversations) regenerateViaConversation(
 		toolsDisabled = false
 	}
 	if llmContext != nil {
+		llmContext.ResponsePostID = post.Id
 		if toolsDisabled && llmContext.Tools != nil {
 			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
 		} else {

@@ -15,12 +15,55 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestWakeJobFromProps(t *testing.T) {
+	tests := []struct {
+		name    string
+		props   any
+		want    WakeJob
+		wantErr bool
+	}{
+		{
+			name:  "typed struct from same-process schedule",
+			props: WakeJob{PostID: "post-id", Reason: "cursor agent"},
+			want:  WakeJob{PostID: "post-id", Reason: "cursor agent"},
+		},
+		{
+			name:  "generic JSON map after restart",
+			props: map[string]any{"post_id": "post-id", "reason": "cursor agent"},
+			want:  WakeJob{PostID: "post-id", Reason: "cursor agent"},
+		},
+		{
+			name:    "missing post id",
+			props:   map[string]any{"reason": "cursor agent"},
+			wantErr: true,
+		},
+		{
+			name:    "non-object props",
+			props:   "bogus",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job, err := wakeJobFromProps(tt.props)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, job)
+		})
+	}
+}
 
 func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	convStore, conv := loadedStateConversationStore()
@@ -46,12 +89,13 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 
 	user := &model.User{Id: "user-id", Username: "user"}
 	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
-	post := &model.Post{Id: "bot-post-id", UserId: "bot-id"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel"}
+	post.AddProp(streaming.ConversationIDProp, conv.ID)
 
 	mmClient := mocks.NewMockClient(t)
+	mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
 	mmClient.On("GetUser", "user-id").Return(user, nil).Once()
 	mmClient.On("GetChannel", "dm-channel").Return(channel, nil).Once()
-	mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
@@ -66,14 +110,9 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 		streamingService: streamingService,
 	}
 
-	require.NoError(t, c.ResumeConversation(context.Background(), mmtools.WakeRecord{
-		ConversationID: conv.ID,
-		BotID:          "bot-id",
-		UserID:         "user-id",
-		ChannelID:      "dm-channel",
-		PostID:         "bot-post-id",
-		IsDM:           true,
-		Reason:         "cursor cloud agent",
+	require.NoError(t, c.ResumeConversation(context.Background(), WakeJob{
+		PostID: "bot-post-id",
+		Reason: "cursor cloud agent",
 	}))
 	streamingService.waitForStreaming()
 
@@ -92,29 +131,63 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	require.Contains(t, lm.requests[0].Posts[len(lm.requests[0].Posts)-1].Message, "cursor cloud agent")
 }
 
-func TestResumeConversationDropsWhenConversationMissing(t *testing.T) {
-	convStore := newLoadedStateFlowStore()
-
-	mockAPI := &plugintest.API{}
-	pluginAPI := pluginapi.NewClient(mockAPI, nil)
-	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
-	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
-
-	mmClient := mocks.NewMockClient(t)
-	mmClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
-
-	c := &Conversations{
-		mmClient:    mmClient,
-		bots:        botsService,
-		convService: conversation.NewService(convStore, nil, nil, nil),
+func TestResumeConversationDrops(t *testing.T) {
+	tests := []struct {
+		name string
+		post func(convID string) *model.Post
+	}{
+		{
+			name: "post missing",
+			post: func(string) *model.Post { return nil },
+		},
+		{
+			name: "post has no conversation prop",
+			post: func(string) *model.Post {
+				return &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel"}
+			},
+		},
+		{
+			name: "conversation missing",
+			post: func(string) *model.Post {
+				post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel"}
+				post.AddProp(streaming.ConversationIDProp, "missing-conv")
+				return post
+			},
+		},
 	}
 
-	require.NoError(t, c.ResumeConversation(context.Background(), mmtools.WakeRecord{
-		ConversationID: "missing",
-		BotID:          "bot-id",
-		UserID:         "user-id",
-		ChannelID:      "dm-channel",
-		PostID:         "bot-post-id",
-	}))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+
+			mockAPI := &plugintest.API{}
+			pluginAPI := pluginapi.NewClient(mockAPI, nil)
+			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
+
+			mmClient := mocks.NewMockClient(t)
+			if post := tt.post(conv.ID); post != nil {
+				mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
+			} else {
+				mmClient.On("GetPost", "bot-post-id").Return(nil, model.NewAppError("GetPost", "not found", nil, "", 404)).Once()
+			}
+			mmClient.On("LogDebug", mock.Anything, mock.Anything).Return().Once()
+
+			c := &Conversations{
+				mmClient:    mmClient,
+				bots:        botsService,
+				convService: conversation.NewService(convStore, nil, nil, nil),
+			}
+
+			require.NoError(t, c.ResumeConversation(context.Background(), WakeJob{
+				PostID: "bot-post-id",
+				Reason: "cursor cloud agent",
+			}))
+
+			turns, err := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			require.Empty(t, turns)
+		})
+	}
 }

@@ -365,7 +365,6 @@ func (p *Plugin) OnActivate() error {
 		mmClient,
 		webSearchService,
 	)
-	wakeScheduler := mmtools.NewWakeScheduler(mmtools.NewPluginWakeStore(mmClient, &pluginAPI.KV), mmClient, mmtools.WakeSchedulerOptions{})
 
 	// Build redirect URI
 	siteURL := pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
@@ -453,10 +452,22 @@ func (p *Plugin) OnActivate() error {
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
 
-	wakeScheduler.SetOnWake(conversationsService.ResumeConversation)
-	toolProvider.SetWakeScheduler(wakeScheduler)
-	if sweepErr := wakeScheduler.Sweep(); sweepErr != nil {
-		pluginAPI.Log.Error("Failed to restore wait_for_async_work timers", "error", sweepErr)
+	// wait_for_async_work wakes ride on the cluster JobOnce scheduler: jobs
+	// persist in KV, survive restarts, and fire exactly once cluster-wide.
+	wakeJobs := cluster.GetJobOnceScheduler(p.API)
+	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
+	} else if wakeErr := wakeJobs.Start(); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to start wait_for_async_work wake scheduler", "error", wakeErr)
+	} else {
+		toolProvider.SetScheduleWake(func(postID, reason string, wait time.Duration) error {
+			_, scheduleErr := wakeJobs.ScheduleOnce(
+				conversations.WakeJobKeyPrefix+model.NewId(),
+				time.Now().Add(wait),
+				conversations.WakeJob{PostID: postID, Reason: reason},
+			)
+			return scheduleErr
+		})
 	}
 
 	// Initialize embedded MCP server handlers for plugin endpoints

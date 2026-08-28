@@ -332,6 +332,14 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}, nil
 }
 
+// AppendSyntheticUserTurn appends a user turn with no backing Mattermost
+// post: included in the LLM context on the next request, invisible in the
+// thread. Used to re-wake an agent (wait_for_async_work).
+func (s *Service) AppendSyntheticUserTurn(conversationID, message string) error {
+	_, err := s.appendUserTurn(conversationID, message, nil, nil)
+	return err
+}
+
 // appendUserTurn creates a new user turn at the next available sequence number.
 func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string) (string, error) {
 	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient))

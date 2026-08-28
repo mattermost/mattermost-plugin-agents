@@ -6,106 +6,124 @@ package conversations
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"fmt"
+	"strings"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
-	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func bindConversationResume(llmContext *llm.Context, conversationID, postID string) {
-	if llmContext == nil {
+// WakeJobKeyPrefix namespaces wait_for_async_work jobs in the shared
+// cluster.JobOnceScheduler.
+const WakeJobKeyPrefix = "wait_wake_"
+
+// WakeJob is the JobOnce props payload for a wait_for_async_work resume. All
+// other conversation state is rederived from the response post at wake time.
+type WakeJob struct {
+	PostID string `json:"post_id"`
+	Reason string `json:"reason"`
+}
+
+// HandleWakeJob is the cluster.JobOnceScheduler callback. Props scheduled
+// before a restart arrive as generic JSON, so normalize via re-marshal.
+func (c *Conversations) HandleWakeJob(key string, props any) {
+	if !strings.HasPrefix(key, WakeJobKeyPrefix) {
 		return
 	}
-	llmContext.ConversationID = conversationID
-	llmContext.PostID = postID
+
+	job, err := wakeJobFromProps(props)
+	if err != nil {
+		c.mmClient.LogError("wait_for_async_work: invalid wake job props", "error", err, "key", key)
+		return
+	}
+
+	if err := c.ResumeConversation(context.Background(), job); err != nil {
+		c.mmClient.LogError("wait_for_async_work: wake failed", "error", err, "post_id", job.PostID)
+	}
+}
+
+func wakeJobFromProps(props any) (WakeJob, error) {
+	raw, err := json.Marshal(props)
+	if err != nil {
+		return WakeJob{}, fmt.Errorf("failed to marshal wake job props: %w", err)
+	}
+	var job WakeJob
+	if err := json.Unmarshal(raw, &job); err != nil {
+		return WakeJob{}, fmt.Errorf("failed to unmarshal wake job props: %w", err)
+	}
+	if job.PostID == "" {
+		return WakeJob{}, fmt.Errorf("wake job props missing post_id")
+	}
+	return job, nil
 }
 
 // ResumeConversation injects a synthetic user turn for a wait_for_async_work
-// wake and re-enters the tool follow-up loop on the original bot post.
-func (c *Conversations) ResumeConversation(ctx context.Context, rec mmtools.WakeRecord) error {
+// wake and re-enters the tool follow-up loop on the original bot post. It
+// rederives all conversation state from the response post, mirroring
+// HandleToolCall; if any entity is gone the thread is dead and the wake is
+// dropped.
+func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "resume conversation after wait",
-		trace.WithAttributes(
-			telemetry.UserID.String(rec.UserID),
-			telemetry.ChannelID.String(rec.ChannelID),
-			telemetry.PostID.String(rec.PostID),
-			telemetry.AgentID.String(rec.BotID),
-		),
+		trace.WithAttributes(telemetry.PostID.String(job.PostID)),
 	)
 	defer span.End()
 
-	if c == nil || c.convService == nil || c.bots == nil || c.mmClient == nil {
-		return errors.New("conversations service is not configured")
-	}
-
-	conv, err := c.convService.GetConversation(rec.ConversationID)
-	if err != nil {
-		c.mmClient.LogDebug("wait_for_async_work: dropping wake, conversation missing",
-			"error", err, "conversation_id", rec.ConversationID)
-		return nil
-	}
-
-	bot := c.bots.GetBotByID(rec.BotID)
-	if bot == nil {
-		c.mmClient.LogDebug("wait_for_async_work: dropping wake, bot missing", "bot_id", rec.BotID)
-		return nil
-	}
-
-	user, err := c.mmClient.GetUser(rec.UserID)
-	if err != nil {
-		c.mmClient.LogDebug("wait_for_async_work: dropping wake, user missing",
-			"error", err, "user_id", rec.UserID)
-		return nil
-	}
-
-	channel, err := c.mmClient.GetChannel(rec.ChannelID)
-	if err != nil {
-		c.mmClient.LogDebug("wait_for_async_work: dropping wake, channel missing",
-			"error", err, "channel_id", rec.ChannelID)
-		return nil
-	}
-
-	post, err := c.mmClient.GetPost(rec.PostID)
+	post, err := c.mmClient.GetPost(job.PostID)
 	if err != nil {
 		c.mmClient.LogDebug("wait_for_async_work: dropping wake, post missing",
-			"error", err, "post_id", rec.PostID)
+			"error", err, "post_id", job.PostID)
 		return nil
 	}
 
-	if err := c.writeWaitWakeTurn(conv.ID, rec.Reason); err != nil {
+	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convID == "" {
+		c.mmClient.LogDebug("wait_for_async_work: dropping wake, post has no conversation",
+			"post_id", job.PostID)
+		return nil
+	}
+
+	conv, err := c.convService.GetConversation(convID)
+	if err != nil {
+		c.mmClient.LogDebug("wait_for_async_work: dropping wake, conversation missing",
+			"error", err, "conversation_id", convID)
+		return nil
+	}
+
+	bot := c.bots.GetBotByID(post.UserId)
+	if bot == nil {
+		c.mmClient.LogDebug("wait_for_async_work: dropping wake, bot missing", "bot_id", post.UserId)
+		return nil
+	}
+
+	user, err := c.mmClient.GetUser(conv.UserID)
+	if err != nil {
+		c.mmClient.LogDebug("wait_for_async_work: dropping wake, user missing",
+			"error", err, "user_id", conv.UserID)
+		return nil
+	}
+
+	channel, err := c.mmClient.GetChannel(post.ChannelId)
+	if err != nil {
+		c.mmClient.LogDebug("wait_for_async_work: dropping wake, channel missing",
+			"error", err, "channel_id", post.ChannelId)
+		return nil
+	}
+
+	if err := c.convService.AppendSyntheticUserTurn(conv.ID, mmtools.WakeUserMessage(job.Reason)); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to write wake turn")
 		return err
 	}
 
-	if err := c.streamToolFollowUp(ctx, bot, user, channel, post, conv, rec.IsDM, nil); err != nil {
+	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if err := c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, nil); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to resume conversation")
 		return err
 	}
 	return nil
-}
-
-func (c *Conversations) writeWaitWakeTurn(conversationID, reason string) error {
-	content, err := json.Marshal([]conversation.ContentBlock{{
-		Type: conversation.BlockTypeText,
-		Text: mmtools.WakeUserMessage(reason),
-	}})
-	if err != nil {
-		return err
-	}
-
-	return c.convService.CreateTurnAutoSequence(&store.Turn{
-		ID:             model.NewId(),
-		ConversationID: conversationID,
-		PostID:         nil,
-		Role:           "user",
-		Content:        content,
-		CreatedAt:      model.GetMillis(),
-	})
 }
