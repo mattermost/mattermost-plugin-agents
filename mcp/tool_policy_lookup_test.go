@@ -156,6 +156,32 @@ func TestLookupToolPolicy(t *testing.T) {
 		require.True(t, enabled)
 	})
 
+	t.Run("plugin runtime name with server slug prefix matches advertised config name", func(t *testing.T) {
+		cfg := Config{
+			PluginServers: []PluginServerConfig{
+				pluginServerEnabled(ToolPolicyAutoRunEverywhere, true),
+			},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, "cursor_cloud_agents__"+pluginToolName)
+
+		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+		require.True(t, enabled)
+	})
+
+	t.Run("over-stripped native name does not match plugin-prefixed config", func(t *testing.T) {
+		cfg := Config{
+			PluginServers: []PluginServerConfig{
+				pluginServerEnabled(ToolPolicyAutoRunEverywhere, true),
+			},
+		}
+
+		policy, enabled := LookupToolPolicy(cfg, pluginOrigin, "add")
+
+		require.Equal(t, ToolPolicyAsk, policy)
+		require.True(t, enabled)
+	})
+
 	t.Run("embedded server with empty tool configs falls back to vetted seed", func(t *testing.T) {
 		cfg := Config{
 			EmbeddedServer: EmbeddedServerConfig{

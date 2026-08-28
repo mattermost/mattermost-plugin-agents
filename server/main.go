@@ -446,8 +446,11 @@ func (p *Plugin) OnActivate() error {
 	conversationsService.SetMeetingsService(meetingsService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
+	// Pass toolName through unchanged: LookupToolPolicy already denormalizes a
+	// single server-slug prefix. Pre-stripping here over-strips plugin MCP
+	// tools, whose advertised names already contain "__" (pluginid__native).
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, llm.BareMCPToolName(toolName))
+		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, toolName)
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
