@@ -457,9 +457,14 @@ func (p *Plugin) OnActivate() error {
 	wakeJobs := cluster.GetJobOnceScheduler(p.API)
 	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
 		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
-	} else if wakeErr := wakeJobs.Start(); wakeErr != nil {
-		pluginAPI.Log.Error("Failed to start wait_for_async_work wake scheduler", "error", wakeErr)
 	} else {
+		// The scheduler is a process-wide singleton: on OnActivate re-runs
+		// Start errors with "already been started" while the refreshed
+		// callback above keeps working, so a Start error must not disable
+		// scheduling. ScheduleOnce self-guards if Start genuinely failed.
+		if wakeErr := wakeJobs.Start(); wakeErr != nil {
+			pluginAPI.Log.Warn("wait_for_async_work wake scheduler did not (re)start", "error", wakeErr)
+		}
 		toolProvider.SetScheduleWake(func(postID, reason string, wait time.Duration) error {
 			_, scheduleErr := wakeJobs.ScheduleOnce(
 				conversations.WakeJobKeyPrefix+model.NewId(),

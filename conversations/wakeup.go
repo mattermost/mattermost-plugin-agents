@@ -41,9 +41,14 @@ func (c *Conversations) HandleWakeJob(key string, props any) {
 		return
 	}
 
-	if err := c.ResumeConversation(context.Background(), job); err != nil {
-		c.mmClient.LogError("wait_for_async_work: wake failed", "error", err, "post_id", job.PostID)
-	}
+	// The scheduler serializes callbacks under a process-wide mutex; resume
+	// runs a full LLM turn (potentially minutes), so it must not block other
+	// wakes from firing.
+	go func() {
+		if err := c.ResumeConversation(context.Background(), job); err != nil {
+			c.mmClient.LogError("wait_for_async_work: wake failed", "error", err, "post_id", job.PostID)
+		}
+	}()
 }
 
 func wakeJobFromProps(props any) (WakeJob, error) {
