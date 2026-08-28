@@ -282,7 +282,8 @@ func TestRestoreSecrets(t *testing.T) {
 // makes to the MCP server list. The console edits an entry in place and always
 // submits the whole list, so a rename, a URL change, a reorder and a deletion
 // all arrive as a list whose masked entries must resolve to the credential of
-// the entry the admin was editing — and to no other.
+// the entry the admin was editing — and to no other. Credentials stay with the
+// base URL they were stored against, so an entry moved to a new URL starts over.
 func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 	const (
 		firstURL     = "https://jira.example.com/mcp"
@@ -349,10 +350,10 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 			wantHeaders:       []map[string]string{{renamedKey: firstHeader}, {headerKey: secondHeader}},
 		},
 		{
-			name:              "server pointed at a new url keeps its credentials",
+			name:              "server pointed at a new url starts without credentials",
 			incoming:          []MCPServerConfig{masked("Jira", thirdURL, headerKey), masked("Confluence", secondURL, headerKey)},
-			wantClientSecrets: []string{firstSecret, secondSecret},
-			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}},
+			wantClientSecrets: []string{"", secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: ""}, {headerKey: secondHeader}},
 		},
 		{
 			name:              "reordered servers keep their own credentials",
@@ -403,6 +404,79 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 						"header %q of servers[%d] (%q)", key, i, server.Name)
 				}
 			}
+		})
+	}
+}
+
+// TestRestoreSecretsKeepsMCPCredentialsWithTheirBaseURL asserts that a masked
+// MCP credential resolves only for an entry addressing the base URL it was
+// stored against, including when that base URL is empty. An entry that supplies
+// a base URL of its own is addressing somewhere else and starts over.
+func TestRestoreSecretsKeepsMCPCredentialsWithTheirBaseURL(t *testing.T) {
+	const (
+		storedSecret = "stored-client-secret" // #nosec G101 -- test fixture value
+		storedHeader = "Bearer stored-token"  // #nosec G101 -- test fixture value
+		headerKey    = "Authorization"
+	)
+
+	tests := []struct {
+		name          string
+		storedBaseURL string
+		// incomingBaseURL is the base URL the console submits for the entry.
+		incomingBaseURL string
+		want            string
+	}{
+		{
+			name:            "same base url",
+			storedBaseURL:   "https://mcp.example.com",
+			incomingBaseURL: "https://mcp.example.com",
+			want:            storedSecret,
+		},
+		{
+			name:            "no base url on either side",
+			storedBaseURL:   "",
+			incomingBaseURL: "",
+			want:            storedSecret,
+		},
+		{
+			name:            "base url added to an entry stored without one",
+			storedBaseURL:   "",
+			incomingBaseURL: "https://elsewhere.example.com",
+			want:            "",
+		},
+		{
+			name:            "base url of an entry changed",
+			storedBaseURL:   "https://mcp.example.com",
+			incomingBaseURL: "https://elsewhere.example.com",
+			want:            "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := &Config{MCP: MCPConfig{Servers: []MCPServerConfig{{
+				Name:         "Jira",
+				BaseURL:      tt.storedBaseURL,
+				ClientSecret: storedSecret,
+				Headers:      map[string]string{headerKey: storedHeader},
+			}}}}
+			incoming := Config{MCP: MCPConfig{Servers: []MCPServerConfig{{
+				Name:         "Jira",
+				BaseURL:      tt.incomingBaseURL,
+				ClientSecret: SecretPlaceholder,
+				Headers:      map[string]string{headerKey: SecretPlaceholder},
+			}}}}
+
+			restored := RestoreSecrets(incoming, stored)
+
+			require.Len(t, restored.MCP.Servers, 1)
+			assert.Equal(t, tt.want, restored.MCP.Servers[0].ClientSecret, "client secret")
+
+			wantHeader := storedHeader
+			if tt.want == "" {
+				wantHeader = ""
+			}
+			assert.Equal(t, wantHeader, restored.MCP.Servers[0].Headers[headerKey], "header %q", headerKey)
 		})
 	}
 }

@@ -61,9 +61,8 @@ func RedactSecrets(cfg Config) Config {
 // resolves to empty instead of being persisted verbatim.
 //
 // Counterparts are matched by service ID, bot ID (for the deprecated inline
-// service), by name and base URL for an MCP server (see matchStoredMCPServers),
-// by header key within that server, and by parameter key for the embedding
-// provider.
+// service), by base URL for an MCP server (see matchStoredMCPServers), by header
+// key within that server, and by parameter key for the embedding provider.
 func RestoreSecrets(incoming Config, stored *Config) Config {
 	out := *incoming.Clone()
 	if stored == nil {
@@ -172,25 +171,22 @@ func findBotByID(bots []llm.BotConfig, id string) *llm.BotConfig {
 // recognized as one that is already stored, most specific first.
 var mcpServerIdentifiers = []func(incoming, stored MCPServerConfig) bool{
 	func(incoming, stored MCPServerConfig) bool {
-		return incoming.Name != "" && incoming.BaseURL != "" &&
-			incoming.Name == stored.Name && incoming.BaseURL == stored.BaseURL
+		return incoming.Name == stored.Name && incoming.BaseURL == stored.BaseURL
 	},
 	func(incoming, stored MCPServerConfig) bool {
-		return incoming.Name != "" && incoming.Name == stored.Name
-	},
-	func(incoming, stored MCPServerConfig) bool {
-		return incoming.BaseURL != "" && incoming.BaseURL == stored.BaseURL
+		return incoming.BaseURL == stored.BaseURL
 	},
 }
 
 // matchStoredMCPServers pairs each incoming MCP server with the stored entry it
 // identifies, or nil when it identifies none. An MCP server carries no id and
 // the admin console submits the whole list on every save, so an entry is
-// recognized by its name and base URL together first, then by either one alone
-// as long as that picks out a single stored entry — which is how a server keeps
-// its credentials across a rename or a change of URL. Each stored entry is
-// claimed at most once, so a further entry repeating a name or a URL identifies
-// nothing.
+// recognized by its name and base URL together first, then by its base URL
+// alone as long as that picks out a single stored entry — which is how a server
+// keeps its credentials across a rename. Credentials stay with the base URL they
+// were stored against: an entry moved to another URL identifies nothing, and so
+// does a further entry repeating a URL, since each stored entry is claimed at
+// most once.
 func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfig {
 	matched := make([]*MCPServerConfig, len(incoming))
 	claimed := make([]bool, len(stored))
