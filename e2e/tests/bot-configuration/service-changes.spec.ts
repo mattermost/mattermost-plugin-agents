@@ -5,7 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTestText } from 'helpers/openai-mock';
-import { createBotConfigHelper, generateBotId } from 'helpers/bot-config';
+import { createBotConfigHelper, generateBotId, SECRET_PLACEHOLDER } from 'helpers/bot-config';
 
 // Test configuration
 const username = 'regularuser';
@@ -336,23 +336,21 @@ function createTestSuite() {
                 expect(bot1?.serviceID).toBe('mock-service');
                 expect(bot2?.serviceID).toBe('second-service');
 
-                // Update the mock-service
-                const originalService = await botConfig.getService('mock-service');
                 await botConfig.updateService('mock-service', {
-                    apiKey: 'updated-key'
+                    apiKey: 'updated-key',
                 });
 
-                // Verify service was updated
+                // Verify the service stays configured. GET returns the mask, not the stored key.
                 const updatedService = await botConfig.getService('mock-service');
-                expect(updatedService?.apiKey).toBe('updated-key');
+                expect(updatedService?.apiKey).toBe(SECRET_PLACEHOLDER);
 
                 // Bot1 still references same service (but service has new config)
                 const bot1AfterUpdate = await botConfig.getBot(bot1!.id);
                 expect(bot1AfterUpdate?.serviceID).toBe('mock-service');
 
-                // Restore original key
+                // Restore the seeded mock-service key. GET cannot return the original value.
                 await botConfig.updateService('mock-service', {
-                    apiKey: originalService!.apiKey
+                    apiKey: 'mock',
                 });
             });
         });
