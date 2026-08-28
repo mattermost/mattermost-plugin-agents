@@ -85,10 +85,9 @@ type ToolCatalogContext struct {
 	// conversation entry points that stream a response post set this.
 	ResponseFilesSupported bool
 
-	// SandboxFilesAttached indicates files the provider's code-execution
-	// sandbox captured this turn are attached to the reply automatically. The
-	// model needs to be told, because it cannot see the file ids the provider
-	// reports and would otherwise paste file contents into its response text.
+	// SandboxFilesAttached is true when this turn's sandbox output will be
+	// attached automatically. The model cannot see provider file ids, so the
+	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
 	SandboxFilesAttached bool
 }
 
@@ -112,15 +111,9 @@ type ToolRuntimeContext struct {
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
 
-	// SandboxFiles records, in observation order, the provider-side files the
-	// code-execution sandbox captured this request (Anthropic returns one for
-	// every file a command left in $OUTPUT_DIR). Each reference includes the
-	// opaque provider route that produced it so fallback-created files are
-	// downloaded with the right account. The response flow attaches them in
-	// this order.
-	//
-	// References only ever come from observed server-tool activity — never
-	// from model input — so nothing the model says can add one.
+	// SandboxFiles are provider files observed this request, in order, with
+	// the route that produced them. Populated only from server-tool activity,
+	// never from model input.
 	SandboxFiles []ProviderFileReference
 
 	// ResponseAttachmentBudget caps how many files response tools may create
@@ -275,11 +268,8 @@ func (t *ToolRuntimeContext) AddCreatedFile(f CreatedFile) {
 	t.CreatedFiles = append(t.CreatedFiles, f)
 }
 
-// AddSandboxFiles records provider-side sandbox files observed in this
-// request's server-tool activity, preserving arrival order. Empty references
-// and repeated route/id pairs are skipped — a server-tool snapshot is
-// cumulative, so the same file is reported on every subsequent event of the
-// turn.
+// AddSandboxFiles records observed sandbox files in arrival order. Empty
+// references and repeated route/id pairs are skipped because snapshots are cumulative.
 func (c *Context) AddSandboxFiles(refs ...ProviderFileReference) {
 	if c == nil {
 		return
@@ -301,10 +291,8 @@ func (t *ToolRuntimeContext) AddSandboxFiles(refs ...ProviderFileReference) {
 	}
 }
 
-// ConsumeSandboxFiles returns the sandbox file references observed this
-// request, in observation order, and clears them. Consuming makes the attach
-// path idempotent: a stream that ends twice (continuation, retry) must not
-// attach the same provider file to the post again.
+// ConsumeSandboxFiles returns observed files and clears them so a stream that
+// ends twice cannot attach the same provider file again.
 func (c *Context) ConsumeSandboxFiles() []ProviderFileReference {
 	if c == nil {
 		return nil

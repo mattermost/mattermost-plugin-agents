@@ -19,8 +19,7 @@ import (
 //     DO NOT use cfg.Service or cfg.ServiceID directly - those are internal references.
 //   - mmBot: The Mattermost bot user
 //   - llm: The initialized language model instance
-//   - providerServices: Provider-side capabilities resolved from the concrete
-//     provider client before it was wrapped (see llm.ProviderServices)
+//   - providerServices: resolved from the concrete client before wrapping (see llm.ProviderServices)
 //
 // Bot instances should be created via EnsureBots() which properly resolves
 // service references and initializes all fields.
@@ -48,19 +47,13 @@ func (b *Bot) GetService() llm.ServiceConfig {
 	return b.service
 }
 
-// ProviderServices returns the provider-side capabilities available to this
-// bot's tools, or nil when none were resolved (bots built outside EnsureBots,
-// and providers with no such capabilities). Callers must tolerate nil; the
-// llm.ProviderServices predicates are nil-safe.
+// ProviderServices is nil-safe; callers must tolerate nil (bots built outside EnsureBots).
 func (b *Bot) ProviderServices() *llm.ProviderServices {
 	return b.providerServices
 }
 
-// WithConfig returns a copy of the bot with its configuration replaced,
-// carrying over the resolved service, Mattermost bot user, language model and
-// provider services. Use this instead of re-calling NewBot when deriving a bot
-// for a narrower flow, so newly added dependencies are preserved by default
-// rather than silently dropped.
+// WithConfig copies the bot with a new config. Use this instead of NewBot so
+// resolved LLM and provider services are not silently dropped.
 func (b *Bot) WithConfig(cfg llm.BotConfig) *Bot {
 	if b == nil {
 		return nil
@@ -70,13 +63,9 @@ func (b *Bot) WithConfig(cfg llm.BotConfig) *Bot {
 	return &derived
 }
 
-// hasNativeToolEnabled reports whether the named native (provider-executed)
-// tool is both enabled on the bot and actually deliverable to the resolved
-// service's provider. The effective provider capability has to be considered
-// rather than trusting the persisted bot config alone: callers use these
-// predicates to decide whether to suppress a built-in Mattermost fallback or
-// to catalog a companion tool, and a native tool that gets stripped before the
-// request would leave them with neither.
+// hasNativeToolEnabled is true only if the tool is enabled and the resolved
+// provider can actually deliver it. Callers use this to suppress Mattermost
+// fallbacks; trusting persisted config alone would leave them with neither.
 func (b *Bot) hasNativeToolEnabled(name string) bool {
 	if !bifrost.SupportsNativeTools(b.service.Type) {
 		return false
@@ -94,29 +83,20 @@ func (b *Bot) hasNativeToolEnabled(name string) bool {
 	return slices.Contains(b.cfg.EnabledNativeTools, name)
 }
 
-// HasNativeWebSearchEnabled reports whether the bot will use the provider's
-// native web search. Callers use it to decide whether to suppress Mattermost's
-// built-in web search fallback.
+// HasNativeWebSearchEnabled is used to suppress Mattermost's built-in web search fallback.
 func (b *Bot) HasNativeWebSearchEnabled() bool {
 	return b.hasNativeToolEnabled(llm.NativeToolWebSearch)
 }
 
-// HasNativeCodeExecutionEnabled reports whether the bot will use the provider's
-// code-execution sandbox. This says nothing about whether the files that
-// sandbox produces can be retrieved — that is a separate provider capability,
-// reported by llm.ProviderServices.CanDownloadFiles. Callers that bridge
-// sandbox output into Mattermost want SandboxFileAttachmentAvailable instead.
+// HasNativeCodeExecutionEnabled is independent of file retrieval. OpenAI can
+// run the sandbox but cannot serve its files; use SandboxFileAttachmentAvailable
+// for attach/prompt gating.
 func (b *Bot) HasNativeCodeExecutionEnabled() bool {
 	return b.hasNativeToolEnabled(llm.NativeToolCodeInterpreter)
 }
 
-// SandboxFileAttachmentAvailable reports whether files this bot's code-execution
-// sandbox captures can be attached to its replies. Both halves are required and
-// they are independent: the agent has to have the sandbox enabled, and the
-// provider has to be able to serve the files it produced (Anthropic can; OpenAI
-// container files are not retrievable yet). Both the prompt text that tells the
-// model attachment happens and the runtime attach path read this, so they cannot
-// disagree.
+// SandboxFileAttachmentAvailable requires both the sandbox and a retrievable
+// file API. Prompt text and the attach path must use this so they cannot disagree.
 func (b *Bot) SandboxFileAttachmentAvailable() bool {
 	if b == nil {
 		return false
@@ -136,8 +116,7 @@ func (b *Bot) SetProviderServicesForTest(services *llm.ProviderServices) {
 	b.providerServices = services
 }
 
-// NewBot creates a new Bot instance. The result has no provider services; use
-// EnsureBots for a fully wired bot, or WithConfig to derive one from it.
+// NewBot has no provider services. Use EnsureBots for a wired bot, or WithConfig to derive one.
 func NewBot(cfg llm.BotConfig, service llm.ServiceConfig, mmBot *model.Bot, llmInstance llm.LanguageModel) *Bot {
 	return &Bot{
 		cfg:     cfg,

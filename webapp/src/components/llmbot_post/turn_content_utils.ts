@@ -151,7 +151,6 @@ export function extractReasoningFromTurn(turn: Turn): {summary: string; signatur
         return {summary: '', signature: ''};
     }
 
-    // Concatenate all thinking blocks (typically there is only one).
     const summary = thinkingBlocks.map((b) => b.text ?? '').join('\n');
     const signature = thinkingBlocks[thinkingBlocks.length - 1]?.signature ?? '';
     return {summary, signature};
@@ -186,7 +185,6 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
             }
         }
 
-        // Text block with inline citations
         if (block.type === BlockTypeText && block.citations) {
             for (let i = 0; i < block.citations.length; i++) {
                 const c = block.citations[i];
@@ -234,8 +232,6 @@ export function hasAutoApprovedToolsForPost(
     );
 }
 
-// One assistant turn in a response. The post renders these as a vertical
-// sequence: text → tools → text → tools → final text.
 export interface Round {
     id: string;
     text: string;
@@ -243,13 +239,10 @@ export interface Round {
     reasoning: {summary: string; signature: string};
     annotations: Annotation[];
 
-    // Provider-executed (server) tool activity for the round: web searches,
-    // page fetches, sandbox code runs. Rendered before the text since the
-    // activity precedes the final answer.
+    // Rendered before text: RoundView shows activity above the answer.
     serverTools: ServerToolUse[];
 }
 
-/** Extract ServerToolUse[] from server_tool_use content blocks. */
 export function extractServerToolsFromTurn(turn: Turn): ServerToolUse[] {
     const serverTools: ServerToolUse[] = [];
     for (const block of turn.content) {
@@ -299,11 +292,7 @@ export function computeRenderedRounds(params: {
     return out;
 }
 
-/**
- * A round under construction, plus where its text starts within the turn's
- * full concatenated text. The offset is needed to rebase citation indices,
- * which the server reports against the whole message.
- */
+/** Round draft plus textStart, used to rebase citation indices onto this round's slice. */
 interface RoundDraft {
     reasoning: {summary: string; signature: string};
     serverTools: ServerToolUse[];
@@ -320,18 +309,10 @@ function draftIsEmpty(draft: RoundDraft): boolean {
 }
 
 /**
- * Split one assistant turn's content blocks into the rounds to render.
- *
- * A round renders as `reasoning → activity → text → tool calls`, so a block
- * whose slot is already filled has to start a new round or it would appear
- * above content that arrived before it. Concretely: provider-executed activity
- * arriving after the round already has text begins a new round, which is what
- * keeps narration written between two sandbox runs below the first and above
- * the second.
- *
- * Client tool calls need no equivalent split — the toolrunner already persists
- * each of their rounds as its own turn — so every tool_use block in a turn
- * belongs to that turn's final round, which is where the turn ended.
+ * Split one assistant turn into rounds. RoundView renders
+ * `reasoning → activity → text`, so a block whose slot is already filled
+ * starts a new round. Client tool_use blocks stay on the last round:
+ * toolrunner already persists each of those as its own turn.
  */
 function splitTurnIntoRounds(
     turn: Turn,
@@ -365,8 +346,6 @@ function splitTurnIntoRounds(
                 break;
             }
 
-            // Consecutive invocations stay in one round so a burst of searches
-            // renders as a single activity group.
             if (draft.text !== '') {
                 startNewDraft();
             }
@@ -391,8 +370,7 @@ function splitTurnIntoRounds(
 
     const kept = drafts.filter((d) => !draftIsEmpty(d));
     if (kept.length === 0) {
-        // A round can be tool calls alone (the model called a tool without
-        // narrating), and dropping it would lose the approval UI with it.
+        // Keep a tool-only round or the approval UI disappears.
         if (toolCalls.length === 0) {
             return [];
         }
@@ -403,8 +381,6 @@ function splitTurnIntoRounds(
 
     return kept.map((d, i) => ({
 
-        // The first round keeps the turn id so single-round turns are
-        // unchanged; later ones are suffixed to stay unique as React keys.
         id: i === 0 ? turn.id : `${turn.id}-${i}`,
         text: d.text,
         toolCalls: i === kept.length - 1 ? toolCalls : [],
@@ -414,13 +390,7 @@ function splitTurnIntoRounds(
     }));
 }
 
-/**
- * Assign each annotation to the round holding the text it points into, with its
- * indices rebased onto that round's text. Citation offsets are reported against
- * the turn's whole message, but each round renders only its own slice, and
- * citation_processor slices by index — so unrebased offsets would drop markers
- * in the wrong place.
- */
+/** Assign annotations to the round whose text they point into, rebasing indices. Server offsets are against the whole message. */
 function distributeAnnotations(drafts: RoundDraft[], annotations: Annotation[]): Annotation[][] {
     const out: Annotation[][] = drafts.map(() => []);
     if (annotations.length === 0) {
@@ -434,7 +404,6 @@ function distributeAnnotations(drafts: RoundDraft[], annotations: Annotation[]):
         return out;
     }
 
-    // Single text run: the offsets already line up, so leave them untouched.
     if (textBearing.length === 1) {
         out[textBearing[0].index] = annotations;
         return out;

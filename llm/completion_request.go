@@ -41,19 +41,13 @@ type Post struct {
 	Reasoning          string // Extended thinking/reasoning content from models that support it
 	ReasoningSignature string // Signature for thinking blocks (opaque verification field)
 
-	// ServerTools records provider-executed tool activity that produced this
-	// assistant turn (web search, web fetch, code execution). The provider
-	// puts its own results in the model's context during the request that ran
-	// them, but they are gone from every later request — so without replaying
-	// them the model forgets work it just did and repeats it. Replayed as a
-	// labeled record rather than reconstructed provider blocks: the fields are
-	// display-truncated, and the sandbox container is not carried forward, so
-	// forged result blocks would point at a container that no longer exists.
+	// ServerTools is provider-executed activity from this turn. The provider
+	// drops those results from later requests, so we replay a labeled summary
+	// (not reconstructed blocks: fields are truncated and the sandbox is gone).
 	ServerTools []ServerToolUse
 
-	// AssistantSegments records where response text and server-tool activity
-	// occurred relative to each other. ServerTools holds each invocation's
-	// final payload; server-tool segments reference that snapshot by ID.
+	// AssistantSegments is arrival order of text vs server-tool activity.
+	// ServerTools holds payloads; segments reference them by ID.
 	AssistantSegments []TurnSegment
 }
 
@@ -78,9 +72,7 @@ func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int
 		if (totalTokens + postTokens) > maxTokens {
 			charactersToCut := (postTokens - (maxTokens - totalTokens)) * 4
 			post.Message = strings.TrimSpace(post.Message[charactersToCut:])
-			// The partial-message cut cannot be mapped safely onto interleaved
-			// activity segments. Drop that old turn's replay metadata rather
-			// than bypassing truncation by sending the original segment text.
+			// Drop replay metadata: a token-budget cut cannot be mapped onto interleaved segments.
 			post.AssistantSegments = nil
 			post.ServerTools = nil
 			b.Posts = append(b.Posts, post)

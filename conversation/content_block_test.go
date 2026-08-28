@@ -297,8 +297,6 @@ func TestFilterForNonRequester(t *testing.T) {
 			},
 		},
 		{
-			// Server tools run provider-side with no approval flow; their
-			// activity shares the post text's visibility and is never redacted.
 			name: "leaves server_tool_use untouched",
 			blocks: []ContentBlock{
 				{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{
@@ -348,9 +346,6 @@ func TestFilterForNonRequester(t *testing.T) {
 	}
 }
 
-// TestSanitizeForDisplayServerTool verifies server-tool activity strings are
-// escaped against Unicode bidi/spoofing attacks (web content and sandbox
-// output are attacker-influenced) and that the original blocks are not mutated.
 func TestSanitizeForDisplayServerTool(t *testing.T) {
 	bidi := "safe\u202Eevil"
 	blocks := []ContentBlock{{

@@ -48,9 +48,6 @@ func sandboxCtx(channelID string, fileIDs ...string) *llm.Context {
 	return c
 }
 
-// TestAttachSandboxOutputFilesUploadsInObservationOrder covers the happy path:
-// every file the sandbox captured is uploaded under the provider's own name, in
-// the order the sandbox produced them, and recorded for response attachment.
 func TestAttachSandboxOutputFilesUploadsInObservationOrder(t *testing.T) {
 	const channelID = "channel-id"
 	client := mocks.NewMockClient(t)
@@ -87,9 +84,6 @@ func TestAttachSandboxOutputFilesUploadsInObservationOrder(t *testing.T) {
 	require.Equal(t, []string{"file_1", "file_2"}, downloader.requested)
 }
 
-// TestAttachSandboxOutputFilesRefusals covers every reason a turn's sandbox
-// files must not reach the channel. Each case asserts no upload happens, which
-// the mock enforces by having no UploadFile expectation.
 func TestAttachSandboxOutputFilesRefusals(t *testing.T) {
 	const channelID = "channel-id"
 
@@ -166,8 +160,6 @@ func TestAttachSandboxOutputFilesRefusals(t *testing.T) {
 	}
 }
 
-// TestAttachSandboxOutputFilesSkipsBadFiles pins that one unusable file does not
-// stop the rest: the reply still carries the files that were fine.
 func TestAttachSandboxOutputFilesSkipsBadFiles(t *testing.T) {
 	const channelID = "channel-id"
 
@@ -193,7 +185,6 @@ func TestAttachSandboxOutputFilesSkipsBadFiles(t *testing.T) {
 			}})
 			client.On("HasPermissionToChannel", "user-id", channelID, model.PermissionUploadFile).Return(true)
 			client.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Once()
-			// Only the good file is uploaded.
 			client.On("UploadFile", mock.Anything, "good.txt", channelID).
 				Return(&model.FileInfo{Id: "mm-good", Name: "good.txt"}, nil).Once()
 
@@ -210,9 +201,6 @@ func TestAttachSandboxOutputFilesSkipsBadFiles(t *testing.T) {
 	}
 }
 
-// TestAttachSandboxOutputFilesHonorsAttachmentCap pins that a sandbox run cannot
-// push a post past the per-reply attachment cap, including slots already taken
-// by CreateFile earlier in the same turn.
 func TestAttachSandboxOutputFilesHonorsAttachmentCap(t *testing.T) {
 	const channelID = "channel-id"
 	client := mocks.NewMockClient(t)
@@ -241,11 +229,7 @@ func TestAttachSandboxOutputFilesHonorsAttachmentCap(t *testing.T) {
 		"files past the cap must not be downloaded at all")
 }
 
-// TestAttachSandboxOutputFilesSanitizesName pins that a provider-reported name
-// is reduced to a safe base name before upload. The sandbox command that wrote
-// the file is model-authored, so the name is model-influenced input — but a
-// traversal-looking name still carries a usable base, so it uploads under that
-// rather than being dropped (matching CreateFile).
+// Traversal-looking names still upload under the base name, matching CreateFile.
 func TestAttachSandboxOutputFilesSanitizesName(t *testing.T) {
 	const channelID = "channel-id"
 
@@ -284,8 +268,6 @@ func TestAttachSandboxOutputFilesSanitizesName(t *testing.T) {
 	}
 }
 
-// TestAttachSandboxOutputFilesDownloadFailure pins that a provider download
-// failure is absorbed: the reply still goes out, just without the file.
 func TestAttachSandboxOutputFilesDownloadFailure(t *testing.T) {
 	const channelID = "channel-id"
 	client := mocks.NewMockClient(t)

@@ -14,10 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// TestServerToolActivityRecord covers what the model is told about work it
-// already did. The provider drops its own server-tool results from every
-// request after the one that ran them, so this record is the model's only
-// memory of them on later rounds.
 func TestServerToolActivityRecord(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -49,8 +45,6 @@ func TestServerToolActivityRecord(t *testing.T) {
 			},
 		},
 		{
-			// The model cannot see provider file ids, and attachment may
-			// still fail after capture, so replay must not claim success.
 			name: "captured output files are reported as pending attachment",
 			uses: []llm.ServerToolUse{{
 				ID:      "srvtoolu_2",
@@ -102,9 +96,6 @@ func TestServerToolActivityRecord(t *testing.T) {
 	}
 }
 
-// TestServerToolActivityReplayedInRequest pins the wiring end to end: an
-// assistant post carrying server-tool activity must preserve its position
-// relative to the assistant text around it.
 func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	llmClient, err := New(Config{
 		ProviderSettings: ProviderSettings{
@@ -157,8 +148,6 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	assert.Equal(t, "now make it blue", texts[4])
 }
 
-// TestServerToolActivityNotReplayedWhenAbsent pins that ordinary turns are
-// unchanged — no stray assistant message when there was no server activity.
 func TestServerToolActivityNotReplayedWhenAbsent(t *testing.T) {
 	llmClient, err := New(Config{
 		ProviderSettings: ProviderSettings{

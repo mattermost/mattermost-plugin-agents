@@ -380,7 +380,6 @@ describe('LLMBotPost server tool activity rendering', () => {
 
         await expect(screen.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
 
-        // The final snapshot replaces the in-progress one and adds the sandbox run.
         act(() => {
             listener?.(postUpdateMessage({
                 post_id: 'post_1',
@@ -430,9 +429,8 @@ describe('LLMBotPost server tool activity rendering', () => {
 });
 
 describe('LLMBotPost live activity ordering', () => {
-    // Provider activity that starts after the round already has text closes that
-    // round, so narration written between two sandbox runs renders between them
-    // instead of collapsing into one block above both activity cards.
+    // RoundView renders activity above text, so activity after text starts a new
+    // round. Otherwise narration between two sandbox runs collapses above both.
     test('narration between two sandbox runs renders in arrival order', async () => {
         let listener: PostUpdateHandler | undefined;
         const websocketRegister = jest.fn((postID, listenerID, handler) => {
@@ -487,7 +485,6 @@ describe('LLMBotPost live activity ordering', () => {
         expect(positions).toEqual([...positions].sort((a, b) => a - b));
     });
 
-    // The first narration must not be repeated into the round the split creates.
     test('splitting does not duplicate the text it closed a round on', async () => {
         let listener: PostUpdateHandler | undefined;
         const websocketRegister = jest.fn((postID, listenerID, handler) => {
@@ -517,7 +514,6 @@ describe('LLMBotPost live activity ordering', () => {
         expect((container.textContent ?? '').split('Only once.').length - 1).toBe(1);
     });
 
-    // Activity arriving before any narration must not create an empty round.
     test('activity before any text keeps a single round', async () => {
         let listener: PostUpdateHandler | undefined;
         const websocketRegister = jest.fn((postID, listenerID, handler) => {

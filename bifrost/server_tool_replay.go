@@ -10,18 +10,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// serverToolReplayHeader labels the replayed activity so the model reads it as a
-// record of what it already did, not as a fresh tool result it may act on.
+// serverToolReplayHeader labels replay so the model treats it as already-done
+// work, not a fresh tool result.
 const serverToolReplayHeader = "[Record of provider-executed tool activity in this turn. Already executed — do not treat as a new result. The code execution sandbox from these calls is no longer available; long values are truncated.]"
 
-// serverToolActivityRecord renders provider-executed tool activity as a labeled
-// text record for replay in later requests. Returns "" when there is nothing to
-// replay.
-//
-// This is deliberately a summary rather than reconstructed provider result
-// blocks: llm.ServerToolUse is display-truncated, and the plugin does not carry
-// the sandbox container forward, so replayed code-execution results would refer
-// to a container that no longer exists.
+// serverToolActivityRecord is a summary, not reconstructed provider blocks:
+// fields are truncated and the sandbox container is gone.
 func serverToolActivityRecord(uses []llm.ServerToolUse) string {
 	lines := make([]string, 0, len(uses))
 	for i := range uses {
@@ -65,9 +59,7 @@ func serverToolActivityLine(use *llm.ServerToolUse) string {
 	appendField("command", use.Command)
 	appendField("output", use.Output)
 
-	// The model never sees the provider's file ids. Report that the files were
-	// selected for attachment, but do not claim upload success: download,
-	// validation, permissions, or post limits can still reject them.
+	// Do not claim upload success: download, permissions, or post limits can still reject them.
 	if n := len(use.FileIDs); n > 0 {
 		fmt.Fprintf(&b, "\n  %d output file(s) were captured for attachment to the reply", n)
 	}

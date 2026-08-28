@@ -150,9 +150,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
     liveRef.current = {message, toolCalls, reasoningSummary, annotations, serverTools};
 
-    // Provider activity snapshots are cumulative for the whole round, so the
-    // handler tracks which invocations it has already placed (assignedActivityIds)
-    // and which belong to the round currently being built (roundActivityIds).
+    // Snapshots are cumulative; assignedActivityIds is global, roundActivityIds is the current round.
     const assignedActivityIds = useRef<Set<string>>(new Set());
     const roundActivityIds = useRef<Set<string>>(new Set());
     const resetActivityTracking = () => {
@@ -240,9 +238,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setProgressPhase(null);
                 setGenerating(true);
 
-                // RoundView renders reasoning before provider activity. If
-                // reasoning starts after activity, close that activity round
-                // first so the live UI preserves provider arrival order.
+                // RoundView renders reasoning before activity; split if activity already exists.
                 const live = liveRef.current;
                 if (live.serverTools.length > 0) {
                     setLiveRounds((prev) => [
@@ -289,7 +285,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
-                        // Snapshot the round into liveRounds and reset for the next.
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
                             ...prev,
@@ -338,19 +333,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setProgressPhase(null);
                 setGenerating(true);
 
-                // Cumulative provider-executed tool activity for the round;
-                // each event replaces the prior snapshot.
                 try {
                     const parsedServerTools = JSON.parse(data.server_tool) as ServerToolUse[];
                     const fresh = parsedServerTools.filter(
                         (use) => use.id !== '' && !assignedActivityIds.current.has(use.id),
                     );
 
-                    // An invocation starting after the round already has text
-                    // closes that round, the same way a resolved tool call does.
-                    // A round renders activity above its text, so without the
-                    // split the whole turn's narration collapses into one block
-                    // with every activity card hoisted above it.
+                    // RoundView renders activity above text, so a new invocation after text starts a new round.
                     if (fresh.length > 0 && liveRef.current.message !== '') {
                         const live = liveRef.current;
                         setLiveRounds((prev) => [
@@ -376,8 +365,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                         roundActivityIds.current.add(use.id);
                     }
 
-                    // Show only this round's invocations; the snapshot still
-                    // carries earlier ones, which their own round already holds.
                     setServerTools(parsedServerTools.filter((use) => roundActivityIds.current.has(use.id)));
                     setPrecontent(false);
                 } catch {

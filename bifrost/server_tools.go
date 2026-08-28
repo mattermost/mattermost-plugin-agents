@@ -200,8 +200,7 @@ func populateCodeExecutionFields(use *llm.ServerToolUse, tm *schemas.ResponsesTo
 		use.Command = truncateForDisplay(*carry.Input, serverToolCommandMaxLen)
 	}
 
-	// Provider-side ids of files this execution left in the sandbox output
-	// directory. The request context records them so the reply can attach them.
+	// Provider-side ids of files left in the sandbox output directory.
 	for _, file := range carry.Files {
 		if file.FileID != "" {
 			use.FileIDs = append(use.FileIDs, file.FileID)

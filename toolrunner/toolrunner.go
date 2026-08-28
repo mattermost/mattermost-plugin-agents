@@ -100,16 +100,12 @@ type ToolTurn struct {
 	// AssistantReasoning holds the reasoning data from the assistant response.
 	AssistantReasoning llm.ReasoningData
 
-	// AssistantServerTools holds the provider-executed (server) tool activity
-	// observed during the assistant response — the final cumulative snapshot
-	// from EventTypeServerToolUse. Without it, a round that mixed server tools
-	// with client tool calls would lose the activity when persisted.
+	// AssistantServerTools is the final cumulative snapshot. Without it, a
+	// round that mixed server tools with client tool calls would lose activity.
 	AssistantServerTools []llm.ServerToolUse
 
-	// AssistantSegments records the order in which the round's reasoning,
-	// response text and provider-executed activity arrived. Persisting the
-	// round without it renders the pieces grouped by kind, so narration the
-	// model wrote between two code executions collapses above both of them.
+	// AssistantSegments is arrival order. Without it, narration between two
+	// sandbox runs collapses above both of them.
 	AssistantSegments []llm.TurnSegment
 
 	// ToolResults holds the executed tool results, one per tool call.
@@ -220,8 +216,6 @@ func (r *ToolRunner) runLoop(
 		var serverTools []llm.ServerToolUse
 		var usage llm.TokenUsage
 		var streamErr error
-		// sequence records arrival order so the persisted round renders in the
-		// order it happened, not grouped by kind.
 		var sequence llm.TurnSequence
 
 		for event := range stream.Stream {
@@ -231,14 +225,10 @@ func (r *ToolRunner) runLoop(
 					toolCalls = append(toolCalls, tcs...)
 				}
 			case llm.EventTypeServerToolUse:
-				// Cumulative snapshot of provider-executed tool activity;
-				// keep the latest so a tool round persists it (see ToolTurn).
 				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 					serverTools = uses
 					sequence.RecordServerTools(uses)
-					// Register the sandbox output files before any presentation
-					// sanitation. Downloads need the exact provider ids and the
-					// route that produced them, especially after fallback.
+					// Register files before presentation sanitation; downloads need exact ids and fallback routes.
 					for _, use := range uses {
 						refs := make([]llm.ProviderFileReference, 0, len(use.FileIDs))
 						for _, id := range use.FileIDs {
@@ -570,8 +560,6 @@ func appendToolTurnAndPost(
 	}
 	result.ToolTurns = append(result.ToolTurns, turn)
 
-	// ServerTools travels with the post so the next round's request still shows
-	// the model the provider-executed work it did in this one.
 	request.Posts = append(request.Posts, llm.Post{
 		Role:               llm.PostRoleBot,
 		Message:            text,

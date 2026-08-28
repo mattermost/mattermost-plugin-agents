@@ -23,21 +23,11 @@ import (
 
 const sandboxOutputFileAttachmentOperation = "attach_sandbox_output_file"
 
-// AttachSandboxOutputFiles materializes the files a provider code-execution
-// sandbox captured this turn as Mattermost files, recording them on llmCtx so
-// the response flow attaches them to the bot's reply.
-//
-// There is no tool for this and no model-supplied file id. A provider captures
-// exactly the files the sandbox command left in its output directory
-// ($OUTPUT_DIR for Anthropic) and reports their ids in the execution result;
-// copying a file there is already the model's "share this" gesture, and the ids
-// themselves are never visible to the model. So the ids come only from observed
-// server-tool activity, which also means nothing the model says can name a file
-// outside this turn's sandbox output.
-//
-// Files are consumed from llmCtx, making repeat calls for one turn a no-op.
-// Individual failures are logged and skipped: a file that cannot be downloaded
-// or uploaded must not fail the reply it was going to ride along with.
+// AttachSandboxOutputFiles uploads sandbox output files captured this turn
+// onto llmCtx for the reply. There is no attach tool: Anthropic reports ids
+// only for files left in $OUTPUT_DIR, which is the model's share gesture, and
+// those ids are never shown to the model. Failures are skipped so a bad file
+// cannot fail the reply. ConsumeSandboxFiles makes a repeat call a no-op.
 func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, downloader llm.ProviderFileDownloader, llmCtx *llm.Context) {
 	files := llmCtx.ConsumeSandboxFiles()
 	if len(files) == 0 {
@@ -56,7 +46,6 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 	sizeLimit := createFileContentLimit(cfg)
 
 	for _, fileRef := range files {
-		// Recheck each iteration: every successful attach consumes a slot.
 		slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn)
 		if len(llmCtx.CreatedFilesList()) >= slots {
 			client.LogWarn("Dropping code execution output files beyond the response attachment cap",
@@ -64,16 +53,13 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 			return
 		}
 		if err := attachOneSandboxFile(ctx, client, downloader, llmCtx, fileRef, sizeLimit); err != nil {
-			// The provider file id is a request-scoped handle, not content.
 			client.LogError("Failed to attach a code execution output file", "error", err.Error(), "provider_file_id", fileRef.ID)
 		}
 	}
 }
 
-// sandboxAttachmentAllowed reports why the turn's sandbox files cannot be
-// attached, or nil when they can. UploadFile bypasses the api4 per-user checks,
-// so server attachment policy and the requesting user's channel permission are
-// enforced here — the same policy CreateFile applies.
+// sandboxAttachmentAllowed enforces the same policy as CreateFile. UploadFile
+// bypasses api4 per-user checks, so this must stay.
 func sandboxAttachmentAllowed(client mmapi.Client, llmCtx *llm.Context) error {
 	if llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Id == "" {
 		return errors.New("no conversation channel to hold the files")
@@ -138,9 +124,7 @@ func attachOneSandboxFile(
 	return nil
 }
 
-// sandboxFileName sanitizes the provider-reported name. The sandbox command
-// that wrote the file is model-authored, so the name is model-influenced input
-// and must not be able to escape the upload's own naming.
+// sandboxFileName sanitizes a model-influenced provider name so it cannot escape the upload.
 func sandboxFileName(providerName string) (string, error) {
 	name := filepath.Base(strings.TrimSpace(providerName))
 	if name == "" || name == "." || name == ".." || name == string(filepath.Separator) || strings.ContainsAny(name, `/\`) {

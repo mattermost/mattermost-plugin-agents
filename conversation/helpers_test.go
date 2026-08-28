@@ -79,10 +79,6 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
 }
 
-// TestToolUseBlocksIncludesServerToolActivity pins the fix for server-tool
-// activity being lost from intermediate tool rounds: a round that mixed
-// provider-executed tools with client tool calls must persist the activity
-// as server_tool_use blocks placed before the round's text.
 func TestToolUseBlocksIncludesServerToolActivity(t *testing.T) {
 	serverTools := []llm.ServerToolUse{
 		{ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "release notes"},
@@ -158,10 +154,6 @@ func TestUnmarshalBlocks(t *testing.T) {
 	}
 }
 
-// TestToolUseBlocksUsesRecordedOrder pins that a persisted tool round renders in
-// the order the provider streamed it. Tool rounds go through this path rather
-// than the streaming accumulator, so without the recorded order the same
-// grouped-by-kind reordering shows up on every round that called a tool.
 func TestToolUseBlocksUsesRecordedOrder(t *testing.T) {
 	serverTools := []llm.ServerToolUse{
 		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "ls"},
@@ -189,9 +181,6 @@ func TestToolUseBlocksUsesRecordedOrder(t *testing.T) {
 	assert.Equal(t, BlockTypeToolUse, blocks[4].Type)
 }
 
-// TestSequenceBlocksDropsUnknownActivity pins that a segment whose activity is
-// missing from the snapshot is skipped: the webapp has no card to render for an
-// invocation with no payload.
 func TestSequenceBlocksDropsUnknownActivity(t *testing.T) {
 	blocks := SequenceBlocks([]llm.TurnSegment{
 		{Kind: llm.TurnSegmentServerTool, ServerToolID: "gone"},

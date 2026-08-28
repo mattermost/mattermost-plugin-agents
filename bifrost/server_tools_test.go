@@ -39,13 +39,6 @@ func writeAnthropicSSE(w http.ResponseWriter, events []string) {
 	}
 }
 
-// TestStreamResponsesEmitsServerToolActivity drives recorded Anthropic
-// Messages SSE (server_tool_use blocks and their result blocks, faithful to
-// the wire format) through the real Bifrost client and asserts the plugin
-// surfaces the activity as EventTypeServerToolUse events: an in_progress
-// snapshot when the tool starts and a final snapshot carrying the interpreted
-// result (query / URL+title / command+output / error), without disturbing the
-// text stream.
 func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 	messageStart := `{"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_1","type":"message","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":1}}}`
 	messageEnd := []string{
@@ -266,9 +259,6 @@ func TestStreamResponsesEmitsServerToolActivity(t *testing.T) {
 	}
 }
 
-// TestStreamResponsesCapturesFallbackFileRoute verifies that the runtime-only
-// route stored beside a provider file id identifies the account that actually
-// served a failed-over completion.
 func TestStreamResponsesCapturesFallbackFileRoute(t *testing.T) {
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"type":"error","error":{"type":"overloaded_error"}}`, http.StatusServiceUnavailable)
@@ -333,9 +323,6 @@ func flatten(groups ...[]string) []string {
 	return out
 }
 
-// TestProviderServices pins which capabilities each provider hands to the
-// tools layer. This is resolved on the concrete client because the bot's
-// LanguageModel is a decorator chain that hides it.
 func TestProviderServices(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -370,9 +357,6 @@ func TestProviderServices(t *testing.T) {
 	}
 }
 
-// TestDownloadProviderFile drives the real Bifrost client against a mock
-// Anthropic Files API and asserts the content, MIME type, auth header and
-// URL path — the contract sandbox output attachment depends on.
 func TestDownloadProviderFile(t *testing.T) {
 	fileBytes := []byte("col1,col2\n1,2\n")
 	var gotPath, gotAPIKey string
@@ -452,9 +436,6 @@ func TestDownloadProviderFile(t *testing.T) {
 	}
 }
 
-// TestDownloadProviderFileUsesCapturedFallbackRoute verifies that provider
-// file references do not silently switch back to primary credentials after a
-// completion was served by a fallback account.
 func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
 	var primaryRequests int32
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -506,9 +487,8 @@ func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
 	assert.Zero(t, atomic.LoadInt32(&primaryRequests), "primary credentials must not be used for a fallback-owned file")
 }
 
-// TestMapServerToolStatus pins the item-status mapping. "incomplete" (e.g. an
-// OpenAI code_interpreter_call cut off by max tokens) must be terminal: mapping
-// it to in-progress leaves a spinner in the UI after the stream ends.
+// "incomplete" (e.g. OpenAI code_interpreter_call cut off by max tokens) must
+// be terminal: mapping it to in-progress leaves a spinner after the stream ends.
 func TestMapServerToolStatus(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -528,11 +508,6 @@ func TestMapServerToolStatus(t *testing.T) {
 	}
 }
 
-// TestCodeExecutionRequestCarriesFilesAPIBeta pins the header that makes sandbox
-// output files reachable at all: Anthropic reports the file ids a code-execution
-// result produced only when the completion request opts into the Files API beta.
-// Without it the results carry an empty file list, so nothing is observed
-// on the request context and no sandbox output files are attached.
 func TestCodeExecutionRequestCarriesFilesAPIBeta(t *testing.T) {
 	tests := []struct {
 		name        string

@@ -160,12 +160,6 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 	require.False(t, providerServices.CanDownloadFiles())
 }
 
-// TestGetLLMResolvesProviderServicesThroughWrapperChain pins the reason
-// ProviderServices exists: getLLM returns a model wrapped in decorators that
-// expose only llm.LanguageModel, so the file-download capability of the
-// underlying Anthropic client is unreachable from the returned model and has to
-// arrive via the services handle. Asserting both halves keeps a future wrapper
-// from quietly stranding the capability again.
 func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
@@ -191,8 +185,6 @@ func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
 	require.False(t, assertable, "the wrapped model must not be relied on for provider capabilities")
 }
 
-// TestGetLLMProviderServicesForNonDownloadableProvider pins that a provider
-// without file retrieval gets no downloader, even with the sandbox enabled.
 func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
@@ -1207,9 +1199,7 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 	}
 }
 
-// HasNativeCodeExecutionEnabled answers only "will the provider run the
-// sandbox" — it must not fold in whether the sandbox's output files can be
-// retrieved, which is a separate provider capability (ProviderServices).
+// Independent of file retrieval: OpenAI runs the sandbox but cannot serve its files.
 func TestHasNativeCodeExecutionEnabled(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1222,8 +1212,6 @@ func TestHasNativeCodeExecutionEnabled(t *testing.T) {
 			expected: true,
 		},
 		{
-			// OpenAI runs a code interpreter, so this is enabled even though
-			// its container files are not retrievable yet.
 			name:     "openai with code_interpreter enabled",
 			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
 			expected: true,
@@ -1282,9 +1270,6 @@ func TestHasNativeCodeExecutionEnabledRequiresBotOptIn(t *testing.T) {
 	require.False(t, b.HasNativeCodeExecutionEnabled())
 }
 
-// TestWithConfigPreservesDependencies pins that deriving a bot for a narrower
-// flow keeps the dependencies the derived bot's tools need. Rebuilding with
-// NewBot instead would drop provider services and strand provider-backed tools.
 func TestWithConfigPreservesDependencies(t *testing.T) {
 	mmBot := &model.Bot{UserId: "b1"}
 	service := llm.ServiceConfig{ID: "svc-1", Type: llm.ServiceTypeAnthropic}
@@ -1303,7 +1288,6 @@ func TestWithConfigPreservesDependencies(t *testing.T) {
 	require.Equal(t, mmBot, derived.GetMMBot())
 	require.True(t, derived.ProviderServices().CanDownloadFiles())
 
-	// The original must be untouched.
 	require.False(t, original.GetConfig().AutoEnableNewMCPTools)
 }
 

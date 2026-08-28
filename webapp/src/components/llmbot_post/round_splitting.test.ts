@@ -43,10 +43,8 @@ function text(value: string): ContentBlock {
 }
 
 describe('round splitting at provider activity boundaries', () => {
-    // A round renders activity above its text, so activity that starts after
-    // the round already has text has to begin a new round. Without the split,
-    // narration written between two sandbox runs collapses into a single block
-    // with both activity cards hoisted above it.
+    // RoundView renders activity above text, so activity after text starts a new
+    // round. Otherwise narration between two sandbox runs collapses above both.
     test('activity after text starts a new round', () => {
         const turn = makeTurn([
             text("I'll write the script."),
@@ -83,8 +81,6 @@ describe('round splitting at provider activity boundaries', () => {
         const ids = rounds.map((r) => r.id);
 
         expect(new Set(ids).size).toBe(ids.length);
-
-        // The first round keeps the turn id, so single-round turns are unchanged.
         expect(ids[0]).toBe('turn_1');
     });
 
@@ -103,8 +99,6 @@ describe('round splitting at provider activity boundaries', () => {
         expect(rounds[0].text).toBe('Found it.');
     });
 
-    // Reasoning renders above activity, so interleaved thinking needs the same
-    // treatment: a thought after the round has content starts a new round.
     test('thinking after text or activity starts a new round', () => {
         const turn = makeTurn([
             {type: 'thinking', text: 'first thought'} as ContentBlock,
@@ -137,9 +131,6 @@ describe('round splitting at provider activity boundaries', () => {
         expect(rounds[0].reasoning).toEqual({summary: 'part one\npart two', signature: 'sig'});
     });
 
-    // Tool use ends an assistant turn, and the toolrunner already persists each
-    // tool round as its own turn — so a split turn's calls belong to its last
-    // round, not duplicated across the rounds the activity split created.
     test('tool calls land on the final round of a split turn', () => {
         const turn = makeTurn([
             text('Looking into it.'),
@@ -182,9 +173,8 @@ describe('round splitting at provider activity boundaries', () => {
 });
 
 describe('citation offsets across a split turn', () => {
-    // citation_processor slices the rendered text by end_index, and the server
-    // reports offsets against the turn's whole message — so a split has to
-    // rebase them or markers land in the wrong round at the wrong position.
+    // Server offsets are against the whole message; citation_processor slices
+    // by end_index, so unrebased markers land in the wrong round.
     test('annotations are assigned to the round holding their text, rebased', () => {
         const turn = makeTurn([
             text('0123456789'),
@@ -206,12 +196,10 @@ describe('citation offsets across a split turn', () => {
 
         expect(rounds).toHaveLength(2);
 
-        // First citation points into the first text run: offsets unchanged.
         expect(rounds[0].annotations).toHaveLength(1);
         expect(rounds[0].annotations[0].url).toBe('https://a');
         expect(rounds[0].annotations[0].end_index).toBe(4);
 
-        // Second points into the second run, which starts at offset 10.
         expect(rounds[1].annotations).toHaveLength(1);
         expect(rounds[1].annotations[0].url).toBe('https://b');
         expect(rounds[1].annotations[0].start_index).toBe(2);

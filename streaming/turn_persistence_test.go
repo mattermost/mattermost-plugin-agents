@@ -444,8 +444,6 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 
 		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
 
-		// Persisted turn: the final snapshot lands as a server_tool_use block
-		// before the text block, with bidi characters sanitized.
 		ts.mu.Lock()
 		defer ts.mu.Unlock()
 		streamTurn := findStreamTurn(ts.turns, postID)
@@ -462,13 +460,11 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.Empty(t, blocks[0].ServerTool.ProviderRoute, "runtime route must not be persisted")
 		require.Equal(t, conversation.BlockTypeText, blocks[1].Type)
 
-		// Streaming presentation sanitation must not mutate the canonical
-		// provider data held by ToolRunner for replay and file download.
+		// Sanitation of the broadcast copy must not mutate ToolRunner's replay snapshot.
 		require.Equal(t, "file.txt\u202E\n", final[0].Output)
 		require.Equal(t, "file\u202E1", final[0].FileIDs[0])
 		require.Equal(t, "anthropic::fallback", final[0].ProviderRoute)
 
-		// Websocket: every snapshot is broadcast under the server_tool control.
 		var serverToolEvents []publishedEvent
 		for _, ev := range client.events {
 			if ev.payload["control"] == "server_tool" {
@@ -1644,10 +1640,6 @@ func TestRedactToolCallsPreservesUserInteraction(t *testing.T) {
 	require.True(t, redacted[0].WouldAutoExecute)
 }
 
-// TestBuildContentBlocksPreservesArrivalOrder pins the fix for out-of-order
-// rendering: a turn that narrated, ran a sandbox command, narrated again and ran
-// another must persist in that order. Grouping by kind put both narrations above
-// both executions, so the bot read as describing work before doing it.
 func TestBuildContentBlocksPreservesArrivalOrder(t *testing.T) {
 	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
 
@@ -1695,13 +1687,9 @@ func TestBuildContentBlocksPreservesArrivalOrder(t *testing.T) {
 	assert.Equal(t, conversation.BlockTypeText, blocks[5].Type)
 	assert.Equal(t, "Done.", blocks[5].Text)
 
-	// Tool use ends the turn, so the call comes last.
 	assert.Equal(t, conversation.BlockTypeToolUse, blocks[6].Type)
 }
 
-// TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot pins that an
-// invocation renders with its finished payload while keeping the position it had
-// when it started — the provider updates entries in place as they progress.
 func TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot(t *testing.T) {
 	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
 

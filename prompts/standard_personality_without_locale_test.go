@@ -270,11 +270,9 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 	}
 }
 
-// TestStandardPersonalitySandboxFileGuidance pins that the sandbox-file guidance
-// renders exactly when this turn's sandbox output files will be attached. The
-// model cannot see the file ids the provider reports, so $OUTPUT_DIR is the only
-// lever it has — and guidance shown when nothing is attached would have it
-// promise attachments that never arrive.
+// Guidance renders only when this turn's sandbox output will actually attach.
+// The model never sees provider file ids, so $OUTPUT_DIR is the only share
+// gesture — showing it otherwise would promise attachments that never arrive.
 func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
 	const guidance = "$OUTPUT_DIR"
 
@@ -300,8 +298,7 @@ func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
 			want: false,
 		},
 		{
-			// The sandbox is provider-executed and still runs when Mattermost
-			// tools are disabled, so the guidance must not be gated on tools.
+			// Sandbox still runs with Mattermost tools disabled, so guidance cannot be gated on tools.
 			name: "attachment active with no tool store",
 			context: &llm.Context{
 				BotName:     "ai",

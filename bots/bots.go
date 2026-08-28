@@ -441,11 +441,9 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-// getLLM returns the wrapped language model for a bot along with the
-// provider-side services resolved from the unwrapped client. The services have
-// to be returned separately: every wrapper below exposes only
-// llm.LanguageModel, so any capability of the concrete client that is not
-// captured here is unreachable from the returned model.
+// getLLM returns the wrapped model plus provider services resolved from the
+// unwrapped client. Wrappers expose only LanguageModel, so capabilities not
+// captured here cannot be recovered later.
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
 	result, providerServices, err := b.getBaseLLM(serviceConfig, botConfig, fallbackServices)
 	if err != nil {

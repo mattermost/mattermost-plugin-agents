@@ -482,14 +482,6 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 	}
 }
 
-// markSandboxFileAttachment records whether files this turn's code-execution
-// sandbox captures will be attached to the reply, so the system prompt can tell
-// the model — it cannot see the file ids the provider reports and would
-// otherwise paste file contents into its response text.
-//
-// This mirrors the runtime gate in the response flow: a flow that attaches
-// response files, the sandbox enabled on the agent, and a provider that can
-// serve the files it produced.
 func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {
 	c.ToolCatalog.SandboxFilesAttached = c.ToolCatalog.ResponseFilesSupported && bot.SandboxFileAttachmentAvailable()
 }

@@ -37,10 +37,7 @@ func TestSupportsNativeTools(t *testing.T) {
 	}
 }
 
-// TestSupportsProviderFileDownload pins which providers can serve file
-// content. Note the deliberate split from code-execution support: OpenAI runs a
-// sandbox but its container files are not retrievable, so it belongs in
-// SupportedNativeToolsForServiceType and not here.
+// OpenAI runs a sandbox but its container files are not retrievable.
 func TestSupportsProviderFileDownload(t *testing.T) {
 	tests := []struct {
 		serviceType string

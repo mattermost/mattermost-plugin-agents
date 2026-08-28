@@ -11,10 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTurnSequenceInterleavedArrival is the case the fixed-category renderer got
-// wrong: a turn that narrates, runs a sandbox command, narrates again, then runs
-// another. Grouping by kind puts both narrations above both executions, so the
-// bot reads as having described work before doing it.
+// Grouping by kind puts both narrations above both executions.
 func TestTurnSequenceInterleavedArrival(t *testing.T) {
 	var s TurnSequence
 
@@ -55,9 +52,6 @@ func TestTurnSequenceMergesConsecutiveDeltas(t *testing.T) {
 	}, s.Segments())
 }
 
-// TestTurnSequenceReasoningBlocks covers multiple reasoning blocks in one turn:
-// each end event closes only the block in progress, and the provider's final
-// text replaces whatever partial text was streamed for it.
 func TestTurnSequenceReasoningBlocks(t *testing.T) {
 	var s TurnSequence
 
@@ -74,8 +68,6 @@ func TestTurnSequenceReasoningBlocks(t *testing.T) {
 	}, s.Segments())
 }
 
-// TestTurnSequenceUnfinishedReasoningIsKept pins that reasoning streamed before
-// an error or cancel still renders — the partial thought is all there is.
 func TestTurnSequenceUnfinishedReasoningIsKept(t *testing.T) {
 	var s TurnSequence
 	s.AppendReasoning("partial")
@@ -83,8 +75,6 @@ func TestTurnSequenceUnfinishedReasoningIsKept(t *testing.T) {
 	require.Equal(t, []TurnSegment{{Kind: TurnSegmentThinking, Text: "partial"}}, s.Segments())
 }
 
-// TestTurnSequenceFinishReasoningWithoutDeltas covers thinking display modes
-// that stream no reasoning text and deliver it only at the end.
 func TestTurnSequenceFinishReasoningWithoutDeltas(t *testing.T) {
 	var s TurnSequence
 	s.AppendText("answer")
@@ -97,9 +87,7 @@ func TestTurnSequenceFinishReasoningWithoutDeltas(t *testing.T) {
 	}, s.Segments())
 }
 
-// TestTurnSequenceRecordServerToolsIsIdempotent pins that cumulative snapshots
-// do not duplicate an invocation, and that an id keeps its original position
-// when a later snapshot updates it in place.
+// Cumulative snapshots must not duplicate an id or move it from first appearance.
 func TestTurnSequenceRecordServerToolsIsIdempotent(t *testing.T) {
 	var s TurnSequence
 
@@ -114,9 +102,7 @@ func TestTurnSequenceRecordServerToolsIsIdempotent(t *testing.T) {
 	}, s.Segments())
 }
 
-// TestTurnSequenceRemoveTextRangesPreservesInterleaving covers citation
-// cleanup across text separated by provider activity. Removing markers must
-// not move the later text ahead of the second tool.
+// Citation cleanup must not slide later text ahead of intervening activity.
 func TestTurnSequenceRemoveTextRangesPreservesInterleaving(t *testing.T) {
 	var s TurnSequence
 

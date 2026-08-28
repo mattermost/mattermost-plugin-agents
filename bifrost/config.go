@@ -65,18 +65,9 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 	}
 }
 
-// SupportsProviderFileDownload reports whether the given service type's
-// provider can serve file content through Bifrost's Files API support. This is
-// the single source of truth for provider file retrieval: it decides whether a
-// bot gets an llm.ProviderServices.FileDownloader, which in turn gates the
-// built-in tools that bridge provider files into Mattermost.
-//
-// Anthropic exposes GET /v1/files/{id}/content, which is how code-execution
-// output files are retrieved. OpenAI's code-interpreter container files live
-// behind a different endpoint that Bifrost does not surface yet, so they stay
-// unsupported — note this is independent of whether the provider can *run* the
-// sandbox (see SupportedNativeToolsForServiceType, where OpenAI does support
-// code_interpreter).
+// SupportsProviderFileDownload is independent of sandbox execution: OpenAI can
+// run code_interpreter, but its container files use an endpoint Bifrost does
+// not surface yet. Anthropic's GET /v1/files/{id}/content is supported.
 func SupportsProviderFileDownload(serviceType string) bool {
 	provider, err := MapServiceTypeToProvider(serviceType)
 	if err != nil {

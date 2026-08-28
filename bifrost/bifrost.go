@@ -37,9 +37,8 @@ const (
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
-	// FileDownloadTimeout caps a provider file-content download (sandbox
-	// output files can be sizeable, but a wedged provider must not hold a
-	// tool resolution open indefinitely).
+	// FileDownloadTimeout caps a provider file download so a wedged provider
+	// cannot hold a tool resolution open indefinitely.
 	FileDownloadTimeout = 60 * time.Second
 )
 
@@ -87,9 +86,8 @@ type LLM struct {
 	// alternative providers when the primary fails.
 	fallbacks []schemas.Fallback
 
-	// providerFileDownloadRoutes contains the registered Bifrost provider
-	// routes that can serve captured files. Fallbacks sharing the primary's
-	// provider type have distinct custom routes and credentials.
+	// providerFileDownloadRoutes are registered Bifrost routes that can serve
+	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
 }
 
@@ -883,15 +881,10 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	return resp.InputTokens, nil
 }
 
-// applyCompletionBetaHeaders opts the completion request into provider betas
-// that the plugin's feature set needs but Bifrost does not derive on its own.
-//
-// Anthropic reports the ids of files a code-execution sandbox produced only when
-// the completion request carries the Files API beta; without it every
-// code-execution result arrives with an empty file list, so there is nothing to
-// attach to a reply. Bifrost auto-injects this header only when the request
-// *references* a file id (a document/image "file" source), never because the
-// code execution tool is enabled — so the plugin has to ask for it here.
+// applyCompletionBetaHeaders opts into provider betas Bifrost does not set
+// itself. Anthropic only reports sandbox file ids when the Files API beta is
+// on the completion request; Bifrost adds that header only when the request
+// already references a file, never because code execution is enabled.
 func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
 	if bifrostCtx == nil {
 		return
@@ -911,11 +904,7 @@ func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
 	bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
 }
 
-// ProviderServices reports the provider-side capabilities this client can
-// perform, for injection into the components that need them. It must be called
-// on the concrete client, before the model is wrapped in decorators — the
-// wrappers deliberately expose only llm.LanguageModel, so a capability not
-// captured here cannot be recovered later. See llm.ProviderServices.
+// ProviderServices must be called on the concrete client before wrapping.
 func (b *LLM) ProviderServices() *llm.ProviderServices {
 	services := &llm.ProviderServices{}
 	if supportsProviderFileDownloadProvider(b.provider) {
@@ -924,15 +913,9 @@ func (b *LLM) ProviderServices() *llm.ProviderServices {
 	return services
 }
 
-// DownloadProviderFile implements llm.ProviderFileDownloader: it downloads a
-// provider-side file (e.g. an Anthropic code-execution output file) through
-// Bifrost's Files API support. The captured reference selects the registered
-// provider route so a fallback-created file uses that fallback's credentials
-// and base URL. Bifrost's Anthropic provider attaches the files-api beta header.
-// Reached through ProviderServices, not by asserting on a bot's LanguageModel.
-//
-// The name comes from the metadata endpoint because the content response
-// carries none, and callers need the sandbox's own file name.
+// DownloadProviderFile fetches a provider-side file. The captured reference
+// selects the route so a fallback-created file uses that fallback's credentials.
+// Filename comes from the metadata endpoint; the content response has none.
 func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
 	providerRoute := b.provider
 	if ref.ProviderRoute != "" {
@@ -1856,13 +1839,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			// Replay text and provider-executed activity in provider arrival
-			// order. The activity itself is a labeled summary because the
-			// sandbox container is not reusable, but its position relative to
-			// the assistant's narration must be preserved.
 			messages = append(messages, assistantReplayMessages(post)...)
-
-			// Handle tool calls in assistant messages.
 			if len(post.ToolUse) > 0 {
 				for _, tc := range post.ToolUse {
 					funcCallMsg := schemas.ResponsesMessage{
@@ -2235,9 +2212,6 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// web fetch / code execution). Every state change re-emits the cumulative
 	// snapshot so receivers can replace prior state.
 	serverTools := newServerToolTracker()
-	// Bifrost records the route that actually served each stream chunk. Keep
-	// the latest non-empty value so files emitted by a fallback retain the
-	// credentials/base URL that own them.
 	providerRoute := b.provider
 	emitServerTools := func() {
 		output <- llm.TextStreamEvent{

@@ -78,20 +78,16 @@ type ServerToolUse struct {
 	Output string `json:"output,omitempty"`
 	// ErrorCode is the provider error code when the invocation failed.
 	ErrorCode string `json:"error_code,omitempty"`
-	// FileIDs are provider-side ids of files this invocation captured (e.g.
-	// files an Anthropic code-execution command left in $OUTPUT_DIR). The
-	// response flow downloads these and attaches them to the bot's reply.
+	// FileIDs are provider-side ids of files left in the sandbox output directory.
 	FileIDs []string `json:"file_ids,omitempty"`
 
-	// ProviderRoute is the opaque Bifrost route that produced FileIDs. It is
-	// runtime-only: the downloader needs it to use the right fallback account,
-	// but it must never be broadcast or persisted with display activity.
+	// ProviderRoute is the Bifrost route that produced FileIDs. Runtime-only:
+	// needed for fallback downloads, never broadcast or persisted for display.
 	ProviderRoute string `json:"-"`
 }
 
-// CloneServerToolUses makes a deep-enough copy for presentation transforms.
-// FileIDs is the only reference-valued field; cloning it ensures sanitation
-// cannot mutate the canonical provider replay snapshot.
+// CloneServerToolUses copies FileIDs so presentation sanitation cannot mutate
+// the canonical provider replay snapshot.
 func CloneServerToolUses(uses []ServerToolUse) []ServerToolUse {
 	cloned := slices.Clone(uses)
 	for i := range cloned {

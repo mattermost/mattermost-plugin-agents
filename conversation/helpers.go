@@ -75,14 +75,8 @@ func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
 	return blocks, nil
 }
 
-// SequenceBlocks renders recorded turn segments as content blocks in the order
-// they arrived, resolving each server_tool segment against the activity
-// snapshot. Shared by the streaming layer and the tool-round persistence path so
-// a turn renders identically however it was produced.
-//
-// A segment whose activity is missing from the snapshot is dropped rather than
-// rendered empty: the webapp has no card to show for an invocation with no
-// payload.
+// SequenceBlocks renders segments in arrival order, resolving server_tool
+// ids against the snapshot. Missing activity is dropped, not rendered empty.
 func SequenceBlocks(segments []llm.TurnSegment, serverTools []llm.ServerToolUse) []ContentBlock {
 	byID := make(map[string]*llm.ServerToolUse, len(serverTools))
 	for i := range serverTools {
@@ -122,14 +116,8 @@ func SequenceBlocks(segments []llm.TurnSegment, serverTools []llm.ServerToolUse)
 	return blocks
 }
 
-// toolUseBlocks builds assistant-side content blocks from ToolRunner output.
-// Tool calls must carry their resolved status (AutoApproved / Error) — the
-// toolrunner stores resolved tool calls on ToolTurn.AssistantToolCalls after
-// execution, so this helper just forwards tc.Status verbatim.
-//
-// segments carries the arrival order of the round's reasoning, text and
-// provider-executed activity. When it is empty (callers with no recorded
-// order), the three fall back to a fixed reasoning → activity → text order.
+// toolUseBlocks builds assistant-side content blocks. Tool calls keep their
+// resolved status. Empty segments fall back to reasoning → activity → text.
 func toolUseBlocks(
 	message string,
 	reasoning llm.ReasoningData,
@@ -151,7 +139,6 @@ func toolUseBlocks(
 			})
 		}
 
-		// Activity precedes the text: it happened before the answer.
 		for i := range serverTools {
 			serverTool := serverTools[i]
 			blocks = append(blocks, ContentBlock{
@@ -168,7 +155,7 @@ func toolUseBlocks(
 		}
 	}
 
-	// Tool use ends an assistant turn, so tool calls always come last.
+	// Tool use ends an assistant turn, so calls always come last.
 	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
 			Type:            BlockTypeToolUse,

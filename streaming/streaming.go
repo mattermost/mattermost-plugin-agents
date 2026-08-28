@@ -94,14 +94,10 @@ type turnAccumulator struct {
 	existingAnchorID string
 	isContinuation   bool
 
-	// sequence records text, reasoning and provider-executed tool activity in
-	// the order the provider streamed them, so the persisted turn renders in
-	// the order it happened rather than grouped by kind.
 	sequence    llm.TurnSequence
 	annotations []llm.Annotation
 	toolCalls   []llm.ToolCall
-	// serverTools is the latest cumulative activity snapshot, holding the
-	// payload for the server_tool segments recorded in sequence.
+	// serverTools is the latest cumulative snapshot; sequence stores positions only.
 	serverTools []llm.ServerToolUse
 
 	// Token usage
@@ -116,11 +112,8 @@ type turnAccumulator struct {
 func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 	blocks := []conversation.ContentBlock{}
 
-	// 1. Reasoning, response text and provider-executed tool activity, in the
-	// order the provider streamed them.
 	blocks = append(blocks, conversation.SequenceBlocks(a.sequence.Segments(), a.serverTools)...)
 
-	// 2. Annotations block (web search context)
 	if len(a.annotations) > 0 {
 		resultsJSON, err := json.Marshal(a.annotations)
 		if err == nil {
@@ -134,8 +127,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		}
 	}
 
-	// 3. Tool call blocks. Tool use ends an assistant turn, so these always
-	// come last within a round.
+	// Tool use ends an assistant turn, so these always come last.
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type:             conversation.BlockTypeToolUse,
@@ -692,14 +684,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					p.broadcastToolCalls(post, toolCalls, requesterUserID)
 				}
 			case llm.EventTypeAnnotations:
-				// Handle annotations - might include cleaned message for web search citations
 				if annotationMap, ok := event.Value.(map[string]interface{}); ok {
-					// Web search annotations with cleaned message
 					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
 						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {
-							// Replace the post's visible message with the citation-marker-free
-							// version. Persisted turn text is cleaned by deleting the same
-							// ranges from each existing segment, preserving activity order.
 							messageBuilder.Reset()
 							messageBuilder.WriteString(cleanedMsg)
 							post.Message = cleanedMsg
@@ -724,7 +711,6 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						}
 					}
 				} else if annotations, ok := event.Value.([]llm.Annotation); ok {
-					// Regular annotations without cleaned message
 					annotationsJSON, err := json.Marshal(annotations)
 					if err != nil {
 						p.mmClient.LogError("Failed to marshal annotations", "error", err)
@@ -744,13 +730,8 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					}
 				}
 			case llm.EventTypeServerToolUse:
-				// Provider-executed tool activity (web search / web fetch /
-				// code execution). The event carries the cumulative snapshot
-				// for the round; sanitize, persist, and broadcast it.
 				if rawServerTools, ok := event.Value.([]llm.ServerToolUse); ok {
-					// Presentation sanitation must never mutate ToolRunner's
-					// canonical provider replay snapshot, which can share slice
-					// backing storage with this event.
+					// Clone before sanitizing: this event can share FileIDs backing storage with ToolRunner's replay snapshot.
 					serverTools := llm.CloneServerToolUses(rawServerTools)
 					for i := range serverTools {
 						serverTools[i].ProviderRoute = ""
