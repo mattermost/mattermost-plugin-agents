@@ -61,8 +61,9 @@ func RedactSecrets(cfg Config) Config {
 // resolves to empty instead of being persisted verbatim.
 //
 // Counterparts are matched by service ID, bot ID (for the deprecated inline
-// service), MCP server name, header key within that server, and parameter key
-// for the embedding provider.
+// service), by name and base URL for an MCP server (see matchStoredMCPServers),
+// by header key within that server, and by parameter key for the embedding
+// provider.
 func RestoreSecrets(incoming Config, stored *Config) Config {
 	out := *incoming.Clone()
 	if stored == nil {
@@ -84,20 +85,19 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		restoreServiceSecrets(out.Bots[i].Service, storedInline)
 	}
 
+	matchedServers := matchStoredMCPServers(out.MCP.Servers, stored.MCP.Servers)
 	for i := range out.MCP.Servers {
 		server := &out.MCP.Servers[i]
-		storedServer := findMCPServerByName(stored.MCP.Servers, server.Name)
-		storedHeaders := map[string]string{}
+
+		var storedHeaders map[string]string
 		storedClientSecret := ""
-		if storedServer != nil {
+		if storedServer := matchedServers[i]; storedServer != nil {
 			storedHeaders = storedServer.Headers
 			storedClientSecret = storedServer.ClientSecret
 		}
 
 		server.ClientSecret = resolveSecret(server.ClientSecret, storedClientSecret)
-		for name, value := range server.Headers {
-			server.Headers[name] = resolveSecret(value, storedHeaders[name])
-		}
+		server.Headers = restoreHeaderSecrets(server.Headers, storedHeaders)
 	}
 
 	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
@@ -168,16 +168,100 @@ func findBotByID(bots []llm.BotConfig, id string) *llm.BotConfig {
 	return nil
 }
 
-func findMCPServerByName(servers []MCPServerConfig, name string) *MCPServerConfig {
-	if name == "" {
-		return nil
-	}
-	for i := range servers {
-		if servers[i].Name == name {
-			return &servers[i]
+// mcpServerIdentifiers are the ways an incoming MCP server entry can be
+// recognized as one that is already stored, most specific first.
+var mcpServerIdentifiers = []func(incoming, stored MCPServerConfig) bool{
+	func(incoming, stored MCPServerConfig) bool {
+		return incoming.Name != "" && incoming.BaseURL != "" &&
+			incoming.Name == stored.Name && incoming.BaseURL == stored.BaseURL
+	},
+	func(incoming, stored MCPServerConfig) bool {
+		return incoming.Name != "" && incoming.Name == stored.Name
+	},
+	func(incoming, stored MCPServerConfig) bool {
+		return incoming.BaseURL != "" && incoming.BaseURL == stored.BaseURL
+	},
+}
+
+// matchStoredMCPServers pairs each incoming MCP server with the stored entry it
+// identifies, or nil when it identifies none. An MCP server carries no id and
+// the admin console submits the whole list on every save, so an entry is
+// recognized by its name and base URL together first, then by either one alone
+// as long as that picks out a single stored entry — which is how a server keeps
+// its credentials across a rename or a change of URL. Each stored entry is
+// claimed at most once, so a further entry repeating a name or a URL identifies
+// nothing.
+func matchStoredMCPServers(incoming, stored []MCPServerConfig) []*MCPServerConfig {
+	matched := make([]*MCPServerConfig, len(incoming))
+	claimed := make([]bool, len(stored))
+
+	for _, identifies := range mcpServerIdentifiers {
+		for i := range incoming {
+			if matched[i] != nil {
+				continue
+			}
+
+			found := -1
+			for j := range stored {
+				if claimed[j] || !identifies(incoming[i], stored[j]) {
+					continue
+				}
+				if found >= 0 {
+					found = -1
+					break
+				}
+				found = j
+			}
+
+			if found >= 0 {
+				matched[i] = &stored[found]
+				claimed[found] = true
+			}
 		}
 	}
-	return nil
+
+	return matched
+}
+
+// restoreHeaderSecrets resolves masked header values against the values stored
+// for the same server. Keys are matched exactly; a masked value under a key the
+// stored server does not have takes the one stored header left unclaimed, which
+// is how a renamed header keeps its value. Anything less clear-cut resolves to
+// empty.
+func restoreHeaderSecrets(incoming, stored map[string]string) map[string]string {
+	if len(incoming) == 0 {
+		return incoming
+	}
+
+	unclaimed := make(map[string]string, len(stored))
+	for key, value := range stored {
+		unclaimed[key] = value
+	}
+
+	var unmatched []string
+	for key, value := range incoming {
+		if storedValue, ok := unclaimed[key]; ok {
+			delete(unclaimed, key)
+			incoming[key] = resolveSecret(value, storedValue)
+			continue
+		}
+		if IsSecretPlaceholder(value) {
+			unmatched = append(unmatched, key)
+		}
+	}
+
+	if len(unmatched) == 1 && len(unclaimed) == 1 {
+		for _, storedValue := range unclaimed {
+			incoming[unmatched[0]] = storedValue
+		}
+		return incoming
+	}
+
+	for _, key := range unmatched {
+		incoming[key] = ""
+	}
+
+	return incoming
 }
 
 func redactEmbeddingProviderSecrets(parameters json.RawMessage) json.RawMessage {

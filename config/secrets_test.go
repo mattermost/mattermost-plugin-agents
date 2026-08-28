@@ -277,3 +277,132 @@ func TestRestoreSecrets(t *testing.T) {
 		assert.Equal(t, SecretPlaceholder, incoming.Services[0].APIKey)
 	})
 }
+
+// TestRestoreSecretsFollowsMCPServerEdits covers the edits the admin console
+// makes to the MCP server list. The console edits an entry in place and always
+// submits the whole list, so a rename, a URL change, a reorder and a deletion
+// all arrive as a list whose masked entries must resolve to the credential of
+// the entry the admin was editing — and to no other.
+func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
+	const (
+		firstURL     = "https://jira.example.com/mcp"
+		secondURL    = "https://confluence.example.com/mcp"
+		thirdURL     = "https://github.example.com/mcp"
+		firstSecret  = "jira-client-secret"        // #nosec G101 -- test fixture value
+		secondSecret = "confluence-client-secret"  // #nosec G101 -- test fixture value
+		firstHeader  = "Bearer jira-header-token"  // #nosec G101 -- test fixture value
+		secondHeader = "Bearer conf-header-token"  // #nosec G101 -- test fixture value
+		headerKey    = "Authorization"
+		renamedKey   = "X-Api-Key"
+	)
+
+	// storedServers is the persisted list every case starts from.
+	storedServers := func() []MCPServerConfig {
+		return []MCPServerConfig{
+			{
+				Name:         "Jira",
+				BaseURL:      firstURL,
+				ClientSecret: firstSecret,
+				Headers:      map[string]string{headerKey: firstHeader},
+			},
+			{
+				Name:         "Confluence",
+				BaseURL:      secondURL,
+				ClientSecret: secondSecret,
+				Headers:      map[string]string{headerKey: secondHeader},
+			},
+		}
+	}
+
+	// masked is what the console holds for a server whose credentials the admin
+	// did not touch: the read response, with identifiers still readable.
+	masked := func(name, baseURL string, headerKeys ...string) MCPServerConfig {
+		server := MCPServerConfig{
+			Name:         name,
+			BaseURL:      baseURL,
+			ClientSecret: SecretPlaceholder,
+			Headers:      map[string]string{},
+		}
+		for _, key := range headerKeys {
+			server.Headers[key] = SecretPlaceholder
+		}
+		return server
+	}
+
+	tests := []struct {
+		name     string
+		incoming []MCPServerConfig
+		// want is the credential expected for each incoming entry, by position.
+		wantClientSecrets []string
+		wantHeaders       []map[string]string
+	}{
+		{
+			name:              "renamed server keeps its credentials",
+			incoming:          []MCPServerConfig{masked("Atlassian Jira", firstURL, headerKey), masked("Confluence", secondURL, headerKey)},
+			wantClientSecrets: []string{firstSecret, secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}},
+		},
+		{
+			name:              "renamed header key keeps its value",
+			incoming:          []MCPServerConfig{masked("Jira", firstURL, renamedKey), masked("Confluence", secondURL, headerKey)},
+			wantClientSecrets: []string{firstSecret, secondSecret},
+			wantHeaders:       []map[string]string{{renamedKey: firstHeader}, {headerKey: secondHeader}},
+		},
+		{
+			name:              "server pointed at a new url keeps its credentials",
+			incoming:          []MCPServerConfig{masked("Jira", thirdURL, headerKey), masked("Confluence", secondURL, headerKey)},
+			wantClientSecrets: []string{firstSecret, secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}},
+		},
+		{
+			name:              "reordered servers keep their own credentials",
+			incoming:          []MCPServerConfig{masked("Confluence", secondURL, headerKey), masked("Jira", firstURL, headerKey)},
+			wantClientSecrets: []string{secondSecret, firstSecret},
+			wantHeaders:       []map[string]string{{headerKey: secondHeader}, {headerKey: firstHeader}},
+		},
+		{
+			name:              "deleted server does not hand its credentials to the survivor",
+			incoming:          []MCPServerConfig{masked("Confluence", secondURL, headerKey)},
+			wantClientSecrets: []string{secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: secondHeader}},
+		},
+		{
+			name:              "added server starts without credentials",
+			incoming:          []MCPServerConfig{masked("Jira", firstURL, headerKey), masked("Confluence", secondURL, headerKey), masked("GitHub", thirdURL, headerKey)},
+			wantClientSecrets: []string{firstSecret, secondSecret, ""},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: secondHeader}, {headerKey: ""}},
+		},
+		{
+			name:              "second server sharing a name resolves nothing",
+			incoming:          []MCPServerConfig{masked("Jira", firstURL, headerKey), masked("Jira", thirdURL, headerKey)},
+			wantClientSecrets: []string{firstSecret, ""},
+			wantHeaders:       []map[string]string{{headerKey: firstHeader}, {headerKey: ""}},
+		},
+		{
+			name:              "server renamed and pointed elsewhere at once resolves nothing",
+			incoming:          []MCPServerConfig{masked("Something Else", thirdURL, headerKey), masked("Confluence", secondURL, headerKey)},
+			wantClientSecrets: []string{"", secondSecret},
+			wantHeaders:       []map[string]string{{headerKey: ""}, {headerKey: secondHeader}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stored := &Config{MCP: MCPConfig{Servers: storedServers()}}
+			incoming := Config{MCP: MCPConfig{Servers: tt.incoming}}
+
+			restored := RestoreSecrets(incoming, stored)
+
+			require.Len(t, restored.MCP.Servers, len(tt.incoming))
+			for i := range restored.MCP.Servers {
+				server := restored.MCP.Servers[i]
+				assert.Equal(t, tt.wantClientSecrets[i], server.ClientSecret,
+					"client secret of servers[%d] (%q)", i, server.Name)
+				for key, want := range tt.wantHeaders[i] {
+					assert.Equal(t, want, server.Headers[key],
+						"header %q of servers[%d] (%q)", key, i, server.Name)
+				}
+			}
+		})
+	}
+}
