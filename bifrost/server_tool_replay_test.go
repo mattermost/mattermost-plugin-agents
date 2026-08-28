@@ -4,6 +4,7 @@
 package bifrost
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -146,6 +147,37 @@ func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	assert.Contains(t, texts[2], "for attachment to the reply")
 	assert.Equal(t, "Here is the chart.", texts[3])
 	assert.Equal(t, "now make it blue", texts[4])
+}
+
+// A turn with several sandbox runs must carry the replay banner once, not per
+// segment: repeating it wastes tokens and makes its "this turn" claim wrong.
+func TestServerToolActivityReplayHeaderEmittedOncePerTurn(t *testing.T) {
+	post := llm.Post{
+		Role: llm.PostRoleBot,
+		ServerTools: []llm.ServerToolUse{
+			{ID: "s1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, Command: "python one.py"},
+			{ID: "s2", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, Command: "python two.py"},
+		},
+		AssistantSegments: []llm.TurnSegment{
+			{Kind: llm.TurnSegmentText, Text: "First run. "},
+			{Kind: llm.TurnSegmentServerTool, ServerToolID: "s1"},
+			{Kind: llm.TurnSegmentText, Text: "Second run. "},
+			{Kind: llm.TurnSegmentServerTool, ServerToolID: "s2"},
+			{Kind: llm.TurnSegmentText, Text: "Done."},
+		},
+	}
+
+	var replay strings.Builder
+	for _, msg := range assistantReplayMessages(post) {
+		require.NotNil(t, msg.Content)
+		require.NotNil(t, msg.Content.ContentStr)
+		replay.WriteString(*msg.Content.ContentStr)
+		replay.WriteString("\n")
+	}
+
+	assert.Equal(t, 1, strings.Count(replay.String(), serverToolReplayHeader))
+	assert.Contains(t, replay.String(), "python one.py")
+	assert.Contains(t, replay.String(), "python two.py")
 }
 
 func TestServerToolActivityNotReplayedWhenAbsent(t *testing.T) {

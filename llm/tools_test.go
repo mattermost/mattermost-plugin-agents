@@ -288,6 +288,33 @@ func TestToolStoreLookupTool(t *testing.T) {
 	}
 }
 
+func TestIsResolvedToolCallBatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses []ToolCallStatus
+		want     bool
+	}{
+		{name: "empty batch is not resolved", statuses: nil, want: false},
+		{name: "all terminal statuses", statuses: []ToolCallStatus{ToolCallStatusSuccess, ToolCallStatusError, ToolCallStatusAutoApproved}, want: true},
+		{name: "pending call keeps the batch unresolved", statuses: []ToolCallStatus{ToolCallStatusSuccess, ToolCallStatusPending}, want: false},
+		{name: "accepted call keeps the batch unresolved", statuses: []ToolCallStatus{ToolCallStatusAccepted}, want: false},
+		// Rejected must not count as resolved: streaming keeps the calls on a
+		// rejected-approval turn, and the annotation decorator must reset its
+		// builder at exactly the same boundaries.
+		{name: "rejected call keeps the batch unresolved", statuses: []ToolCallStatus{ToolCallStatusSuccess, ToolCallStatusRejected}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			toolCalls := make([]ToolCall, len(tt.statuses))
+			for i, status := range tt.statuses {
+				toolCalls[i] = ToolCall{ID: "id", Status: status}
+			}
+			assert.Equal(t, tt.want, IsResolvedToolCallBatch(toolCalls))
+		})
+	}
+}
+
 func TestToolCall_SanitizeArguments(t *testing.T) {
 	tests := []struct {
 		name     string

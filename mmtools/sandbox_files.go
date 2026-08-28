@@ -8,9 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
-	"strings"
-	"unicode/utf8"
 
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -18,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost/server/public/model"
 )
 
 const sandboxOutputFileAttachmentOperation = "attach_sandbox_output_file"
@@ -37,44 +33,24 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 		return
 	}
 
-	if err := sandboxAttachmentAllowed(client, llmCtx); err != nil {
+	if err := uploadPolicyAllowed(client, llmCtx); err != nil {
 		client.LogWarn("Not attaching code execution output files", "reason", err.Error(), "files", len(files))
 		return
 	}
 
-	cfg := client.GetConfig()
-	sizeLimit := createFileContentLimit(cfg)
+	sizeLimit := createFileContentLimit(client.GetConfig())
+	slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn)
 
 	for _, fileRef := range files {
-		slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn)
 		if len(llmCtx.CreatedFilesList()) >= slots {
 			client.LogWarn("Dropping code execution output files beyond the response attachment cap",
-				"cap", maxCreatedFilesPerTurn)
+				"cap", slots)
 			return
 		}
 		if err := attachOneSandboxFile(ctx, client, downloader, llmCtx, fileRef, sizeLimit); err != nil {
 			client.LogError("Failed to attach a code execution output file", "error", err.Error(), "provider_file_id", fileRef.ID)
 		}
 	}
-}
-
-// sandboxAttachmentAllowed enforces the same policy as CreateFile. UploadFile
-// bypasses api4 per-user checks, so this must stay.
-func sandboxAttachmentAllowed(client mmapi.Client, llmCtx *llm.Context) error {
-	if llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Id == "" {
-		return errors.New("no conversation channel to hold the files")
-	}
-	if llmCtx.RequestingUser == nil || llmCtx.RequestingUser.Id == "" {
-		return errors.New("no requesting user")
-	}
-	cfg := client.GetConfig()
-	if cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
-		return errors.New("file attachments are disabled by server config")
-	}
-	if !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
-		return errors.New("requesting user lacks upload permission in the channel")
-	}
-	return nil
 }
 
 func attachOneSandboxFile(
@@ -92,7 +68,12 @@ func attachOneSandboxFile(
 	)
 	downloadCtx, span := telemetry.Tracer().Start(ctx, "download sandbox output file", spanAttributes)
 	defer span.End()
-	file, err := downloader.DownloadProviderFile(downloadCtx, fileRef)
+	rejected := func(err error) error {
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, "sandbox file rejected")
+		return err
+	}
+	file, err := downloader.DownloadProviderFile(downloadCtx, fileRef, sizeLimit)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, "download failed")
@@ -100,15 +81,17 @@ func attachOneSandboxFile(
 	}
 
 	if len(file.Content) == 0 {
-		return errors.New("sandbox file is empty")
+		return rejected(errors.New("sandbox file is empty"))
 	}
+	// The downloader already gates on the metadata size; re-check the actual
+	// content in case the provider misreported it.
 	if int64(len(file.Content)) > sizeLimit {
-		return fmt.Errorf("sandbox file is %d bytes, over the %d-byte limit", len(file.Content), sizeLimit)
+		return rejected(fmt.Errorf("sandbox file is %d bytes, over the %d-byte limit", len(file.Content), sizeLimit))
 	}
 
-	name, err := sandboxFileName(file.Name)
+	name, err := validateUploadFileName(file.Name)
 	if err != nil {
-		return err
+		return rejected(fmt.Errorf("provider reported an unusable file name: %w", err))
 	}
 
 	_, uploadSpan := telemetry.Tracer().Start(ctx, "upload sandbox output file", spanAttributes)
@@ -122,16 +105,4 @@ func attachOneSandboxFile(
 
 	llmCtx.AddCreatedFile(llm.CreatedFile{ID: info.Id, Name: info.Name})
 	return nil
-}
-
-// sandboxFileName sanitizes a model-influenced provider name so it cannot escape the upload.
-func sandboxFileName(providerName string) (string, error) {
-	name := filepath.Base(strings.TrimSpace(providerName))
-	if name == "" || name == "." || name == ".." || name == string(filepath.Separator) || strings.ContainsAny(name, `/\`) {
-		return "", fmt.Errorf("provider reported an unusable file name")
-	}
-	if utf8.RuneCountInString(name) > maxCreateFileNameLength {
-		return "", fmt.Errorf("provider file name is longer than %d characters", maxCreateFileNameLength)
-	}
-	return name, nil
 }

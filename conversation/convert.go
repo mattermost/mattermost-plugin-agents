@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -87,8 +86,7 @@ func BlocksToPost(
 			if block.ServerTool == nil || block.ServerTool.ID == "" {
 				continue
 			}
-			activity := *block.ServerTool
-			activity.FileIDs = slices.Clone(block.ServerTool.FileIDs)
+			activity := block.ServerTool.Clone()
 			post.ServerTools = append(post.ServerTools, activity)
 			post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
 				Kind:         llm.TurnSegmentServerTool,
@@ -276,8 +274,7 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 			})
 		}
 		for i := range post.ServerTools {
-			activity := post.ServerTools[i]
-			activity.FileIDs = slices.Clone(activity.FileIDs)
+			activity := post.ServerTools[i].Clone()
 			blocks = append(blocks, ContentBlock{
 				Type:       BlockTypeServerToolUse,
 				ServerTool: &activity,

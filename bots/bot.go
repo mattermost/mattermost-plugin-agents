@@ -67,9 +67,8 @@ func (b *Bot) WithConfig(cfg llm.BotConfig) *Bot {
 // provider can actually deliver it. Callers use this to suppress Mattermost
 // fallbacks; trusting persisted config alone would leave them with neither.
 func (b *Bot) hasNativeToolEnabled(name string) bool {
-	if !bifrost.SupportsNativeTools(b.service.Type) {
-		return false
-	}
+	// SupportedNativeToolsForServiceType is the single source of truth for
+	// which providers deliver native tools; it is empty for the rest.
 	if !slices.Contains(bifrost.SupportedNativeToolsForServiceType(b.service.Type), name) {
 		return false
 	}

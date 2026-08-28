@@ -425,7 +425,7 @@ func TestDownloadProviderFile(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			file, downloadErr := downloader.DownloadProviderFile(context.Background(), tt.ref)
+			file, downloadErr := downloader.DownloadProviderFile(context.Background(), tt.ref, 0)
 			if tt.wantErr {
 				require.Error(t, downloadErr)
 				return
@@ -434,6 +434,21 @@ func TestDownloadProviderFile(t *testing.T) {
 			tt.verify(t, file)
 		})
 	}
+
+	t.Run("file over maxBytes is rejected from metadata without a content fetch", func(t *testing.T) {
+		gotPath = ""
+		_, downloadErr := downloader.DownloadProviderFile(context.Background(),
+			llm.ProviderFileReference{ID: "file_011abc", ProviderRoute: string(schemas.Anthropic)}, int64(len(fileBytes)-1))
+		require.Error(t, downloadErr)
+		assert.Empty(t, gotPath, "the content endpoint must not be hit for an oversized file")
+	})
+
+	t.Run("file at maxBytes downloads", func(t *testing.T) {
+		file, downloadErr := downloader.DownloadProviderFile(context.Background(),
+			llm.ProviderFileReference{ID: "file_011abc", ProviderRoute: string(schemas.Anthropic)}, int64(len(fileBytes)))
+		require.NoError(t, downloadErr)
+		assert.Equal(t, fileBytes, file.Content)
+	})
 }
 
 func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
@@ -479,7 +494,7 @@ func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
 	file, err := llmClient.DownloadProviderFile(context.Background(), llm.ProviderFileReference{
 		ID:            "file_fallback",
 		ProviderRoute: string(schemas.Anthropic) + "::backup",
-	})
+	}, 0)
 	require.NoError(t, err)
 	assert.Equal(t, "fallback.txt", file.Name)
 	assert.Equal(t, []byte("fallback"), file.Content)
@@ -563,6 +578,60 @@ func TestCodeExecutionRequestCarriesFilesAPIBeta(t *testing.T) {
 					"code-execution requests must opt into the Files API beta or results carry no file ids")
 			} else {
 				assert.NotContains(t, beta, "files-api-2025-04-14")
+			}
+		})
+	}
+}
+
+// The beta opt-in must key off the registered file-download routes, not the
+// primary provider: an Anthropic fallback serves sandbox files too, and
+// without the header its results carry no file ids.
+func TestFilesAPIBetaAppliedForAnthropicFallback(t *testing.T) {
+	tests := []struct {
+		name      string
+		primary   schemas.ModelProvider
+		fallbacks []FallbackEntry
+		wantBeta  bool
+	}{
+		{
+			name:    "anthropic fallback behind an openai primary",
+			primary: schemas.OpenAI,
+			fallbacks: []FallbackEntry{{
+				ID:               "backup",
+				ProviderSettings: ProviderSettings{Provider: schemas.Anthropic, APIKey: "anthropic-key", DefaultModel: "claude-sonnet-4-6"},
+			}},
+			wantBeta: true,
+		},
+		{
+			name:     "no provider can serve files",
+			primary:  schemas.OpenAI,
+			wantBeta: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmClient, err := New(Config{
+				ProviderSettings: ProviderSettings{
+					Provider:         tt.primary,
+					APIKey:           "primary-key",
+					DefaultModel:     "primary-model",
+					StreamingTimeout: 10 * time.Second,
+				},
+				EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+				Fallbacks:          tt.fallbacks,
+			})
+			require.NoError(t, err)
+			defer llmClient.Shutdown()
+
+			bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+			llmClient.applyCompletionBetaHeaders(bifrostCtx)
+
+			headers, _ := bifrostCtx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
+			if tt.wantBeta {
+				assert.Contains(t, headers[anthropicBetaHeader], anthropicFilesAPIBeta)
+			} else {
+				assert.NotContains(t, headers[anthropicBetaHeader], anthropicFilesAPIBeta)
 			}
 		})
 	}

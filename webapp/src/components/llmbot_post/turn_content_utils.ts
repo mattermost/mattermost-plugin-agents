@@ -142,20 +142,6 @@ export function extractToolCallsForPost(
     return toolUseBlocks.map((block) => toolUseBlockToToolCall(block, resultMap));
 }
 
-/** Extract reasoning summary text and signature from thinking content blocks. */
-export function extractReasoningFromTurn(turn: Turn): {summary: string; signature: string} {
-    const thinkingBlocks = turn.content.filter(
-        (b: ContentBlock) => b.type === BlockTypeThinking,
-    );
-    if (thinkingBlocks.length === 0) {
-        return {summary: '', signature: ''};
-    }
-
-    const summary = thinkingBlocks.map((b) => b.text ?? '').join('\n');
-    const signature = thinkingBlocks[thinkingBlocks.length - 1]?.signature ?? '';
-    return {summary, signature};
-}
-
 /** Extract Annotation[] from annotation blocks and citations on text blocks. */
 export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
     const annotations: Annotation[] = [];
@@ -241,16 +227,6 @@ export interface Round {
 
     // Rendered before text: RoundView shows activity above the answer.
     serverTools: ServerToolUse[];
-}
-
-export function extractServerToolsFromTurn(turn: Turn): ServerToolUse[] {
-    const serverTools: ServerToolUse[] = [];
-    for (const block of turn.content) {
-        if (block.type === BlockTypeServerToolUse && block.server_tool) {
-            serverTools.push(block.server_tool);
-        }
-    }
-    return serverTools;
 }
 
 /**

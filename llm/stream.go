@@ -86,12 +86,19 @@ type ServerToolUse struct {
 	ProviderRoute string `json:"-"`
 }
 
+// Clone returns a copy whose FileIDs slice is independent of the original, so
+// presentation-side mutation cannot corrupt the canonical replay snapshot.
+func (s ServerToolUse) Clone() ServerToolUse {
+	s.FileIDs = slices.Clone(s.FileIDs)
+	return s
+}
+
 // CloneServerToolUses copies FileIDs so presentation sanitation cannot mutate
 // the canonical provider replay snapshot.
 func CloneServerToolUses(uses []ServerToolUse) []ServerToolUse {
 	cloned := slices.Clone(uses)
 	for i := range cloned {
-		cloned[i].FileIDs = slices.Clone(uses[i].FileIDs)
+		cloned[i] = cloned[i].Clone()
 	}
 	return cloned
 }

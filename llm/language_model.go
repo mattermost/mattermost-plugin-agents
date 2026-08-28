@@ -105,6 +105,8 @@ type ProviderFile struct {
 
 // ProviderFileDownloader serves provider-side files. Reach it through
 // ProviderServices.FileDownloader, never by asserting on LanguageModel.
+// A positive maxBytes rejects a file whose provider-reported metadata size
+// exceeds it before any content is fetched; 0 disables the gate.
 type ProviderFileDownloader interface {
-	DownloadProviderFile(ctx context.Context, ref ProviderFileReference) (ProviderFile, error)
+	DownloadProviderFile(ctx context.Context, ref ProviderFileReference, maxBytes int64) (ProviderFile, error)
 }

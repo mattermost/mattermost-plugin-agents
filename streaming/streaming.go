@@ -415,30 +415,6 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 	})
 }
 
-// isResolvedToolCallsEvent reports whether a ToolCalls event represents the
-// post-execution "resolved" broadcast (every call has a terminal status
-// assigned by toolrunner after execution) rather than the pre-execution
-// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
-// auto-run tools as AutoApproved (not Success) and errored ones as Error;
-// user-approved tools are later tagged Success by the approval flow. Anything
-// else — most commonly Pending — indicates the event hasn't been executed yet.
-func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
-	if len(toolCalls) == 0 {
-		return false
-	}
-	for _, tc := range toolCalls {
-		switch tc.Status {
-		case llm.ToolCallStatusSuccess,
-			llm.ToolCallStatusError,
-			llm.ToolCallStatusAutoApproved:
-			// terminal status after execution
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // redactToolCalls returns a copy of the tool calls with Arguments and Result
 // cleared so that non-requesters see tool names and status but not payloads.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
@@ -670,7 +646,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// at the resolved tool_call event. On pending,
 						// retain the calls so a rejected-approval turn
 						// keeps them.
-						if isResolvedToolCallsEvent(toolCalls) {
+						if llm.IsResolvedToolCallBatch(toolCalls) {
 							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil

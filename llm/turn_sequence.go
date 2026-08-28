@@ -4,8 +4,8 @@
 package llm
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 	"strings"
 )
 
@@ -109,11 +109,11 @@ func (s *TurnSequence) RemoveTextRanges(original string, ranges []TextRange) boo
 	}
 
 	normalized := slices.Clone(ranges)
-	sort.Slice(normalized, func(i, j int) bool {
-		if normalized[i].Start == normalized[j].Start {
-			return normalized[i].End < normalized[j].End
+	slices.SortFunc(normalized, func(a, b TextRange) int {
+		if c := cmp.Compare(a.Start, b.Start); c != 0 {
+			return c
 		}
-		return normalized[i].Start < normalized[j].Start
+		return cmp.Compare(a.End, b.End)
 	})
 	for i := range normalized {
 		if normalized[i].Start < 0 || normalized[i].End < normalized[i].Start || normalized[i].End > len(original) {
@@ -180,12 +180,9 @@ func (s *TurnSequence) Text() string {
 
 // HasText reports whether any response text was recorded.
 func (s *TurnSequence) HasText() bool {
-	for _, segment := range s.segments {
-		if segment.Kind == TurnSegmentText && segment.Text != "" {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.segments, func(segment TurnSegment) bool {
+		return segment.Kind == TurnSegmentText && segment.Text != ""
+	})
 }
 
 func (s *TurnSequence) last() *TurnSegment {
@@ -196,10 +193,7 @@ func (s *TurnSequence) last() *TurnSegment {
 }
 
 func (s *TurnSequence) hasServerTool(id string) bool {
-	for _, segment := range s.segments {
-		if segment.Kind == TurnSegmentServerTool && segment.ServerToolID == id {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(s.segments, func(segment TurnSegment) bool {
+		return segment.Kind == TurnSegmentServerTool && segment.ServerToolID == id
+	})
 }

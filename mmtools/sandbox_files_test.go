@@ -18,14 +18,15 @@ import (
 )
 
 // fakeDownloader serves canned provider files, recording the ids requested in
-// the order they were asked for.
+// the order they were asked for. Like a real provider, it enforces maxBytes
+// from the file's metadata before serving content.
 type fakeDownloader struct {
 	files     map[string]llm.ProviderFile
 	err       error
 	requested []string
 }
 
-func (d *fakeDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
+func (d *fakeDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference, maxBytes int64) (llm.ProviderFile, error) {
 	d.requested = append(d.requested, ref.ID)
 	if d.err != nil {
 		return llm.ProviderFile{}, d.err
@@ -33,6 +34,9 @@ func (d *fakeDownloader) DownloadProviderFile(_ context.Context, ref llm.Provide
 	file, ok := d.files[ref.ID]
 	if !ok {
 		return llm.ProviderFile{}, errors.New("not found")
+	}
+	if maxBytes > 0 && int64(len(file.Content)) > maxBytes {
+		return llm.ProviderFile{}, errors.New("file is over the size limit")
 	}
 	return file, nil
 }

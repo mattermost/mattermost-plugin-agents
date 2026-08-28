@@ -5,7 +5,6 @@ package conversation
 
 import (
 	"encoding/json"
-	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -105,8 +104,7 @@ func SequenceBlocks(segments []llm.TurnSegment, serverTools []llm.ServerToolUse)
 			if !ok {
 				continue
 			}
-			activity := *use
-			activity.FileIDs = slices.Clone(use.FileIDs)
+			activity := use.Clone()
 			blocks = append(blocks, ContentBlock{
 				Type:       BlockTypeServerToolUse,
 				ServerTool: &activity,
@@ -140,7 +138,7 @@ func toolUseBlocks(
 		}
 
 		for i := range serverTools {
-			serverTool := serverTools[i]
+			serverTool := serverTools[i].Clone()
 			blocks = append(blocks, ContentBlock{
 				Type:       BlockTypeServerToolUse,
 				ServerTool: &serverTool,

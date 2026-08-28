@@ -26,7 +26,7 @@ type responseFilesDownloader struct {
 	requested []llm.ProviderFileReference
 }
 
-func (d *responseFilesDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
+func (d *responseFilesDownloader) DownloadProviderFile(_ context.Context, ref llm.ProviderFileReference, _ int64) (llm.ProviderFile, error) {
 	d.requested = append(d.requested, ref)
 	return llm.ProviderFile{Name: ref.ID + ".txt", Content: []byte("content")}, nil
 }

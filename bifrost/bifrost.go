@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -889,7 +890,11 @@ func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
 	if bifrostCtx == nil {
 		return
 	}
-	if b.provider != schemas.Anthropic || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
+	// Any registered file-download route may end up serving the request —
+	// Anthropic can be a fallback rather than the primary — so key the beta
+	// opt-in off the routes, mirroring DownloadProviderFile. Only providers
+	// needing the beta register a route; others ignore the extra header.
+	if len(b.providerFileDownloadRoutes) == 0 || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
 		return
 	}
 
@@ -916,7 +921,9 @@ func (b *LLM) ProviderServices() *llm.ProviderServices {
 // DownloadProviderFile fetches a provider-side file. The captured reference
 // selects the route so a fallback-created file uses that fallback's credentials.
 // Filename comes from the metadata endpoint; the content response has none.
-func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileReference) (llm.ProviderFile, error) {
+// A positive maxBytes rejects an oversized file from the metadata alone,
+// before its content is transferred.
+func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileReference, maxBytes int64) (llm.ProviderFile, error) {
 	providerRoute := b.provider
 	if ref.ProviderRoute != "" {
 		providerRoute = schemas.ModelProvider(ref.ProviderRoute)
@@ -938,10 +945,10 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 	}
 
 	if ref.ID == "" {
-		return fail(fmt.Errorf("file id is required"))
+		return fail(errors.New("file id is required"))
 	}
 	if !b.providerFileDownloadRoutes[providerRoute] {
-		return fail(fmt.Errorf("provider file route is not available"))
+		return fail(errors.New("provider file route is not available"))
 	}
 
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(downloadCtx, FileDownloadTimeout)
@@ -956,7 +963,10 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		return fail(err)
 	}
 	if meta == nil {
-		return fail(fmt.Errorf("bifrost file retrieve returned nil response"))
+		return fail(errors.New("bifrost file retrieve returned nil response"))
+	}
+	if maxBytes > 0 && meta.Bytes > maxBytes {
+		return fail(fmt.Errorf("provider file is %d bytes, over the %d-byte limit", meta.Bytes, maxBytes))
 	}
 
 	resp, bifrostErr := b.client.FileContentRequest(bifrostCtx, &schemas.BifrostFileContentRequest{
@@ -968,7 +978,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		return fail(err)
 	}
 	if resp == nil {
-		return fail(fmt.Errorf("bifrost file content returned nil response"))
+		return fail(errors.New("bifrost file content returned nil response"))
 	}
 
 	span.SetStatus(codes.Ok, "file download succeeded")
@@ -1897,6 +1907,7 @@ func assistantReplayMessages(post llm.Post) []schemas.ResponsesMessage {
 	}
 
 	messages := make([]schemas.ResponsesMessage, 0, len(post.AssistantSegments))
+	headerEmitted := false
 	for _, segment := range post.AssistantSegments {
 		switch segment.Kind {
 		case llm.TurnSegmentText:
@@ -1908,9 +1919,17 @@ func assistantReplayMessages(post llm.Post) []schemas.ResponsesMessage {
 			if !ok {
 				continue
 			}
-			if record := serverToolActivityRecord([]llm.ServerToolUse{use}); record != "" {
-				messages = append(messages, newTextMessage(record))
+			line := serverToolActivityLine(&use)
+			if line == "" {
+				continue
 			}
+			// The header describes the whole turn, so it prefixes only the
+			// first activity record instead of repeating per segment.
+			if !headerEmitted {
+				headerEmitted = true
+				line = serverToolReplayHeader + "\n" + line
+			}
+			messages = append(messages, newTextMessage(line))
 		}
 	}
 	return messages

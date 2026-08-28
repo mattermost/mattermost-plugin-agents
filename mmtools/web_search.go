@@ -792,20 +792,6 @@ func FlattenWebSearchResults(values []WebSearchContextValue) []WebSearchResult {
 	return flat
 }
 
-func resolvedToolCallBatch(toolCalls []llm.ToolCall) bool {
-	if len(toolCalls) == 0 {
-		return false
-	}
-	for _, toolCall := range toolCalls {
-		switch toolCall.Status {
-		case llm.ToolCallStatusSuccess, llm.ToolCallStatusError, llm.ToolCallStatusAutoApproved, llm.ToolCallStatusRejected:
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // DecorateStreamWithAnnotations attaches annotation events based on search results to the provided stream.
 func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []WebSearchContextValue, logger WebSearchLog) *llm.TextStreamResult {
 	if result == nil || len(searchData) == 0 {
@@ -838,7 +824,7 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 				// A resolved client-tool event closes the preceding round. The
 				// streaming accumulator resets at the same boundary, so citation
 				// cleanup at final End must target only the current round's text.
-				if toolCalls, ok := event.Value.([]llm.ToolCall); ok && resolvedToolCallBatch(toolCalls) {
+				if toolCalls, ok := event.Value.([]llm.ToolCall); ok && llm.IsResolvedToolCallBatch(toolCalls) {
 					builder.Reset()
 				}
 				output <- event

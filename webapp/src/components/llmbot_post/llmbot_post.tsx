@@ -153,9 +153,16 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Snapshots are cumulative; assignedActivityIds is global, roundActivityIds is the current round.
     const assignedActivityIds = useRef<Set<string>>(new Set());
     const roundActivityIds = useRef<Set<string>>(new Set());
+
+    // The `next` payload is cumulative since the server's last builder reset (a
+    // resolved tool_call), NOT since the last live round split. Track how much
+    // of it is already frozen into liveRounds so only the remainder renders.
+    const frozenTextLenRef = useRef(0);
+
     const resetActivityTracking = () => {
         assignedActivityIds.current = new Set();
         roundActivityIds.current = new Set();
+        frozenTextLenRef.current = 0;
     };
 
     // Sync message from post.message changes (e.g. after post update)
@@ -238,9 +245,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setProgressPhase(null);
                 setGenerating(true);
 
-                // RoundView renders reasoning before activity; split if activity already exists.
+                // RoundView renders reasoning before activity or text, so split
+                // when either slot is already filled — the same rule
+                // splitTurnIntoRounds applies to persisted turns, keeping the
+                // live rendering from reflowing after the refetch.
                 const live = liveRef.current;
-                if (live.serverTools.length > 0) {
+                if (live.serverTools.length > 0 || live.message !== '') {
                     setLiveRounds((prev) => [
                         ...prev,
                         {
@@ -252,6 +262,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                             serverTools: live.serverTools,
                         },
                     ]);
+                    frozenTextLenRef.current += live.message.length;
                     setMessage('');
                     setToolCalls([]);
                     setReasoningSummary('');
@@ -353,6 +364,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                                 serverTools: live.serverTools,
                             },
                         ]);
+                        frozenTextLenRef.current += live.message.length;
                         setMessage('');
                         setReasoningSummary('');
                         setIsReasoningLoading(false);
@@ -363,6 +375,23 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     for (const use of fresh) {
                         assignedActivityIds.current.add(use.id);
                         roundActivityIds.current.add(use.id);
+                    }
+
+                    // The cumulative snapshot may carry newer status for
+                    // invocations frozen into earlier rounds; update them in
+                    // place so their spinners resolve without a refetch.
+                    const frozenById = new Map(
+                        parsedServerTools.
+                            filter((use) => use.id !== '' && assignedActivityIds.current.has(use.id) && !roundActivityIds.current.has(use.id)).
+                            map((use) => [use.id, use]),
+                    );
+                    if (frozenById.size > 0) {
+                        setLiveRounds((prev) => prev.map((round) => (
+                            round.serverTools.some((use) => frozenById.has(use.id)) ? {
+                                ...round,
+                                serverTools: round.serverTools.map((use) => frozenById.get(use.id) ?? use),
+                            } : round
+                        )));
                     }
 
                     setServerTools(parsedServerTools.filter((use) => roundActivityIds.current.has(use.id)));
@@ -378,7 +407,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setProgressPhase(null);
                 setGenerating(true);
                 setPrecontent(false);
-                setMessage(data.next);
+                setMessage(data.next.slice(frozenTextLenRef.current));
                 return;
             }
 
@@ -432,6 +461,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
             if (data.control === 'continue') {
                 reasoningSeenRef.current = false;
+                frozenTextLenRef.current = 0;
 
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
@@ -501,6 +531,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setToolCalls([]);
         setServerTools([]);
         setLiveRounds([]);
+        resetActivityTracking();
         regeneratingRef.current = true;
         setRegenerating(true);
         doRegenerate(props.post.id);

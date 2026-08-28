@@ -245,6 +245,32 @@ const (
 	ToolCallStatusAutoApproved
 )
 
+// IsResolvedToolCallBatch reports whether a ToolCalls event represents the
+// post-execution "resolved" broadcast (every call has a terminal status
+// assigned by toolrunner after execution) rather than the pre-execution
+// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
+// auto-run tools as AutoApproved (not Success) and errored ones as Error;
+// user-approved tools are later tagged Success by the approval flow. Anything
+// else — most commonly Pending, but also Rejected — indicates the batch has
+// not been executed. Streaming persistence and the annotation decorator both
+// reset per-round state at this boundary, so they must share this predicate.
+func IsResolvedToolCallBatch(toolCalls []ToolCall) bool {
+	if len(toolCalls) == 0 {
+		return false
+	}
+	for _, tc := range toolCalls {
+		switch tc.Status {
+		case ToolCallStatusSuccess,
+			ToolCallStatusError,
+			ToolCallStatusAutoApproved:
+			// terminal status after execution
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
 	ID          string          `json:"id"`
