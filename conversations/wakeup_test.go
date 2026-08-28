@@ -52,6 +52,7 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	mmClient.On("GetUser", "user-id").Return(user, nil).Once()
 	mmClient.On("GetChannel", "dm-channel").Return(channel, nil).Once()
 	mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
+	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
