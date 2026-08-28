@@ -495,6 +495,7 @@
   "nkLLHbC2": "Let the agent run code in Anthropic's managed sandbox. Enabling this also lets web search and web fetch filter results in the sandbox. Conversation content may be processed and retained in the sandbox; see Anthropic's code execution tool documentation for details and pricing.",
   "nmpevlUA": "Discard",
   "nmtfDhMS": "Embedding Search",
+  "nnWwrIoe": "Saved credentials do not carry over to a different URL. Re-enter them before saving.",
   "nscvoEh1": "MCP Configuration",
   "o9y8/n3P": "Refreshing...",
   "oKysdn0r": "Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.",
