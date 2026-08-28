@@ -169,6 +169,11 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         vertexProjectID: props.service.vertexProjectID || '',
                         vertexProjectNumber: props.service.vertexProjectNumber || '',
                         vertexAuthCredentials: props.service.vertexAuthCredentials || '',
+
+                        // Once the service is saved its credentials are read
+                        // server-side; a service still being entered sends them
+                        // inline above.
+                        serviceID: props.service.id,
                     },
                 );
                 setAvailableModels(data);
@@ -181,7 +186,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
+    }, [type, props.service.id, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {

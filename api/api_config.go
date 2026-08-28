@@ -56,7 +56,9 @@ func (a *API) handleGetConfig(c *gin.Context) {
 
 	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
 	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	// Credentials are masked in the response; the admin console sends the mask back unchanged
+	// for the ones it does not edit.
+	c.JSON(http.StatusOK, config.RedactSecrets(normalizeAdminConfig(*cfg.Clone())))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
@@ -71,14 +73,21 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	cfg = normalizeAdminConfig(cfg)
 
+	// A masked credential means "keep the one already stored"; every other value
+	// is what the admin typed, including an empty one that clears the credential.
+	// A failed read of the stored config must not block the save, so masks then
+	// resolve to empty rather than being persisted verbatim.
+	prev, prevErr := a.configStore.GetConfig()
+	if prevErr != nil {
+		prev = nil
+	}
+	cfg = config.RestoreSecrets(cfg, prev)
+
 	// Audit which top-level config sections change — never their values,
-	// since services/webSearch/mcp carry credentials. Best effort: a failed
-	// read of the prior config must not block the save, so the record then
-	// simply omits changed_keys.
-	if rec := auditRec(c); rec != nil {
-		if prev, err := a.configStore.GetConfig(); err == nil {
-			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
-		}
+	// since services/webSearch/mcp carry credentials. Best effort: without the
+	// prior config the record simply omits changed_keys.
+	if rec := auditRec(c); rec != nil && prevErr == nil {
+		audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
 	}
 
 	if err := a.configStore.SaveConfig(cfg); err != nil {

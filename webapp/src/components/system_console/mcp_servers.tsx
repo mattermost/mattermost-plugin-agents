@@ -274,6 +274,7 @@ const MCPServer = ({
                                 onChange={(e) => updateHeader(key, e.target.value, value)}
                             />
                             <HeaderInput
+                                type='password'
                                 placeholder={intl.formatMessage({defaultMessage: 'Value'})}
                                 value={value}
                                 onChange={(e) => updateHeader(key, key, e.target.value)}

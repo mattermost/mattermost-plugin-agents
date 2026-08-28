@@ -624,6 +624,11 @@ type FetchModelsRequest struct {
 	APIURL      string `json:"apiURL"`
 	OrgID       string `json:"orgID"`
 
+	// ServiceID names an already saved service whose credentials are read from
+	// the stored configuration. A service the admin is still entering has no
+	// stored counterpart and supplies its credentials in this request instead.
+	ServiceID string `json:"serviceID"`
+
 	// Region applies to providers that require it for model listing (Vertex AI).
 	Region string `json:"region"`
 
@@ -631,6 +636,25 @@ type FetchModelsRequest struct {
 	VertexProjectID       string `json:"vertexProjectID"`
 	VertexProjectNumber   string `json:"vertexProjectNumber"`
 	VertexAuthCredentials string `json:"vertexAuthCredentials"`
+}
+
+// storedServiceByID returns the saved service with the given ID, or nil when the
+// configuration holds no such service.
+func (a *API) storedServiceByID(id string) (*llm.ServiceConfig, error) {
+	cfg, err := a.configStore.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config: %w", err)
+	}
+	if cfg == nil {
+		return nil, nil
+	}
+
+	service, ok := cfg.GetServiceByID(id)
+	if !ok {
+		return nil, nil
+	}
+
+	return &service, nil
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -642,6 +666,28 @@ func (a *API) handleFetchModels(c *gin.Context) {
 
 	if req.ServiceType == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serviceType is required"))
+		return
+	}
+
+	if req.ServiceID != "" {
+		stored, err := a.storedServiceByID(req.ServiceID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+		if stored != nil {
+			if req.APIKey == "" || config.IsSecretPlaceholder(req.APIKey) {
+				req.APIKey = stored.APIKey
+			}
+			if req.VertexAuthCredentials == "" || config.IsSecretPlaceholder(req.VertexAuthCredentials) {
+				req.VertexAuthCredentials = stored.VertexAuthCredentials
+			}
+		}
+	}
+
+	// A mask is not a credential: reject it rather than sending it to a provider.
+	if config.IsSecretPlaceholder(req.APIKey) || config.IsSecretPlaceholder(req.VertexAuthCredentials) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("credentials must be supplied as a value or referenced with the serviceID of a saved service"))
 		return
 	}
 
