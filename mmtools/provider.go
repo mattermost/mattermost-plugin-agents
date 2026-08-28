@@ -18,8 +18,9 @@ type ToolProvider interface {
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
 type MMToolProvider struct {
-	pluginAPI mmapi.Client
-	webSearch WebSearchService
+	pluginAPI     mmapi.Client
+	webSearch     WebSearchService
+	wakeScheduler *WakeScheduler
 }
 
 // NewMMToolProvider creates a new tool provider
@@ -28,6 +29,15 @@ func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMTo
 		pluginAPI: pluginAPI,
 		webSearch: webSearch,
 	}
+}
+
+// SetWakeScheduler installs the scheduler used by wait_for_async_work.
+// Called after conversations are wired because the wake handler resumes them.
+func (p *MMToolProvider) SetWakeScheduler(scheduler *WakeScheduler) {
+	if p == nil {
+		return
+	}
+	p.wakeScheduler = scheduler
 }
 
 // GetTools returns all available tools. Tool execution is restricted at runtime via
@@ -59,6 +69,12 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {
 		builtInTools = append(builtInTools, NewAskUserQuestionTool())
+	}
+
+	// Same catalog gate as CreateFile: only conversation flows that stream a
+	// response post can later resume onto that post.
+	if p.wakeScheduler != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported {
+		builtInTools = append(builtInTools, NewWaitForAsyncWorkTool(p.wakeScheduler))
 	}
 
 	return builtInTools

@@ -365,6 +365,7 @@ func (p *Plugin) OnActivate() error {
 		mmClient,
 		webSearchService,
 	)
+	wakeScheduler := mmtools.NewWakeScheduler(mmtools.NewPluginWakeStore(mmClient, &pluginAPI.KV), mmClient, mmtools.WakeSchedulerOptions{})
 
 	// Build redirect URI
 	siteURL := pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
@@ -451,6 +452,12 @@ func (p *Plugin) OnActivate() error {
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
+
+	wakeScheduler.SetOnWake(conversationsService.ResumeConversation)
+	toolProvider.SetWakeScheduler(wakeScheduler)
+	if sweepErr := wakeScheduler.Sweep(); sweepErr != nil {
+		pluginAPI.Log.Error("Failed to restore wait_for_async_work timers", "error", sweepErr)
+	}
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers

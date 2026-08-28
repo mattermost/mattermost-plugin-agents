@@ -43,10 +43,11 @@ type Tool struct {
 	UserInteraction string
 
 	// AutoExecute marks a built-in tool that runs without user approval, like
-	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
-	// effect is scoped to the assistant's own response (e.g. CreateFile
-	// attaching a file to the reply post). Only honored for tools with an
-	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose side
+	// effect is scoped to this assistant's own response or conversation
+	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
+	// scheduling a later resume). Only honored for tools with an empty
+	// ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
 
 	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.

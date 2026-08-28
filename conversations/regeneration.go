@@ -257,6 +257,7 @@ func (c *Conversations) regenerateViaConversation(
 		c.contextBuilder.WithLLMContextInteractive(),
 		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
+	bindConversationResume(llmContext, conv.ID, post.Id)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 	toolsDisabled := !isDM
