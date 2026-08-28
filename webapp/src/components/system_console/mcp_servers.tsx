@@ -127,6 +127,11 @@ const MCPServer = ({
     // Base URL the credentials currently in the fields belong to.
     const credentialBaseURLRef = useRef<string>(serverConfig.baseURL?.trim() ?? '');
 
+    // handleURLBlur awaits getVettedToolSeed; keep the latest props so a late
+    // response cannot overwrite edits made while that request was in flight.
+    const latestConfigRef = useRef(config);
+    latestConfigRef.current = config;
+
     const updateServerURL = (baseURL: string) => {
         onChange(serverIndex, {
             ...config,
@@ -151,6 +156,10 @@ const MCPServer = ({
                 baseURL,
             });
         }
+        latestConfigRef.current = {
+            ...current,
+            baseURL,
+        };
 
         (async () => {
             if (trimmed === lastSeededBaseURLRef.current) {
@@ -167,10 +176,13 @@ const MCPServer = ({
             } catch {
                 return;
             }
+            const latest = latestConfigRef.current;
+            if (latest.baseURL.trim() !== trimmed) {
+                return;
+            }
             lastSeededBaseURLRef.current = trimmed;
             onChange(serverIndex, {
-                ...current,
-                baseURL,
+                ...latest,
                 tool_configs: toolConfigs,
             });
         })().catch(() => null);

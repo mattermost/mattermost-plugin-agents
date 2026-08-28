@@ -52,7 +52,10 @@ import {SECRET_PLACEHOLDER} from './plugin_config_types';
 /* eslint-enable import/first, import/order */
 
 const mockUseIsBasicsLicensed = useIsBasicsLicensed as jest.Mock;
-const {getMCPTools: mockGetMCPTools} = jest.requireMock('../../client') as {getMCPTools: jest.Mock};
+const {getMCPTools: mockGetMCPTools, getVettedToolSeed: mockGetVettedToolSeed} = jest.requireMock('../../client') as {
+    getMCPTools: jest.Mock;
+    getVettedToolSeed: jest.Mock;
+};
 
 function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
     return {
@@ -284,5 +287,25 @@ describe('MCPServers credentials when the server URL changes', () => {
         await leaveURLField();
 
         expect(screen.getByText(CLEARED_NOTE)).not.toBeNull();
+    });
+
+    test('a credential typed while the tool seed is in flight is kept', async () => {
+        let resolveSeed: (value: unknown[]) => void = () => undefined;
+        mockGetVettedToolSeed.mockReturnValue(new Promise((resolve) => {
+            resolveSeed = resolve;
+        }));
+
+        const {server} = renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
+
+        typeURL(MOVED_URL);
+        await leaveURLField();
+        fireEvent.change(screen.getByPlaceholderText('Client Secret'), {target: {value: 'typed-while-seeding'}});
+
+        await act(async () => {
+            resolveSeed([]);
+        });
+
+        expect(server().clientSecret).toBe('typed-while-seeding');
+        expect(server().baseURL).toBe(MOVED_URL);
     });
 });
