@@ -105,14 +105,13 @@ func attachOneSandboxFile(
 		telemetry.UserID.String(llmCtx.RequestingUser.Id),
 	)
 	downloadCtx, span := telemetry.Tracer().Start(ctx, "download sandbox output file", spanAttributes)
+	defer span.End()
 	file, err := downloader.DownloadProviderFile(downloadCtx, fileRef)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(otelcodes.Error, "download failed")
-		span.End()
 		return fmt.Errorf("download failed: %w", err)
 	}
-	span.End()
 
 	if len(file.Content) == 0 {
 		return errors.New("sandbox file is empty")
@@ -127,14 +126,13 @@ func attachOneSandboxFile(
 	}
 
 	_, uploadSpan := telemetry.Tracer().Start(ctx, "upload sandbox output file", spanAttributes)
+	defer uploadSpan.End()
 	info, err := client.UploadFile(bytes.NewReader(file.Content), name, llmCtx.Channel.Id)
 	if err != nil {
 		uploadSpan.RecordError(err)
 		uploadSpan.SetStatus(otelcodes.Error, "upload failed")
-		uploadSpan.End()
 		return fmt.Errorf("upload failed: %w", err)
 	}
-	uploadSpan.End()
 
 	llmCtx.AddCreatedFile(llm.CreatedFile{ID: info.Id, Name: info.Name})
 	return nil

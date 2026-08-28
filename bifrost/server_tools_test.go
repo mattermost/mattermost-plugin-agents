@@ -372,7 +372,7 @@ func TestProviderServices(t *testing.T) {
 
 // TestDownloadProviderFile drives the real Bifrost client against a mock
 // Anthropic Files API and asserts the content, MIME type, auth header and
-// URL path — the contract AttachSandboxFile depends on.
+// URL path — the contract sandbox output attachment depends on.
 func TestDownloadProviderFile(t *testing.T) {
 	fileBytes := []byte("col1,col2\n1,2\n")
 	var gotPath, gotAPIKey string
@@ -531,8 +531,8 @@ func TestMapServerToolStatus(t *testing.T) {
 // TestCodeExecutionRequestCarriesFilesAPIBeta pins the header that makes sandbox
 // output files reachable at all: Anthropic reports the file ids a code-execution
 // result produced only when the completion request opts into the Files API beta.
-// Without it the results carry an empty file list, the observed-id allowlist stays
-// empty, and every AttachSandboxFile call is rejected as an unobserved id.
+// Without it the results carry an empty file list, so nothing is observed
+// on the request context and no sandbox output files are attached.
 func TestCodeExecutionRequestCarriesFilesAPIBeta(t *testing.T) {
 	tests := []struct {
 		name        string

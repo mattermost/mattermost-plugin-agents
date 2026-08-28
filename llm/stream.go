@@ -89,9 +89,6 @@ type ServerToolUse struct {
 	ProviderRoute string `json:"-"`
 }
 
-// Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
-// web-influenced string field, mirroring ToolCall.SanitizeArguments. Call it
-// before broadcasting or persisting the activity.
 // CloneServerToolUses makes a deep-enough copy for presentation transforms.
 // FileIDs is the only reference-valued field; cloning it ensures sanitation
 // cannot mutate the canonical provider replay snapshot.
@@ -103,6 +100,9 @@ func CloneServerToolUses(uses []ServerToolUse) []ServerToolUse {
 	return cloned
 }
 
+// Sanitize escapes Unicode bidi/spoofing characters in every LLM- or
+// web-influenced string field, mirroring ToolCall.SanitizeArguments. Call it
+// before broadcasting or persisting the activity.
 func (s *ServerToolUse) Sanitize() {
 	s.Query = SanitizeNonPrintableChars(s.Query)
 	s.URL = SanitizeNonPrintableChars(s.URL)
