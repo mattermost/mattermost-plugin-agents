@@ -129,7 +129,7 @@ const MCPServer = ({
 
     // handleURLBlur awaits getVettedToolSeed; keep the latest props so a late
     // response cannot overwrite edits made while that request was in flight.
-    const latestConfigRef = useRef(config);
+    const latestConfigRef = useRef<MCPServerConfig>(config);
     latestConfigRef.current = config;
 
     const updateServerURL = (baseURL: string) => {

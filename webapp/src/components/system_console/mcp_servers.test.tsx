@@ -290,7 +290,7 @@ describe('MCPServers credentials when the server URL changes', () => {
     });
 
     test('a credential typed while the tool seed is in flight is kept', async () => {
-        let resolveSeed = () => { /* assigned when the mock Promise is created */ };
+        let resolveSeed: (value: unknown[]) => void = () => { /* assigned when the mock Promise is created */ };
         mockGetVettedToolSeed.mockReturnValue(new Promise((resolve) => {
             resolveSeed = resolve;
         }));
