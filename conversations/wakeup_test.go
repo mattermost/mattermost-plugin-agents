@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -17,11 +18,16 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// plantedWakeReason is distinctive wake-job content: if it ever shows up
+// in a marshaled audit record, scheduler message content leaked into the trail.
+const plantedWakeReason = "SENTINEL_WAKE_REASON_MUST_NOT_APPEAR_IN_AUDIT"
 
 func TestWakeJobFromProps(t *testing.T) {
 	tests := []struct {
@@ -107,6 +113,7 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetConfig").Return(&model.Config{}).Maybe()
+	loggedAudit := captureLogAuditRec(mockAPI)
 
 	c := &Conversations{
 		mmClient:         mmClient,
@@ -116,9 +123,11 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 		streamingService: streamingService,
 	}
 
-	require.NoError(t, c.ResumeConversation(context.Background(), WakeJob{
+	rec := plugin.MakeAuditRecord("waitForAsyncWork", model.AuditStatusFail)
+	ctx := audit.WithRecord(context.Background(), rec)
+	require.NoError(t, c.ResumeConversation(ctx, WakeJob{
 		PostID: "bot-post-id",
-		Reason: "cursor cloud agent",
+		Reason: plantedWakeReason,
 	}))
 	streamingService.waitForStreaming()
 
@@ -139,10 +148,12 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	var blocks []conversation.ContentBlock
 	require.NoError(t, json.Unmarshal(turns[1].Content, &blocks))
 	require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
-	require.Equal(t, mmtools.WakeUserMessage("cursor cloud agent"), blocks[0].Text)
+	require.Equal(t, mmtools.WakeUserMessage(plantedWakeReason), blocks[0].Text)
 
 	require.Len(t, lm.requests, 1)
-	require.Contains(t, lm.requests[0].Posts[len(lm.requests[0].Posts)-1].Message, "cursor cloud agent")
+	require.Contains(t, lm.requests[0].Posts[len(lm.requests[0].Posts)-1].Message, plantedWakeReason)
+
+	assertAuditDoesNotContain(t, loggedAudit, rec, plantedWakeReason)
 }
 
 func TestResumeConversationFailsPlaceholderWhenConversationPropUpdateFails(t *testing.T) {
@@ -183,6 +194,7 @@ func TestResumeConversationFailsPlaceholderWhenConversationPropUpdateFails(t *te
 	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetConfig").Return(&model.Config{}).Maybe()
+	loggedAudit := captureLogAuditRec(mockAPI)
 
 	c := &Conversations{
 		mmClient:       mmClient,
@@ -191,13 +203,16 @@ func TestResumeConversationFailsPlaceholderWhenConversationPropUpdateFails(t *te
 		convService:    conversation.NewService(convStore, nil, nil, nil),
 	}
 
-	err = c.ResumeConversation(context.Background(), WakeJob{
+	rec := plugin.MakeAuditRecord("waitForAsyncWork", model.AuditStatusFail)
+	ctx := audit.WithRecord(context.Background(), rec)
+	err = c.ResumeConversation(ctx, WakeJob{
 		PostID: "bot-post-id",
-		Reason: "cursor cloud agent",
+		Reason: plantedWakeReason,
 	})
 	require.Error(t, err)
 	require.NotNil(t, wakePost)
 	require.Contains(t, wakePost.Message, "error occurred")
+	assertAuditDoesNotContain(t, loggedAudit, rec, plantedWakeReason)
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
@@ -263,4 +278,32 @@ func TestResumeConversationDrops(t *testing.T) {
 			require.Empty(t, turns)
 		})
 	}
+}
+
+// captureLogAuditRec is the conversations-package analog of
+// api.TestEnvironment.CaptureAuditRecords: this package has no HTTP
+// TestEnvironment, so we listen on the plugin API mock directly.
+func captureLogAuditRec(mockAPI *plugintest.API) *[]*model.AuditRecord {
+	records := &[]*model.AuditRecord{}
+	mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		if rec, ok := args.Get(0).(*model.AuditRecord); ok {
+			*records = append(*records, rec)
+		}
+	}).Maybe()
+	return records
+}
+
+func assertAuditDoesNotContain(t *testing.T, logged *[]*model.AuditRecord, rec *model.AuditRecord, sentinel string) {
+	t.Helper()
+	toCheck := make([]*model.AuditRecord, 0, 1+len(*logged))
+	if rec != nil {
+		toCheck = append(toCheck, rec)
+	}
+	toCheck = append(toCheck, *logged...)
+	for _, r := range toCheck {
+		raw, err := json.Marshal(r)
+		require.NoError(t, err)
+		require.NotContains(t, string(raw), sentinel)
+	}
+	require.Empty(t, *logged)
 }
