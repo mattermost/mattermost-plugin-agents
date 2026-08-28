@@ -399,10 +399,8 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 				server := restored.MCP.Servers[i]
 				assert.Equal(t, tt.wantClientSecrets[i], server.ClientSecret,
 					"client secret of servers[%d] (%q)", i, server.Name)
-				for key, want := range tt.wantHeaders[i] {
-					assert.Equal(t, want, server.Headers[key],
-						"header %q of servers[%d] (%q)", key, i, server.Name)
-				}
+				assert.Equal(t, tt.wantHeaders[i], server.Headers,
+					"headers of servers[%d] (%q)", i, server.Name)
 			}
 		})
 	}
