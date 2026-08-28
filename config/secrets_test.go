@@ -289,10 +289,10 @@ func TestRestoreSecretsFollowsMCPServerEdits(t *testing.T) {
 		firstURL     = "https://jira.example.com/mcp"
 		secondURL    = "https://confluence.example.com/mcp"
 		thirdURL     = "https://github.example.com/mcp"
-		firstSecret  = "jira-client-secret"        // #nosec G101 -- test fixture value
-		secondSecret = "confluence-client-secret"  // #nosec G101 -- test fixture value
-		firstHeader  = "Bearer jira-header-token"  // #nosec G101 -- test fixture value
-		secondHeader = "Bearer conf-header-token"  // #nosec G101 -- test fixture value
+		firstSecret  = "jira-client-secret"       // #nosec G101 -- test fixture value
+		secondSecret = "confluence-client-secret" // #nosec G101 -- test fixture value
+		firstHeader  = "Bearer jira-header-token" // #nosec G101 -- test fixture value
+		secondHeader = "Bearer conf-header-token" // #nosec G101 -- test fixture value
 		headerKey    = "Authorization"
 		renamedKey   = "X-Api-Key"
 	)
