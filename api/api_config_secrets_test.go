@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -505,4 +507,141 @@ func TestFetchModelsRejectsPlaceholderAsCredential(t *testing.T) {
 		"a masked credential with no service reference must be rejected")
 	assert.Zero(t, atomic.LoadInt32(&upstreamCalls),
 		"a masked credential must never be sent to a provider")
+}
+
+// recordingUpstream is a provider stand-in that answers a model listing and
+// records every request header it was given.
+type recordingUpstream struct {
+	server *httptest.Server
+
+	mu      sync.Mutex
+	headers []http.Header
+}
+
+func newRecordingUpstream() *recordingUpstream {
+	u := &recordingUpstream{}
+	u.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u.mu.Lock()
+		u.headers = append(u.headers, r.Header.Clone())
+		u.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4o","object":"model"}]}`))
+	}))
+	return u
+}
+
+func (u *recordingUpstream) apiURL() string {
+	return u.server.URL + "/v1"
+}
+
+// sawValue reports whether any recorded request carried value in a header.
+func (u *recordingUpstream) sawValue(value string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+
+	for _, header := range u.headers {
+		for _, values := range header {
+			for _, v := range values {
+				if strings.Contains(v, value) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint asserts that the
+// credentials of a saved service reach the endpoint that service is saved with,
+// and no other. The admin console names a saved service instead of repeating its
+// credentials, so the endpoint the request carries is what decides whether the
+// stored credentials apply to it.
+func TestFetchModelsSendsStoredCredentialOnlyToStoredEndpoint(t *testing.T) {
+	const storedServiceID = "svc-saved"
+
+	tests := []struct {
+		name        string
+		serviceType string
+		// storedURL is the endpoint held by the saved service. A provider reached
+		// at a fixed address holds none.
+		storedURL func(savedURL string) string
+		// requestURL is the endpoint carried by the request.
+		requestURL func(savedURL, otherURL string) string
+		// wantAtSaved is whether the saved endpoint must receive the credentials.
+		wantAtSaved bool
+	}{
+		{
+			name:        "request naming the endpoint the service is saved with",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			storedURL:   func(savedURL string) string { return savedURL },
+			requestURL:  func(savedURL, _ string) string { return savedURL },
+			wantAtSaved: true,
+		},
+		{
+			name:        "request naming an unrelated endpoint",
+			serviceType: llm.ServiceTypeOpenAICompatible,
+			storedURL:   func(savedURL string) string { return savedURL },
+			requestURL:  func(_, otherURL string) string { return otherURL },
+		},
+		{
+			name:        "request naming an endpoint for a service saved without one",
+			serviceType: llm.ServiceTypeOpenAI,
+			storedURL:   func(string) string { return "" },
+			requestURL:  func(_, otherURL string) string { return otherURL },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saved := newRecordingUpstream()
+			defer saved.server.Close()
+			other := newRecordingUpstream()
+			defer other.server.Close()
+
+			api, mockAPI, stores := setupAdminTestEnvironment(t)
+			defer mockAPI.AssertExpectations(t)
+
+			mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return().Maybe()
+			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			mockAPI.On("LogWarn", mock.Anything).Return().Maybe()
+			mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			mockAPI.On("LogInfo", mock.Anything).Return().Maybe()
+			mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+			stores.configStore.cfg = &config.Config{
+				Services: []llm.ServiceConfig{{
+					ID:     storedServiceID,
+					Type:   tt.serviceType,
+					APIKey: sentinelServiceAPIKey,
+					APIURL: tt.storedURL(saved.apiURL()),
+				}},
+			}
+
+			raw, err := json.Marshal(map[string]any{
+				"serviceType": tt.serviceType,
+				"serviceID":   storedServiceID,
+				"apiURL":      tt.requestURL(saved.apiURL(), other.apiURL()),
+			})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/models/fetch", bytes.NewReader(raw))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			assert.False(t, other.sawValue(sentinelServiceAPIKey),
+				"the credentials of a saved service must not be sent to an endpoint the service is not saved with")
+
+			if tt.wantAtSaved {
+				assert.Equal(t, http.StatusOK, recorder.Result().StatusCode,
+					"naming the endpoint a service is saved with must list its models")
+				assert.True(t, saved.sawValue(sentinelServiceAPIKey),
+					"the endpoint a service is saved with must receive that service's credentials")
+			}
+		})
+	}
 }

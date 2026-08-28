@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -638,6 +639,15 @@ type FetchModelsRequest struct {
 	VertexAuthCredentials string `json:"vertexAuthCredentials"`
 }
 
+// sameUpstreamEndpoint reports whether two provider API URLs address the same
+// endpoint. An empty URL means the provider's own fixed address.
+func sameUpstreamEndpoint(a, b string) bool {
+	normalize := func(u string) string {
+		return strings.TrimRight(strings.TrimSpace(u), "/")
+	}
+	return normalize(a) == normalize(b)
+}
+
 // storedServiceByID returns the saved service with the given ID, or nil when the
 // configuration holds no such service.
 func (a *API) storedServiceByID(id string) (*llm.ServiceConfig, error) {
@@ -675,7 +685,10 @@ func (a *API) handleFetchModels(c *gin.Context) {
 			c.AbortWithError(http.StatusInternalServerError, err)
 			return
 		}
-		if stored != nil {
+		// A saved service's credentials belong to the endpoint it is saved with,
+		// so they are only read for a request addressing that same endpoint. A
+		// request addressing anywhere else carries its own credentials or none.
+		if stored != nil && sameUpstreamEndpoint(req.APIURL, stored.APIURL) {
 			if req.APIKey == "" || config.IsSecretPlaceholder(req.APIKey) {
 				req.APIKey = stored.APIKey
 			}
