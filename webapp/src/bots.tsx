@@ -5,6 +5,8 @@ import {useEffect, useMemo, useCallback} from 'react';
 
 import {useDispatch, useSelector} from 'react-redux';
 
+import {Dispatch} from 'redux';
+
 import {GlobalState} from '@mattermost/types/store';
 import {PreferenceType} from '@mattermost/types/preferences';
 
@@ -63,6 +65,34 @@ export const resolveActiveBot = (bots: LLMBot[] | null, preferredId: string): LL
     return bots.find((bot) => bot.isDefault) ?? bots[0];
 };
 
+// Fetches the bot list and stores it (plus the related feature flags) in the
+// plugin's redux slice. Shared by useBotlist, the channel-settings loadValues,
+// and the initialize() warm-up. Returns the fetched bots, or null when the
+// response is falsy.
+export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | null> {
+    const response = await getAIBots();
+    if (!response) {
+        return null;
+    }
+
+    dispatch({
+        type: BotsHandler,
+        bots: response.bots,
+    });
+
+    dispatch({
+        type: 'SET_SEARCH_ENABLED',
+        searchEnabled: response.searchEnabled,
+    });
+
+    dispatch({
+        type: 'SET_ALLOW_UNSAFE_LINKS',
+        allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
+    });
+
+    return response.bots;
+}
+
 export const useBotlist = () => {
     const bots = useSelector<GlobalState, LLMBot[] | null>((state: any) => state['plugins-' + manifest.id].bots);
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
@@ -71,29 +101,8 @@ export const useBotlist = () => {
 
     // Load bots
     useEffect(() => {
-        const fetchBots = async () => {
-            const response = await getAIBots();
-            if (!response) {
-                return;
-            }
-
-            dispatch({
-                type: BotsHandler,
-                bots: response.bots,
-            });
-
-            dispatch({
-                type: 'SET_SEARCH_ENABLED',
-                searchEnabled: response.searchEnabled,
-            });
-
-            dispatch({
-                type: 'SET_ALLOW_UNSAFE_LINKS',
-                allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
-            });
-        };
         if (!bots) {
-            fetchBots();
+            fetchAndStoreBots(dispatch).catch(() => { /* best effort */ });
         }
     }, [currentUserId, bots, dispatch]);
 
@@ -118,6 +127,18 @@ export const useBotlist = () => {
     return {bots, activeBot, setActiveBot};
 };
 
+// Pure filter for the bots a user may use in a specific channel, keyed off
+// each bot's channel access level. Shared by useBotlistForChannel and the
+// channel-settings tab's synchronous shouldRender/normalization.
+export const filterBotsByChannelAccess = (bots: LLMBot[], channelId: string): LLMBot[] => {
+    return bots.filter((bot: LLMBot) => {
+        const channelIDs = bot.channelIDs ?? [];
+        return bot.channelAccessLevel === ChannelAccessLevel.All ||
+            (bot.channelAccessLevel === ChannelAccessLevel.Allow && channelIDs.includes(channelId)) ||
+            (bot.channelAccessLevel === ChannelAccessLevel.Block && !channelIDs.includes(channelId));
+    });
+};
+
 // useBotlistForChannel only shows bots the user is allowed to use in a specific channel. Also returns if bots were filtered for showing
 // a sorry no bots message.
 export const useBotlistForChannel = (channelId: string) => {
@@ -128,12 +149,7 @@ export const useBotlistForChannel = (channelId: string) => {
         if (!bots) {
             return [];
         }
-        return bots.filter((bot: LLMBot) => {
-            const channelIDs = bot.channelIDs ?? [];
-            return bot.channelAccessLevel === ChannelAccessLevel.All ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Allow && channelIDs.includes(channelId)) ||
-				(bot.channelAccessLevel === ChannelAccessLevel.Block && !channelIDs.includes(channelId));
-        });
+        return filterBotsByChannelAccess(bots, channelId);
     }, [bots, channelId]);
 
     // Within a channel the preferred/default bot may be disallowed, so resolve

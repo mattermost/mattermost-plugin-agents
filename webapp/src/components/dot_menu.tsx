@@ -105,8 +105,14 @@ const DotMenu = ({
                 toggleOpen();
             }}
             onKeyDown={(e: KeyboardEvent) => {
-                // Handle Enter and Space as clicking on the button
-                if (e.key === 'Space' || e.key === 'Enter') {
+                // Handle Enter and Space as clicking on the button. The
+                // spacebar's KeyboardEvent.key is ' ' (a single space).
+                if (e.key === ' ' || e.key === 'Enter') {
+                    if (e.key === ' ') {
+                        // Space would otherwise also scroll the page; Enter
+                        // needs no preventDefault on a div.
+                        e.preventDefault();
+                    }
                     e.stopPropagation();
                     toggleOpen();
                 }

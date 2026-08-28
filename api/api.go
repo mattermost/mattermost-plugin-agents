@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -114,6 +115,16 @@ type ConversationStore interface {
 	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
 }
 
+// ChannelAutoReplyStore provides read/write access to per-channel auto-reply settings.
+// Implemented by *autoreply.Service (Phase 1). Get reads the database so API reads are
+// read-your-writes across cluster nodes; Set/Delete validate, persist, and handle
+// cluster cache invalidation internally.
+type ChannelAutoReplyStore interface {
+	Get(channelID string) (*autoreply.Setting, error)
+	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Delete(channelID string) error
+}
+
 // ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
 type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
@@ -165,6 +176,7 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	autoReplyStore        ChannelAutoReplyStore
 	mcpRequestLimiter     *mcpRequestLimiter
 
 	// auditEvents maps gin handler names to audit event names for routes
@@ -211,6 +223,7 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	autoReplyStore ChannelAutoReplyStore,
 ) *API {
 	a := &API{
 		mcpRequestLimiter:     newMCPRequestLimiter(),
@@ -245,6 +258,7 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		autoReplyStore:        autoReplyStore,
 	}
 	a.auditEvents = buildAuditEventRegistry(a)
 	return a
@@ -374,12 +388,23 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
 
+	// Auto-reply settings are channel configuration, not a bot invocation:
+	// they must not depend on the default agent (restricted default agents and
+	// zero-agent installs must not block reading or clearing a setting), so
+	// they are registered outside the aiBotRequired group. The PUT handler and
+	// the autoreply service validate the selected bot themselves.
+	autoReplyRouter := router.Group("/channel/:channelid")
+	autoReplyRouter.Use(a.channelReadAuthorizationRequired)
+	autoReplyRouter.GET("/autoreply", a.handleGetChannelAutoReply)
+	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
+
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)
 	adminRouter.POST("/reindex", a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
 	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
+	adminRouter.POST("/reindex/rebuild-vector-index", a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)

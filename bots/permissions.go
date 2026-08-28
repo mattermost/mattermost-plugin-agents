@@ -28,6 +28,15 @@ func (m *MMBots) CheckUsageRestrictions(requestingUserID string, bot *Bot, chann
 	return nil
 }
 
+// CheckUsageRestrictionsForChannel returns nil when the bot's
+// ChannelAccessLevel configuration allows use in the given channel, otherwise
+// an error wrapping ErrUsageRestriction. Unlike CheckUsageRestrictions it does
+// not consider user-scope restrictions, so callers can validate channel-level
+// settings (e.g. auto-reply) independent of any requesting user.
+func (m *MMBots) CheckUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
+	return m.checkUsageRestrictionsForChannel(bot, channel)
+}
+
 func (m *MMBots) checkUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
 	switch bot.GetConfig().ChannelAccessLevel {
 	case llm.ChannelAccessLevelAll:

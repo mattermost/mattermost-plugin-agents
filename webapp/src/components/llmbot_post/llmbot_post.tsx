@@ -41,15 +41,30 @@ const SearchResultsPropKey = 'search_results';
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
 
+export type AgentProgressPhase =
+    'checking_mcp' |
+    'loading_conversation' |
+    'preparing_request' |
+    'connecting_provider';
+
 export interface PostUpdateWebsocketMessage {
     post_id: string
     next?: string
     control?: string
+    progress_phase?: AgentProgressPhase
+    progress_seq?: number
     tool_call?: string
     reasoning?: string
     annotations?: string
     server_tool?: string
 }
+
+const progressPhaseSequence: Record<string, number> = {
+    checking_mcp: 1,
+    loading_conversation: 2,
+    preparing_request: 3,
+    connecting_provider: 4,
+};
 
 interface LLMBotPostProps {
     post: any;
@@ -103,7 +118,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [annotations, setAnnotations] = useState<Annotation[]>([]);
     const [serverTools, setServerTools] = useState<ServerToolUse[]>([]);
     const [precontent, setPrecontent] = useState(props.post.message === '');
+    const [progressPhase, setProgressPhase] = useState<AgentProgressPhase | null>(null);
     const [error, setError] = useState('');
+    const progressSequenceRef = useRef(0);
+    const progressCompleteRef = useRef(props.post.message !== '');
+    const reasoningSeenRef = useRef(false);
 
     // Stopped is a flag that is used to prevent the websocket from updating the message after the user has stopped the generation.
     // Needs a ref because of the useEffect closure.
@@ -124,6 +143,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Suppresses persistedRounds while regenerating so the prior generation
     // doesn't render alongside the new stream.
     const [regenerating, setRegenerating] = useState(false);
+    const regeneratingRef = useRef(regenerating);
+    regeneratingRef.current = regenerating;
 
     // Lets the WebSocket handler snapshot the live round without re-subscribing.
     const liveRef = useRef({message, toolCalls, reasoningSummary, annotations, serverTools});
@@ -142,6 +163,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Sync message from post.message changes (e.g. after post update)
     useEffect(() => {
         if (props.post.message !== '' && props.post.message !== message) {
+            progressCompleteRef.current = true;
+            setProgressPhase(null);
             setMessage(props.post.message);
             setPrecontent(false);
         }
@@ -177,6 +200,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setMessage((prev: string) => (prev === '' ? prev : ''));
         setReasoningSummary((prev: string) => (prev === '' ? prev : ''));
         setIsReasoningLoading(false);
+        regeneratingRef.current = false;
         setRegenerating(false);
         setPendingRefetch(false);
         resetActivityTracking();
@@ -196,7 +220,26 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 return;
             }
 
+            if (data.control === 'progress') {
+                const phase = data.progress_phase;
+                if (!phase || progressCompleteRef.current) {
+                    return;
+                }
+                const expectedSequence = progressPhaseSequence[phase];
+                if (typeof expectedSequence !== 'number' || data.progress_seq !== expectedSequence || expectedSequence <= progressSequenceRef.current) {
+                    return;
+                }
+                progressSequenceRef.current = expectedSequence;
+                setProgressPhase(phase);
+                return;
+            }
+
             if (data.control === 'reasoning_summary' && data.reasoning) {
+                progressCompleteRef.current = true;
+                reasoningSeenRef.current = true;
+                setProgressPhase(null);
+                setGenerating(true);
+
                 // RoundView renders reasoning before provider activity. If
                 // reasoning starts after activity, close that activity round
                 // first so the live UI preserves provider arrival order.
@@ -221,8 +264,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     roundActivityIds.current = new Set();
                 }
 
-                // Don't clear generating: the `generating && currentRound`
-                // gate in renderedRounds would hide the thinking block.
+                // Reasoning is substantive stream output even if start was missed.
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(true);
                 setPrecontent(false);
@@ -230,12 +272,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'reasoning_summary_done' && data.reasoning) {
+                progressCompleteRef.current = true;
+                reasoningSeenRef.current = true;
+                setProgressPhase(null);
+                setGenerating(true);
                 setReasoningSummary(data.reasoning);
                 setIsReasoningLoading(false);
+                setPrecontent(false);
                 return;
             }
 
             if (data.control === 'tool_call' && data.tool_call) {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
+                setGenerating(true);
                 try {
                     const parsedToolCalls = JSON.parse(data.tool_call) as ToolCall[];
                     if (isResolvedToolCallEvent(parsedToolCalls)) {
@@ -270,6 +320,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'annotations' && data.annotations) {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
+                setGenerating(true);
                 try {
                     const parsedAnnotations = JSON.parse(data.annotations);
                     setAnnotations(parsedAnnotations);
@@ -281,6 +334,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'server_tool' && data.server_tool) {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
+                setGenerating(true);
+
                 // Cumulative provider-executed tool activity for the round;
                 // each event replaces the prior snapshot.
                 try {
@@ -330,6 +387,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (typeof data.next === 'string' && !stoppedRef.current) {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
                 setGenerating(true);
                 setPrecontent(false);
                 setMessage(data.next);
@@ -337,11 +396,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'end') {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
                 setPendingRefetch(true);
+                regeneratingRef.current = false;
                 if (conversationId) {
                     invalidateConversation(conversationId);
                 }
@@ -349,15 +411,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'cancel') {
+                progressCompleteRef.current = true;
+                setProgressPhase(null);
                 setGenerating(false);
                 setPrecontent(false);
                 setStopped(false);
                 setIsReasoningLoading(false);
+                regeneratingRef.current = false;
                 setRegenerating(false);
                 return;
             }
 
             if (data.control === 'start') {
+                if (reasoningSeenRef.current && !regeneratingRef.current) {
+                    return;
+                }
+                reasoningSeenRef.current = false;
                 setGenerating(true);
                 setPrecontent(true);
                 setStopped(false);
@@ -375,6 +444,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             }
 
             if (data.control === 'continue') {
+                reasoningSeenRef.current = false;
+
                 // Tool-approval resume: prior round comes from refetched
                 // persistedRounds, so reset all local state.
                 setGenerating(true);
@@ -430,6 +501,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }), [regenerating, conversationId, stablePersisted, liveRounds, generating, pendingRefetch, currentRound]);
 
     const regnerate = () => {
+        progressCompleteRef.current = false;
+        progressSequenceRef.current = 0;
+        reasoningSeenRef.current = false;
         setMessage('');
         setGenerating(false);
         setPrecontent(true);
@@ -440,6 +514,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setToolCalls([]);
         setServerTools([]);
         setLiveRounds([]);
+        regeneratingRef.current = true;
         setRegenerating(true);
         doRegenerate(props.post.id);
     };
@@ -475,6 +550,22 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const isGenerationInProgress = generating || isReasoningLoading;
 
+    let precontentMessage = intl.formatMessage({defaultMessage: 'Working...'});
+    switch (progressPhase) {
+    case 'checking_mcp':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Checking MCP connections and tools...'});
+        break;
+    case 'loading_conversation':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Loading conversation context...'});
+        break;
+    case 'preparing_request':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Preparing request...'});
+        break;
+    case 'connecting_provider':
+        precontentMessage = intl.formatMessage({defaultMessage: 'Connecting to provider...'});
+        break;
+    }
+
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
     const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
@@ -505,6 +596,13 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     };
 
+    // Tool-only posts leave post.message empty, so precontent stays true on
+    // remount. Hide Working... once rounds exist, except while generation is
+    // actually resuming (continue/start still set precontent on purpose).
+    const showWorking =
+        (precontent && (generating || renderedRounds.length === 0)) ||
+        (conversationLoading && !generating && renderedRounds.length === 0);
+
     return (
         <PostBody
             data-testid='llm-bot-post'
@@ -520,12 +618,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {(precontent || (conversationLoading && !generating && renderedRounds.length === 0)) && (
+            {showWorking && (
                 <MinimalReasoningContainer>
                     <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
-                    <span>
-                        <FormattedMessage defaultMessage='Starting...'/>
-                    </span>
+                    <span>{precontentMessage}</span>
                 </MinimalReasoningContainer>
             )}
             {renderedRounds.map((round, idx) => {

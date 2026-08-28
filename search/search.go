@@ -204,13 +204,15 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 		limit = 5
 	}
 
-	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
+	searchOpts := embeddings.SearchOptions{
 		Limit:     limit,
 		Offset:    opts.Offset,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
-	})
+	}
+
+	searchResults, err := search.Search(ctx, query, searchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
