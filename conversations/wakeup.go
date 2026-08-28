@@ -75,17 +75,22 @@ func wakeJobFromProps(props any) (WakeJob, error) {
 // HandleToolCall; if any entity is gone the thread is dead and the wake is
 // dropped.
 func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) error {
-	ctx, span := telemetry.Tracer().Start(ctx, "resume conversation after wait",
-		trace.WithAttributes(telemetry.PostID.String(job.PostID)),
-	)
-	defer span.End()
-
 	post, err := c.mmClient.GetPost(job.PostID)
 	if err != nil {
 		c.mmClient.LogDebug("wait_for_async_work: dropping wake, post missing",
 			"error", err, "post_id", job.PostID)
 		return nil
 	}
+
+	// Chain into the originating run's trace, same as HandleToolCall / regen.
+	// The scheduler callback has no request ctx; Background is independent of
+	// the expired tool-call request. rehydrateRunTrace is best-effort.
+	ctx = c.rehydrateRunTrace(ctx, post)
+	ctx, span := telemetry.Tracer().Start(ctx, "resume conversation after wait",
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(job.PostID)),
+	)
+	defer span.End()
 
 	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
 	if !ok || convID == "" {
@@ -136,6 +141,9 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) err
 	}
 	wakePost.AddProp(streaming.ConversationIDProp, conv.ID)
 	if err := c.mmClient.UpdatePost(wakePost); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to attach conversation to wake response post")
+		c.failResponsePlaceholder(wakePost, user.Locale)
 		return fmt.Errorf("failed to attach conversation to wake response post: %w", err)
 	}
 

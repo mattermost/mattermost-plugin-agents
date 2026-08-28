@@ -145,6 +145,65 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 	require.Contains(t, lm.requests[0].Posts[len(lm.requests[0].Posts)-1].Message, "cursor cloud agent")
 }
 
+func TestResumeConversationFailsPlaceholderWhenConversationPropUpdateFails(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+	userContent, err := json.Marshal([]conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "please watch the job"}})
+	require.NoError(t, err)
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "user-1",
+		ConversationID: conv.ID,
+		Role:           "user",
+		Content:        userContent,
+		Sequence:       1,
+	}))
+
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
+
+	user := &model.User{Id: "user-id", Username: "user"}
+	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel", RootId: "root-post-id"}
+	post.AddProp(streaming.ConversationIDProp, conv.ID)
+
+	var wakePost *model.Post
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
+	mmClient.On("GetUser", "user-id").Return(user, nil).Once()
+	mmClient.On("GetChannel", "dm-channel").Return(channel, nil).Once()
+	mmClient.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) {
+		wakePost = args.Get(0).(*model.Post)
+		wakePost.Id = "wake-post-id"
+	}).Return(nil).Once()
+	mmClient.On("UpdatePost", mock.Anything).Return(model.NewAppError("UpdatePost", "store.system.update.app_error", nil, "", http.StatusInternalServerError)).Once()
+	mmClient.On("UpdatePost", mock.Anything).Return(nil).Once()
+	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("LogWarn", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetConfig").Return(&model.Config{}).Maybe()
+
+	c := &Conversations{
+		mmClient:       mmClient,
+		contextBuilder: loadedStateBuilder(t),
+		bots:           botsService,
+		convService:    conversation.NewService(convStore, nil, nil, nil),
+	}
+
+	err = c.ResumeConversation(context.Background(), WakeJob{
+		PostID: "bot-post-id",
+		Reason: "cursor cloud agent",
+	})
+	require.Error(t, err)
+	require.NotNil(t, wakePost)
+	require.Contains(t, wakePost.Message, "error occurred")
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 1)
+}
+
 func TestResumeConversationDrops(t *testing.T) {
 	tests := []struct {
 		name string
