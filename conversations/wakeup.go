@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -67,8 +68,10 @@ func wakeJobFromProps(props any) (WakeJob, error) {
 }
 
 // ResumeConversation injects a synthetic user turn for a wait_for_async_work
-// wake and re-enters the tool follow-up loop on the original bot post. It
-// rederives all conversation state from the response post, mirroring
+// wake and re-enters the tool follow-up loop on a new bot post in the same
+// thread. Streaming onto the original post would blank and replace its
+// finished response (continuation semantics), so the wake gets its own reply.
+// Conversation state is rederived from the original response post, mirroring
 // HandleToolCall; if any entity is gone the thread is dead and the wake is
 // dropped.
 func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) error {
@@ -118,16 +121,36 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) err
 		return nil
 	}
 
+	responseRootID := post.Id
+	if post.RootId != "" {
+		responseRootID = post.RootId
+	}
+	wakePost := &model.Post{
+		ChannelId: post.ChannelId,
+		RootId:    responseRootID,
+	}
+	if err := c.createResponsePlaceholder(bot.GetMMBot().UserId, conv.UserID, wakePost, post.Id); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to create wake response post")
+		return err
+	}
+	wakePost.AddProp(streaming.ConversationIDProp, conv.ID)
+	if err := c.mmClient.UpdatePost(wakePost); err != nil {
+		return fmt.Errorf("failed to attach conversation to wake response post: %w", err)
+	}
+
 	if err := c.convService.AppendSyntheticUserTurn(conv.ID, mmtools.WakeUserMessage(job.Reason)); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to write wake turn")
+		c.failResponsePlaceholder(wakePost, user.Locale)
 		return err
 	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	if err := c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, nil); err != nil {
+	if err := c.streamToolFollowUp(ctx, bot, user, channel, wakePost, conv, isDM, nil); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to resume conversation")
+		c.failResponsePlaceholder(wakePost, user.Locale)
 		return err
 	}
 	return nil

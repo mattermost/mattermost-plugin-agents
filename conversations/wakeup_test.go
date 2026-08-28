@@ -89,13 +89,19 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 
 	user := &model.User{Id: "user-id", Username: "user"}
 	channel := &model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"}
-	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel"}
+	post := &model.Post{Id: "bot-post-id", UserId: "bot-id", ChannelId: "dm-channel", RootId: "root-post-id"}
 	post.AddProp(streaming.ConversationIDProp, conv.ID)
 
+	var wakePost *model.Post
 	mmClient := mocks.NewMockClient(t)
 	mmClient.On("GetPost", "bot-post-id").Return(post, nil).Once()
 	mmClient.On("GetUser", "user-id").Return(user, nil).Once()
 	mmClient.On("GetChannel", "dm-channel").Return(channel, nil).Once()
+	mmClient.On("CreatePost", mock.Anything).Run(func(args mock.Arguments) {
+		wakePost = args.Get(0).(*model.Post)
+		wakePost.Id = "wake-post-id"
+	}).Return(nil).Once()
+	mmClient.On("UpdatePost", mock.Anything).Return(nil).Once()
 	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("LogError", mock.Anything, mock.Anything).Maybe().Return()
@@ -115,6 +121,14 @@ func TestResumeConversationWritesWakeTurnAndFollowsUp(t *testing.T) {
 		Reason: "cursor cloud agent",
 	}))
 	streamingService.waitForStreaming()
+
+	// The wake streams onto a new bot post in the same thread; the original
+	// post's finished response is left untouched.
+	require.NotNil(t, wakePost)
+	require.Equal(t, "root-post-id", wakePost.RootId)
+	require.Equal(t, "dm-channel", wakePost.ChannelId)
+	require.Equal(t, "bot-id", wakePost.UserId)
+	require.Equal(t, conv.ID, wakePost.GetProp(streaming.ConversationIDProp))
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)
 	require.NoError(t, err)
