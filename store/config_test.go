@@ -401,7 +401,7 @@ func TestSaveConfigRejectsLegacyUUIDsAfterMigration(t *testing.T) {
 	err = s.SaveConfig(config.Config{
 		Services: []llm.ServiceConfig{{ID: testUUIDA, Name: "A"}},
 	})
-	require.ErrorIs(t, err, ErrStaleLegacyServiceIDs)
+	require.ErrorIs(t, err, ErrLegacyUUIDServiceID)
 	assert.Equal(t, rowsBefore, configHistoryCount(t, s), "rejected save must not write a config row")
 
 	current, err := s.GetConfig()
