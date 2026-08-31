@@ -6,7 +6,6 @@ package main
 import (
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -17,8 +16,10 @@ import (
 // service IDs are rewritten to model.NewId() values, and MCP servers (external,
 // embedded, and plugin-registered) get stable IDs assigned. All run in a
 // single idempotent store transaction, guarded by one cluster mutex. Returns
-// whether the migration wrote to the DB.
-func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) (bool, error) {
+// whether the migration wrote to the DB. Callers must load config from the
+// store afterwards — Migrated=false means another node already wrote, not that
+// this process's memory is current.
+func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store) (bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_abac_id_migration")
 	if err != nil {
 		return false, fmt.Errorf("failed to create ABAC ID migration mutex: %w", err)
@@ -32,15 +33,6 @@ func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.
 	}
 
 	if report.Migrated {
-		reloaded, reloadErr := st.GetConfig()
-		if reloadErr != nil {
-			return false, fmt.Errorf("failed to reload config after ID migrations: %w", reloadErr)
-		}
-		if reloaded != nil {
-			if storeErr := cfg.StorePersistedConfigWithoutNotify(reloaded); storeErr != nil {
-				return false, fmt.Errorf("failed to store config after ID migrations: %w", storeErr)
-			}
-		}
 		pluginAPI.Log.Info("ABAC ID migrations applied",
 			"services_remapped", report.ServicesRemapped,
 			"agent_rows_updated", report.AgentRowsUpdated,

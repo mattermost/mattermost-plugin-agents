@@ -192,9 +192,9 @@ func (p *Plugin) OnActivate() error {
 	mtx2.Unlock()
 
 	// ABAC ID migrations must run after the config.json->DB migration and
-	// before runtime config is loaded, so no subsystem can observe legacy
-	// service IDs or ID-less MCP servers.
-	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
+	// before runtime config is loaded. A follower that waited on the cluster
+	// lock must reload the winner's remapped IDs even when Migrated is false.
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store)
 	if err != nil {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
 	}
