@@ -32,11 +32,23 @@ func cacheableContext(ctx context.Context) context.Context {
 	return context.WithoutCancel(ctx)
 }
 
-// clientKey identifies one pooled client bag. serviceAccount is part of the key so a
-// user-OAuth bag for a bot user ID never collides with that bot's service-account bag.
+// clientKind is the structural role of a pooled bag. Remotes bags cannot
+// attach embedded/plugin clients; local bags cannot attach remotes.
+type clientKind int
+
+const (
+	clientKindUserRemote clientKind = iota
+	clientKindSARemote
+	clientKindLocal
+	// clientKindUnrestricted is for UserClients unit tests only. ClientManager
+	// never stores a bag of this kind.
+	clientKindUnrestricted
+)
+
+// clientKey identifies one pooled client bag.
 type clientKey struct {
-	userID         string
-	serviceAccount bool
+	userID string
+	kind   clientKind
 }
 
 // ClientManager manages MCP clients for multiple users
@@ -45,10 +57,8 @@ type ClientManager struct {
 	log            pluginapi.LogService
 	pluginAPI      *pluginapi.Client
 	clientsMu      sync.RWMutex
-	clients        map[clientKey]*UserClients // remotes only, keyed by identity+auth mode
-	activity       map[clientKey]time.Time    // remotes-bag last activity
-	localClients   map[string]*UserClients    // embedded+plugin only, keyed by invoking user ID
-	localActivity  map[string]time.Time       // local-bag last activity
+	clients        map[clientKey]*UserClients
+	activity       map[clientKey]time.Time
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -105,18 +115,10 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 			now := time.Now()
 			for key, client := range m.clients {
 				if now.Sub(m.activity[key]) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "serviceAccount", key.serviceAccount)
+					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "kind", key.kind)
 					client.Close()
 					delete(m.clients, key)
 					delete(m.activity, key)
-				}
-			}
-			for userID, client := range m.localClients {
-				if now.Sub(m.localActivity[userID]) > m.clientTimeout {
-					m.log.Debug("Closing inactive local MCP client", "userID", userID)
-					client.Close()
-					delete(m.localClients, userID)
-					delete(m.localActivity, userID)
 				}
 			}
 			m.clientsMu.Unlock()
@@ -144,11 +146,9 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 
 	m.config = config
 	m.clients = make(map[clientKey]*UserClients)
-	m.localClients = make(map[string]*UserClients)
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
 	m.closeChan = make(chan struct{})
 	m.activity = make(map[clientKey]time.Time)
-	m.localActivity = make(map[string]time.Time)
 
 	m.cleanupTicker = time.NewTicker(5 * time.Minute)
 	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
@@ -176,18 +176,17 @@ func (m *ClientManager) Close() {
 	for _, client := range m.clients {
 		client.Close()
 	}
-	for _, client := range m.localClients {
-		client.Close()
-	}
 
 	m.clients = make(map[clientKey]*UserClients)
-	m.localClients = make(map[string]*UserClients)
 }
 
 // createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
 // When forceRefresh is true the remote connect bypasses the shared tools cache and any
 // existing cached client is replaced.
 func (m *ClientManager) createAndStoreUserClient(ctx context.Context, key clientKey, forceRefresh bool) (*UserClients, *Errors) {
+	if key.kind != clientKindUserRemote && key.kind != clientKindSARemote {
+		return nil, &Errors{Errors: []error{fmt.Errorf("remote client bags require a remote kind")}}
+	}
 	// Unless forcing a refresh, reuse an already-cached client so we skip a
 	// redundant remote connect when another goroutine cached one first.
 	if !forceRefresh {
@@ -200,12 +199,7 @@ func (m *ClientManager) createAndStoreUserClient(ctx context.Context, key client
 		m.clientsMu.Unlock()
 	}
 
-	var userClients *UserClients
-	if key.serviceAccount {
-		userClients = newServiceAccountClients(key.userID, m.log, m.httpClient, m.toolsCache)
-	} else {
-		userClients = NewUserClients(key.userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
-	}
+	userClients := newRemoteClients(key.userID, key.kind == clientKindSARemote, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 
 	// Connect outside the manager lock so remote MCP handshakes do not block other users.
 	// Cacheable client creation must not inherit request cancellation; a canceled
@@ -249,56 +243,57 @@ func (m *ClientManager) getClient(ctx context.Context, key clientKey) (*UserClie
 	return m.createAndStoreUserClient(ctx, key, false)
 }
 
-// GetToolsForUser returns the tools available for a specific user: per-user
-// remote connections plus embedded and plugin tools as that user.
+// GetTools builds the MCP tool catalog for req. Remotes come from the pooled
+// bag identified by req; embedded and plugin servers always connect as the
+// invoking user on a local bag. Namespacing runs once across both bags.
+func (m *ClientManager) GetTools(ctx context.Context, req CatalogRequest) ([]llm.Tool, *Errors) {
+	return m.collectCatalog(ctx, req)
+}
+
+// GetToolsForUser is a convenience wrapper around GetTools for user-mode catalogs.
 func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	return m.collectCatalog(ctx, clientKey{userID: userID}, userID)
-}
-
-// GetToolsForServiceAccount returns the catalog for one service-account
-// invocation: admin-header remotes pooled per botUserID, plus embedded and
-// plugin tools connected as invokingUserID. Non-SA remotes are excluded (fail
-// closed) and are never connected as the invoking user, so this path cannot
-// surface per-user OAuth prompts.
-func (m *ClientManager) GetToolsForServiceAccount(ctx context.Context, botUserID, invokingUserID string) ([]llm.Tool, *Errors) {
-	if botUserID == "" {
-		return nil, nil
+	req, err := NewUserCatalogRequest(userID)
+	if err != nil {
+		return nil, &Errors{Errors: []error{err}}
 	}
-	return m.collectCatalog(ctx, clientKey{userID: botUserID, serviceAccount: true}, invokingUserID)
+	return m.GetTools(ctx, req)
 }
 
-// collectCatalog is the shared builder for user-mode and SA-mode catalogs.
-// Remotes come from the pooled bag identified by remoteKey; embedded and
-// plugin servers always connect as localUserID on a separate per-user bag so
-// a shared SA remotes bag can never cache another user's session.
-func (m *ClientManager) collectCatalog(ctx context.Context, remoteKey clientKey, localUserID string) ([]llm.Tool, *Errors) {
-	remoteClient, initialErrors := m.getClient(ctx, remoteKey)
+// collectCatalog is the single catalog boundary: connect remotes and locals,
+// then materialize namespaced tools once.
+func (m *ClientManager) collectCatalog(ctx context.Context, req CatalogRequest) ([]llm.Tool, *Errors) {
+	if err := req.validate(); err != nil {
+		return nil, &Errors{Errors: []error{err}}
+	}
+
+	remoteClient, initialErrors := m.getClient(ctx, req.remoteKey())
 	mcpErrors := cloneMCPErrors(initialErrors)
 
 	pluginSnap := m.snapshotEnabledPluginServers()
-	rawTools := remoteClient.GetTools(ctx)
+	localClient := m.getOrCreateLocalClient(req.localKey())
+	mcpErrors = mergeMCPErrors(mcpErrors, m.connectLocalServers(ctx, localClient, pluginSnap))
 
-	if localUserID != "" {
-		localClient := m.getOrCreateLocalClient(localUserID)
-		mcpErrors = mergeMCPErrors(mcpErrors, m.connectLocalServers(ctx, localClient, pluginSnap))
-		rawTools = append(rawTools, localClient.GetTools(ctx)...)
-	}
-
+	rawTools := collectToolsFromSnapshots(req.invokingUserID, m.log, remoteClient.snapshotClients(), localClient.snapshotClients())
 	return filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap), mcpErrors
 }
 
-// getOrCreateLocalClient returns the per-user embedded+plugin bag. It never
-// holds remote connections and is never keyed by a service-account bot.
-func (m *ClientManager) getOrCreateLocalClient(userID string) *UserClients {
+// getOrCreateLocalClient returns the per-user embedded+plugin bag.
+// Non-local keys are coerced so a remotes bag can never be stored here.
+func (m *ClientManager) getOrCreateLocalClient(key clientKey) *UserClients {
+	if key.kind != clientKindLocal {
+		m.log.Error("refusing to store a non-local bag as a local client", "userID", key.userID, "kind", key.kind)
+		key.kind = clientKindLocal
+	}
+
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
-	if client, exists := m.localClients[userID]; exists {
-		m.localActivity[userID] = time.Now()
+	if client, exists := m.clients[key]; exists {
+		m.activity[key] = time.Now()
 		return client
 	}
-	client := NewUserClients(userID, m.log, nil, m.httpClient, m.toolsCache)
-	m.localClients[userID] = client
-	m.localActivity[userID] = time.Now()
+	client := newLocalClients(key.userID, m.log, m.httpClient, m.toolsCache)
+	m.clients[key] = client
+	m.activity[key] = time.Now()
 	return client
 }
 
@@ -333,21 +328,17 @@ func mergeMCPErrors(dst *Errors, src *Errors) *Errors {
 	if src == nil {
 		return dst
 	}
-	for _, authErr := range src.ToolAuthErrors {
-		dst = appendMCPAuthError(dst, authErr)
-	}
 	for _, err := range src.Errors {
 		dst = appendMCPError(dst, err)
 	}
-	return dst
-}
-
-func appendMCPAuthError(mcpErrors *Errors, authErr llm.ToolAuthError) *Errors {
-	if mcpErrors == nil {
-		mcpErrors = &Errors{}
+	if len(src.ToolAuthErrors) == 0 {
+		return dst
 	}
-	mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, authErr)
-	return mcpErrors
+	if dst == nil {
+		dst = &Errors{}
+	}
+	dst.ToolAuthErrors = append(dst.ToolAuthErrors, src.ToolAuthErrors...)
+	return dst
 }
 
 // RefreshToolsForUser drops cached user clients and shared server tool lists,
@@ -362,11 +353,15 @@ func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) 
 		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
 	}
 	m.InvalidateUserClients(userID)
-	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
+	req, err := NewUserCatalogRequest(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Pre-warm the user remotes bag with a forced remote rediscovery; GetTools
 	// then reuses this cached client rather than rebuilding it.
-	m.createAndStoreUserClient(ctx, clientKey{userID: userID}, true)
+	m.createAndStoreUserClient(ctx, req.remoteKey(), true)
 
-	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
+	tools, mcpErrors := m.GetTools(ctx, req)
 	return tools, mcpErrors, nil
 }
 
@@ -485,18 +480,14 @@ func (m *ClientManager) InvalidateUserClients(userID string) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
-	for _, key := range []clientKey{{userID: userID}, {userID: userID, serviceAccount: true}} {
+	for _, kind := range []clientKind{clientKindUserRemote, clientKindSARemote, clientKindLocal} {
+		key := clientKey{userID: userID, kind: kind}
 		if uc, ok := m.clients[key]; ok {
 			uc.Close()
 			delete(m.clients, key)
 		}
 		delete(m.activity, key)
 	}
-	if uc, ok := m.localClients[userID]; ok {
-		uc.Close()
-		delete(m.localClients, userID)
-	}
-	delete(m.localActivity, userID)
 }
 
 // ProcessOAuthCallback processes the OAuth callback for a user. iss is the

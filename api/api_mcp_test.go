@@ -89,11 +89,13 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 
 	require.Equal(t, zeroToolServer.Name, response.Servers[0].Name)
 	require.Equal(t, zeroToolServer.BaseURL, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 	require.False(t, response.Servers[0].Authenticated)
 	require.Empty(t, response.Servers[0].Tools)
 
 	require.Equal(t, toolServer.Name, response.Servers[1].Name)
 	require.Equal(t, toolServer.BaseURL, response.Servers[1].ServerOrigin)
+	require.Equal(t, mcp.ServerKindRemote, response.Servers[1].Kind)
 	require.True(t, response.Servers[1].Authenticated)
 	require.Len(t, response.Servers[1].Tools, 2)
 	require.Equal(t, "a_tool", response.Servers[1].Tools[0].Name)
@@ -478,6 +480,8 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, mcp.EmbeddedServerName, response.Servers[0].Name)
 	require.Equal(t, mcp.EmbeddedClientKey, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindEmbedded, response.Servers[0].Kind)
+	require.False(t, response.Servers[0].ServiceAccountConfigured)
 	require.True(t, response.Servers[0].Authenticated)
 	require.Empty(t, response.Servers[0].Tools)
 	require.False(t, response.Servers[0].NeedsOAuth)
@@ -526,6 +530,8 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, pluginCfg.Name, response.Servers[0].Name)
 	require.Equal(t, "plugin://"+pluginCfg.PluginID, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindPlugin, response.Servers[0].Kind)
+	require.False(t, response.Servers[0].ServiceAccountConfigured)
 	require.True(t, response.Servers[0].Authenticated)
 	require.False(t, response.Servers[0].NeedsOAuth)
 	require.Len(t, response.Servers[0].Tools, 2)
@@ -676,6 +682,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 
 		require.Len(t, response.Servers, 2)
 		require.Equal(t, "n8n", response.Servers[0].Name)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 		require.True(t, response.Servers[0].Authenticated)
 		require.False(t, response.Servers[0].NeedsOAuth)
 		require.Empty(t, response.Servers[0].AuthURL)
@@ -684,6 +691,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Equal(t, "workflow_list", response.Servers[0].Tools[0].Name)
 
 		require.Equal(t, "OAuth Only", response.Servers[1].Name)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[1].Kind)
 		require.False(t, response.Servers[1].Authenticated)
 		require.False(t, response.Servers[1].NeedsOAuth)
 		require.Empty(t, response.Servers[1].AuthURL)
@@ -763,6 +771,23 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, status)
 		require.Empty(t, mcpMock.getServiceAccountCalls)
 		require.Empty(t, mcpMock.getContexts)
+	})
+
+	t.Run("sysadmin unsaved-agent preview uses the viewer as remote owner and invoker", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+		mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+		e.api.mcpClientManager = mcpMock
+		e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+		response, status := requestUserMCPTools(t, e.api, "catalog=service_account")
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
+		require.True(t, response.Servers[0].Authenticated)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 	})
 }
 

@@ -105,7 +105,7 @@ func TestNewClientServiceAccountSendsStaticHeaders(t *testing.T) {
 func TestServiceAccountConnectToRemoteServersFailClosed(t *testing.T) {
 	liveHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "sa_tool"))
 
-	bag := newServiceAccountClients("bot-1", newTestLogService(), liveHTTP.Client(), newTestToolsCache())
+	bag := newRemoteClients("bot-1", true, newTestLogService(), nil, liveHTTP.Client(), newTestToolsCache())
 	t.Cleanup(bag.Close)
 
 	mcpErrors := bag.ConnectToRemoteServers(context.Background(), []ServerConfig{
@@ -202,28 +202,45 @@ func TestServiceAccountUsesSharedCacheDespiteStaticOAuthCreds(t *testing.T) {
 	require.ElementsMatch(t, []string{"sa_tool"}, cachedToolNames(second.Tools()))
 }
 
-// The two auth modes must pool separately even for the same user ID.
+// The two auth modes must connect separately even for the same remote-owner ID.
 func TestClientManagerModeIsolationPooling(t *testing.T) {
+	server := newTestMCPServer(0, "shared_tool")
+	httpServer, recorder := startRecordingStreamableMCPServer(t, server)
 	pluginAPI := newTestPluginAPIForEmbeddedManager("bot-1", "session-1")
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, http.DefaultClient, nil)
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			Name:                  "shared-server",
+			BaseURL:               httpServer.URL,
+			Enabled:               true,
+			ServiceAccountHeaders: testServiceAccountHeaders(),
+		}},
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, httpServer.Client(), nil)
 	t.Cleanup(m.Close)
 
-	_, userErrors := m.GetToolsForUser(context.Background(), "bot-1")
+	userTools, userErrors := m.GetTools(context.Background(), mustUserCatalogRequest(t, "bot-1"))
 	require.Nil(t, userErrors)
-	_, saErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-1")
+	requireToolNames(t, userTools, "shared_server__shared_tool")
+
+	saTools, saErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-1"))
 	require.Nil(t, saErrors)
+	requireToolNames(t, saTools, "shared_server__shared_tool")
 
-	require.Len(t, m.clients, 2)
-	userBag := m.clients[clientKey{userID: "bot-1"}]
-	saBag := m.clients[clientKey{userID: "bot-1", serviceAccount: true}]
-	require.NotNil(t, userBag)
-	require.NotNil(t, saBag)
-	require.NotSame(t, userBag, saBag)
-
-	require.False(t, userBag.serviceAccount)
-	require.NotNil(t, userBag.oauthManager)
-	require.True(t, saBag.serviceAccount)
-	require.Nil(t, saBag.oauthManager, "service account bags must have no OAuth machinery")
+	var sawUser, sawSA bool
+	for _, headers := range recorder.snapshot() {
+		if headers.Get(testSAHeaderName) == testSAHeaderValue {
+			sawSA = true
+			require.Equal(t, "bot-1", headers.Get(MMUserIDHeader))
+			require.Empty(t, headers.Get("Authorization"))
+			continue
+		}
+		if headers.Get(MMUserIDHeader) == "bot-1" {
+			sawUser = true
+			require.Empty(t, headers.Get(testSAHeaderName))
+		}
+	}
+	require.True(t, sawUser, "user-mode remotes must connect without service-account headers")
+	require.True(t, sawSA, "service-account remotes must connect with service-account headers")
 }
 
 func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
@@ -248,17 +265,11 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetToolsForServiceAccount(context.Background(), botUserID, invokingUserID)
+	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, botUserID, invokingUserID))
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "mattermost__search_users")
 	require.Equal(t, []string{invokingUserID}, embeddedServer.recordedUserIDs())
-
-	local := m.localClients[invokingUserID]
-	require.NotNil(t, local)
-	embedded := localClientByID(local, EmbeddedClientKey)
-	require.NotNil(t, embedded)
-	require.Equal(t, invokingUserID, embedded.userID)
-	require.Equal(t, "user-a-session", embedded.sessionID)
+	require.Equal(t, []string{"user-a-session"}, embeddedServer.recordedSessionIDs())
 }
 
 func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testing.T) {
@@ -287,7 +298,7 @@ func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testi
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-a")
+	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 1)
 
@@ -333,15 +344,9 @@ func TestClientManagerServiceAccountRemoteBagExcludesLocalServers(t *testing.T) 
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
-	_, mcpErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-a")
+	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
 	require.Nil(t, mcpErrors)
-
-	saBag := m.clients[clientKey{userID: "bot-1", serviceAccount: true}]
-	require.NotNil(t, saBag)
-	require.ElementsMatch(t, []string{"sa-server"}, clientBagServerIDs(saBag))
-
-	_, userRemoteExists := m.clients[clientKey{userID: "user-a"}]
-	require.False(t, userRemoteExists, "SA catalog must not create a per-user remotes bag")
+	requireToolNames(t, tools, "sa_server__sa_tool", "mattermost__search_users", "example__test_tool_0")
 }
 
 func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing.T) {
@@ -364,21 +369,13 @@ func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing
 	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
 	t.Cleanup(m.Close)
 
-	_, errA := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-a")
+	_, errA := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
 	require.Nil(t, errA)
-	_, errB := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-b")
+	_, errB := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-b"))
 	require.Nil(t, errB)
 
-	clientA := localClientByID(m.localClients["user-a"], EmbeddedClientKey)
-	clientB := localClientByID(m.localClients["user-b"], EmbeddedClientKey)
-	require.NotNil(t, clientA)
-	require.NotNil(t, clientB)
-	require.NotSame(t, clientA, clientB)
-	require.Equal(t, "user-a", clientA.userID)
-	require.Equal(t, "user-b", clientB.userID)
-	require.Equal(t, "session-a", clientA.sessionID)
-	require.Equal(t, "session-b", clientB.sessionID)
-	require.NotEqual(t, clientA.sessionID, clientB.sessionID)
+	require.Equal(t, []string{"user-a", "user-b"}, embeddedServer.recordedUserIDs())
+	require.Equal(t, []string{"session-a", "session-b"}, embeddedServer.recordedSessionIDs())
 }
 
 func TestClientManagerServiceAccountCatalogExcludesNonSARemotes(t *testing.T) {
@@ -398,86 +395,82 @@ func TestClientManagerServiceAccountCatalogExcludesNonSARemotes(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, saHTTP.Client(), nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1", "user-a")
+	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
 	require.Nil(t, mcpErrors, "excluded remotes are not failures and must not be dialed as the user")
 	requireToolNames(t, tools, "sa_server__sa_tool")
-
-	saBag := m.clients[clientKey{userID: "bot-1", serviceAccount: true}]
-	require.NotNil(t, saBag)
-	require.ElementsMatch(t, []string{"sa-server"}, clientBagServerIDs(saBag))
-
-	_, userRemoteExists := m.clients[clientKey{userID: "user-a"}]
-	require.False(t, userRemoteExists)
 }
 
-func TestServerAvailableForServiceAccount(t *testing.T) {
-	t.Parallel()
+// A remote named "Mattermost" slugs to the same prefix as the embedded server.
+// Namespacing must run once across both bags so both tools survive.
+func TestCollectCatalogCrossBagToolNameCollision(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+
+	remoteHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "search_users"))
+	pluginAPI := newTestPluginAPIForEmbeddedUsers(map[string]string{"user-a": "user-a-session"})
+	embeddedServer := &fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")}
+
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+	mockAPI := &fakePluginHTTPClient{
+		pluginHTTP: func(req *http.Request) *http.Response {
+			rec := httptest.NewRecorder()
+			target.Config.Handler.ServeHTTP(rec, req)
+			return rec.Result()
+		},
+	}
+
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			Name:                  "Mattermost",
+			BaseURL:               remoteHTTP.URL,
+			Enabled:               true,
+			ServiceAccountHeaders: testServiceAccountHeaders(),
+		}},
+		EmbeddedServer: EmbeddedServerConfig{
+			Enabled:     true,
+			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
+		},
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), embeddedServer, remoteHTTP.Client(), mockAPI)
+	t.Cleanup(m.Close)
+	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Mattermost", Path: "/mcp", Enabled: true})
 
 	tests := []struct {
-		name   string
-		server ServerConfig
-		want   bool
+		name string
+		req  CatalogRequest
 	}{
-		{
-			name:   "embedded server is not a remote SA target",
-			server: ServerConfig{BaseURL: EmbeddedClientKey},
-			want:   false,
-		},
-		{
-			name:   "plugin server is not a remote SA target",
-			server: ServerConfig{BaseURL: "plugin://com.example.mcp"},
-			want:   false,
-		},
-		{
-			name:   "remote server without SA headers is excluded",
-			server: ServerConfig{BaseURL: "https://mcp.example.com", Name: "n8n"},
-			want:   false,
-		},
-		{
-			name: "remote server with SA headers is available",
-			server: ServerConfig{
-				BaseURL:               "https://mcp.example.com",
-				ServiceAccountHeaders: testServiceAccountHeaders(),
-			},
-			want: true,
-		},
+		{name: "user catalog", req: mustUserCatalogRequest(t, "user-a")},
+		{name: "service account catalog", req: mustSACatalogRequest(t, "bot-1", "user-a")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, ServerAvailableForServiceAccount(tt.server))
-		})
-	}
-}
+			tools, mcpErrors := m.GetTools(context.Background(), tt.req)
+			require.Nil(t, mcpErrors)
+			require.GreaterOrEqual(t, len(tools), 3, "remote, embedded, and plugin tools must all be present")
 
-func TestIsLocalServerOrigin(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		origin string
-		want   bool
-	}{
-		{origin: EmbeddedClientKey, want: true},
-		{origin: "plugin://com.example.mcp", want: true},
-		{origin: "https://mcp.example.com", want: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.origin, func(t *testing.T) {
-			require.Equal(t, tt.want, IsLocalServerOrigin(tt.origin))
+			seen := make(map[string]struct{}, len(tools))
+			for _, tool := range tools {
+				_, exists := seen[tool.Name]
+				require.False(t, exists, "duplicate runtime tool name %q after cross-bag namespacing", tool.Name)
+				seen[tool.Name] = struct{}{}
+			}
 		})
 	}
 }
 
 type recordingEmbeddedMCPServer struct {
 	fakeEmbeddedMCPServer
-	mu      sync.Mutex
-	userIDs []string
+	mu         sync.Mutex
+	userIDs    []string
+	sessionIDs []string
 }
 
 func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	f.mu.Lock()
 	f.userIDs = append(f.userIDs, userID)
+	f.sessionIDs = append(f.sessionIDs, sessionID)
 	f.mu.Unlock()
 	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
 }
@@ -486,6 +479,26 @@ func (f *recordingEmbeddedMCPServer) recordedUserIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.userIDs...)
+}
+
+func (f *recordingEmbeddedMCPServer) recordedSessionIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.sessionIDs...)
+}
+
+func mustUserCatalogRequest(t *testing.T, userID string) CatalogRequest {
+	t.Helper()
+	req, err := NewUserCatalogRequest(userID)
+	require.NoError(t, err)
+	return req
+}
+
+func mustSACatalogRequest(t *testing.T, remoteOwnerID, invokingUserID string) CatalogRequest {
+	t.Helper()
+	req, err := NewServiceAccountCatalogRequest(remoteOwnerID, invokingUserID)
+	require.NoError(t, err)
+	return req
 }
 
 // newTestPluginAPIForEmbeddedUsers maps each user ID to a pre-minted session ID.
@@ -511,29 +524,6 @@ func newTestPluginAPIForEmbeddedUsers(users map[string]string) *pluginapi.Client
 		userByID:    userByID,
 	}
 	return pluginapi.NewClient(fakeAPI, nil)
-}
-
-func clientBagServerIDs(bag *UserClients) []string {
-	if bag == nil {
-		return nil
-	}
-	ids := make([]string, 0)
-	for _, entry := range bag.snapshotClients() {
-		ids = append(ids, entry.serverID)
-	}
-	return ids
-}
-
-func localClientByID(bag *UserClients, serverID string) *Client {
-	if bag == nil {
-		return nil
-	}
-	for _, entry := range bag.snapshotClients() {
-		if entry.serverID == serverID {
-			return entry.client
-		}
-	}
-	return nil
 }
 
 func cachedToolNames(tools map[string]*gomcp.Tool) []string {

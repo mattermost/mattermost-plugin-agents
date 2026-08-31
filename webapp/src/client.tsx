@@ -27,9 +27,12 @@ export type UserMCPToolInfo = {
     enabled: boolean;
     policy: MCPToolPolicy;
 };
+export type MCPServerKind = 'remote' | 'embedded' | 'plugin';
+
 export type UserMCPServerInfo = {
     name: string;
     serverOrigin: string;
+    kind: MCPServerKind;
     authenticated: boolean;
     needsOAuth: boolean;
     authEmail?: string;

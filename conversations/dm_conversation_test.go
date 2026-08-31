@@ -491,12 +491,8 @@ type testMCPClientManager struct {
 	errors *mcp.Errors
 }
 
-func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	return m.tools, m.errors
-}
-
-func (m *testMCPClientManager) GetToolsForServiceAccount(context.Context, string, string) ([]llm.Tool, *mcp.Errors) {
-	return nil, nil
 }
 
 // --- Test: new DM creates conversation entity and returns stream ----------

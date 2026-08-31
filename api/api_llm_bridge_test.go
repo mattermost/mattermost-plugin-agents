@@ -1721,15 +1721,14 @@ type fakeBridgeMCPToolProvider struct {
 	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, userID string) ([]llm.Tool, *mcp.Errors) {
-	p.userCalls = append(p.userCalls, userID)
+func (p *fakeBridgeMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.UsesServiceAccount() {
+		p.saCalls = append(p.saCalls, req.RemoteOwnerID())
+		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID())
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID())
 	return p.tools, nil
-}
-
-func (p *fakeBridgeMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls = append(p.saCalls, botUserID)
-	p.saInvokerCalls = append(p.saInvokerCalls, invokingUserID)
-	return p.saTools, nil
 }
 
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider

@@ -38,7 +38,11 @@ type countingMCPToolProvider struct {
 	saCalls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.UsesServiceAccount() {
+		p.saCalls++
+		return nil, nil
+	}
 	p.calls++
 	return []llm.Tool{
 		{
@@ -47,11 +51,6 @@ func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([
 			Schema:      llm.NewJSONSchemaFromStruct[struct{}](),
 		},
 	}, nil
-}
-
-func (p *countingMCPToolProvider) GetToolsForServiceAccount(stdcontext.Context, string, string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls++
-	return nil, nil
 }
 
 // staticMCPToolProvider serves a fixed catalog per auth mode and records the identity each mode was asked for.
@@ -66,18 +65,20 @@ type staticMCPToolProvider struct {
 }
 
 type saCatalogCall struct {
-	botUserID      string
+	remoteOwnerID  string
 	invokingUserID string
 }
 
-func (p *staticMCPToolProvider) GetToolsForUser(_ stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors) {
-	p.userCalls = append(p.userCalls, userID)
+func (p *staticMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.UsesServiceAccount() {
+		p.saCalls = append(p.saCalls, saCatalogCall{
+			remoteOwnerID:  req.RemoteOwnerID(),
+			invokingUserID: req.InvokingUserID(),
+		})
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID())
 	return p.tools, p.errors
-}
-
-func (p *staticMCPToolProvider) GetToolsForServiceAccount(_ stdcontext.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls = append(p.saCalls, saCatalogCall{botUserID: botUserID, invokingUserID: invokingUserID})
-	return p.saTools, nil
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
@@ -374,7 +375,7 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	)
 
 	require.Equal(t, []saCatalogCall{{
-		botUserID:      serviceAccountBotUserID,
+		remoteOwnerID:  serviceAccountBotUserID,
 		invokingUserID: requestingUserID,
 	}}, provider.saCalls)
 	require.Empty(t, provider.userCalls, "the requesting user's per-user remotes catalog must not be consulted")

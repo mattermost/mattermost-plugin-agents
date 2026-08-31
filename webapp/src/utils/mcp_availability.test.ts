@@ -5,6 +5,7 @@ import {mcpServerStatus, type MCPAvailabilityServer, type MCPServerStatus} from 
 
 function server(overrides: Partial<MCPAvailabilityServer> & Pick<MCPAvailabilityServer, 'authenticated'>): MCPAvailabilityServer {
     return {
+        kind: 'remote',
         needsOAuth: false,
         serviceAccountConfigured: false,
         tools: [],
@@ -35,7 +36,7 @@ describe('mcpServerStatus', () => {
         },
         {
             name: 'authenticated Mattermost embedded server',
-            server: server({authenticated: true, serviceAccountConfigured: true}),
+            server: server({kind: 'embedded', authenticated: true, serviceAccountConfigured: false}),
             useServiceAccountAuth: false,
             expected: 'connected',
         },
@@ -96,6 +97,24 @@ describe('mcpServerStatus', () => {
             server: server({authenticated: false, tools: [{name: 'a'}]}),
             useServiceAccountAuth: false,
             expected: 'none',
+        },
+        {
+            name: 'SA mode plugin without tools is not an SA credential failure',
+            server: server({kind: 'plugin', authenticated: false, serviceAccountConfigured: false}),
+            useServiceAccountAuth: true,
+            expected: 'not-connected',
+        },
+        {
+            name: 'SA mode embedded without tools is not an SA credential failure',
+            server: server({kind: 'embedded', authenticated: false, serviceAccountConfigured: false}),
+            useServiceAccountAuth: true,
+            expected: 'not-connected',
+        },
+        {
+            name: 'user mode embedded is never SA-only unavailable',
+            server: server({kind: 'embedded', authenticated: false, serviceAccountConfigured: false}),
+            useServiceAccountAuth: false,
+            expected: 'not-connected',
         },
     ])('$name', ({server: mcpServer, useServiceAccountAuth, expected}) => {
         expect(mcpServerStatus(mcpServer, useServiceAccountAuth)).toBe(expected);

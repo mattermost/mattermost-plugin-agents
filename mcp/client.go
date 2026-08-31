@@ -121,21 +121,6 @@ func (c *Client) useSharedToolsCache() bool {
 	return sharedToolsCacheAllowedForServer(c.config)
 }
 
-// IsLocalServerOrigin reports whether origin is the embedded Mattermost server
-// or a plugin-registered MCP server. These always authenticate as the invoking
-// user; they never use service-account headers.
-func IsLocalServerOrigin(origin string) bool {
-	return origin == EmbeddedClientKey || strings.HasPrefix(origin, "plugin://")
-}
-
-// ServerAvailableForServiceAccount reports whether a remote MCP server can be
-// connected in service-account mode. Fail closed: no service-account headers
-// means the server is excluded. Embedded and plugin servers are not remotes;
-// they are attached separately as the invoking user.
-func ServerAvailableForServiceAccount(s ServerConfig) bool {
-	return s.HasServiceAccountAuth()
-}
-
 // remoteConnectionHeaders builds the static headers for a remote MCP connection.
 // Later layers win on key conflicts: X-Mattermost-UserID < admin Headers < ServiceAccountHeaders.
 func remoteConnectionHeaders(userID string, serverConfig ServerConfig, serviceAccount bool) map[string]string {

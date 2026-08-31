@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type {MCPServerKind} from '@/client';
+
 export type MCPServerStatus =
     | 'connected'
     | 'no-sa-credentials'
@@ -10,6 +12,7 @@ export type MCPServerStatus =
     | 'none';
 
 export type MCPAvailabilityServer = {
+    kind: MCPServerKind;
     authenticated: boolean;
     needsOAuth: boolean;
     serviceAccountConfigured: boolean;
@@ -18,6 +21,10 @@ export type MCPAvailabilityServer = {
     tools: readonly unknown[];
 };
 
+function isLocalMCPServer(kind: MCPServerKind): boolean {
+    return kind === 'embedded' || kind === 'plugin';
+}
+
 // Mutually exclusive UI status for one MCP server. Compute once per row.
 export function mcpServerStatus(
     server: MCPAvailabilityServer,
@@ -25,6 +32,12 @@ export function mcpServerStatus(
 ): MCPServerStatus {
     if (server.authenticated) {
         return 'connected';
+    }
+    if (isLocalMCPServer(server.kind)) {
+        if (!server.authEmail && server.tools.length === 0 && !server.authURL) {
+            return 'not-connected';
+        }
+        return 'none';
     }
     if (useServiceAccountAuth) {
         if (!server.serviceAccountConfigured) {

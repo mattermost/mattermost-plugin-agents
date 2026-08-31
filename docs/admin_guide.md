@@ -682,7 +682,7 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 - **Idle Cleanup**: Inactive client connections are automatically closed after the configured timeout
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation. Agents using service account authentication share one remote connection per agent (keyed to the agent's bot account) for external MCP servers; embedded Mattermost and plugin connections stay per requesting user
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
-- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent, and is hidden entirely for agents using service account authentication (there are no per-user connections or preferences to manage). Tool use is still subject to admin tool policies and the user's Mattermost permissions
+- **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent, and is hidden entirely for agents using service account authentication (there are no per-user remote connections or preferences to manage; embedded Mattermost and plugin connections still run as the requesting user). Tool use is still subject to admin tool policies and the user's Mattermost permissions
 
 ### OAuth-backed MCP servers
 

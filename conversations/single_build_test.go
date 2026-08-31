@@ -34,17 +34,16 @@ type countingMCPToolProvider struct {
 	saInvokers   []string
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.UsesServiceAccount() {
+		p.mu.Lock()
+		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID())
+		p.saInvokers = append(p.saInvokers, req.InvokingUserID())
+		p.mu.Unlock()
+		return append([]llm.Tool(nil), p.saTools...), nil
+	}
 	atomic.AddInt32(&p.calls, 1)
 	return append([]llm.Tool(nil), p.tools...), nil
-}
-
-func (p *countingMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.mu.Lock()
-	p.saIdentities = append(p.saIdentities, botUserID)
-	p.saInvokers = append(p.saInvokers, invokingUserID)
-	p.mu.Unlock()
-	return append([]llm.Tool(nil), p.saTools...), nil
 }
 
 func (p *countingMCPToolProvider) Calls() int {

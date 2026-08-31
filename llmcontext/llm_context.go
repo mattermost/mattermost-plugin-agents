@@ -25,10 +25,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user or for a service-account agent
 type MCPToolProvider interface {
-	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	// GetToolsForServiceAccount returns the catalog for a service-account invocation:
-	// SA-header remotes pooled by botUserID, plus embedded/plugin tools as invokingUserID.
-	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors)
+	GetTools(ctx stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
@@ -282,16 +279,20 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// Get tools from all connected servers
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
-			botUserID := bot.BotUserID()
-			if botUserID == "" {
-				// Fail closed: no acting identity means no MCP catalog at all.
-				b.pluginAPI.Log.Error("Service account agent has no bot user ID; skipping MCP tools",
-					"bot_name", botCfg.Name, "bot_id", botCfg.ID)
+			req, reqErr := mcp.NewServiceAccountCatalogRequest(bot.BotUserID(), userID)
+			if reqErr != nil {
+				b.pluginAPI.Log.Error("Service account catalog request is invalid; skipping MCP tools",
+					"bot_name", botCfg.Name, "bot_id", botCfg.ID, "error", reqErr)
 			} else {
-				mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForServiceAccount(ctx, botUserID, userID)
+				mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
 			}
 		} else {
-			mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
+			req, reqErr := mcp.NewUserCatalogRequest(userID)
+			if reqErr != nil {
+				b.pluginAPI.Log.Error("User catalog request is invalid; skipping MCP tools", "userID", userID, "error", reqErr)
+			} else {
+				mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
+			}
 		}
 
 		// Remote/external MCP servers are the licensed "MCP Support" feature.
