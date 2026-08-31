@@ -392,7 +392,7 @@ func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDis
 			},
 		}
 		if message, conflicting := conflictMessages[i]; conflicting {
-			row.info.Error = new(message)
+			row.info.Error = &message
 		} else {
 			row.discover = func() ([]MCPToolInfo, error) {
 				return a.discoverRemoteServerTools(ctx, userID, serverConfig)
