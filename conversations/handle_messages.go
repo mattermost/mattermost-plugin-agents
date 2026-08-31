@@ -230,7 +230,7 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
 		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
-			c.maybeNotifyAgentMentionNeeded(post, channel)
+			c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
 		}
 		return autoReplyErr
 	}
