@@ -6,10 +6,11 @@ package mcp
 import (
 	"errors"
 	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 var (
-	ErrCatalogUserIDRequired      = errors.New("catalog request user ID is required")
 	ErrCatalogRemoteOwnerRequired = errors.New("catalog request remote pool owner is required")
 	ErrCatalogInvokerRequired     = errors.New("catalog request invoking user ID is required")
 )
@@ -20,61 +21,37 @@ const (
 	ServerKindPlugin   = "plugin"
 )
 
-// CatalogRequest is a validated request to build an MCP tool catalog.
-// Construct it with NewUserCatalogRequest, NewServiceAccountCatalogRequest,
-// or NewServiceAccountPreviewRequest — do not build one by hand.
+// CatalogRequest identifies whose MCP tool catalog to build. GetTools
+// validates it fail-closed, so a zero value never yields tools.
 type CatalogRequest struct {
-	remoteOwnerID  string
-	invokingUserID string
-	serviceAccount bool
+	// RemoteOwnerID keys the pooled remote-server connections: the user in
+	// user mode, the agent's bot in service-account mode.
+	RemoteOwnerID string
+	// InvokingUserID is who embedded and plugin servers connect as, in both modes.
+	InvokingUserID string
+	// ServiceAccount selects admin SA headers (and fail-closed exclusion of
+	// remotes without them) instead of per-user OAuth for remote servers.
+	ServiceAccount bool
 }
 
-// NewUserCatalogRequest builds the per-user catalog: remotes and
-// embedded/plugin all authenticate as userID.
-func NewUserCatalogRequest(userID string) (CatalogRequest, error) {
-	if userID == "" {
-		return CatalogRequest{}, ErrCatalogUserIDRequired
-	}
-	return CatalogRequest{
-		remoteOwnerID:  userID,
-		invokingUserID: userID,
-	}, nil
+// UserCatalogRequest is the per-user catalog: remotes and embedded/plugin all
+// authenticate as userID.
+func UserCatalogRequest(userID string) CatalogRequest {
+	return CatalogRequest{RemoteOwnerID: userID, InvokingUserID: userID}
 }
 
-// NewServiceAccountCatalogRequest builds a service-account catalog:
-// remotes pooled by remoteOwnerID with admin SA headers, embedded/plugin
-// connected as invokingUserID.
-func NewServiceAccountCatalogRequest(remoteOwnerID, invokingUserID string) (CatalogRequest, error) {
-	if remoteOwnerID == "" {
-		return CatalogRequest{}, ErrCatalogRemoteOwnerRequired
-	}
-	if invokingUserID == "" {
-		return CatalogRequest{}, ErrCatalogInvokerRequired
-	}
-	return CatalogRequest{
-		remoteOwnerID:  remoteOwnerID,
-		invokingUserID: invokingUserID,
-		serviceAccount: true,
-	}, nil
-}
-
-// NewServiceAccountPreviewRequest builds the unsaved-agent SA preview:
-// the viewer is both the remote-pool owner and the invoking user.
-func NewServiceAccountPreviewRequest(viewerUserID string) (CatalogRequest, error) {
-	return NewServiceAccountCatalogRequest(viewerUserID, viewerUserID)
-}
-
-func (r CatalogRequest) RemoteOwnerID() string  { return r.remoteOwnerID }
-func (r CatalogRequest) InvokingUserID() string { return r.invokingUserID }
-func (r CatalogRequest) UsesServiceAccount() bool {
-	return r.serviceAccount
+// ServiceAccountCatalogRequest is the service-account catalog: remotes pooled
+// by remoteOwnerID with admin SA headers, embedded/plugin connected as
+// invokingUserID.
+func ServiceAccountCatalogRequest(remoteOwnerID, invokingUserID string) CatalogRequest {
+	return CatalogRequest{RemoteOwnerID: remoteOwnerID, InvokingUserID: invokingUserID, ServiceAccount: true}
 }
 
 func (r CatalogRequest) validate() error {
-	if r.remoteOwnerID == "" {
+	if r.RemoteOwnerID == "" {
 		return ErrCatalogRemoteOwnerRequired
 	}
-	if r.invokingUserID == "" {
+	if r.InvokingUserID == "" {
 		return ErrCatalogInvokerRequired
 	}
 	return nil
@@ -82,18 +59,17 @@ func (r CatalogRequest) validate() error {
 
 func (r CatalogRequest) remoteKey() clientKey {
 	kind := clientKindUserRemote
-	if r.serviceAccount {
+	if r.ServiceAccount {
 		kind = clientKindSARemote
 	}
-	return clientKey{userID: r.remoteOwnerID, kind: kind}
+	return clientKey{userID: r.RemoteOwnerID, kind: kind}
 }
 
-func (r CatalogRequest) localKey() clientKey {
-	return clientKey{userID: r.invokingUserID, kind: clientKindLocal}
-}
-
-// ServerKind reports the wire kind for an MCP server origin: remote, embedded, or plugin.
+// ServerKind reports the wire kind for an MCP server origin: remote, embedded,
+// or plugin. An empty origin maps to remote; built-in (non-MCP) tools never
+// reach the wire response this feeds.
 func ServerKind(origin string) string {
+	origin = llm.NormalizeMCPServerOrigin(origin)
 	switch {
 	case origin == EmbeddedClientKey:
 		return ServerKindEmbedded

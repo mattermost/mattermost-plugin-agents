@@ -21,7 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// countingMCPToolProvider counts how many times GetToolsForUser is invoked,
+// countingMCPToolProvider counts how many times the MCP GetTools catalog build is invoked,
 // so single-build refactors can assert there is no second pipeline pass per
 // message.
 type countingMCPToolProvider struct {
@@ -35,10 +35,10 @@ type countingMCPToolProvider struct {
 }
 
 func (p *countingMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
-	if req.UsesServiceAccount() {
+	if req.ServiceAccount {
 		p.mu.Lock()
-		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID())
-		p.saInvokers = append(p.saInvokers, req.InvokingUserID())
+		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID)
+		p.saInvokers = append(p.saInvokers, req.InvokingUserID)
 		p.mu.Unlock()
 		return append([]llm.Tool(nil), p.saTools...), nil
 	}
@@ -81,7 +81,7 @@ func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToo
 }
 
 // TestBuildConversationContextWithTools_MentionShapeBuildsOnce asserts that the
-// shared helper used by the mention path performs a single GetToolsForUser pass.
+// shared helper used by the mention path performs a single MCP GetTools pass.
 func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) {
 	provider := &countingMCPToolProvider{tools: []llm.Tool{
 		{
@@ -104,7 +104,7 @@ func TestBuildConversationContextWithTools_MentionShapeBuildsOnce(t *testing.T) 
 	llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
 	require.NotNil(t, llmCtx)
 	require.NotNil(t, llmCtx.Tools)
-	require.Equal(t, 1, provider.Calls(), "initial build should call GetToolsForUser exactly once")
+	require.Equal(t, 1, provider.Calls(), "initial build should call MCP GetTools exactly once")
 }
 
 // TestBuildConversationContextWithTools_DMShapeBuildsOnce mirrors the DM path:
@@ -198,7 +198,7 @@ func TestBuildConversationContextWithTools_DoesNotMaterializeDynamicMCPTools(t *
 		"strict registry must not surface dynamic MCP tools until they are restored")
 	require.True(t, llmCtx.Tools.IsUnloadedMCPTool("jira__get_issue"),
 		"dynamic MCP tools must appear as unloaded before restoration")
-	require.Equal(t, 1, provider.Calls(), "build should call GetToolsForUser exactly once")
+	require.Equal(t, 1, provider.Calls(), "build should call MCP GetTools exactly once")
 }
 
 // TestBuildConversationContextWithTools_DropsPreFilteredMCPServers pins that

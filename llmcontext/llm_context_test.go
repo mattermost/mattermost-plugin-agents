@@ -39,7 +39,7 @@ type countingMCPToolProvider struct {
 }
 
 func (p *countingMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
-	if req.UsesServiceAccount() {
+	if req.ServiceAccount {
 		p.saCalls++
 		return nil, nil
 	}
@@ -70,14 +70,18 @@ type saCatalogCall struct {
 }
 
 func (p *staticMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
-	if req.UsesServiceAccount() {
+	// Mirror mcp.ClientManager.GetTools: invalid requests fail closed.
+	if req.RemoteOwnerID == "" || req.InvokingUserID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogRemoteOwnerRequired}}
+	}
+	if req.ServiceAccount {
 		p.saCalls = append(p.saCalls, saCatalogCall{
-			remoteOwnerID:  req.RemoteOwnerID(),
-			invokingUserID: req.InvokingUserID(),
+			remoteOwnerID:  req.RemoteOwnerID,
+			invokingUserID: req.InvokingUserID,
 		})
 		return p.saTools, nil
 	}
-	p.userCalls = append(p.userCalls, req.InvokingUserID())
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, p.errors
 }
 
@@ -409,7 +413,7 @@ func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
-	require.Empty(t, provider.saCalls)
+	// The catalog build fails closed downstream; no MCP tools reach the store.
 	require.Empty(t, provider.userCalls)
 	require.ElementsMatch(t, []string{"builtin"}, toolNames(context.Tools))
 	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)

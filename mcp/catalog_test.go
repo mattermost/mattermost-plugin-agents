@@ -7,56 +7,56 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestCatalogRequestConstructors(t *testing.T) {
+func TestCatalogRequest(t *testing.T) {
 	t.Parallel()
 
-	t.Run("user catalog rejects empty user", func(t *testing.T) {
-		_, err := NewUserCatalogRequest("")
-		require.ErrorIs(t, err, ErrCatalogUserIDRequired)
-	})
-
-	t.Run("SA catalog rejects empty remote owner", func(t *testing.T) {
-		_, err := NewServiceAccountCatalogRequest("", "user-1")
-		require.ErrorIs(t, err, ErrCatalogRemoteOwnerRequired)
-	})
-
-	t.Run("SA catalog rejects empty invoker", func(t *testing.T) {
-		_, err := NewServiceAccountCatalogRequest("bot-1", "")
-		require.ErrorIs(t, err, ErrCatalogInvokerRequired)
-	})
-
 	t.Run("user catalog authenticates remotes and locals as the user", func(t *testing.T) {
-		req, err := NewUserCatalogRequest("user-1")
-		require.NoError(t, err)
-		require.Equal(t, "user-1", req.RemoteOwnerID())
-		require.Equal(t, "user-1", req.InvokingUserID())
-		require.False(t, req.UsesServiceAccount())
+		req := UserCatalogRequest("user-1")
+		require.NoError(t, req.validate())
+		require.False(t, req.ServiceAccount)
 		require.Equal(t, clientKey{userID: "user-1", kind: clientKindUserRemote}, req.remoteKey())
-		require.Equal(t, clientKey{userID: "user-1", kind: clientKindLocal}, req.localKey())
+		require.Equal(t, "user-1", req.InvokingUserID)
 	})
 
 	t.Run("SA catalog splits remote owner from invoker", func(t *testing.T) {
-		req, err := NewServiceAccountCatalogRequest("bot-1", "user-a")
-		require.NoError(t, err)
-		require.Equal(t, "bot-1", req.RemoteOwnerID())
-		require.Equal(t, "user-a", req.InvokingUserID())
-		require.True(t, req.UsesServiceAccount())
+		req := ServiceAccountCatalogRequest("bot-1", "user-a")
+		require.NoError(t, req.validate())
+		require.True(t, req.ServiceAccount)
 		require.Equal(t, clientKey{userID: "bot-1", kind: clientKindSARemote}, req.remoteKey())
-		require.Equal(t, clientKey{userID: "user-a", kind: clientKindLocal}, req.localKey())
+		require.Equal(t, "user-a", req.InvokingUserID)
 	})
+}
 
-	t.Run("SA preview uses the viewer as remote owner and invoker", func(t *testing.T) {
-		req, err := NewServiceAccountPreviewRequest("viewer-1")
-		require.NoError(t, err)
-		require.Equal(t, "viewer-1", req.RemoteOwnerID())
-		require.Equal(t, "viewer-1", req.InvokingUserID())
-		require.True(t, req.UsesServiceAccount())
-	})
+// GetTools must fail closed on invalid requests instead of building a catalog.
+func TestGetToolsRejectsInvalidRequests(t *testing.T) {
+	t.Parallel()
+
+	m := &ClientManager{log: newTestLogService()}
+
+	tests := []struct {
+		name    string
+		req     CatalogRequest
+		wantErr error
+	}{
+		{name: "zero value", req: CatalogRequest{}, wantErr: ErrCatalogRemoteOwnerRequired},
+		{name: "empty user", req: UserCatalogRequest(""), wantErr: ErrCatalogRemoteOwnerRequired},
+		{name: "SA empty remote owner", req: ServiceAccountCatalogRequest("", "user-1"), wantErr: ErrCatalogRemoteOwnerRequired},
+		{name: "SA empty invoker", req: ServiceAccountCatalogRequest("bot-1", ""), wantErr: ErrCatalogInvokerRequired},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tools, errs := m.GetTools(context.Background(), tt.req)
+			require.Empty(t, tools)
+			require.NotNil(t, errs)
+			require.Len(t, errs.Errors, 1)
+			require.ErrorIs(t, errs.Errors[0], tt.wantErr)
+		})
+	}
 }
 
 func TestServerKind(t *testing.T) {
@@ -69,6 +69,7 @@ func TestServerKind(t *testing.T) {
 		{origin: EmbeddedClientKey, want: ServerKindEmbedded},
 		{origin: "plugin://com.example.mcp", want: ServerKindPlugin},
 		{origin: "https://mcp.example.com", want: ServerKindRemote},
+		{origin: "https://mcp.example.com/", want: ServerKindRemote},
 		{origin: "", want: ServerKindRemote},
 	}
 
@@ -86,7 +87,7 @@ func TestClientBagKindEnforced(t *testing.T) {
 	cache := newTestToolsCache()
 
 	t.Run("SA remotes reject embedded and plugin connect", func(t *testing.T) {
-		bag := newRemoteClients("bot-1", true, log, nil, http.DefaultClient, cache)
+		bag := newRemoteClients("bot-1", clientKindSARemote, log, nil, http.DefaultClient, cache)
 		err := bag.ConnectToEmbeddedServerIfAvailable(context.Background(), "sess", nil, EmbeddedServerConfig{Enabled: true})
 		require.Error(t, err)
 		require.Empty(t, bag.snapshotClients())
@@ -97,7 +98,7 @@ func TestClientBagKindEnforced(t *testing.T) {
 	})
 
 	t.Run("user remotes reject embedded and plugin connect", func(t *testing.T) {
-		bag := newRemoteClients("user-1", false, log, nil, http.DefaultClient, cache)
+		bag := newRemoteClients("user-1", clientKindUserRemote, log, nil, http.DefaultClient, cache)
 		err := bag.ConnectToEmbeddedServerIfAvailable(context.Background(), "sess", nil, EmbeddedServerConfig{Enabled: true})
 		require.Error(t, err)
 		err = bag.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "com.example.mcp"}, nil)
@@ -115,18 +116,4 @@ func TestClientBagKindEnforced(t *testing.T) {
 		require.NotEmpty(t, errs.Errors)
 		require.Empty(t, bag.snapshotClients())
 	})
-}
-
-func TestCreateAndStoreUserClientRejectsNonRemoteKind(t *testing.T) {
-	pluginAPI := newTestPluginAPIForEmbeddedManager("user-1", "session-1")
-	manager := &ClientManager{
-		log:      pluginAPI.Log,
-		clients:  make(map[clientKey]*UserClients),
-		activity: make(map[clientKey]time.Time),
-	}
-
-	_, errs := manager.createAndStoreUserClient(context.Background(), clientKey{userID: "user-1", kind: clientKindLocal}, false)
-	require.NotNil(t, errs)
-	require.NotEmpty(t, errs.Errors)
-	require.Empty(t, manager.clients)
 }

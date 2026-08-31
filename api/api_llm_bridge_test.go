@@ -1722,12 +1722,12 @@ type fakeBridgeMCPToolProvider struct {
 }
 
 func (p *fakeBridgeMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
-	if req.UsesServiceAccount() {
-		p.saCalls = append(p.saCalls, req.RemoteOwnerID())
-		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID())
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
+		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)
 		return p.saTools, nil
 	}
-	p.userCalls = append(p.userCalls, req.InvokingUserID())
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, nil
 }
 

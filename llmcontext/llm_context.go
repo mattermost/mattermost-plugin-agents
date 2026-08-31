@@ -276,24 +276,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
-		// Get tools from all connected servers
+		// Get tools from all connected servers. GetTools validates the request
+		// fail-closed (e.g. an agent with no bot user yields an error, not tools).
+		req := mcp.UserCatalogRequest(userID)
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
-			req, reqErr := mcp.NewServiceAccountCatalogRequest(bot.BotUserID(), userID)
-			if reqErr != nil {
-				b.pluginAPI.Log.Error("Service account catalog request is invalid; skipping MCP tools",
-					"bot_name", botCfg.Name, "bot_id", botCfg.ID, "error", reqErr)
-			} else {
-				mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
-			}
-		} else {
-			req, reqErr := mcp.NewUserCatalogRequest(userID)
-			if reqErr != nil {
-				b.pluginAPI.Log.Error("User catalog request is invalid; skipping MCP tools", "userID", userID, "error", reqErr)
-			} else {
-				mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
-			}
+			req = mcp.ServiceAccountCatalogRequest(bot.BotUserID(), userID)
 		}
+		mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
 
 		// Remote/external MCP servers are the licensed "MCP Support" feature.
 		// Without a license their tools are never supplied to the LLM: they

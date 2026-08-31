@@ -105,7 +105,7 @@ func TestNewClientServiceAccountSendsStaticHeaders(t *testing.T) {
 func TestServiceAccountConnectToRemoteServersFailClosed(t *testing.T) {
 	liveHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "sa_tool"))
 
-	bag := newRemoteClients("bot-1", true, newTestLogService(), nil, liveHTTP.Client(), newTestToolsCache())
+	bag := newRemoteClients("bot-1", clientKindSARemote, newTestLogService(), nil, liveHTTP.Client(), newTestToolsCache())
 	t.Cleanup(bag.Close)
 
 	mcpErrors := bag.ConnectToRemoteServers(context.Background(), []ServerConfig{
@@ -218,11 +218,11 @@ func TestClientManagerModeIsolationPooling(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, httpServer.Client(), nil)
 	t.Cleanup(m.Close)
 
-	userTools, userErrors := m.GetTools(context.Background(), mustUserCatalogRequest(t, "bot-1"))
+	userTools, userErrors := m.GetTools(context.Background(), UserCatalogRequest("bot-1"))
 	require.Nil(t, userErrors)
 	requireToolNames(t, userTools, "shared_server__shared_tool")
 
-	saTools, saErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-1"))
+	saTools, saErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-1"))
 	require.Nil(t, saErrors)
 	requireToolNames(t, saTools, "shared_server__shared_tool")
 
@@ -265,7 +265,7 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, botUserID, invokingUserID))
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest(botUserID, invokingUserID))
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "mattermost__search_users")
 	require.Equal(t, []string{invokingUserID}, embeddedServer.recordedUserIDs())
@@ -298,7 +298,7 @@ func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testi
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 1)
 
@@ -320,13 +320,7 @@ func TestClientManagerServiceAccountRemoteBagExcludesLocalServers(t *testing.T) 
 
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
-	mockAPI := &fakePluginHTTPClient{
-		pluginHTTP: func(req *http.Request) *http.Response {
-			rec := httptest.NewRecorder()
-			target.Config.Handler.ServeHTTP(rec, req)
-			return rec.Result()
-		},
-	}
+	mockAPI := newPluginHTTPForwarder(t, target)
 
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
@@ -344,7 +338,7 @@ func TestClientManagerServiceAccountRemoteBagExcludesLocalServers(t *testing.T) 
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "sa_server__sa_tool", "mattermost__search_users", "example__test_tool_0")
 }
@@ -369,9 +363,9 @@ func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing
 	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
 	t.Cleanup(m.Close)
 
-	_, errA := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
+	_, errA := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
 	require.Nil(t, errA)
-	_, errB := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-b"))
+	_, errB := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-b"))
 	require.Nil(t, errB)
 
 	require.Equal(t, []string{"user-a", "user-b"}, embeddedServer.recordedUserIDs())
@@ -395,7 +389,7 @@ func TestClientManagerServiceAccountCatalogExcludesNonSARemotes(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, saHTTP.Client(), nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetTools(context.Background(), mustSACatalogRequest(t, "bot-1", "user-a"))
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
 	require.Nil(t, mcpErrors, "excluded remotes are not failures and must not be dialed as the user")
 	requireToolNames(t, tools, "sa_server__sa_tool")
 }
@@ -412,13 +406,7 @@ func TestCollectCatalogCrossBagToolNameCollision(t *testing.T) {
 
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
-	mockAPI := &fakePluginHTTPClient{
-		pluginHTTP: func(req *http.Request) *http.Response {
-			rec := httptest.NewRecorder()
-			target.Config.Handler.ServeHTTP(rec, req)
-			return rec.Result()
-		},
-	}
+	mockAPI := newPluginHTTPForwarder(t, target)
 
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
@@ -440,8 +428,8 @@ func TestCollectCatalogCrossBagToolNameCollision(t *testing.T) {
 		name string
 		req  CatalogRequest
 	}{
-		{name: "user catalog", req: mustUserCatalogRequest(t, "user-a")},
-		{name: "service account catalog", req: mustSACatalogRequest(t, "bot-1", "user-a")},
+		{name: "user catalog", req: UserCatalogRequest("user-a")},
+		{name: "service account catalog", req: ServiceAccountCatalogRequest("bot-1", "user-a")},
 	}
 
 	for _, tt := range tests {
@@ -485,20 +473,6 @@ func (f *recordingEmbeddedMCPServer) recordedSessionIDs() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.sessionIDs...)
-}
-
-func mustUserCatalogRequest(t *testing.T, userID string) CatalogRequest {
-	t.Helper()
-	req, err := NewUserCatalogRequest(userID)
-	require.NoError(t, err)
-	return req
-}
-
-func mustSACatalogRequest(t *testing.T, remoteOwnerID, invokingUserID string) CatalogRequest {
-	t.Helper()
-	req, err := NewServiceAccountCatalogRequest(remoteOwnerID, invokingUserID)
-	require.NoError(t, err)
-	return req
 }
 
 // newTestPluginAPIForEmbeddedUsers maps each user ID to a pre-minted session ID.

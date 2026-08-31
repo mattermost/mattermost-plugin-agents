@@ -29,8 +29,7 @@ type ToolInfo struct {
 }
 
 // UserClients represents a pooled MCP client bag. kind determines which
-// servers it may connect: remotes-only, local-only, or (for unit tests)
-// unrestricted.
+// servers it may connect: remotes-only or local-only (embedded + plugin).
 type UserClients struct {
 	clientsMu    sync.RWMutex
 	clients      map[string]*Client // serverID -> client
@@ -65,15 +64,9 @@ func newClients(userID string, kind clientKind, log pluginapi.LogService, oauthM
 	}
 }
 
-// NewUserClients creates an unrestricted bag for UserClients unit tests.
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
-	return newClients(userID, clientKindUnrestricted, log, oauthManager, httpClient, toolsCache)
-}
-
-func newRemoteClients(userID string, serviceAccount bool, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
-	kind := clientKindUserRemote
-	if serviceAccount {
-		kind = clientKindSARemote
+func newRemoteClients(userID string, kind clientKind, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	// Service accounts never use per-user OAuth.
+	if kind == clientKindSARemote {
 		oauthManager = nil
 	}
 	return newClients(userID, kind, log, oauthManager, httpClient, toolsCache)
@@ -84,11 +77,11 @@ func newLocalClients(userID string, log pluginapi.LogService, httpClient *http.C
 }
 
 func (c *UserClients) allowsRemote() bool {
-	return c.kind == clientKindUserRemote || c.kind == clientKindSARemote || c.kind == clientKindUnrestricted
+	return c.kind == clientKindUserRemote || c.kind == clientKindSARemote
 }
 
 func (c *UserClients) allowsLocal() bool {
-	return c.kind == clientKindLocal || c.kind == clientKindUnrestricted
+	return c.kind == clientKindLocal
 }
 
 func (c *UserClients) serviceAccount() bool {
@@ -279,11 +272,6 @@ func (c *UserClients) Close() {
 	c.clients = make(map[string]*Client)
 }
 
-// GetTools returns the tools available from this bag, namespaced once.
-func (c *UserClients) GetTools(context.Context) []llm.Tool {
-	return collectToolsFromSnapshots(c.userID, c.log, c.snapshotClients())
-}
-
 // collectToolsFromSnapshots namespaces and de-dupes tools across bags exactly
 // once so a remote named "Mattermost" cannot collide with the embedded server.
 func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshots ...[]userClientSnapshot) []llm.Tool {
@@ -294,8 +282,13 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 	if len(merged) == 0 {
 		return nil
 	}
+	// Secondary key keeps unsuffixed-slug assignment deterministic when bags
+	// contain equal server IDs.
 	sort.Slice(merged, func(i, j int) bool {
-		return merged[i].serverID < merged[j].serverID
+		if merged[i].serverID != merged[j].serverID {
+			return merged[i].serverID < merged[j].serverID
+		}
+		return merged[i].client.config.BaseURL < merged[j].client.config.BaseURL
 	})
 
 	var tools []llm.Tool

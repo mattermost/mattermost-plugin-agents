@@ -33,20 +33,19 @@ export function mcpServerStatus(
     if (server.authenticated) {
         return 'connected';
     }
-    if (isLocalMCPServer(server.kind)) {
-        if (!server.authEmail && server.tools.length === 0 && !server.authURL) {
-            return 'not-connected';
+
+    // Service-account statuses only apply to remote servers; local (embedded/
+    // plugin) servers never use SA credentials.
+    if (!isLocalMCPServer(server.kind)) {
+        if (useServiceAccountAuth) {
+            if (!server.serviceAccountConfigured) {
+                return 'no-sa-credentials';
+            }
+            return 'sa-connect-failed';
         }
-        return 'none';
-    }
-    if (useServiceAccountAuth) {
-        if (!server.serviceAccountConfigured) {
-            return 'no-sa-credentials';
+        if (!server.needsOAuth && server.serviceAccountConfigured) {
+            return 'sa-only-unavailable';
         }
-        return 'sa-connect-failed';
-    }
-    if (!server.needsOAuth && server.serviceAccountConfigured) {
-        return 'sa-only-unavailable';
     }
 
     // OAuth-needed rows with an authURL are 'none': Connect handles them.

@@ -199,9 +199,9 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 }
 
 func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
-	if req.UsesServiceAccount() {
-		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID())
-		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID())
+	if req.ServiceAccount {
+		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID)
+		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID)
 		m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
 		return m.serviceAccountTools, m.serviceAccountErrors
 	}

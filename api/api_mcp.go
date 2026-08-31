@@ -59,7 +59,7 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	}
 
 	tools, mcpErrors := a.mcpClientManager.GetTools(c.Request.Context(), req)
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.UsesServiceAccount()))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.ServiceAccount))
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
@@ -72,12 +72,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		return mcp.CatalogRequest{}, false
 	}
 	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.IsBasicsLicensed() {
-		req, err := mcp.NewUserCatalogRequest(userID)
-		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err)
-			return mcp.CatalogRequest{}, false
-		}
-		return req, true
+		return mcp.UserCatalogRequest(userID), true
 	}
 
 	if agentID == "" {
@@ -85,12 +80,8 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 			c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view the service account catalog"))
 			return mcp.CatalogRequest{}, false
 		}
-		req, err := mcp.NewServiceAccountPreviewRequest(userID)
-		if err != nil {
-			c.AbortWithError(http.StatusBadRequest, err)
-			return mcp.CatalogRequest{}, false
-		}
-		return req, true
+		// Unsaved-agent preview: the viewer is both remote-pool owner and invoker.
+		return mcp.ServiceAccountCatalogRequest(userID, userID), true
 	}
 
 	cfg, err := a.agentStore.GetAgent(agentID)
@@ -115,12 +106,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		c.AbortWithError(http.StatusInternalServerError, errors.New("agent has no bot user"))
 		return mcp.CatalogRequest{}, false
 	}
-	req, err := mcp.NewServiceAccountCatalogRequest(cfg.BotUserID, userID)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return mcp.CatalogRequest{}, false
-	}
-	return req, true
+	return mcp.ServiceAccountCatalogRequest(cfg.BotUserID, userID), true
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
