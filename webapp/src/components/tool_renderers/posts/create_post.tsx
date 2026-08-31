@@ -1,25 +1,19 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useMemo} from 'react';
 import styled from 'styled-components';
 import {useSelector} from 'react-redux';
 
 import {GlobalState} from '@mattermost/types/store';
 
-import {getPost} from '@/client';
 import {PostMessagePreview} from '@/mm_webapp';
 
-import {ToolCall, ToolCallStatus} from '../tool_types';
-import ToolCard from '../tool_card';
-import ToolArguments from '../tool_arguments';
-import {PostPreview} from '../post_preview';
+import {ToolCall} from '../../tool_types';
+import ToolCard from '../../tool_card';
+import ToolCardShell, {RichCardProps} from '../tool_card_shell';
 
-import ToolCardShell, {RichCardProps} from './tool_card_shell';
-
-const PreviewWrap = styled.div`
-    margin-top: 12px;
-`;
+import {PreviewWrap, isAwaitingDecision} from './common';
 
 // The create_post preview shows a post that does not exist yet, so none of the
 // preview's interactive elements (permalink jump, avatar, username) can lead
@@ -27,92 +21,6 @@ const PreviewWrap = styled.div`
 const StaticPreviewWrap = styled(PreviewWrap)`
     pointer-events: none;
 `;
-
-// The preview cards only render while the call still needs a decision: that is
-// when seeing the post has approval value. Executed calls render the generic
-// card (the response already carries the outcome).
-function isAwaitingDecision(tool: ToolCall): boolean {
-    return tool.status === ToolCallStatus.Pending || tool.status === ToolCallStatus.Accepted;
-}
-
-interface ReadPostParsed {
-    postId: string;
-}
-
-function parseReadPost(args: ToolCall['arguments']): ReadPostParsed | null {
-    if (args == null || typeof args !== 'object' || Array.isArray(args)) {
-        return null;
-    }
-    const postId = (args as {[key: string]: unknown}).post_id;
-    if (typeof postId !== 'string' || postId === '') {
-        return null;
-    }
-    return {postId};
-}
-
-interface FetchedPost {
-    userId: string;
-    channelId: string;
-    message: string;
-}
-
-/**
- * Card for read_post: while the call awaits approval, shows the referenced
- * post as a Mattermost permalink-style preview so the user sees what the tool
- * will actually read. Falls back to the generic card when the call has already
- * executed (the response carries the content, and a preview would re-render
- * the post's markdown next to the deliberately-unrendered result), when the
- * arguments don't parse, or when the post can't be fetched.
- */
-const PostPreviewCard: React.FC<RichCardProps> = (props) => {
-    const parsed = parseReadPost(props.tool.arguments);
-    const awaiting = isAwaitingDecision(props.tool);
-    const postId = awaiting ? parsed?.postId : undefined; // eslint-disable-line no-undefined
-
-    const [post, setPost] = useState<FetchedPost | null>(null);
-    const [failed, setFailed] = useState(false);
-
-    useEffect(() => {
-        let cancelled = false;
-        if (postId) {
-            getPost(postId).then((fetched) => {
-                if (!cancelled) {
-                    setPost({userId: fetched.user_id, channelId: fetched.channel_id, message: fetched.message});
-                }
-            }).catch(() => {
-                if (!cancelled) {
-                    setFailed(true);
-                }
-            });
-        }
-        return () => {
-            cancelled = true;
-        };
-    }, [postId]);
-
-    if (!parsed || failed || !awaiting) {
-        return <ToolCard {...props}/>;
-    }
-
-    return (
-        <ToolCardShell {...props}>
-            {post ? (
-                <PreviewWrap>
-                    <PostPreview
-                        postId={parsed.postId}
-                        userId={post.userId}
-                        channelId={post.channelId}
-                        content={post.message}
-                    />
-                </PreviewWrap>
-            ) : (
-                <ToolArguments arguments={props.tool.arguments}/>
-            )}
-        </ToolCardShell>
-    );
-};
-
-export default PostPreviewCard;
 
 interface CreatePostParsed {
     message: string;
@@ -143,7 +51,7 @@ function parseCreatePost(args: ToolCall['arguments']): CreatePostParsed | null {
  * the requester's session). Falls back to the generic card when the arguments
  * don't parse or the call has already executed.
  */
-export const CreatePostPreviewCard: React.FC<RichCardProps> = (props) => {
+const CreatePostPreviewCard: React.FC<RichCardProps> = (props) => {
     const parsed = parseCreatePost(props.tool.arguments);
     const awaiting = isAwaitingDecision(props.tool);
 
@@ -181,3 +89,5 @@ export const CreatePostPreviewCard: React.FC<RichCardProps> = (props) => {
         </ToolCardShell>
     );
 };
+
+export default CreatePostPreviewCard;
