@@ -3,9 +3,14 @@
 
 import React, {useState} from 'react';
 import {useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 
+import {GlobalState} from '@mattermost/types/store';
+
 import {LinkVariantIcon} from '@mattermost/compass-icons/components';
+
+import manifest from '@/manifest';
 
 import {CitationBase, CitationWrapper} from './citation_base';
 import {Annotation} from './types';
@@ -16,11 +21,12 @@ interface CitationComponentProps {
 
 export const CitationComponent = (props: CitationComponentProps) => {
     const intl = useIntl();
+    const allowUnsafeLinks = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id]?.allowUnsafeLinks ?? false);
 
     const handleClick = (e: React.MouseEvent | React.KeyboardEvent) => {
         e.preventDefault();
         e.stopPropagation();
-        if (props.annotation.url) {
+        if (allowUnsafeLinks && props.annotation.url) {
             window.open(props.annotation.url, '_blank', 'noopener,noreferrer');
         }
     };
@@ -48,7 +54,7 @@ export const CitationComponent = (props: CitationComponentProps) => {
                 <TooltipContent>
                     {domain ? (
                         <>
-                            <FaviconIcon domain={domain}/>
+                            {allowUnsafeLinks && <FaviconIcon domain={domain}/>}
                             <TooltipDomain>{domain}</TooltipDomain>
                         </>
                     ) : (
@@ -59,6 +65,7 @@ export const CitationComponent = (props: CitationComponentProps) => {
                 </TooltipContent>
             }
             onClick={handleClick}
+            interactive={allowUnsafeLinks}
             ariaLabel={ariaLabel}
             testId='llm-citation'
             tooltipTestId='llm-citation-tooltip'

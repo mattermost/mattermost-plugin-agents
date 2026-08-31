@@ -8,6 +8,7 @@ interface CitationBaseProps {
     icon: React.ReactNode;
     tooltipContent: React.ReactNode;
     onClick: (e: React.MouseEvent | React.KeyboardEvent) => void;
+    interactive?: boolean;
     ariaLabel: string;
     testId?: string;
     tooltipTestId?: string;
@@ -16,6 +17,7 @@ interface CitationBaseProps {
 
 export const CitationBase = (props: CitationBaseProps) => {
     const markerRef = useRef<HTMLSpanElement>(null);
+    const interactive = props.interactive !== false;
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -23,13 +25,18 @@ export const CitationBase = (props: CitationBaseProps) => {
         }
     };
 
+    const interactiveProps = interactive ? {
+        onClick: props.onClick,
+        onKeyDown: handleKeyDown,
+        role: 'button',
+        tabIndex: 0,
+    } : {};
+
     return (
         <CitationWrapper
             ref={markerRef}
-            onClick={props.onClick}
-            onKeyDown={handleKeyDown}
-            role='button'
-            tabIndex={0}
+            $interactive={interactive}
+            {...interactiveProps}
             aria-label={props.ariaLabel}
             data-testid={props.testId}
             data-citation-index={props.citationIndex}
@@ -43,12 +50,12 @@ export const CitationBase = (props: CitationBaseProps) => {
     );
 };
 
-export const CitationWrapper = styled.span`
+export const CitationWrapper = styled.span<{$interactive?: boolean}>`
     display: inline-flex;
     align-items: center;
     justify-content: center;
     margin-left: 4px;
-    cursor: pointer;
+    cursor: ${(props) => (props.$interactive ? 'pointer' : 'default')};
     position: relative;
     width: 20px;
     height: 20px;
