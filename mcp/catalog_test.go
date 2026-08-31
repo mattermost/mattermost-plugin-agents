@@ -14,21 +14,36 @@ import (
 func TestCatalogRequest(t *testing.T) {
 	t.Parallel()
 
-	t.Run("user catalog authenticates remotes and locals as the user", func(t *testing.T) {
-		req := UserCatalogRequest("user-1")
-		require.NoError(t, req.validate())
-		require.False(t, req.ServiceAccount)
-		require.Equal(t, clientKey{userID: "user-1", kind: clientKindUserRemote}, req.remoteKey())
-		require.Equal(t, "user-1", req.InvokingUserID)
-	})
+	tests := []struct {
+		name               string
+		req                CatalogRequest
+		wantServiceAccount bool
+		wantRemoteKey      clientKey
+		wantInvoker        string
+	}{
+		{
+			name:          "user catalog authenticates remotes and locals as the user",
+			req:           UserCatalogRequest("user-1"),
+			wantRemoteKey: clientKey{userID: "user-1", kind: clientKindUserRemote},
+			wantInvoker:   "user-1",
+		},
+		{
+			name:               "SA catalog splits remote owner from invoker",
+			req:                ServiceAccountCatalogRequest("bot-1", "user-a"),
+			wantServiceAccount: true,
+			wantRemoteKey:      clientKey{userID: "bot-1", kind: clientKindSARemote},
+			wantInvoker:        "user-a",
+		},
+	}
 
-	t.Run("SA catalog splits remote owner from invoker", func(t *testing.T) {
-		req := ServiceAccountCatalogRequest("bot-1", "user-a")
-		require.NoError(t, req.validate())
-		require.True(t, req.ServiceAccount)
-		require.Equal(t, clientKey{userID: "bot-1", kind: clientKindSARemote}, req.remoteKey())
-		require.Equal(t, "user-a", req.InvokingUserID)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.req.validate())
+			require.Equal(t, tt.wantServiceAccount, tt.req.ServiceAccount)
+			require.Equal(t, tt.wantRemoteKey, tt.req.remoteKey())
+			require.Equal(t, tt.wantInvoker, tt.req.InvokingUserID)
+		})
+	}
 }
 
 // GetTools must fail closed on invalid requests instead of building a catalog.
@@ -86,34 +101,45 @@ func TestClientBagKindEnforced(t *testing.T) {
 	log := newTestLogService()
 	cache := newTestToolsCache()
 
-	t.Run("SA remotes reject embedded and plugin connect", func(t *testing.T) {
-		bag := newRemoteClients("bot-1", clientKindSARemote, log, nil, http.DefaultClient, cache)
-		err := bag.ConnectToEmbeddedServerIfAvailable(context.Background(), "sess", nil, EmbeddedServerConfig{Enabled: true})
-		require.Error(t, err)
-		require.Empty(t, bag.snapshotClients())
+	tests := []struct {
+		name string
+		bag  *UserClients
+		// Local bags must reject remote connects; remote bags must reject
+		// embedded and plugin connects.
+		local bool
+	}{
+		{
+			name: "SA remotes reject embedded and plugin connect",
+			bag:  newRemoteClients("bot-1", clientKindSARemote, log, nil, http.DefaultClient, cache),
+		},
+		{
+			name: "user remotes reject embedded and plugin connect",
+			bag:  newRemoteClients("user-1", clientKindUserRemote, log, nil, http.DefaultClient, cache),
+		},
+		{
+			name:  "local bag rejects remote connect",
+			bag:   newLocalClients("user-1", log, http.DefaultClient, cache),
+			local: true,
+		},
+	}
 
-		err = bag.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "com.example.mcp"}, nil)
-		require.Error(t, err)
-		require.Empty(t, bag.snapshotClients())
-	})
-
-	t.Run("user remotes reject embedded and plugin connect", func(t *testing.T) {
-		bag := newRemoteClients("user-1", clientKindUserRemote, log, nil, http.DefaultClient, cache)
-		err := bag.ConnectToEmbeddedServerIfAvailable(context.Background(), "sess", nil, EmbeddedServerConfig{Enabled: true})
-		require.Error(t, err)
-		err = bag.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "com.example.mcp"}, nil)
-		require.Error(t, err)
-	})
-
-	t.Run("local bag rejects remote connect", func(t *testing.T) {
-		bag := newLocalClients("user-1", log, http.DefaultClient, cache)
-		errs := bag.ConnectToRemoteServers(context.Background(), []ServerConfig{{
-			Name:    "remote",
-			BaseURL: "https://mcp.example.com",
-			Enabled: true,
-		}}, false)
-		require.NotNil(t, errs)
-		require.NotEmpty(t, errs.Errors)
-		require.Empty(t, bag.snapshotClients())
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.local {
+				errs := tt.bag.ConnectToRemoteServers(context.Background(), []ServerConfig{{
+					Name:    "remote",
+					BaseURL: "https://mcp.example.com",
+					Enabled: true,
+				}}, false)
+				require.NotNil(t, errs)
+				require.NotEmpty(t, errs.Errors)
+			} else {
+				err := tt.bag.ConnectToEmbeddedServerIfAvailable(context.Background(), "sess", nil, EmbeddedServerConfig{Enabled: true})
+				require.Error(t, err)
+				err = tt.bag.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "com.example.mcp"}, nil)
+				require.Error(t, err)
+			}
+			require.Empty(t, tt.bag.snapshotClients())
+		})
+	}
 }
