@@ -304,7 +304,7 @@ describe('ServiceFields structured output policy selector', () => {
             'Native supported',
             'Prompt fallback',
         ]);
-        expect(screen.getByText(/the runtime combines the settings across this service's fallback chain/)).not.toBeNull();
+        expect(screen.getByText(/combined across this service's fallback chain/)).not.toBeNull();
     });
 
     const storedValueCases: {description: string; service: LLMService; selected: string}[] = [

@@ -5,12 +5,14 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	stdcontext "context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -525,15 +527,6 @@ func resolveBridgeService(services []llm.ServiceConfig, value string) (llm.Servi
 	return llm.ServiceConfig{}, false
 }
 
-// acquireServiceLLM leases a language model for direct calls against svc,
-// honoring the test seam when one is installed.
-func (a *API) acquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-	if a.serviceLLMAcquirerForTest != nil {
-		return a.serviceLLMAcquirerForTest(svc, fallbacks)
-	}
-	return a.bots.AcquireServiceLLM(svc, fallbacks)
-}
-
 // prepareServiceBridgeCompletion validates a service bridge completion request,
 // resolves the requested service from stored configuration, and leases a
 // language model for it. On failure it writes the error response and reports
@@ -601,12 +594,9 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 		return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
 	}
 
-	model, release, err := a.acquireServiceLLM(primary, fallbacks)
+	model, release, err := a.bots.AcquireServiceLLM(primary, fallbacks)
 	if err != nil {
 		return fail(http.StatusInternalServerError, fmt.Sprintf("failed to build a language model for service %q: %v", primary.ID, err))
-	}
-	if release == nil {
-		release = func() {}
 	}
 
 	return model, llmRequest, opts, release, true
@@ -693,7 +683,12 @@ func (a *API) streamLLMResponse(c *gin.Context, model llm.LanguageModel, maxTool
 		return
 	}
 
-	// Stream the response as JSON-encoded events
+	// Stream the response as JSON-encoded events. Whatever is left on the
+	// stream is drained on the way out: the caller releases its lease on the
+	// model as soon as this returns, so a producer still blocked on an unread
+	// send would be left holding a provider client that is being shut down.
+	defer drainStream(streamResult)
+
 	for event := range streamResult.Stream {
 		// Convert the event to JSON
 		eventJSON, err := json.Marshal(event)
@@ -712,6 +707,13 @@ func (a *API) streamLLMResponse(c *gin.Context, model llm.LanguageModel, maxTool
 		if event.Type == llm.EventTypeEnd || event.Type == llm.EventTypeError {
 			break
 		}
+	}
+}
+
+// drainStream discards whatever is left on the stream so its producer always
+// runs to completion.
+func drainStream(stream *llm.TextStreamResult) {
+	for range stream.Stream { //nolint:revive // empty-block: the remaining events are deliberately discarded
 	}
 }
 
@@ -892,11 +894,8 @@ func (a *API) handleGetServices(c *gin.Context) {
 		})
 	}
 
-	sort.Slice(services, func(i, j int) bool {
-		if services[i].Name == services[j].Name {
-			return services[i].ID < services[j].ID
-		}
-		return services[i].Name < services[j].Name
+	slices.SortFunc(services, func(a, b bridgeclient.BridgeServiceInfo) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.ID, b.ID))
 	})
 
 	c.JSON(http.StatusOK, bridgeclient.ServicesResponse{

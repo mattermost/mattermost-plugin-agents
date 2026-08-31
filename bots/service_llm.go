@@ -31,28 +31,15 @@ func ServiceCanServeCompletions(svc llm.ServiceConfig) bool {
 // the given service snapshot, and verifies that every fallback is itself able
 // to serve a completion. It is kept separate from ServiceCanServeCompletions so
 // a broken chain surfaces as a descriptive error instead of silently making the
-// primary ineligible.
+// primary ineligible. llm.ResolveFallbackChain already rejects a member that
+// fails llm.IsValidService, so the checks below only have to cover what
+// ServiceCanServeCompletions adds on top of it.
 //
-// Duplicate service IDs in the snapshot resolve to the first entry, matching
-// how the configuration itself is read.
+// primary is expected to come from services, so the whole chain resolves from
+// one consistent view. Duplicate service IDs in the snapshot resolve to the
+// first entry, matching how the configuration itself is read.
 func ResolveBridgeFallbacks(services []llm.ServiceConfig, primary llm.ServiceConfig) ([]llm.ServiceConfig, error) {
-	byID := make(map[string]llm.ServiceConfig, len(services)+1)
-	for _, svc := range services {
-		if _, exists := byID[svc.ID]; !exists {
-			byID[svc.ID] = svc
-		}
-	}
-	// A primary that is not part of the snapshot still needs to resolve its own
-	// chain; a primary that is part of it resolves entirely from the snapshot
-	// so the whole chain comes from one consistent view.
-	if _, exists := byID[primary.ID]; !exists {
-		byID[primary.ID] = primary
-	}
-
-	lookup := func(id string) (llm.ServiceConfig, bool) {
-		svc, ok := byID[id]
-		return svc, ok
-	}
+	lookup := llm.ServiceLookup(services)
 
 	chain, err := llm.ResolveFallbackChain(primary.ID, lookup)
 	if err != nil {
@@ -65,8 +52,6 @@ func ResolveBridgeFallbacks(services []llm.ServiceConfig, primary llm.ServiceCon
 			return nil, fmt.Errorf("fallback service %q in the chain of service %q has unsupported type %q", fallback.ID, primary.ID, fallback.Type)
 		case fallback.DefaultModel == "":
 			return nil, fmt.Errorf("fallback service %q in the chain of service %q has no default model", fallback.ID, primary.ID)
-		case !ServiceCanServeCompletions(fallback):
-			return nil, fmt.Errorf("fallback service %q in the chain of service %q cannot serve completions", fallback.ID, primary.ID)
 		}
 	}
 

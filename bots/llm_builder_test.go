@@ -162,7 +162,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			mockAPI := mockPluginAPI(mmBots)
 			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			model, shutdown, err := mmBots.buildLLM(tt.service, tt.botConfig, tt.fallbacks, serviceTokenUsageIdentity(tt.service))
+			model, shutdown, err := mmBots.buildLLM(tt.service, tt.botConfig, tt.fallbacks)
 			require.NoError(t, err)
 			require.NotNil(t, model)
 			require.NotNil(t, shutdown)
@@ -184,7 +184,7 @@ func TestBuildLLMServiceCallKeepsServiceDefaults(t *testing.T) {
 	service := mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative)
 	service.LoadTestMockConfig = buildTinyLoadTestProfile(t, nil)
 
-	model, shutdown, err := mmBots.buildLLM(service, nil, nil, serviceTokenUsageIdentity(service))
+	model, shutdown, err := mmBots.buildLLM(service, nil, nil)
 	require.NoError(t, err)
 	defer shutdown()
 
@@ -196,66 +196,7 @@ func TestBuildLLMServiceCallKeepsServiceDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, response)
 
-	primary, fallbacks := structuredOutputTargets(service, nil, nil)
-	assert.Equal(t, "mock-model", primary.Model, "a service call runs the service default model")
-	assert.Empty(t, fallbacks)
-}
-
-func TestStructuredOutputTargets(t *testing.T) {
-	primaryService := geminiService("primary", "gemini-2.5-pro", llm.StructuredOutputPolicyAuto)
-	fallbackService := geminiService("backup", "gemini-2.0-flash", llm.StructuredOutputPolicyAuto)
-
-	tests := []struct {
-		name              string
-		service           llm.ServiceConfig
-		botConfig         *llm.BotConfig
-		fallbacks         []llm.ServiceConfig
-		wantPrimaryModel  string
-		wantFallbackIDs   []string
-		wantFallbackModel []string
-	}{
-		{
-			name:             "service call uses the service default model",
-			service:          primaryService,
-			wantPrimaryModel: "gemini-2.5-pro",
-		},
-		{
-			name:             "agent without an override uses the service default model",
-			service:          primaryService,
-			botConfig:        &llm.BotConfig{Name: "agent"},
-			wantPrimaryModel: "gemini-2.5-pro",
-		},
-		{
-			name:             "agent model override wins for the primary",
-			service:          primaryService,
-			botConfig:        &llm.BotConfig{Name: "agent", Model: "gemma-3-27b-it"},
-			wantPrimaryModel: "gemma-3-27b-it",
-		},
-		{
-			name:              "fallbacks keep their own default models",
-			service:           primaryService,
-			botConfig:         &llm.BotConfig{Name: "agent", Model: "gemini-3-pro"},
-			fallbacks:         []llm.ServiceConfig{fallbackService},
-			wantPrimaryModel:  "gemini-3-pro",
-			wantFallbackIDs:   []string{"backup"},
-			wantFallbackModel: []string{"gemini-2.0-flash"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			primary, fallbacks := structuredOutputTargets(tt.service, tt.botConfig, tt.fallbacks)
-
-			assert.Equal(t, tt.service.ID, primary.Service.ID)
-			assert.Equal(t, tt.wantPrimaryModel, primary.Model)
-
-			require.Len(t, fallbacks, len(tt.wantFallbackIDs))
-			for i, wantID := range tt.wantFallbackIDs {
-				assert.Equal(t, wantID, fallbacks[i].Service.ID)
-				assert.Equal(t, tt.wantFallbackModel[i], fallbacks[i].Model)
-			}
-		})
-	}
+	assert.Equal(t, "mock-model", effectiveModelFor(service, nil), "a service call runs the service default model")
 }
 
 // TestAgentModelOverrideParticipatesInCapabilityResolution pins that the model
@@ -293,9 +234,9 @@ func TestAgentModelOverrideParticipatesInCapabilityResolution(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			primary, fallbacks := structuredOutputTargets(service, tt.botConfig, nil)
 			recorder := &recordingLanguageModel{}
-			wrapper := llm.NewStructuredOutputFallbackWrapper(recorder, primary, fallbacks, bifrost.ResolveStructuredOutputCapability)
+			wrapper := llm.NewStructuredOutputFallbackWrapper(recorder, llm.NewNativeStructuredOutputDecision(
+				service, effectiveModelFor(service, tt.botConfig), nil, bifrost.ResolveStructuredOutputCapability))
 
 			_, err := wrapper.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
 				Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "Summarize the channel."}},
@@ -313,7 +254,7 @@ func TestAgentModelOverrideParticipatesInCapabilityResolution(t *testing.T) {
 	}
 }
 
-func TestTokenUsageIdentities(t *testing.T) {
+func TestTokenUsageIdentity(t *testing.T) {
 	service := llm.ServiceConfig{
 		ID:           "svc-1",
 		Name:         "Primary OpenAI",
@@ -321,38 +262,40 @@ func TestTokenUsageIdentities(t *testing.T) {
 		APIKey:       "key",
 		DefaultModel: "gpt-4o",
 	}
+	folded := service
+	folded.DefaultModel = "gpt-4.1"
 
 	tests := []struct {
 		name      string
-		identity  llm.TokenUsageIdentity
+		service   llm.ServiceConfig
+		botConfig *llm.BotConfig
 		wantModel string
 		wantBot   string
 	}{
 		{
 			name:      "agent without a model override reports the service default model",
-			identity:  agentTokenUsageIdentity(service, llm.BotConfig{Name: "agent"}),
+			service:   service,
+			botConfig: &llm.BotConfig{Name: "agent"},
 			wantModel: "gpt-4o",
 			wantBot:   "agent",
 		},
 		{
 			name:      "agent with a model override reports the effective model",
-			identity:  agentTokenUsageIdentity(service, llm.BotConfig{Name: "agent", Model: "gpt-4.1"}),
+			service:   service,
+			botConfig: &llm.BotConfig{Name: "agent", Model: "gpt-4.1"},
 			wantModel: "gpt-4.1",
 			wantBot:   "agent",
 		},
 		{
-			name: "agent identity survives EnsureBots folding the override into the service",
-			identity: func() llm.TokenUsageIdentity {
-				folded := service
-				folded.DefaultModel = "gpt-4.1"
-				return agentTokenUsageIdentity(folded, llm.BotConfig{Name: "agent", Model: "gpt-4.1"})
-			}(),
+			name:      "agent identity survives EnsureBots folding the override into the service",
+			service:   folded,
+			botConfig: &llm.BotConfig{Name: "agent", Model: "gpt-4.1"},
 			wantModel: "gpt-4.1",
 			wantBot:   "agent",
 		},
 		{
-			name:      "service identity has no agent username",
-			identity:  serviceTokenUsageIdentity(service),
+			name:      "service call has no agent username and uses the service default model",
+			service:   service,
 			wantModel: "gpt-4o",
 			wantBot:   "",
 		},
@@ -360,11 +303,13 @@ func TestTokenUsageIdentities(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.wantBot, tt.identity.BotUsername)
-			assert.Equal(t, tt.wantModel, tt.identity.DefaultModel)
-			assert.Equal(t, "svc-1", tt.identity.ServiceID)
-			assert.Equal(t, "Primary OpenAI", tt.identity.ServiceName)
-			assert.Equal(t, llm.ServiceTypeOpenAI, tt.identity.ServiceType)
+			identity := tokenUsageIdentity(tt.service, tt.botConfig)
+
+			assert.Equal(t, tt.wantBot, identity.BotUsername)
+			assert.Equal(t, tt.wantModel, identity.DefaultModel)
+			assert.Equal(t, "svc-1", identity.ServiceID)
+			assert.Equal(t, "Primary OpenAI", identity.ServiceName)
+			assert.Equal(t, llm.ServiceTypeOpenAI, identity.ServiceType)
 		})
 	}
 }

@@ -11,10 +11,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
-	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -45,72 +44,100 @@ func bridgeServiceConfig(id, name, serviceType, defaultModel string) llm.Service
 	return svc
 }
 
-// serviceLLMAcquireCall records one lease request the handler made.
-type serviceLLMAcquireCall struct {
+// serviceLLMBuild records one provider client build the service LLM registry
+// performed while serving a bridge request.
+type serviceLLMBuild struct {
 	svc       llm.ServiceConfig
 	fallbacks []llm.ServiceConfig
 }
 
-// recordingServiceLLMAcquirer stands in for the bots service LLM registry. It
-// records what the handler asked for, counts lease releases, and wraps the
-// recording FakeLLM in the same structured-output fallback wrapper the
-// production builder installs, so the service structured-output policy is
-// exercised end to end through the HTTP handler.
-type recordingServiceLLMAcquirer struct {
+// recordingBaseLLMBuilder replaces provider client construction inside the real
+// bots service LLM registry. The production wrapper chain — token usage
+// logging, the structured-output policy — is built on top of the recording
+// FakeLLM, so service configuration is exercised end to end through the HTTP
+// handler instead of through a hand-rolled copy of the builder.
+type recordingBaseLLMBuilder struct {
 	fake *FakeLLM
-	// err, when set, makes every acquisition fail.
+	// err, when set, makes every build fail.
 	err error
 
-	mu       sync.Mutex
-	calls    []serviceLLMAcquireCall
-	releases int
+	mu        sync.Mutex
+	builds    []serviceLLMBuild
+	shutdowns int
 }
 
-func (r *recordingServiceLLMAcquirer) acquire(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+func (r *recordingBaseLLMBuilder) build(svc llm.ServiceConfig, _ llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	r.mu.Lock()
-	r.calls = append(r.calls, serviceLLMAcquireCall{svc: svc, fallbacks: fallbacks})
+	r.builds = append(r.builds, serviceLLMBuild{svc: svc, fallbacks: fallbacks})
+	err := r.err
 	r.mu.Unlock()
 
-	if r.err != nil {
-		return nil, nil, r.err
+	if err != nil {
+		return nil, nil, err
 	}
 
-	primary := llm.StructuredOutputTarget{Service: svc, Model: svc.DefaultModel}
-	fallbackTargets := make([]llm.StructuredOutputTarget, 0, len(fallbacks))
-	for _, fallback := range fallbacks {
-		fallbackTargets = append(fallbackTargets, llm.StructuredOutputTarget{
-			Service: fallback,
-			Model:   fallback.DefaultModel,
-		})
-	}
-	model := llm.NewStructuredOutputFallbackWrapper(r.fake, primary, fallbackTargets, bifrost.ResolveStructuredOutputCapability)
-
-	release := func() {
+	return r.fake, func() {
 		r.mu.Lock()
-		r.releases++
-		r.mu.Unlock()
-	}
-	return model, release, nil
+		defer r.mu.Unlock()
+		r.shutdowns++
+	}, nil
 }
 
-func (r *recordingServiceLLMAcquirer) acquireCalls() []serviceLLMAcquireCall {
+func (r *recordingBaseLLMBuilder) buildCalls() []serviceLLMBuild {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return append([]serviceLLMAcquireCall(nil), r.calls...)
+	return append([]serviceLLMBuild(nil), r.builds...)
 }
 
-func (r *recordingServiceLLMAcquirer) releaseCount() int {
+func (r *recordingBaseLLMBuilder) shutdownCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.releases
+	return r.shutdowns
 }
 
-// installServiceLLM wires a recording acquirer serving the given fake model
-// into the API under test.
-func (e *TestEnvironment) installServiceLLM(fake *FakeLLM) *recordingServiceLLMAcquirer {
-	acquirer := &recordingServiceLLMAcquirer{fake: fake}
-	e.api.SetServiceLLMAcquirerForTest(acquirer.acquire)
-	return acquirer
+// installServiceLLM makes the service LLM registry serve the given fake model
+// instead of building a provider client.
+func (e *TestEnvironment) installServiceLLM(fake *FakeLLM) *recordingBaseLLMBuilder {
+	builder := &recordingBaseLLMBuilder{fake: fake}
+	e.bots.SetBaseLLMBuilderForTest(builder.build)
+	return builder
+}
+
+// setupServiceBridge builds a test environment whose stored configuration is
+// services and whose service models come from fake.
+func setupServiceBridge(t *testing.T, services []llm.ServiceConfig, fake *FakeLLM) (*TestEnvironment, *recordingBaseLLMBuilder, *bridgeclient.Client) {
+	t.Helper()
+
+	e := SetupTestEnvironment(t)
+	t.Cleanup(func() { e.Cleanup(t) })
+	e.config.services = services
+
+	builder := e.installServiceLLM(fake)
+	return e, builder, e.CreateBridgeClient()
+}
+
+// requireLeaseReleased asserts the handler gave its lease on the model back:
+// retiring every service can only shut a model down once no lease is left, and
+// the shutdown then happens on the registry's own goroutine.
+func requireLeaseReleased(t *testing.T, e *TestEnvironment, builder *recordingBaseLLMBuilder) {
+	t.Helper()
+
+	e.bots.ReconcileServiceLLMs(nil)
+	require.Eventually(t, func() bool {
+		return builder.shutdownCount() == 1
+	}, 5*time.Second, time.Millisecond, "the leased model must be released exactly once")
+}
+
+// withFallback returns svc with its fallback service ID set.
+func withFallback(svc llm.ServiceConfig, fallbackServiceID string) llm.ServiceConfig {
+	svc.FallbackServiceID = fallbackServiceID
+	return svc
+}
+
+// withPolicy returns svc with its structured-output policy set.
+func withPolicy(svc llm.ServiceConfig, policy llm.StructuredOutputPolicy) llm.ServiceConfig {
+	svc.StructuredOutputPolicy = policy
+	return svc
 }
 
 // doBridgeRequest performs a raw inter-plugin bridge request so tests can send
@@ -212,16 +239,8 @@ func TestBridgeGetServicesFromConfiguration(t *testing.T) {
 			name: "service with a broken fallback chain is excluded",
 			services: []llm.ServiceConfig{
 				bridgeServiceConfig("svc-ok", "OK", llm.ServiceTypeOpenAI, "gpt-4o"),
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-dangling", "Dangling", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-missing"
-					return svc
-				}(),
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-bad-fallback", "BadFallback", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-scale"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc-dangling", "Dangling", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-missing"),
+				withFallback(bridgeServiceConfig("svc-bad-fallback", "BadFallback", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-scale"),
 				bridgeServiceConfig("svc-scale", "Scale", llm.ServiceTypeScale, "scale-model"),
 			},
 			expectedIDs: []string{"svc-ok"},
@@ -229,11 +248,7 @@ func TestBridgeGetServicesFromConfiguration(t *testing.T) {
 		{
 			name: "service with a usable fallback chain is listed",
 			services: []llm.ServiceConfig{
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-backup"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-backup"),
 				bridgeServiceConfig("svc-backup", "Backup", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"),
 			},
 			expectedIDs: []string{"svc-backup", "svc-primary"},
@@ -273,15 +288,11 @@ func TestBridgeGetServicesFromConfiguration(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			e.config.services = tc.services
+			e, _, client := setupServiceBridge(t, tc.services, NewFakeLLM("unused"))
 
 			// No agents at all: services are discoverable on their own.
 			require.Empty(t, e.bots.GetAllBots())
 
-			client := e.CreateBridgeClient()
 			services, err := client.GetServices("")
 			require.NoError(t, err)
 
@@ -300,13 +311,12 @@ func TestBridgeGetServicesIgnoresUserID(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	setup := func(t *testing.T) *TestEnvironment {
+	setup := func(t *testing.T) (*TestEnvironment, *bridgeclient.Client) {
 		t.Helper()
-		e := SetupTestEnvironment(t)
-		e.config.services = []llm.ServiceConfig{
+		e, _, client := setupServiceBridge(t, []llm.ServiceConfig{
 			bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
 			bridgeServiceConfig("svc-anthropic", "Anthropic", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"),
-		}
+		}, NewFakeLLM("unused"))
 		// An agent that blocks the requesting user must not affect the list.
 		e.setupTestBot(llm.BotConfig{
 			Name:            "blocking",
@@ -314,14 +324,11 @@ func TestBridgeGetServicesIgnoresUserID(t *testing.T) {
 			UserAccessLevel: llm.UserAccessLevelBlock,
 			UserIDs:         []string{testUserID},
 		})
-		return e
+		return e, client
 	}
 
 	t.Run("same list with and without user_id", func(t *testing.T) {
-		e := setup(t)
-		defer e.Cleanup(t)
-
-		client := e.CreateBridgeClient()
+		_, client := setup(t)
 
 		withoutUser, err := client.GetServices("")
 		require.NoError(t, err)
@@ -333,8 +340,7 @@ func TestBridgeGetServicesIgnoresUserID(t *testing.T) {
 	})
 
 	t.Run("malformed user_id is rejected", func(t *testing.T) {
-		e := setup(t)
-		defer e.Cleanup(t)
+		e, _ := setup(t)
 
 		resp := e.doBridgeRequest(t, http.MethodGet, "/bridge/v1/services?user_id=bad", "")
 		defer resp.Body.Close()
@@ -453,16 +459,8 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 		{
 			name: "fallback chain is resolved from the same snapshot",
 			services: []llm.ServiceConfig{
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-backup"
-					return svc
-				}(),
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-backup", "Backup", llm.ServiceTypeAnthropic, "claude-sonnet-4-5")
-					svc.FallbackServiceID = "svc-last"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-backup"),
+				withFallback(bridgeServiceConfig("svc-backup", "Backup", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"), "svc-last"),
 				bridgeServiceConfig("svc-last", "Last", llm.ServiceTypeGemini, "gemini-2.5-pro"),
 			},
 			service:           "Primary",
@@ -488,11 +486,7 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 		{
 			name: "eligible service with a broken fallback chain fails as a server error",
 			services: []llm.ServiceConfig{
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-missing"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc-primary", "Primary", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-missing"),
 			},
 			service:     "svc-primary",
 			expectedErr: `service "svc-primary" is not usable`,
@@ -502,15 +496,9 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 	for _, invoker := range serviceCompletionInvokers() {
 		for _, tc := range tests {
 			t.Run(invoker.name+"/"+tc.name, func(t *testing.T) {
-				e := SetupTestEnvironment(t)
-				defer e.Cleanup(t)
-
-				e.config.services = tc.services
+				e, builder, client := setupServiceBridge(t, tc.services, NewFakeLLM("service response"))
 				require.Empty(t, e.bots.GetAllBots(), "the service path must work with no agents configured")
 
-				acquirer := e.installServiceLLM(NewFakeLLM("service response"))
-
-				client := e.CreateBridgeClient()
 				result, err := invoker.call(client, tc.service, bridgeclient.CompletionRequest{
 					Posts: []bridgeclient.Post{{Role: "user", Message: "Hello"}},
 				})
@@ -524,7 +512,7 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, "service response", result)
 
-				calls := acquirer.acquireCalls()
+				calls := builder.buildCalls()
 				require.Len(t, calls, 1)
 
 				expectedSvc, ok := resolveBridgeService(tc.services, tc.service)
@@ -538,7 +526,7 @@ func TestBridgeServiceCompletionResolvesStoredService(t *testing.T) {
 				}
 				require.Equal(t, tc.expectedFallbacks, nilIfEmpty(fallbackIDs))
 
-				require.Equal(t, 1, acquirer.releaseCount(), "the lease must be released exactly once")
+				requireLeaseReleased(t, e, builder)
 			})
 		}
 	}
@@ -561,12 +549,9 @@ func TestBridgeServiceCompletionSkipsAgentPermissionChecks(t *testing.T) {
 
 	for _, invoker := range serviceCompletionInvokers() {
 		t.Run(invoker.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			e.config.services = []llm.ServiceConfig{
+			e, _, client := setupServiceBridge(t, []llm.ServiceConfig{
 				bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
-			}
+			}, NewFakeLLM("allowed"))
 
 			// This agent would reject the user on the agent endpoints, and its
 			// channel access level would reject the channel too.
@@ -586,9 +571,6 @@ func TestBridgeServiceCompletionSkipsAgentPermissionChecks(t *testing.T) {
 				TeamId: "team-bridge",
 			}, nil).Maybe()
 
-			e.installServiceLLM(NewFakeLLM("allowed"))
-
-			client := e.CreateBridgeClient()
 			result, err := invoker.call(client, "svc-openai", bridgeclient.CompletionRequest{
 				Posts:     []bridgeclient.Post{{Role: "user", Message: "Hello"}},
 				UserID:    testUserID,
@@ -643,12 +625,10 @@ func TestBridgeServiceCompletionAttribution(t *testing.T) {
 	for _, invoker := range serviceCompletionInvokers() {
 		for _, tc := range tests {
 			t.Run(invoker.name+"/"+tc.name, func(t *testing.T) {
-				e := SetupTestEnvironment(t)
-				defer e.Cleanup(t)
-
-				e.config.services = []llm.ServiceConfig{
+				fake := NewFakeLLM("attributed")
+				e, _, client := setupServiceBridge(t, []llm.ServiceConfig{
 					bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
-				}
+				}, fake)
 
 				if tc.channelErr != nil {
 					e.mockAPI.On("GetChannel", testChannelID).Return(nil, tc.channelErr)
@@ -656,10 +636,6 @@ func TestBridgeServiceCompletionAttribution(t *testing.T) {
 					e.mockAPI.On("GetChannel", testChannelID).Return(tc.channel, nil)
 				}
 
-				fake := NewFakeLLM("attributed")
-				e.installServiceLLM(fake)
-
-				client := e.CreateBridgeClient()
 				_, err := invoker.call(client, "svc-openai", bridgeclient.CompletionRequest{
 					Posts:     []bridgeclient.Post{{Role: "user", Message: "Hello"}},
 					UserID:    testUserID,
@@ -722,11 +698,6 @@ func TestBridgeServiceCompletionStructuredOutputPolicy(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	withPolicy := func(svc llm.ServiceConfig, policy llm.StructuredOutputPolicy) llm.ServiceConfig {
-		svc.StructuredOutputPolicy = policy
-		return svc
-	}
-
 	tests := []struct {
 		name       string
 		services   []llm.ServiceConfig
@@ -780,22 +751,14 @@ func TestBridgeServiceCompletionStructuredOutputPolicy(t *testing.T) {
 		{
 			name: "a fallback that cannot take a native schema puts the whole chain on the prompt fallback",
 			services: []llm.ServiceConfig{
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc", "Service", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-backup"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc", "Service", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-backup"),
 				bridgeServiceConfig("svc-backup", "Backup", llm.ServiceTypeOpenAICompatible, "gpt-4o"),
 			},
 		},
 		{
 			name: "a chain that is capable end to end keeps the native schema",
 			services: []llm.ServiceConfig{
-				func() llm.ServiceConfig {
-					svc := bridgeServiceConfig("svc", "Service", llm.ServiceTypeOpenAI, "gpt-4o")
-					svc.FallbackServiceID = "svc-backup"
-					return svc
-				}(),
+				withFallback(bridgeServiceConfig("svc", "Service", llm.ServiceTypeOpenAI, "gpt-4o"), "svc-backup"),
 				bridgeServiceConfig("svc-backup", "Backup", llm.ServiceTypeGemini, "gemini-2.5-pro"),
 			},
 			wantNative: true,
@@ -805,15 +768,9 @@ func TestBridgeServiceCompletionStructuredOutputPolicy(t *testing.T) {
 	for _, invoker := range serviceCompletionInvokers() {
 		for _, tc := range tests {
 			t.Run(invoker.name+"/"+tc.name, func(t *testing.T) {
-				e := SetupTestEnvironment(t)
-				defer e.Cleanup(t)
-
-				e.config.services = tc.services
-
 				fake := NewFakeLLM(`{"answer":"42"}`)
-				e.installServiceLLM(fake)
+				_, _, client := setupServiceBridge(t, tc.services, fake)
 
-				client := e.CreateBridgeClient()
 				_, err := invoker.call(client, "svc", bridgeclient.CompletionRequest{
 					Posts:            []bridgeclient.Post{{Role: "user", Message: "Answer in JSON"}},
 					JSONOutputFormat: bridgeJSONSchema,
@@ -835,46 +792,25 @@ func TestBridgeServiceCompletionStructuredOutputPolicy(t *testing.T) {
 }
 
 // TestBridgeServiceCompletionReleasesLease verifies the leased model is
-// released exactly once per request, including when the call itself fails after
-// acquisition.
+// released even when the call fails after acquisition. The successful path is
+// covered by TestBridgeServiceCompletionResolvesStoredService.
 func TestBridgeServiceCompletionReleasesLease(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
 
-	tests := []struct {
-		name string
-		fake *FakeLLM
-	}{
-		{
-			name: "successful completion",
-			fake: NewFakeLLM("done"),
-		},
-		{
-			name: "failing completion",
-			fake: NewFakeLLMWithError(fmt.Errorf("provider unavailable")),
-		},
-	}
-
 	for _, invoker := range serviceCompletionInvokers() {
-		for _, tc := range tests {
-			t.Run(invoker.name+"/"+tc.name, func(t *testing.T) {
-				e := SetupTestEnvironment(t)
-				defer e.Cleanup(t)
+		t.Run(invoker.name, func(t *testing.T) {
+			e, builder, client := setupServiceBridge(t, []llm.ServiceConfig{
+				bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
+			}, NewFakeLLMWithError(fmt.Errorf("provider unavailable")))
 
-				e.config.services = []llm.ServiceConfig{
-					bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
-				}
-				acquirer := e.installServiceLLM(tc.fake)
-
-				client := e.CreateBridgeClient()
-				_, _ = invoker.call(client, "svc-openai", bridgeclient.CompletionRequest{
-					Posts: []bridgeclient.Post{{Role: "user", Message: "Hello"}},
-				})
-
-				require.Len(t, acquirer.acquireCalls(), 1)
-				require.Equal(t, 1, acquirer.releaseCount())
+			_, _ = invoker.call(client, "svc-openai", bridgeclient.CompletionRequest{
+				Posts: []bridgeclient.Post{{Role: "user", Message: "Hello"}},
 			})
-		}
+
+			require.Len(t, builder.buildCalls(), 1)
+			requireLeaseReleased(t, e, builder)
+		})
 	}
 }
 
@@ -887,22 +823,17 @@ func TestBridgeServiceCompletionAcquisitionFailure(t *testing.T) {
 
 	for _, invoker := range serviceCompletionInvokers() {
 		t.Run(invoker.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			e.config.services = []llm.ServiceConfig{
+			_, builder, client := setupServiceBridge(t, []llm.ServiceConfig{
 				bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
-			}
-			acquirer := e.installServiceLLM(NewFakeLLM("unused"))
-			acquirer.err = fmt.Errorf("provider client build failed")
+			}, NewFakeLLM("unused"))
+			builder.err = fmt.Errorf("provider client build failed")
 
-			client := e.CreateBridgeClient()
 			_, err := invoker.call(client, "svc-openai", bridgeclient.CompletionRequest{
 				Posts: []bridgeclient.Post{{Role: "user", Message: "Hello"}},
 			})
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "provider client build failed")
-			require.Equal(t, 0, acquirer.releaseCount())
+			require.Zero(t, builder.shutdownCount(), "a failed build leaves nothing to release")
 		})
 	}
 }
@@ -960,19 +891,14 @@ func TestBridgeServiceCompletionRequestValidation(t *testing.T) {
 	for _, invoker := range serviceCompletionInvokers() {
 		for _, tc := range tests {
 			t.Run(invoker.name+"/"+tc.name, func(t *testing.T) {
-				e := SetupTestEnvironment(t)
-				defer e.Cleanup(t)
-
-				e.config.services = []llm.ServiceConfig{
+				_, builder, client := setupServiceBridge(t, []llm.ServiceConfig{
 					bridgeServiceConfig("svc-openai", "OpenAI", llm.ServiceTypeOpenAI, "gpt-4o"),
-				}
-				acquirer := e.installServiceLLM(NewFakeLLM("unused"))
+				}, NewFakeLLM("unused"))
 
-				client := e.CreateBridgeClient()
 				_, err := invoker.call(client, "svc-openai", tc.request)
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.expectedErr)
-				require.Empty(t, acquirer.acquireCalls(), "a rejected request must not lease a model")
+				require.Empty(t, builder.buildCalls(), "a rejected request must not lease a model")
 			})
 		}
 	}
@@ -1013,40 +939,5 @@ func TestResolveBridgeService(t *testing.T) {
 			require.Equal(t, tc.expectFind, found)
 			require.Equal(t, tc.expectedID, svc.ID)
 		})
-	}
-}
-
-// TestServiceCanServeCompletionsGuardsDiscoveryAndCompletion pins the shared
-// eligibility rule the discovery and completion paths both apply, so the two
-// cannot drift apart.
-func TestServiceCanServeCompletionsGuardsDiscoveryAndCompletion(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	e.config.services = []llm.ServiceConfig{
-		bridgeServiceConfig("svc-ok", "OK", llm.ServiceTypeOpenAI, "gpt-4o"),
-		bridgeServiceConfig("svc-scale", "Scale", llm.ServiceTypeScale, "scale-model"),
-		bridgeServiceConfig("svc-modelless", "Modelless", llm.ServiceTypeOpenAI, ""),
-	}
-	e.installServiceLLM(NewFakeLLM("ok"))
-
-	client := e.CreateBridgeClient()
-	services, err := client.GetServices("")
-	require.NoError(t, err)
-	require.Equal(t, []string{"svc-ok"}, bridgeServiceIDs(services))
-
-	for _, svc := range e.config.services {
-		_, err := client.ServiceCompletion(svc.ID, bridgeclient.CompletionRequest{
-			Posts: []bridgeclient.Post{{Role: "user", Message: "Hello"}},
-		})
-		if bots.ServiceCanServeCompletions(svc) {
-			require.NoError(t, err, "discoverable service %q must be callable", svc.ID)
-			continue
-		}
-		require.Error(t, err, "undiscoverable service %q must not be callable", svc.ID)
-		require.Contains(t, err.Error(), "service not found: "+svc.ID)
 	}
 }

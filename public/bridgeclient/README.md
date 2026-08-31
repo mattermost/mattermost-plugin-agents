@@ -75,27 +75,50 @@ disabled there, and `tool_hooks` are ignored.
 
 ### Streaming
 
+The streaming methods return `*llm.TextStreamResult`, so a streaming caller also imports
+the plugin's `llm` package for the event types:
+
 ```go
 import "github.com/mattermost/mattermost-plugin-agents/v2/llm"
 
-// Start streaming request (using Bot ID)
 result, err := client.AgentCompletionStream("bot-user-id", request)
 if err != nil {
     return err
 }
 
-// Process events
 for event := range result.Stream {
     switch event.Type {
     case llm.EventTypeText:
         fmt.Print(event.Value.(string))
+
     case llm.EventTypeError:
-        return event.Value.(error)
+        // Errors reported by the server arrive as a string. Errors the client hit
+        // while reading the stream arrive as an error. Handle both: asserting
+        // event.Value.(error) on its own panics on every server-side failure.
+        if err, ok := event.Value.(error); ok {
+            return err
+        }
+        return fmt.Errorf("%v", event.Value)
+
     case llm.EventTypeEnd:
         return nil
     }
 }
 ```
+
+Three things to know when writing that loop:
+
+- **More event types exist than the three above.** The bridge forwards every event the
+  model produces. Reasoning-enabled agents also emit `EventTypeReasoning` and
+  `EventTypeReasoningEnd`, and you may see `EventTypeUsage`, `EventTypeAnnotations`, and
+  `EventTypeToolCalls`. Ignoring them is fine, as the example does; assuming they cannot
+  arrive is not.
+- **`Value` is `any`, and it has been through JSON.** `EventTypeText` is always a
+  `string`. Structured payloads arrive as `map[string]interface{}` or `[]interface{}`
+  rather than their original Go types, so assert defensively.
+- **Read the stream to the end.** The channel closes after `EventTypeEnd` or
+  `EventTypeError`, so ranging over it terminates. If you stop reading earlier, the
+  client's reader goroutine stays blocked on its next send and leaks.
 
 ### Multi-turn Conversations
 
@@ -137,6 +160,76 @@ When `AllowedTools` is provided:
 - a bare name that exists on more than one MCP server is ambiguous and is
   rejected; pass the namespaced name (`server__tool`) to target a specific
   server's tool
+
+### Tool hooks
+
+`ToolHooks` lets your plugin approve or reject each tool call before it runs. Keys are tool
+names (bare or namespaced, same as `allowed_tools`); each value carries an HTTP path in your
+own plugin that the agents plugin calls first. Don't key the same tool twice — supplying
+both `search_posts` and `mattermost__search_posts` is rejected.
+
+```go
+import "github.com/mattermost/mattermost-plugin-agents/v2/public/mcptool"
+
+request := bridgeclient.CompletionRequest{
+    Posts:        []bridgeclient.Post{{Role: "user", Message: "Search for the incident"}},
+    AllowedTools: []string{"mattermost__search_posts"},
+    UserID:       userID,
+    ToolHooks: map[string]bridgeclient.ToolHookConfig{
+        "mattermost__search_posts": {BeforeCallback: "/hooks/tool-check/run-abc123"},
+    },
+}
+```
+
+`BeforeCallback` must start with `/` and is resolved under `/plugins/<your-plugin-id>`; a
+path that escapes that namespace is rejected. It must be a **path only — a query string is
+rejected**, so encode run context in path segments (`/hooks/tool-check/run-abc123`, not
+`/hooks/tool-check?run=abc123`). The agents plugin never inspects the path beyond those
+checks.
+
+Your handler receives a `POST` with `Content-Type: application/json` and this body:
+
+```go
+type BeforeHookRequest struct {
+    ToolName string          `json:"tool_name"`
+    Args     json.RawMessage `json:"args"` // validated, decoded tool arguments
+    UserID   string          `json:"user_id"`
+}
+```
+
+An `Authorization: Bearer` header carrying the acting user's token is included when the
+MCP client has one, so treat it as optional. Authorize on `user_id` from the body rather
+than depending on that header.
+
+Reply `2xx` with a `mcptool.BeforeHookResponse`. An empty `error` lets the call proceed; a
+non-empty `error` rejects it, and that string is handed to the model as the tool's error:
+
+```go
+func (p *MyPlugin) handleToolCheck(w http.ResponseWriter, r *http.Request) {
+    var hookReq mcptool.BeforeHookRequest
+    _ = json.NewDecoder(r.Body).Decode(&hookReq)
+
+    resp := mcptool.BeforeHookResponse{}
+    if !p.userMayRunTool(hookReq.UserID, hookReq.ToolName) {
+        resp.Error = "not permitted for this user"
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    _ = json.NewEncoder(w).Encode(resp)
+}
+```
+
+Hooks are **fail-closed**: if your endpoint is unreachable, returns a non-2xx, or returns a
+body that doesn't parse, the tool call fails.
+
+Three requirements, each a `400` when missing:
+
+- `allowed_tools` must be set — hooks only apply to allowlisted tools
+- `user_id` must be set
+- the request must carry the `Mattermost-Plugin-ID` header, which identifies the plugin
+  whose namespace the callback resolves in (the client's transports set this for you)
+
+`ToolHooks` is ignored on service endpoints, where tools are disabled.
 
 ## Permission Checking
 
@@ -254,7 +347,20 @@ never shadows that ID. When several configured services share an ID or a name, t
 matching entry in configuration order is used. A service stored with a blank name is listed
 by discovery and callable, but by ID only.
 
-Values that match nothing fail with `service not found: <value>`.
+### Service completion errors
+
+| Status | Message | What it means |
+|---|---|---|
+| 404 | `service not found: <value>` | Nothing matched, **or** it matched a service the bridge can't call: invalid config, no `defaultModel`, or an unsupported provider type |
+| 400 | `posts array cannot be empty` | `Posts` was empty |
+| 400 | `allowed_tools is only supported for agent completion endpoints` | Tools are disabled on service endpoints; drop the field |
+| 500 | `service "<id>" is not usable: ...` | The service itself is fine, but its fallback chain is broken (missing, invalid, or cyclic member). A server misconfiguration, not a bad request |
+| 500 | `failed to build a language model for service "<id>": ...` | The provider client couldn't be constructed, e.g. bad credentials |
+
+A 404 covers both "no such service" and "service exists but isn't callable", so don't treat
+it as proof the name is wrong. `GetServices()` only lists callable services, so anything it
+returns will resolve.
+
 
 ## Discovery Endpoints
 

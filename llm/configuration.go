@@ -43,9 +43,9 @@ const (
 	StructuredOutputPolicyPromptFallback StructuredOutputPolicy = "prompt_fallback"
 )
 
-// isValidStructuredOutputPolicy reports whether the stored value is one the
+// IsValidStructuredOutputPolicy reports whether the stored value is one the
 // runtime understands. The empty value is valid and means "auto".
-func isValidStructuredOutputPolicy(policy StructuredOutputPolicy) bool {
+func IsValidStructuredOutputPolicy(policy StructuredOutputPolicy) bool {
 	switch policy {
 	case "", StructuredOutputPolicyAuto, StructuredOutputPolicyNative, StructuredOutputPolicyPromptFallback:
 		return true
@@ -215,8 +215,14 @@ type BotConfig struct {
 	// StructuredOutputEnabled is deprecated and ignored at runtime. Structured
 	// output is decided per service by ServiceConfig.StructuredOutputPolicy
 	// (see EffectiveStructuredOutputPolicy), because the capability belongs to
-	// the provider/model rather than the agent. The field is kept so stored
-	// agents and API payloads keep round-tripping unchanged.
+	// the provider/model rather than the agent.
+	//
+	// The field is retained so an API payload that still carries it is accepted,
+	// but the current webapp omits it: since this is a plain bool, saving an
+	// agent from the UI clears whatever was stored. Nothing reads it at runtime,
+	// so the only consumer is the activation migration that carries the old
+	// intent over to the service policy
+	// (config.MigrateServiceStructuredOutputPolicies).
 	//
 	// Deprecated: use ServiceConfig.StructuredOutputPolicy.
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
@@ -294,6 +300,22 @@ func (c *BotConfig) IsValid() bool {
 	return c.Validate() == nil
 }
 
+// ServiceLookup returns a by-ID lookup over services, suitable for
+// ResolveFallbackChain. Duplicate IDs resolve to the first entry, matching how
+// the configuration itself is read.
+func ServiceLookup(services []ServiceConfig) func(id string) (ServiceConfig, bool) {
+	byID := make(map[string]ServiceConfig, len(services))
+	for _, svc := range services {
+		if _, exists := byID[svc.ID]; !exists {
+			byID[svc.ID] = svc
+		}
+	}
+	return func(id string) (ServiceConfig, bool) {
+		svc, ok := byID[id]
+		return svc, ok
+	}
+}
+
 // ResolveFallbackChain walks the fallback chain starting from the service
 // identified by primaryServiceID, returning an ordered slice of fallback
 // ServiceConfigs. A misconfigured chain — a cycle, or a fallback ID that is
@@ -341,7 +363,7 @@ func IsValidService(service ServiceConfig) bool {
 
 	// An unrecognized structured-output policy is a configuration error: the
 	// runtime would have to guess whether a schema may be sent natively.
-	if !isValidStructuredOutputPolicy(service.StructuredOutputPolicy) {
+	if !IsValidStructuredOutputPolicy(service.StructuredOutputPolicy) {
 		return false
 	}
 

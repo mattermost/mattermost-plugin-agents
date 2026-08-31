@@ -306,6 +306,48 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves an explicit structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicyNative,
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, llm.StructuredOutputPolicyNative, store.cfg.Services[0].StructuredOutputPolicy)
+			},
+		},
+		{
+			name: "rejects an unrecognized structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicy("sometimes"),
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "an unusable policy must not be persisted")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount, "the in-memory config must not be updated")
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,

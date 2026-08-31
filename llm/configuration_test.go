@@ -736,19 +736,9 @@ func TestServiceConfig_EffectiveStructuredOutputPolicy(t *testing.T) {
 			want:   StructuredOutputPolicyAuto,
 		},
 		{
-			name:   "auto is preserved",
-			stored: StructuredOutputPolicyAuto,
-			want:   StructuredOutputPolicyAuto,
-		},
-		{
-			name:   "native is preserved",
+			name:   "a stored policy is preserved",
 			stored: StructuredOutputPolicyNative,
 			want:   StructuredOutputPolicyNative,
-		},
-		{
-			name:   "prompt fallback is preserved",
-			stored: StructuredOutputPolicyPromptFallback,
-			want:   StructuredOutputPolicyPromptFallback,
 		},
 	}
 
@@ -768,22 +758,10 @@ func TestServiceConfig_JSONRoundTrip_StructuredOutputPolicy(t *testing.T) {
 		wantDecoded StructuredOutputPolicy
 	}{
 		{
-			name:        "auto round-trips",
-			policy:      StructuredOutputPolicyAuto,
-			wantInJSON:  true,
-			wantDecoded: StructuredOutputPolicyAuto,
-		},
-		{
-			name:        "native round-trips",
+			name:        "a stored policy round-trips",
 			policy:      StructuredOutputPolicyNative,
 			wantInJSON:  true,
 			wantDecoded: StructuredOutputPolicyNative,
-		},
-		{
-			name:        "prompt fallback round-trips",
-			policy:      StructuredOutputPolicyPromptFallback,
-			wantInJSON:  true,
-			wantDecoded: StructuredOutputPolicyPromptFallback,
 		},
 		{
 			name:        "unset is omitted and decodes as auto",

@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -233,18 +234,29 @@ func extractTokenUsageDimensions(request CompletionRequest, identity TokenUsageI
 		missingAgent = ""
 	}
 
+	// The request context describes the agent, so it wins over the identity the
+	// model was built with; a per-call model override wins over both.
+	var ctxBotName, ctxBotUsername, ctxBotUserID, ctxBotModel, ctxServiceType string
+	if request.Context != nil {
+		ctxBotName = request.Context.BotName
+		ctxBotUsername = request.Context.BotUsername
+		ctxBotUserID = request.Context.BotUserID
+		ctxBotModel = request.Context.BotModel
+		ctxServiceType = request.Context.BotServiceType
+	}
+
 	dimensions := tokenUsageDimensions{
 		userID:           TokenUsageUnknown,
 		teamID:           TokenUsageUnknown,
 		channelID:        TokenUsageUnknown,
 		channelType:      TokenUsageUnknown,
-		botName:          missingAgent,
-		botUsername:      identity.BotUsername,
-		botUserID:        missingAgent,
-		model:            TokenUsageUnknown,
-		serviceType:      TokenUsageUnknown,
-		operation:        request.Operation,
-		operationSubType: request.OperationSubType,
+		botName:          cmp.Or(ctxBotName, missingAgent),
+		botUsername:      cmp.Or(ctxBotUsername, identity.BotUsername, missingAgent),
+		botUserID:        cmp.Or(ctxBotUserID, missingAgent),
+		model:            cmp.Or(optionModel, ctxBotModel, identity.DefaultModel, TokenUsageUnknown),
+		serviceType:      cmp.Or(ctxServiceType, identity.ServiceType, TokenUsageUnknown),
+		operation:        cmp.Or(request.Operation, TokenUsageUnknown),
+		operationSubType: cmp.Or(request.OperationSubType, TokenUsageUnknown),
 	}
 
 	// Service identity comes from the wrapper only: the request context
@@ -258,22 +270,6 @@ func extractTokenUsageDimensions(request CompletionRequest, identity TokenUsageI
 		dimensions.serviceName = identity.ServiceName
 	}
 
-	if identity.DefaultModel != "" {
-		dimensions.model = identity.DefaultModel
-	}
-	if identity.ServiceType != "" {
-		dimensions.serviceType = identity.ServiceType
-	}
-
-	if dimensions.botUsername == "" {
-		dimensions.botUsername = missingAgent
-	}
-	if dimensions.operation == "" {
-		dimensions.operation = TokenUsageUnknown
-	}
-	if dimensions.operationSubType == "" {
-		dimensions.operationSubType = TokenUsageUnknown
-	}
 	if request.Context != nil {
 		if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
 			dimensions.userID = request.Context.RequestingUser.Id
@@ -296,27 +292,9 @@ func extractTokenUsageDimensions(request CompletionRequest, identity TokenUsageI
 			}
 			dimensions.channelType = normalizeChannelType(request.Context.Channel.Type)
 		}
-
-		if request.Context.BotName != "" {
-			dimensions.botName = request.Context.BotName
-		}
-		if request.Context.BotUsername != "" {
-			dimensions.botUsername = request.Context.BotUsername
-		}
-		if request.Context.BotUserID != "" {
-			dimensions.botUserID = request.Context.BotUserID
-		}
-		if request.Context.BotModel != "" {
-			dimensions.model = request.Context.BotModel
-		}
-		if request.Context.BotServiceType != "" {
-			dimensions.serviceType = request.Context.BotServiceType
-		}
 	}
 
-	if optionModel != "" {
-		dimensions.model = optionModel
-	}
+	// An agent that could not be named at all is reported by its username.
 	if dimensions.botName == missingAgent {
 		dimensions.botName = dimensions.botUsername
 	}

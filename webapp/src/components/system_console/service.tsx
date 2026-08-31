@@ -460,7 +460,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 label={intl.formatMessage({defaultMessage: 'Structured output'})}
                 value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
                 onChange={(e) => props.onChange({...props.service, structuredOutputPolicy: e.target.value})}
-                helptext={intl.formatMessage({defaultMessage: 'How this service handles requests that ask for JSON matching a schema. "Auto" sends the schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. "Native supported" is an administrator override for custom or OpenAI-compatible endpoints whose capabilities cannot be detected reliably. "Prompt fallback" never sends the schema natively. This describes one service\'s capability: the runtime combines the settings across this service\'s fallback chain, so marking a service as natively supported does not force native mode when a fallback in the chain requires the prompt-based strategy.'})}
+                helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
             >
                 <SelectionItemOption value={StructuredOutputPolicyAuto}>
                     {intl.formatMessage({defaultMessage: 'Auto (recommended)'})}

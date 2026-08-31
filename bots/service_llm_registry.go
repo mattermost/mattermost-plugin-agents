@@ -4,31 +4,31 @@
 package bots
 
 import (
+	"maps"
 	"reflect"
+	"slices"
 	"sync"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // serviceLLMEntry is one lazily built service-backed language model plus the
-// configuration it was built from and the number of in-flight requests holding
-// it.
+// configuration it was built from.
 type serviceLLMEntry struct {
 	model     llm.LanguageModel
 	shutdown  func()
 	svc       llm.ServiceConfig
 	fallbacks []llm.ServiceConfig
 
-	// leases counts requests currently using the model. retired entries are no
-	// longer handed out and shut down when their last lease is released.
-	leases  int
-	retired bool
+	// inUse counts the requests currently holding the model. Retired entries
+	// shut down once it drains.
+	inUse sync.WaitGroup
 
 	shutdownOnce sync.Once
 }
 
 // shutdownNow releases the underlying client at most once, so a plugin
-// deactivation racing a lease release cannot shut the same client down twice.
+// deactivation racing a retirement cannot shut the same client down twice.
 func (e *serviceLLMEntry) shutdownNow() {
 	e.shutdownOnce.Do(func() {
 		if e.shutdown != nil {
@@ -42,27 +42,25 @@ func (e *serviceLLMEntry) shutdownNow() {
 //
 // Models are cached rather than built per request because each Bifrost client
 // starts a worker pool (1,000 goroutines and a 5,000-item queue per registered
-// provider by default). The caller must invoke release exactly once when the
-// request is done; the model may be shut down immediately afterwards if the
-// configuration changed in the meantime.
+// provider by default). The caller must invoke release when the request is
+// done; the model may be shut down shortly afterwards if the configuration
+// changed in the meantime.
 func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	if entry, ok := b.leaseCachedServiceLLM(svc, fallbacks); ok {
-		return entry.model, b.releaseFunc(entry), nil
+		return entry.model, releaseLease(entry), nil
 	}
 
-	// Serialize builds per service ID so a burst of first requests creates one
-	// client, not one per request. The global registry lock is never held
-	// across a build.
-	buildMu := b.serviceLLMBuildMutex(svc.ID)
-	buildMu.Lock()
-	defer buildMu.Unlock()
+	// Serialize builds so a burst of first requests creates one client, not one
+	// per request. The registry lock is never held across a build.
+	b.serviceLLMBuildMu.Lock()
+	defer b.serviceLLMBuildMu.Unlock()
 
 	// Another builder may have populated the cache while we waited.
 	if entry, ok := b.leaseCachedServiceLLM(svc, fallbacks); ok {
-		return entry.model, b.releaseFunc(entry), nil
+		return entry.model, releaseLease(entry), nil
 	}
 
-	model, shutdown, err := b.buildServiceLLM(svc, fallbacks)
+	model, shutdown, err := b.buildLLM(svc, nil, fallbacks)
 	if err != nil {
 		// Build failures are never cached: the next request retries, which
 		// matters when the failure is transient or the admin just fixed the
@@ -75,86 +73,42 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 		shutdown:  shutdown,
 		svc:       svc,
 		fallbacks: fallbacks,
-		leases:    1,
 	}
+	entry.inUse.Add(1)
 
-	// Only publish the entry when it still matches the live configuration. The
-	// request may have carried a snapshot that was already stale when the build
-	// started, and a generation counter sampled at build start cannot see a
-	// change that lands mid-build.
-	//
-	// The check must run inside the registry lock so it is ordered against
-	// ReconcileServiceLLMs, which scans under the same lock after the new
-	// configuration is stored: either this publish happens first and the
-	// reconciliation retires the just-published entry, or the reconciliation
-	// scan happens first, in which case the store already happened and this
-	// check reads the new configuration and refuses to publish. Checked
-	// outside the lock, a store plus a full reconciliation could slip between
-	// the check and the publish, caching a stale entry reconciliation never
-	// saw. The config read itself is an atomic pointer load, so no other lock
-	// is taken while holding the registry lock.
-	var supersededEntry *serviceLLMEntry
-
+	// The entry is published unconditionally, even if the caller's snapshot went
+	// stale while the build ran: such an entry is evicted by the next
+	// reconciliation, or superseded by the next request whose snapshot differs.
+	// No request is ever served a stale model, because leaseCachedServiceLLM
+	// only hands out an entry whose service and fallback chain equal the ones
+	// the caller resolved.
 	b.serviceLLMMu.Lock()
-	if !b.serviceLLMMatchesCurrentConfig(svc, fallbacks) {
-		// Stale snapshot: serve this request from the uncached model and shut
-		// it down when the lease is released.
-		entry.retired = true
-		b.retiredServiceLLMs = append(b.retiredServiceLLMs, entry)
-		b.serviceLLMMu.Unlock()
-		return entry.model, b.releaseFunc(entry), nil
-	}
+	defer b.serviceLLMMu.Unlock()
 
 	if existing, ok := b.serviceLLMs[svc.ID]; ok {
-		if reflect.DeepEqual(existing.svc, svc) && serviceConfigSlicesEqual(existing.fallbacks, fallbacks) {
-			// Lost a race against another writer for the same
-			// configuration; keep the published entry and discard ours.
-			existing.leases++
-			b.serviceLLMMu.Unlock()
-			entry.shutdownNow()
-			return existing.model, b.releaseFunc(existing), nil
-		}
-		// The cached entry was built from a configuration that is no longer
-		// current, so it must not stay in the cache.
-		existing.retired = true
-		if existing.leases > 0 {
-			b.retiredServiceLLMs = append(b.retiredServiceLLMs, existing)
-		} else {
-			supersededEntry = existing
-		}
+		// Only a configuration this request did not resolve can still be
+		// cached here — an equal one would have been leased above — so it must
+		// not stay in the cache.
+		b.retire(existing)
 	}
 	if b.serviceLLMs == nil {
 		b.serviceLLMs = make(map[string]*serviceLLMEntry)
 	}
 	b.serviceLLMs[svc.ID] = entry
-	b.serviceLLMMu.Unlock()
-
-	if supersededEntry != nil {
-		supersededEntry.shutdownNow()
-	}
-	return entry.model, b.releaseFunc(entry), nil
+	return entry.model, releaseLease(entry), nil
 }
 
 // ReconcileServiceLLMs drops cached models whose service or fallback chain
-// changed or disappeared. Entries still in use are retired and shut down when
+// changed or disappeared. Entries still in use are retired and shut down once
 // their last lease is released.
 func (b *MMBots) ReconcileServiceLLMs(services []llm.ServiceConfig) {
-	byID := make(map[string]llm.ServiceConfig, len(services))
-	for _, svc := range services {
-		if _, exists := byID[svc.ID]; !exists {
-			byID[svc.ID] = svc
-		}
-	}
-	lookup := func(id string) (llm.ServiceConfig, bool) {
-		svc, ok := byID[id]
-		return svc, ok
-	}
-
-	var toShutdown []*serviceLLMEntry
+	lookup := llm.ServiceLookup(services)
 
 	b.serviceLLMMu.Lock()
+	defer b.serviceLLMMu.Unlock()
+
 	for id, entry := range b.serviceLLMs {
-		svc, ok := byID[id]
+		svc, ok := lookup(id)
 		if ok && reflect.DeepEqual(svc, entry.svc) {
 			// A fallback chain resolution error means the chain is no longer
 			// usable, which is itself a change.
@@ -165,37 +119,46 @@ func (b *MMBots) ReconcileServiceLLMs(services []llm.ServiceConfig) {
 		}
 
 		delete(b.serviceLLMs, id)
-		entry.retired = true
-		if entry.leases <= 0 {
-			toShutdown = append(toShutdown, entry)
-			continue
-		}
-		b.retiredServiceLLMs = append(b.retiredServiceLLMs, entry)
+		b.retire(entry)
 	}
+}
+
+// ShutdownServiceLLMs shuts every service model down, cached or retired,
+// regardless of outstanding leases. Called on plugin deactivation.
+func (b *MMBots) ShutdownServiceLLMs() {
+	b.serviceLLMMu.Lock()
+	entries := slices.Collect(maps.Values(b.serviceLLMs))
+	entries = append(entries, slices.Collect(maps.Keys(b.retiredServiceLLMs))...)
+	clear(b.serviceLLMs)
+	clear(b.retiredServiceLLMs)
 	b.serviceLLMMu.Unlock()
 
-	for _, entry := range toShutdown {
+	// Retired entries may still have a goroutine waiting for their leases to
+	// drain; shutdownOnce makes its later call a no-op.
+	for _, entry := range entries {
 		entry.shutdownNow()
 	}
 }
 
-// ShutdownServiceLLMs shuts down every service model, cached or retired,
-// regardless of outstanding leases. Called on plugin deactivation.
-func (b *MMBots) ShutdownServiceLLMs() {
-	b.serviceLLMMu.Lock()
-	entries := make([]*serviceLLMEntry, 0, len(b.serviceLLMs)+len(b.retiredServiceLLMs))
-	for id, entry := range b.serviceLLMs {
-		entry.retired = true
-		entries = append(entries, entry)
-		delete(b.serviceLLMs, id)
+// retire stops handing entry out and shuts it down once its leases drain. It
+// must be called with serviceLLMMu held and after entry is no longer reachable
+// from b.serviceLLMs, so that no new lease can be taken: that is what makes
+// inUse.Add and inUse.Wait mutually exclusive, and the "Add after Wait" hazard
+// impossible.
+func (b *MMBots) retire(entry *serviceLLMEntry) {
+	if b.retiredServiceLLMs == nil {
+		b.retiredServiceLLMs = make(map[*serviceLLMEntry]struct{})
 	}
-	entries = append(entries, b.retiredServiceLLMs...)
-	b.retiredServiceLLMs = nil
-	b.serviceLLMMu.Unlock()
+	b.retiredServiceLLMs[entry] = struct{}{}
 
-	for _, entry := range entries {
+	go func() {
+		entry.inUse.Wait()
 		entry.shutdownNow()
-	}
+
+		b.serviceLLMMu.Lock()
+		delete(b.retiredServiceLLMs, entry)
+		b.serviceLLMMu.Unlock()
+	}()
 }
 
 // leaseCachedServiceLLM takes a lease on the cached entry for svc when it was
@@ -205,104 +168,28 @@ func (b *MMBots) leaseCachedServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Se
 	defer b.serviceLLMMu.Unlock()
 
 	entry, ok := b.serviceLLMs[svc.ID]
-	if !ok || entry.retired {
+	if !ok {
 		return nil, false
 	}
 	if !reflect.DeepEqual(entry.svc, svc) || !serviceConfigSlicesEqual(entry.fallbacks, fallbacks) {
 		return nil, false
 	}
 
-	entry.leases++
+	entry.inUse.Add(1)
 	return entry, true
 }
 
-// releaseFunc returns the one-shot lease release for entry. A retired entry
-// shuts down once its last lease goes away.
-func (b *MMBots) releaseFunc(entry *serviceLLMEntry) func() {
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			shutdown := false
-
-			b.serviceLLMMu.Lock()
-			entry.leases--
-			if entry.retired && entry.leases <= 0 {
-				shutdown = true
-				b.retiredServiceLLMs = removeServiceLLMEntry(b.retiredServiceLLMs, entry)
-			}
-			b.serviceLLMMu.Unlock()
-
-			if shutdown {
-				entry.shutdownNow()
-			}
-		})
-	}
-}
-
-// serviceLLMBuildMutex returns the per-service-ID build lock, creating it on
-// first use.
-func (b *MMBots) serviceLLMBuildMutex(serviceID string) *sync.Mutex {
-	b.serviceLLMMu.Lock()
-	defer b.serviceLLMMu.Unlock()
-
-	if b.serviceLLMBuildMutexes == nil {
-		b.serviceLLMBuildMutexes = make(map[string]*sync.Mutex)
-	}
-	mutex, ok := b.serviceLLMBuildMutexes[serviceID]
-	if !ok {
-		mutex = &sync.Mutex{}
-		b.serviceLLMBuildMutexes[serviceID] = mutex
-	}
-	return mutex
-}
-
-// serviceLLMMatchesCurrentConfig reports whether the configuration a model was
-// built from is still the live one.
-func (b *MMBots) serviceLLMMatchesCurrentConfig(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) bool {
-	if b.config == nil {
-		return false
-	}
-
-	current, ok := b.config.GetServiceByID(svc.ID)
-	if !ok || !reflect.DeepEqual(current, svc) {
-		return false
-	}
-
-	currentFallbacks, err := llm.ResolveFallbackChain(svc.ID, b.config.GetServiceByID)
-	if err != nil {
-		return false
-	}
-	return serviceConfigSlicesEqual(currentFallbacks, fallbacks)
-}
-
-// buildServiceLLM constructs a service-backed model, honoring the test seam
-// when one is installed.
-func (b *MMBots) buildServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-	if b.serviceLLMBuilderForTest != nil {
-		return b.serviceLLMBuilderForTest(svc, fallbacks)
-	}
-	return b.buildLLM(svc, nil, fallbacks, serviceTokenUsageIdentity(svc))
+// releaseLease returns the one-shot release for a lease already taken on entry.
+// Extra calls are ignored so a caller that releases twice cannot drive the
+// lease count negative.
+func releaseLease(entry *serviceLLMEntry) func() {
+	return sync.OnceFunc(entry.inUse.Done)
 }
 
 // serviceConfigSlicesEqual compares two fallback chains, treating nil and empty
 // as the same "no fallbacks".
 func serviceConfigSlicesEqual(a, b []llm.ServiceConfig) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !reflect.DeepEqual(a[i], b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func removeServiceLLMEntry(entries []*serviceLLMEntry, target *serviceLLMEntry) []*serviceLLMEntry {
-	for i, entry := range entries {
-		if entry == target {
-			return append(entries[:i], entries[i+1:]...)
-		}
-	}
-	return entries
+	return slices.EqualFunc(a, b, func(x, y llm.ServiceConfig) bool {
+		return reflect.DeepEqual(x, y)
+	})
 }

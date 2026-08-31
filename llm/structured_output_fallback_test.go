@@ -17,6 +17,12 @@ type fakeLLMForFallback struct {
 	capturedConfig LanguageModelConfig
 }
 
+// jsonSchema is the schema every test in this file requests: a single-field
+// object, so the marshaled instruction stays small and easy to assert on.
+var jsonSchema = NewJSONSchemaFromStruct[struct {
+	Name string `json:"name"`
+}]()
+
 func (f *fakeLLMForFallback) capture(request CompletionRequest, opts []LanguageModelOption) {
 	f.capturedPosts = request.Posts
 	var cfg LanguageModelConfig
@@ -43,35 +49,36 @@ func (f *fakeLLMForFallback) CountTokens(_ context.Context, request CompletionRe
 func (f *fakeLLMForFallback) InputTokenLimit() int  { return 4096 }
 func (f *fakeLLMForFallback) OutputTokenLimit() int { return 4096 }
 
-// fallbackTargetWithPolicy builds a single-service target carrying the policy.
-func fallbackTargetWithPolicy(id string, policy StructuredOutputPolicy, model string) StructuredOutputTarget {
-	return StructuredOutputTarget{
-		Service: ServiceConfig{
-			ID:                     id,
-			Type:                   ServiceTypeOpenAI,
-			APIKey:                 "key",
-			DefaultModel:           model,
-			StructuredOutputPolicy: policy,
-		},
-		Model: model,
+// serviceWithPolicy builds a service carrying the policy, whose default model
+// is the one an attempt against it would run.
+func serviceWithPolicy(id string, policy StructuredOutputPolicy, model string) ServiceConfig {
+	return ServiceConfig{
+		ID:                     id,
+		Type:                   ServiceTypeOpenAI,
+		APIKey:                 "key",
+		DefaultModel:           model,
+		StructuredOutputPolicy: policy,
 	}
 }
 
-// resolverReturning answers every auto lookup with the given capability and
+// resolvedTarget is one question the resolver was asked.
+type resolvedTarget struct {
+	serviceID string
+	model     string
+}
+
+// resolverReturning answers every auto lookup with the given verdict and
 // records what it was asked about.
-func resolverReturning(capability StructuredOutputCapability, seen *[]StructuredOutputTarget) StructuredOutputCapabilityResolver {
-	return func(svc ServiceConfig, model string) StructuredOutputCapability {
+func resolverReturning(capable bool, seen *[]resolvedTarget) StructuredOutputCapabilityResolver {
+	return func(svc ServiceConfig, model string) bool {
 		if seen != nil {
-			*seen = append(*seen, StructuredOutputTarget{Service: svc, Model: model})
+			*seen = append(*seen, resolvedTarget{serviceID: svc.ID, model: model})
 		}
-		return capability
+		return capable
 	}
 }
 
 func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
 	withSchema := func(cfg *LanguageModelConfig) {
 		cfg.JSONOutputFormat = jsonSchema
 	}
@@ -124,9 +131,7 @@ func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			wrapper := NewStructuredOutputFallbackWrapper(
 				&fakeLLMForFallback{response: tt.response},
-				fallbackTargetWithPolicy("primary", tt.policy, "gpt-4o"),
-				nil,
-				nil,
+				NewNativeStructuredOutputDecision(serviceWithPolicy("primary", tt.policy, "gpt-4o"), "gpt-4o", nil, nil),
 			)
 			result, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, tt.opts...)
 			require.NoError(t, err)
@@ -136,9 +141,6 @@ func TestStructuredOutputFallbackWrapperFenceStripping(t *testing.T) {
 }
 
 func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
 	withSchema := func(cfg *LanguageModelConfig) {
 		cfg.JSONOutputFormat = jsonSchema
 	}
@@ -148,8 +150,8 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 
 	type gatingCase struct {
 		name                 string
-		primary              StructuredOutputTarget
-		fallbacks            []StructuredOutputTarget
+		primary              ServiceConfig
+		fallbacks            []ServiceConfig
 		resolver             StructuredOutputCapabilityResolver
 		opts                 []LanguageModelOption
 		posts                []Post
@@ -160,7 +162,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 	tests := []gatingCase{
 		{
 			name:                 "native policy with schema: schema forwarded, posts untouched",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: true,
@@ -168,7 +170,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "prompt fallback with schema, first post system: schema stripped, instruction appended",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -176,7 +178,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "prompt fallback with schema, no system post: schema stripped, system post prepended",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{userPost},
 			wantSchemaDownstream: false,
@@ -184,7 +186,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "prompt fallback without schema: pass-through",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"),
 			opts:                 nil,
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -192,7 +194,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "native policy without schema: pass-through",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
 			opts:                 nil,
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -200,26 +202,17 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "auto policy resolved supported: schema forwarded",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
-			resolver:             resolverReturning(StructuredOutputCapabilitySupported, nil),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
+			resolver:             resolverReturning(true, nil),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: true,
 			wantInstruction:      false,
 		},
 		{
-			name:                 "auto policy resolved unknown: prompt fallback",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "mystery-model"),
-			resolver:             resolverReturning(StructuredOutputCapabilityUnknown, nil),
-			opts:                 []LanguageModelOption{withSchema},
-			posts:                []Post{systemPost, userPost},
-			wantSchemaDownstream: false,
-			wantInstruction:      true,
-		},
-		{
-			name:                 "auto policy resolved unsupported: prompt fallback",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "scaled-model"),
-			resolver:             resolverReturning(StructuredOutputCapabilityUnsupported, nil),
+			name:                 "auto policy resolved not capable: prompt fallback",
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyAuto, "mystery-model"),
+			resolver:             resolverReturning(false, nil),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -227,7 +220,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "auto policy without resolver: prompt fallback",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -235,8 +228,8 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:                 "invalid stored policy: prompt fallback",
-			primary:              fallbackTargetWithPolicy("primary", StructuredOutputPolicy("sometimes"), "gpt-4o"),
-			resolver:             resolverReturning(StructuredOutputCapabilitySupported, nil),
+			primary:              serviceWithPolicy("primary", StructuredOutputPolicy("sometimes"), "gpt-4o"),
+			resolver:             resolverReturning(true, nil),
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
 			wantSchemaDownstream: false,
@@ -244,9 +237,9 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:    "native primary with prompt-fallback fallback: whole chain uses prompt fallback",
-			primary: fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
-			fallbacks: []StructuredOutputTarget{
-				fallbackTargetWithPolicy("backup", StructuredOutputPolicyPromptFallback, "local-model"),
+			primary: serviceWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			fallbacks: []ServiceConfig{
+				serviceWithPolicy("backup", StructuredOutputPolicyPromptFallback, "local-model"),
 			},
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
@@ -255,9 +248,9 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		},
 		{
 			name:    "native primary with native fallbacks: schema forwarded",
-			primary: fallbackTargetWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
-			fallbacks: []StructuredOutputTarget{
-				fallbackTargetWithPolicy("backup", StructuredOutputPolicyNative, "gpt-4.1"),
+			primary: serviceWithPolicy("primary", StructuredOutputPolicyNative, "gpt-4o"),
+			fallbacks: []ServiceConfig{
+				serviceWithPolicy("backup", StructuredOutputPolicyNative, "gpt-4.1"),
 			},
 			opts:                 []LanguageModelOption{withSchema},
 			posts:                []Post{systemPost, userPost},
@@ -295,10 +288,14 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 		assert.Contains(t, fake.capturedPosts[0].Message, `"name"`, "instruction should contain the marshaled schema")
 	}
 
+	decisionFor := func(tt gatingCase) func(string) bool {
+		return NewNativeStructuredOutputDecision(tt.primary, tt.primary.DefaultModel, tt.fallbacks, tt.resolver)
+	}
+
 	for _, tt := range tests {
 		t.Run("no stream: "+tt.name, func(t *testing.T) {
 			fake := &fakeLLMForFallback{response: `{"name": "test"}`}
-			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.primary, tt.fallbacks, tt.resolver)
+			wrapper := NewStructuredOutputFallbackWrapper(fake, decisionFor(tt))
 
 			callerPosts := make([]Post, len(tt.posts))
 			copy(callerPosts, tt.posts)
@@ -311,7 +308,7 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 
 		t.Run("streaming: "+tt.name, func(t *testing.T) {
 			fake := &fakeLLMForFallback{}
-			wrapper := NewStructuredOutputFallbackWrapper(fake, tt.primary, tt.fallbacks, tt.resolver)
+			wrapper := NewStructuredOutputFallbackWrapper(fake, decisionFor(tt))
 
 			callerPosts := make([]Post, len(tt.posts))
 			copy(callerPosts, tt.posts)
@@ -325,14 +322,10 @@ func TestStructuredOutputFallbackWrapperSchemaGating(t *testing.T) {
 }
 
 func TestStructuredOutputFallbackWrapperResolvesEveryTarget(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
-
-	primary := fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "primary-model")
-	fallbacks := []StructuredOutputTarget{
-		fallbackTargetWithPolicy("backup-1", StructuredOutputPolicyAuto, "backup-1-model"),
-		fallbackTargetWithPolicy("backup-2", StructuredOutputPolicyAuto, "backup-2-model"),
+	primary := serviceWithPolicy("primary", StructuredOutputPolicyAuto, "primary-model")
+	fallbacks := []ServiceConfig{
+		serviceWithPolicy("backup-1", StructuredOutputPolicyAuto, "backup-1-model"),
+		serviceWithPolicy("backup-2", StructuredOutputPolicyAuto, "backup-2-model"),
 	}
 
 	tests := []struct {
@@ -353,10 +346,10 @@ func TestStructuredOutputFallbackWrapperResolvesEveryTarget(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var seen []StructuredOutputTarget
+			var seen []resolvedTarget
 			fake := &fakeLLMForFallback{response: `{"name": "test"}`}
-			wrapper := NewStructuredOutputFallbackWrapper(fake, primary, fallbacks,
-				resolverReturning(StructuredOutputCapabilitySupported, &seen))
+			wrapper := NewStructuredOutputFallbackWrapper(fake, NewNativeStructuredOutputDecision(
+				primary, primary.DefaultModel, fallbacks, resolverReturning(true, &seen)))
 
 			opts := append([]LanguageModelOption{func(cfg *LanguageModelConfig) {
 				cfg.JSONOutputFormat = jsonSchema
@@ -365,52 +358,21 @@ func TestStructuredOutputFallbackWrapperResolvesEveryTarget(t *testing.T) {
 			_, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, opts...)
 			require.NoError(t, err)
 
-			require.Len(t, seen, 3, "every possible provider attempt must be resolved")
-			assert.Equal(t, "primary", seen[0].Service.ID)
-			assert.Equal(t, tt.wantPrimaryModel, seen[0].Model)
-			assert.Equal(t, "backup-1", seen[1].Service.ID)
-			assert.Equal(t, "backup-1-model", seen[1].Model, "a fallback always runs its own model")
-			assert.Equal(t, "backup-2", seen[2].Service.ID)
-			assert.Equal(t, "backup-2-model", seen[2].Model)
+			// The fallbacks are resolved once when the decision is built; the
+			// primary is resolved per call, because only its model can change.
+			assert.Equal(t, []resolvedTarget{
+				{serviceID: "backup-1", model: "backup-1-model"},
+				{serviceID: "backup-2", model: "backup-2-model"},
+				{serviceID: "primary", model: tt.wantPrimaryModel},
+			}, seen, "every possible provider attempt must be resolved")
 		})
 	}
 }
 
-func TestStructuredOutputFallbackWrapperMixedChain(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
-
-	capabilities := map[string]StructuredOutputCapability{
-		"primary": StructuredOutputCapabilitySupported,
-		"backup":  StructuredOutputCapabilityUnknown,
-	}
-	resolver := func(svc ServiceConfig, _ string) StructuredOutputCapability {
-		return capabilities[svc.ID]
-	}
-
-	fake := &fakeLLMForFallback{response: `{"name": "test"}`}
-	wrapper := NewStructuredOutputFallbackWrapper(fake,
-		fallbackTargetWithPolicy("primary", StructuredOutputPolicyAuto, "gpt-4o"),
-		[]StructuredOutputTarget{fallbackTargetWithPolicy("backup", StructuredOutputPolicyAuto, "mystery")},
-		resolver,
-	)
-
-	_, err := wrapper.ChatCompletionNoStream(context.Background(), CompletionRequest{}, func(cfg *LanguageModelConfig) {
-		cfg.JSONOutputFormat = jsonSchema
-	})
-	require.NoError(t, err)
-	assert.Nil(t, fake.capturedConfig.JSONOutputFormat, "an incapable fallback must keep the whole chain on prompt fallback")
-}
-
 func TestStructuredOutputFallbackWrapperCountTokensAppliesTransformation(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
-
 	fake := &fakeLLMForFallback{}
-	wrapper := NewStructuredOutputFallbackWrapper(fake,
-		fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), nil, nil)
+	wrapper := NewStructuredOutputFallbackWrapper(fake, NewNativeStructuredOutputDecision(
+		serviceWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), "gpt-4o", nil, nil))
 
 	_, err := wrapper.CountTokens(context.Background(), CompletionRequest{
 		Posts: []Post{{Role: PostRoleUser, Message: "Summarize the channel."}},
@@ -431,12 +393,9 @@ func TestStructuredOutputFallbackWrapperCountTokensAppliesTransformation(t *test
 }
 
 func TestStructuredOutputFallbackWrapperPromptFallbackStripsFenceAndSchemaTogether(t *testing.T) {
-	jsonSchema := NewJSONSchemaFromStruct[struct {
-		Name string `json:"name"`
-	}]()
 	fake := &fakeLLMForFallback{response: "```json\n{\"name\": \"test\"}\n```"}
-	wrapper := NewStructuredOutputFallbackWrapper(fake,
-		fallbackTargetWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), nil, nil)
+	wrapper := NewStructuredOutputFallbackWrapper(fake, NewNativeStructuredOutputDecision(
+		serviceWithPolicy("primary", StructuredOutputPolicyPromptFallback, "gpt-4o"), "gpt-4o", nil, nil))
 
 	request := CompletionRequest{Posts: []Post{
 		{Role: PostRoleSystem, Message: "You are a helpful assistant."},

@@ -126,15 +126,19 @@ func TestResolveBridgeFallbacks(t *testing.T) {
 		svc.FallbackServiceID = fallbackID
 		return svc
 	}
+	withModel := func(id, model string) llm.ServiceConfig {
+		svc := openAIService(id)
+		svc.DefaultModel = model
+		return svc
+	}
 
 	tests := []struct {
-		name        string
-		services    []llm.ServiceConfig
-		primary     llm.ServiceConfig
-		wantIDs     []string
-		wantErr     string
-		wantModels  []string
-		primaryOnly bool
+		name       string
+		services   []llm.ServiceConfig
+		primary    llm.ServiceConfig
+		wantIDs    []string
+		wantErr    string
+		wantModels []string
 	}{
 		{
 			name:     "no fallback configured resolves to an empty chain",
@@ -198,27 +202,12 @@ func TestResolveBridgeFallbacks(t *testing.T) {
 			name: "duplicate service IDs resolve to the first entry",
 			services: []llm.ServiceConfig{
 				primaryWithFallback("a", "b"),
-				func() llm.ServiceConfig {
-					svc := openAIService("b")
-					svc.DefaultModel = "first-wins"
-					return svc
-				}(),
-				func() llm.ServiceConfig {
-					svc := openAIService("b")
-					svc.DefaultModel = "second-loses"
-					return svc
-				}(),
+				withModel("b", "first-wins"),
+				withModel("b", "second-loses"),
 			},
 			primary:    primaryWithFallback("a", "b"),
 			wantIDs:    []string{"b"},
 			wantModels: []string{"first-wins"},
-		},
-		{
-			name:       "primary outside the snapshot still resolves its chain",
-			services:   []llm.ServiceConfig{openAIService("b")},
-			primary:    primaryWithFallback("a", "b"),
-			wantIDs:    []string{"b"},
-			wantModels: []string{"gpt-4o"},
 		},
 	}
 

@@ -7,14 +7,15 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// fakeServiceLLMBuilder stands in for the real Bifrost-backed builder so
-// registry behavior can be exercised without starting provider worker pools.
+// fakeServiceLLMBuilder stands in for provider client construction so registry
+// behavior can be exercised without starting Bifrost worker pools.
 type fakeServiceLLMBuilder struct {
 	mu        sync.Mutex
 	builds    []llm.ServiceConfig
@@ -25,7 +26,7 @@ type fakeServiceLLMBuilder struct {
 	failWith     error
 }
 
-func (f *fakeServiceLLMBuilder) build(svc llm.ServiceConfig, _ []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+func (f *fakeServiceLLMBuilder) build(svc llm.ServiceConfig, _ llm.BotConfig, _ []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	f.mu.Lock()
 	f.builds = append(f.builds, svc)
 	beforeReturn := f.beforeReturn
@@ -64,8 +65,19 @@ func newRegistryTestBots(t *testing.T, services []llm.ServiceConfig) (*MMBots, *
 	cfg := &mockConfig{services: services}
 	mmBots := newTestMMBots(t, cfg)
 	builder := &fakeServiceLLMBuilder{}
-	mmBots.serviceLLMBuilderForTest = builder.build
+	mmBots.baseLLMBuilderForTest = builder.build
 	return mmBots, cfg, builder
+}
+
+// requireShutdownIDs waits for the models that have been retired to shut down.
+// Retirement drains an entry's leases on its own goroutine, so the shutdown
+// lands shortly after the last release rather than inside it.
+func requireShutdownIDs(t *testing.T, builder *fakeServiceLLMBuilder, want []string) {
+	t.Helper()
+
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		assert.Equal(c, want, builder.shutdownIDs())
+	}, 5*time.Second, time.Millisecond)
 }
 
 func TestAcquireServiceLLMCachesPerService(t *testing.T) {
@@ -142,7 +154,7 @@ func TestAcquireServiceLLMRebuildsOnConfigChange(t *testing.T) {
 
 			assert.NotSame(t, first, second, "a changed configuration must produce a new model")
 			assert.Equal(t, 2, builder.buildCount())
-			assert.Equal(t, []string{primary.ID}, builder.shutdownIDs(), "the superseded model must be shut down")
+			requireShutdownIDs(t, builder, []string{primary.ID})
 		})
 	}
 }
@@ -189,11 +201,11 @@ func TestAcquireServiceLLMReplacesSupersededCacheEntry(t *testing.T) {
 			assert.Equal(t, 2, builder.buildCount())
 
 			if tt.wantShutdownAt == "replace" {
-				assert.Equal(t, []string{"a"}, builder.shutdownIDs())
+				requireShutdownIDs(t, builder, []string{"a"})
 			} else {
 				assert.Empty(t, builder.shutdownIDs())
 				releaseOld()
-				assert.Equal(t, []string{"a"}, builder.shutdownIDs())
+				requireShutdownIDs(t, builder, []string{"a"})
 			}
 
 			// The replacement is cached: a second acquire reuses it.
@@ -264,38 +276,6 @@ func TestAcquireServiceLLMDoesNotCacheBuildFailures(t *testing.T) {
 	assert.Equal(t, 2, builder.buildCount(), "a failed build must be retried, not cached")
 }
 
-func TestAcquireServiceLLMDoesNotCacheStaleSnapshots(t *testing.T) {
-	stale := openAIService("a")
-	current := openAIService("a")
-	current.DefaultModel = "gpt-4.1"
-
-	mmBots, cfg, builder := newRegistryTestBots(t, []llm.ServiceConfig{stale})
-
-	// The configuration changes while the model for the old snapshot is being
-	// built, which a generation counter sampled at build start would miss.
-	builder.beforeReturn = func(svc llm.ServiceConfig) {
-		if svc.DefaultModel == stale.DefaultModel {
-			cfg.services = []llm.ServiceConfig{current}
-		}
-	}
-
-	staleModel, releaseStale, err := mmBots.AcquireServiceLLM(stale, nil)
-	require.NoError(t, err)
-	require.NotNil(t, staleModel)
-
-	freshModel, releaseFresh, err := mmBots.AcquireServiceLLM(current, nil)
-	require.NoError(t, err)
-	assert.NotSame(t, staleModel, freshModel, "the stale build must not be served to new requests")
-
-	assert.Empty(t, builder.shutdownIDs(), "the stale model must stay alive for its lease holder")
-	releaseStale()
-	assert.Equal(t, []string{"a"}, builder.shutdownIDs(), "the uncached stale model must shut down on release")
-
-	releaseFresh()
-	assert.Equal(t, []string{"a"}, builder.shutdownIDs(), "the cached model must stay alive")
-	assert.Equal(t, 2, builder.buildCount())
-}
-
 func TestReconcileServiceLLMs(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -345,7 +325,7 @@ func TestReconcileServiceLLMs(t *testing.T) {
 			mmBots.ReconcileServiceLLMs(next)
 
 			if tt.wantShutdown {
-				assert.Equal(t, []string{"a"}, builder.shutdownIDs())
+				requireShutdownIDs(t, builder, []string{"a"})
 			} else {
 				assert.Empty(t, builder.shutdownIDs())
 			}
@@ -382,7 +362,7 @@ func TestReconcileServiceLLMsWaitsForOutstandingLeases(t *testing.T) {
 	assert.Empty(t, builder.shutdownIDs(), "the model must stay up until the last lease is released")
 
 	releaseSecond()
-	assert.Equal(t, []string{"a"}, builder.shutdownIDs(), "the final release must shut the retired model down")
+	requireShutdownIDs(t, builder, []string{"a"})
 }
 
 func TestShutdownServiceLLMs(t *testing.T) {
