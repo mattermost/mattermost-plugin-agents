@@ -94,7 +94,7 @@ Some requests ask the LLM for JSON matching a schema — agent features that nee
 | **Native supported** | `native` | Asserts that this service accepts a native JSON schema. Use it for custom or OpenAI-compatible endpoints whose capabilities Mattermost can't detect. If the assertion is wrong, the provider rejects those requests. |
 | **Prompt fallback** | `prompt_fallback` | Never sends the schema natively. The schema is always converted into prompt instructions. |
 
-The stored configuration key is `structuredOutputPolicy` on each service entry. An empty value means `auto`, so services configured before this setting existed keep working unchanged and need no migration.
+The stored configuration key is `structuredOutputPolicy` on each service entry. An empty value means `auto`, so services configured before this setting existed remain valid without any change.
 
 The setting describes one service's capability, but the decision is made once per request and covers the service's entire fallback chain, because the prompt conversion happens before Mattermost picks which service actually serves the request. A schema is sent natively only when every possible attempt — the primary service and every service in its fallback chain — is either known-capable under **Auto (recommended)** or marked **Native supported**. If any link in the chain needs the prompt fallback, the whole request uses prompt instructions. Marking a service as **Native supported** therefore doesn't force native output for a chain that contains a service requiring the fallback.
 

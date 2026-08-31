@@ -35,7 +35,7 @@ The supported upgrade path is to upgrade Mattermost to the latest v11.6 patch re
 
 ## 4. What gets migrated automatically
 
-When v2.0.0 starts for the first time on an existing install, the plugin runs three database migrations and two in-process data migrations. They are coordinated for HA via cluster mutex and a system-table flag, and are designed to be re-run safely.
+When v2.0.0 starts for the first time on an existing install, the plugin runs three database migrations and one in-process data migration. They are coordinated for HA via cluster mutex and a system-table flag, and are designed to be re-run safely.
 
 ### 4.1 Schema migrations (`store/migrations/`)
 
@@ -62,17 +62,7 @@ After the schema migrations run, the plugin performs a one-time migration of leg
 5. The plugin clears `config.bots` from stored configuration to prevent duplicate bot registration on subsequent restarts.
 6. The plugin sets `legacy_config_bots_migrated = true`.
 
-### 4.3 Agent structured output migration (`config/structured_output_migration.go`)
-
-The removed per-agent **Structured output** toggle is carried over to the service policy that replaced it:
-
-1. The plugin acquires the cluster mutex `ai_agent_structured_output_migration` so only one node performs the migration in HA deployments.
-2. For each service in stored configuration, if any stored agent using that service still carries the deprecated `StructuredOutputEnabled = true`, that service's structured output policy is set to **Native supported** (`native`).
-3. A policy an administrator has already set explicitly is never overwritten. The migration therefore needs no completion flag: after it has run once, every affected service has a policy, so later activations change nothing.
-
-Agents whose toggle was **off** are deliberately not migrated in the other direction. Their service keeps an unset policy and takes part in automatic detection, so it can start sending native schemas on provider/model combinations where support is known. See [Structured output](admin_guide.md#structured-output).
-
-### 4.4 What changes in the System Console
+### 4.3 What changes in the System Console
 
 - **AI Bots** → redirects to the new top-level **Agents** product page. The legacy AI Bots editor is replaced by the **Agents** management UI (list page plus a three-tab agent editor: Configuration, Access, MCPs).
 - **Enable MCP Client** and **Enable Embedded Server** toggles are removed (PR #617). MCP and the embedded Mattermost MCP server are always on.
@@ -131,15 +121,13 @@ Defaults that ship with v2.0.0 differ from v1.x in the following ways. None of t
 | OpenAI direct: Responses API | Toggle, off-by-default | **Always on (no toggle)** | OpenAI service type only |
 | Native web search (per agent) | Off | **On for new agents** | Capable providers: OpenAI, Azure OpenAI, Anthropic, Google Gemini, Google Vertex AI. Native tools are filtered out at request time for Bedrock, Cohere, Mistral, and Scale-backed services. |
 | Extended reasoning / thinking (per agent) | Off | **On for new and migrated agents** (migration 000006 backfills `ReasoningEnabled=true`) | Capable providers (same scope as native web search) |
-| Structured output (per agent) | Off | **Deprecated** — the per-agent toggle has been removed and the stored value (migration 000006 column `StructuredOutputEnabled`, default `false`) is ignored at runtime. Structured output is now a per-service policy; see [Structured output](admin_guide.md#structured-output) in the Admin Guide. | All providers |
+| Structured output (per agent) | Off | **Off** (default `false` in both migration 000006 and the Agents UI's `emptyDraft`, for both new and migrated agents) | Capable providers: OpenAI, OpenAI Compatible, Azure OpenAI, Anthropic |
 
 > **Migrated agents and native web search.** The migration 000006 backfill leaves `EnabledNativeTools = '[]'` for existing agent rows. Agents that were migrated from `config.bots` therefore do not automatically gain native web search at upgrade time. To enable native web search for a migrated agent, edit the agent on the **Agents** page and turn on **Enable Web Search** under the **Configuration** tab.
 
 > **Reasoning is on by default for migrated agents.** Migration 000006 backfills `ReasoningEnabled = true` for existing rows. If your environment relies on agents *not* using extended thinking — for example, to reduce token spend or to keep latency predictable for a particular agent — explicitly turn off **Reasoning Enabled** on each affected agent after the upgrade.
 
-> **Direct OpenAI services now send native JSON schemas.** With no explicit policy, an `openai` service running a model family known to implement OpenAI Structured Outputs (`gpt-4o`, `gpt-4.1`, `gpt-4.5`, `gpt-5`, `o1`/`o3`/`o4` and their dated snapshots) now sends a requested JSON schema natively, where v1.x converted it into prompt instructions. The plugin's own structured-output features are unaffected, because the schemas they generate are strict-safe (required fields, no additional properties). An external LLM Bridge caller that posts a hand-written loose schema — no `required` list, no `"additionalProperties": false` — can now receive a provider 400 where it previously received a prompt-fallback answer. Either tighten the schema, or set that service's structured output policy to **Prompt fallback**.
-
-> **Anthropic structured output and extended thinking.** Anthropic doesn't support extended thinking together with native structured output on the same request, so requests that send a JSON schema natively skip extended thinking for that request; all other requests keep using it. Whether the schema is sent natively is governed by the service's structured output policy.
+> **Anthropic structured output and extended thinking.** Both toggles can be enabled on the same agent. Because Anthropic doesn't support extended thinking together with structured output, requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
 
 ## 7. Step-by-step upgrade procedure
 
