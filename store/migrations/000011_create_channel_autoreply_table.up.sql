@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS Agents_ChannelAutoReply (
+    ChannelID VARCHAR(26) PRIMARY KEY,
+    BotID VARCHAR(26) NOT NULL,
+    Mode VARCHAR(32) NOT NULL,
+    UpdatedBy VARCHAR(26) NOT NULL,
+    UpdateAt BIGINT NOT NULL
+);

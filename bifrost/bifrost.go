@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
+	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -474,6 +475,8 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	modelOutputLimit := providerutils.GetMaxOutputTokensOrDefault(cfg.Model, cfg.MaxGeneratedTokens)
+	cfg.MaxGeneratedTokens = min(cfg.MaxGeneratedTokens, modelOutputLimit)
 	return cfg
 }
 

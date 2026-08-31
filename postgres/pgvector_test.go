@@ -1316,8 +1316,9 @@ func TestClear(t *testing.T) {
 		assert.Equal(t, 0, count)
 
 		// Same-dim Clear keeps the vector typmod
-		dims, dimErr := pgVector.embeddingColumnDimensions(ctx)
+		elementType, dims, dimErr := pgVector.embeddingColumnTypmod(ctx)
 		require.NoError(t, dimErr)
+		assert.Equal(t, embeddings.VectorElementTypeVector, elementType)
 		assert.Equal(t, 3, dims)
 	})
 
@@ -1338,15 +1339,17 @@ func TestClear(t *testing.T) {
 		newStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 5})
 		require.NoError(t, err)
 
-		// CREATE TABLE IF NOT EXISTS leaves the old typmod until Clear.
-		dims, err := newStore.embeddingColumnDimensions(ctx)
+		// CREATE TABLE IF NOT EXISTS is skipped on mismatch; typmod stays until Clear.
+		elementType, dims, err := newStore.embeddingColumnTypmod(ctx)
 		require.NoError(t, err)
+		assert.Equal(t, embeddings.VectorElementTypeVector, elementType)
 		assert.Equal(t, 3, dims)
 
 		require.NoError(t, newStore.Clear(ctx))
 
-		dims, err = newStore.embeddingColumnDimensions(ctx)
+		elementType, dims, err = newStore.embeddingColumnTypmod(ctx)
 		require.NoError(t, err)
+		assert.Equal(t, embeddings.VectorElementTypeVector, elementType)
 		assert.Equal(t, 5, dims)
 
 		hadIndex, err := newStore.vectorIndexExists(ctx)
@@ -1381,38 +1384,98 @@ func TestClear(t *testing.T) {
 
 		require.NoError(t, newStore.Clear(ctx))
 
-		dims, err := newStore.embeddingColumnDimensions(ctx)
+		elementType, dims, err := newStore.embeddingColumnTypmod(ctx)
 		require.NoError(t, err)
+		assert.Equal(t, embeddings.VectorElementTypeVector, elementType)
 		assert.Equal(t, 5, dims)
 
 		exists, err = newStore.vectorIndexExists(ctx)
 		require.NoError(t, err)
 		assert.False(t, exists, "deferred Clear must leave HNSW dropped for FinalizeBulkIndex")
 	})
+
+	t.Run("same-dimension maintain Clear replaces catalog m=16 with configured m=8", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		_, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: 16})
+		require.NoError(t, err)
+
+		var oldDef string
+		require.NoError(t, db.Get(&oldDef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName))
+		oldM, ok := parseHNSWMFromIndexDef(oldDef)
+		require.True(t, ok)
+		assert.Equal(t, 16, oldM)
+
+		newStore, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+
+		exists, err := newStore.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists, "wrong-m leftover must not count as the ANN index")
+
+		require.NoError(t, newStore.Clear(ctx))
+
+		exists, err = newStore.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, exists, "maintain-mode Clear must replace wrong m while the table is empty")
+
+		var newDef string
+		require.NoError(t, db.Get(&newDef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName))
+		newM, ok := parseHNSWMFromIndexDef(newDef)
+		require.True(t, ok, "replaced index def must include m: %s", newDef)
+		assert.Equal(t, embeddings.DefaultHNSWM, newM)
+	})
+
+	t.Run("same-dimension deferred Clear leaves a dropped index dropped", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		ctx := context.Background()
+		store, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+		require.NoError(t, store.PrepareBulkIndex(ctx))
+
+		exists, err := store.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists)
+
+		require.NoError(t, store.Clear(ctx))
+
+		exists, err = store.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, exists, "deferred Clear must not recreate HNSW before FinalizeBulkIndex")
+		assert.NotContains(t, embeddingsTableIndexes(t, db), vectorIndexName)
+	})
 }
 
 func TestParseVectorTypmod(t *testing.T) {
 	tests := []struct {
-		name    string
-		input   string
-		want    int
-		wantErr bool
+		name     string
+		input    string
+		wantType string
+		wantDims int
+		wantErr  bool
 	}{
-		{name: "standard", input: "vector(1536)", want: 1536},
-		{name: "small", input: "vector(3)", want: 3},
+		{name: "standard vector", input: "vector(1536)", wantType: embeddings.VectorElementTypeVector, wantDims: 1536},
+		{name: "small vector", input: "vector(3)", wantType: embeddings.VectorElementTypeVector, wantDims: 3},
+		{name: "halfvec", input: "halfvec(256)", wantType: embeddings.VectorElementTypeHalfvec, wantDims: 256},
 		{name: "missing dims", input: "vector", wantErr: true},
 		{name: "empty", input: "vector()", wantErr: true},
 		{name: "wrong type", input: "text", wantErr: true},
+		{name: "unsupported element type", input: "sparsevec(1536)", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseVectorTypmod(tt.input)
+			gotType, gotDims, err := parseVectorTypmod(tt.input)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
 			}
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantType, gotType)
+			assert.Equal(t, tt.wantDims, gotDims)
 		})
 	}
 }

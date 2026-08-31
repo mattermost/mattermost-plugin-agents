@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
@@ -103,6 +104,13 @@ type VectorStore interface {
 	DeleteOrphaned(ctx context.Context, nowTime, batchSize int64) (int64, error)
 }
 
+// SchemaChecker is an optional VectorStore preflight. CompositeSearch calls it
+// before generating embeddings so a column-type mismatch does not bill the
+// provider. Clear must still succeed so Full Reindex can repair the schema.
+type SchemaChecker interface {
+	CheckSchema(ctx context.Context) error
+}
+
 // BulkIndexer drops/rebuilds the ANN index around bulk loads.
 type BulkIndexer interface {
 	PrepareBulkIndex(ctx context.Context) error
@@ -146,6 +154,21 @@ const (
 	MaxReindexBatchSize     = 1000
 )
 
+// HNSW m (graph connections per row). pgvector accepts 2–100; 8 is a
+// lower-RAM default than pgvector's own 16.
+const (
+	DefaultHNSWM = 8
+	MinHNSWM     = 2
+	MaxHNSWM     = 100
+)
+
+// Embedding column element types. "vector" is float32; "halfvec" is float16
+// (pgvector 0.7+). Unset or unknown values normalize to vector.
+const (
+	VectorElementTypeVector  = "vector"
+	VectorElementTypeHalfvec = "halfvec"
+)
+
 // ReindexIndexStrategy*: maintain updates ANN during load; defer rebuilds after.
 const (
 	ReindexIndexStrategyMaintain = "maintain"
@@ -159,6 +182,8 @@ type EmbeddingSearchConfig struct {
 	EmbeddingProvider    UpstreamConfig   `json:"embeddingProvider"`
 	Parameters           json.RawMessage  `json:"parameters"`
 	Dimensions           int              `json:"dimensions"`
+	HNSWM                int              `json:"hnswM,omitempty"`
+	VectorElementType    string           `json:"vectorElementType,omitempty"`
 	ChunkingOptions      chunking.Options `json:"chunkingOptions"`
 	ReindexWorkers       int              `json:"reindexWorkers,omitempty"`
 	ReindexBatchSize     int              `json:"reindexBatchSize,omitempty"`
@@ -166,6 +191,7 @@ type EmbeddingSearchConfig struct {
 	RecencyBiasEnabled   bool             `json:"recencyBiasEnabled,omitempty"`
 	RecencyHalfLifeDays  float64          `json:"recencyHalfLifeDays,omitempty"`
 	RecencyFloor         float64          `json:"recencyFloor,omitempty"`
+	IndexRetentionDays   int              `json:"indexRetentionDays,omitempty"`
 }
 
 // GetReindexWorkers returns the configured reindex worker count, clamped to
@@ -175,6 +201,62 @@ func (c *EmbeddingSearchConfig) GetReindexWorkers() int {
 		return DefaultReindexWorkers
 	}
 	return min(c.ReindexWorkers, MaxReindexWorkers)
+}
+
+// GetHNSWM returns the configured HNSW m, clamped to pgvector's [2, 100]
+// range, with unset (<=0) falling back to the default.
+func (c *EmbeddingSearchConfig) GetHNSWM() int {
+	if c.HNSWM <= 0 {
+		return DefaultHNSWM
+	}
+	if c.HNSWM < MinHNSWM {
+		return MinHNSWM
+	}
+	return min(c.HNSWM, MaxHNSWM)
+}
+
+// NormalizeVectorElementType keeps only "halfvec"; anything else (including
+// unset) is "vector".
+func NormalizeVectorElementType(elementType string) string {
+	if elementType == VectorElementTypeHalfvec {
+		return VectorElementTypeHalfvec
+	}
+	return VectorElementTypeVector
+}
+
+// GetVectorElementType returns the configured embedding column type.
+func (c *EmbeddingSearchConfig) GetVectorElementType() string {
+	return NormalizeVectorElementType(c.VectorElementType)
+}
+
+// MillisPerDay is the Unix-millis length of a 24-hour day.
+const MillisPerDay int64 = 24 * 60 * 60 * 1000
+
+// GetIndexRetentionDays returns the configured retention window in days.
+// Negative values are treated as 0 (index all posts).
+func (c *EmbeddingSearchConfig) GetIndexRetentionDays() int {
+	if c.IndexRetentionDays < 0 {
+		return 0
+	}
+	return c.IndexRetentionDays
+}
+
+// IndexRetentionFloor is the inclusive CreateAt lower bound for indexing
+// writes. 0 days (all posts) returns 0, meaning no lower bound. The result is
+// never negative.
+func (c *EmbeddingSearchConfig) IndexRetentionFloor(nowMillis int64) int64 {
+	days := c.GetIndexRetentionDays()
+	if days == 0 {
+		return 0
+	}
+	if int64(days) > math.MaxInt64/MillisPerDay {
+		return 0
+	}
+	window := int64(days) * MillisPerDay
+	if nowMillis < window {
+		return 0
+	}
+	return nowMillis - window
 }
 
 // GetReindexBatchSize returns the configured reindex batch size, clamped to

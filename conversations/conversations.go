@@ -47,6 +47,7 @@ type Conversations struct {
 	configProvider    ConfigProvider
 	toolPolicyChecker mcp.ToolPolicyChecker
 	convService       *conversation.Service
+	autoReplySettings AutoReplySettings
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -90,6 +91,12 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 // and DM auto-run decisions.
 func (c *Conversations) SetToolPolicyChecker(checker mcp.ToolPolicyChecker) {
 	c.toolPolicyChecker = checker
+}
+
+// SetAutoReplySettings sets the per-channel auto-reply settings lookup.
+// The auto-reply feature is disabled when unset.
+func (c *Conversations) SetAutoReplySettings(s AutoReplySettings) {
+	c.autoReplySettings = s
 }
 
 // SetConversationService sets the conversation entity service.
@@ -193,6 +200,17 @@ func (c *Conversations) ProcessDMRequest(
 	llmCtx *llm.Context,
 	maxToolTurns int,
 ) (*DMStreamResult, error) {
+	return c.processDMRequest(ctx, convID, lm, llmCtx, maxToolTurns, nil)
+}
+
+func (c *Conversations) processDMRequest(
+	ctx stdcontext.Context,
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+	maxToolTurns int,
+	beforeProvider func(),
+) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
 
@@ -213,6 +231,9 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
+	if beforeProvider != nil {
+		beforeProvider()
+	}
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)

@@ -56,7 +56,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 		clusterNotifier: &testClusterNotifier{},
 	}
 
-	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil)
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil, nil)
 
 	return api, mockAPI, stores
 }
@@ -1284,6 +1284,105 @@ func TestAuditCatchUpReindex(t *testing.T) {
 			require.Len(t, *records, 1, "exactly one audit record must be emitted")
 			rec := (*records)[0]
 			assert.Equal(t, AuditEventCatchUpReindex, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+const plantedRebuildSentinel = "SENTINEL_REBUILD_PROMPT_MUST_NOT_APPEAR"
+
+func TestAuditRebuildVectorIndex(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		mockIndexer    *mockIndexerService // nil leaves indexerService nil
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "job already running records a 409 fail with the blocking job status",
+			body:           `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer:    &mockIndexerService{jobStatus: runningReindexJob(), searchConfigured: true},
+			expectedStatus: http.StatusConflict,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusConflict, rec.Error.Code)
+				assert.Equal(t, indexer.JobStatusRunning, rec.EventData.Parameters["job_status"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+		{
+			name: "incomplete reindex records a 400 fail",
+			body: `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer: &mockIndexerService{
+				jobStatus: &indexer.JobStatus{
+					JobID:     "failed-reindex",
+					Status:    indexer.JobStatusFailed,
+					Operation: indexer.JobOperationReindex,
+					Resumable: false,
+				},
+				searchConfigured: true,
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+		{
+			name:           "search not configured records a 400 fail",
+			body:           `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer:    nil,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+				assert.NotContains(t, rec.EventData.Parameters, "hnswM")
+				assert.NotContains(t, rec.EventData.Parameters, "hnsw_m")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			if tt.mockIndexer != nil {
+				e.api.indexerService = createMockIndexer(t, tt.mockIndexer)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/rebuild-vector-index", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventRebuildVectorIndex, rec.EventName)
 			assert.Equal(t, "userid", rec.Actor.UserId)
 			tt.validateRecord(t, rec)
 		})

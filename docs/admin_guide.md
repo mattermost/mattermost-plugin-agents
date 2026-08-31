@@ -319,10 +319,13 @@ Bulk reindexing throughput can be tuned for large datasets:
 | **Reindex Worker Count** | 4 (max 32) | Concurrent embedding/storage workers during bulk reindexing. Raise for faster reindexing if your embedding provider rate limits allow (limits are respected automatically via retry with backoff); lower to reduce database and provider load. Values above the maximum are clamped. |
 | **Reindex Batch Size** | 200 (max 1000) | Posts fetched and embedded per batch. Larger batches amortize request overhead; requests are split automatically to stay within provider per-request limits. Values above the maximum are clamped. |
 | **Reindex Index Strategy** | Maintain index during reindex | Controls how the vector similarity index is handled during a full reindex. `maintain` keeps the index up to date on every insert (default). `defer` drops the index up front, bulk-loads without index maintenance, and rebuilds the index once at the end — much faster for large databases, but semantic search is unavailable until the rebuild completes. |
+| **HNSW M** | 8 (range 2–100) | Graph connections per row in the HNSW vector index. Lower values use less RAM and are slightly less accurate. Changing M rebuilds the vector index; it does **not** re-embed posts. Existing indexes created before this setting stay at pgvector's default `m=16` until you run **Rebuild vector index**. |
+| **Vector precision** | Standard (`vector`) | Storage type for embedding values. Standard uses 4-byte `vector`; half precision uses 2-byte `halfvec` (pgvector 0.7+, including Amazon RDS). Half precision uses less RAM and disk. Changing this **drops the embeddings table** — run **Full Reindex**, not Resume and not Rebuild vector index. Default is standard so existing indexes keep working. |
+| **Index posts from the last N days** | 0 (all posts) | Limits how far back indexing looks. `0` indexes all posts. A positive value indexes only posts created in the last N days. Raising N and running **Catch Up** embeds older posts that are not already in the index without disabling search. Lowering N does **not** delete already-indexed posts; search still returns rows already in the index. RAM does not drop until a later Full Reindex. |
 
 The defaults stay comfortably within OpenAI Tier 1 rate limits. On Azure OpenAI, throughput is capped by your deployment's tokens-per-minute quota — raise it to benefit from higher worker counts.
 
-Run the initial indexing process after configuration.
+Run the initial indexing process after configuration. For a large historical corpus, set **Index posts from the last N days** first, then run **Full Reindex**. That Full Reindex is the historical cut — for example `N=365` indexes only the last year instead of hundreds of millions of older posts.
 
 #### Large database reindexing
 
@@ -332,13 +335,16 @@ Notes on deferred reindex:
 
 - **Semantic search is unavailable** from reindex start until the final index build finishes (API returns HTTP 503). Live posts still index during the bulk load. During the final build (hours on large DBs), live indexing, deletions, and retention pause instead of blocking on CREATE INDEX — catch-up repairs new posts, the repair pass handles edits/deletions, and retention runs on its next schedule.
 - **Repair phase after the build.** Search returns once the index exists; the job then enters a short `repairing` phase to re-embed posts edited while live indexing was paused (catch-up sweeps new posts). If the job stops after the build but before repair finishes, the `repairing` marker stays durable — resume or reindex to finish. Search works in this phase; a few recent edits may be slightly stale until repair completes.
-- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + 300)` bytes (~1.7 KB/element at 256 dims, ~34 GB for 20M posts). Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`.
+- **Tune the build on the database.** The plugin does not override server settings. Keep the HNSW graph in `maintenance_work_mem` — roughly `rows × (4 × dimensions + graph)` bytes for standard `vector`, or `rows × (2 × dimensions + graph)` for `halfvec`. Graph overhead shrinks with **HNSW M** (about `2 × m` integer links per layer; at the default `m=8` this is well under the older ~300-byte-per-row rule of thumb used at `m=16`). Example: ~1.4 KB/element at 256 dims with `m=8`, or ~28 GB for 20M posts. Half precision at 256 dimensions is **not** a 2× RAM cut — graph edges still use integer links, so only the vector payload shrinks. Beyond that budget PostgreSQL spills to disk and build speed can drop ~40x. pgvector 0.6+ can parallelize with `max_parallel_maintenance_workers`. `halfvec` requires pgvector 0.7+ (Amazon RDS includes it on supported engine versions).
 - **Crash recovery.** Lifecycle state is durable. After a restart, **Check Index Health** shows the vector index state and search stays gated until you resume or start a full reindex (the plugin never rebuilds during activation). Canceling or failing mid-bulk-load likewise leaves the index dropped rather than rebuilding it over a partial corpus, so a resume continues defer-style. Any full or resumed reindex rebuilds a dropped index and finishes pending repair, even if strategy was changed back to `maintain`.
 - Strategy applies to full reindexes only. Catch-up never drops the index. Live indexing maintains the index except during the final build.
+- **Index retention window.** Catch Up after increasing N (for example 365 → 730, or 365 → all posts) can take a long time because it maintains the HNSW index as it inserts. A jump from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down until the rebuild finishes). Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
 
 ### Permission configuration
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
+
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Turning auto-reply off never requires a license, so an existing setting stays clearable after a license downgrade. The channel settings tab UI requires Mattermost v11.10 or later, while the plugin's minimum server version remains 11.9.0 — on v11.9 the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
 ## Management tasks
 
@@ -394,13 +400,22 @@ jq -r '[.timestamp, .user_id, .team_id, .bot_username, .input_tokens, .output_to
 
 ### Post indexing
 
-Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, or **dimensions** requires a **Full Reindex** (do not use Resume for a dimension change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions change so new vectors match the configured width.
+Post indexing occurs automatically during initial setup. Changing the embedding **provider**, **model**, **dimensions**, or **vector precision** (`vector` vs `halfvec`) requires a **Full Reindex** (do not use Resume for a dimension or type change — Resume keeps the existing table schema). Full Reindex recreates the embeddings table when dimensions or vector precision change so new vectors match the configured column. Changing **HNSW M** requires **Rebuild vector index**, not Full Reindex — existing embeddings are reused and only the HNSW graph is rebuilt. After upgrading, existing indexes stay at `m=16` until you rebuild. Rebuild vector index cannot change the column type.
+
+**Index posts from the last N days** controls how far back indexing looks. `0` (the default) indexes all posts. A positive N is the historical cut for the first Full Reindex on a large corpus.
+
+- **Increase N** (365 → 730, or 365 → 0/all posts): search stays available. Run **Catch Up** to embed posts now in-window that are not already in the index. Catch Up does not re-embed rows that already exist. Do not Full Reindex just to widen the window. Catch Up after a large increase can take a long time and maintains HNSW as it inserts; jumping from a one-year window to all posts on a huge corpus may still prefer a deferred Full Reindex (re-embeds everything; search is down).
+- **Decrease N**: live indexing and later reindexes use the tighter floor. Rows already in the index are **not** deleted, and search still returns them. RAM and table size do not drop until a later Full Reindex. Catch Up still indexes in-window posts that have no embedding row (`NOT EXISTS`); after a complete index that is usually no extra work.
+- Saving N does **not** start Catch Up or Full Reindex automatically. Use the banner and the Catch Up button.
+- Changing N while a job is running does not change that job's window; abort and start a new job if you want the new bounds.
 
 1. Navigate to **System Console > Plugins > Agents > Embedding Search**
 2. Use the reindex controls to:
    
    - Monitor indexing progress during initial setup.
-   - Trigger a Full Reindex when changing embedding providers, models, or dimensions.
+   - Trigger a Full Reindex when changing embedding providers, models, dimensions, or vector precision, or when you want the first historical cut for N.
+   - Trigger Catch Up after increasing N, or to index posts created since the last successful index that are not already stored.
+   - Trigger Rebuild vector index when changing HNSW M (search is unavailable during the build).
    - Check indexing status.
 
 ### OpenTelemetry tracing
@@ -757,7 +772,7 @@ The plugin also registers an extended catalog of read and write tools spanning M
 
 - **Posts & messages**: get_post_info, list_pinned_posts, list_saved_posts, ⚠ update_post, ⚠ delete_post, ⚠ pin_post, ⚠ unpin_post, ⚠ save_post, ⚠ acknowledge_post
 - **Scheduled posts & reminders**: list_scheduled_posts, ⚠ create_scheduled_post, ⚠ update_scheduled_post, ⚠ delete_scheduled_post, ⚠ set_post_reminder
-- **Reactions & emoji**: get_post_reactions, get_bulk_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
+- **Reactions & emoji**: get_post_reactions, list_custom_emoji, search_custom_emoji, ⚠ add_reaction, ⚠ remove_reaction
 - **Threads, mentions & unread**: get_threads, get_mentions, get_unread_counts, get_channel_unread, get_posts_around_unread, ⚠ mark_channel_read, ⚠ mark_channels_viewed, ⚠ mark_post_unread, ⚠ set_thread_follow
 - **Channels**: get_channel_stats, get_channel_member_counts, search_channels, list_team_channels, list_archived_channels, ⚠ update_channel, ⚠ archive_channel, ⚠ restore_channel, ⚠ convert_channel_privacy
 - **Channel members & settings**: get_channel_member, get_channel_members_by_ids, get_channel_members_by_status, get_user_channel_memberships, get_users_not_in_channel, search_users_in_channel, list_sidebar_categories, ⚠ add_channel_members, ⚠ remove_channel_member, ⚠ set_channel_mute, ⚠ set_channel_favorite, ⚠ update_channel_notify_props
@@ -859,3 +874,4 @@ The following table outlines which features require a license:
 | AI Actions menu (thread summarization) | Entry, Enterprise, and Enterprise Advanced |
 | Channel summarization (unread messages) | Entry, Enterprise, and Enterprise Advanced |
 | Recorded meeting transcripts and summarization | Entry, Enterprise, and Enterprise Advanced |
+| Per-channel agent auto-reply | Entry, Enterprise, and Enterprise Advanced |
