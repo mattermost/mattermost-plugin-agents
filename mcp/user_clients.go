@@ -55,6 +55,14 @@ type UserClients struct {
 	// closed marks the client as torn down so a dial that finishes after
 	// Close does not resurrect a session nobody will ever close.
 	closed bool
+
+	// admission is the manager-wide network-connection gate. Nil in tests that
+	// construct a UserClients directly, which then skip the aggregate cap.
+	admission *connectionAdmission
+	// connectTimeout overrides the production remote/plugin connect budget.
+	// Zero means the production defaults. Tests use a short value so queue
+	// time can be distinguished from the admitted timeout.
+	connectTimeout time.Duration
 }
 
 // originAttempt is one user's connect attempt against a single MCP server
@@ -64,6 +72,9 @@ type UserClients struct {
 type originAttempt struct {
 	done chan struct{}
 	err  error
+	// identity is the connection identity used when this attempt was created.
+	// ReInit compares it to the new config so a still-valid session is kept.
+	identity string
 }
 
 func (a *originAttempt) finished() bool {
@@ -113,6 +124,9 @@ type connectTask struct {
 	silent bool
 	// replaces commits over an already-connected client for this origin.
 	replaces bool
+	// identity is the connection identity recorded on the attempt so ReInit
+	// can tell a still-valid session from a stale one.
+	identity string
 	dial     func() (*Client, error)
 }
 
@@ -145,15 +159,21 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// ensureConnections dials every task whose origin has not been connected for
-// this user yet. Dials run concurrently and their results are merged in task
-// order, so the returned errors do not depend on which server answered first.
+// ensureConnections plans then executes tasks. Direct test callers use this
+// wrapper; ClientManager plans under lifecycleMu and executes after unlock.
 func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask) *Errors {
-	if len(tasks) == 0 {
+	plans, discarded := c.planConnections(tasks)
+	c.closeDiscardedClients(discarded)
+	return c.executeConnections(ctx, plans)
+}
+
+// executeConnections dials every planned origin concurrently and merges
+// results in task order, so the returned errors do not depend on which server
+// answered first.
+func (c *UserClients) executeConnections(ctx context.Context, plans []connectPlan) *Errors {
+	if len(plans) == 0 {
 		return nil
 	}
-
-	plans := c.planConnections(tasks)
 
 	dialers := make([]*connectPlan, 0, len(plans))
 	for i := range plans {
@@ -188,17 +208,30 @@ func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask
 }
 
 // planConnections decides, for each task, whether this caller dials the origin,
-// waits on an in-flight attempt, or reuses a remembered outcome.
-func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
+// waits on an in-flight attempt, or reuses a remembered outcome. An existing
+// attempt whose identity does not match the task is detached so a later commit
+// cannot resurrect the old session. Callers must close the returned clients
+// after releasing any manager lifecycle lock.
+func (c *UserClients) planConnections(tasks []connectTask) ([]connectPlan, []*Client) {
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
+
+	if c.closed {
+		return nil, nil
+	}
 
 	if c.attempts == nil {
 		c.attempts = make(map[string]*originAttempt, len(tasks))
 	}
 
+	var discarded []*Client
 	plans := make([]connectPlan, 0, len(tasks))
 	for _, task := range tasks {
+		if existing := c.attempts[task.origin]; existing != nil && existing.identity != task.identity {
+			delete(c.attempts, task.origin)
+			discarded = append(discarded, c.takeClientsForOriginLocked(task.origin)...)
+		}
+
 		if existing := c.attempts[task.origin]; existing != nil {
 			switch {
 			case !existing.finished():
@@ -212,12 +245,12 @@ func (c *UserClients) planConnections(tasks []connectTask) []connectPlan {
 			}
 		}
 
-		attempt := &originAttempt{done: make(chan struct{})}
+		attempt := &originAttempt{done: make(chan struct{}), identity: task.identity}
 		c.attempts[task.origin] = attempt
 		plans = append(plans, connectPlan{task: task, attempt: attempt, dialing: true})
 	}
 
-	return plans
+	return plans, discarded
 }
 
 // commitDials publishes every dial outcome under one lock so a waiter cannot
@@ -231,21 +264,32 @@ func (c *UserClients) commitDials(dialers []*connectPlan) {
 
 	c.clientsMu.Lock()
 	for _, plan := range dialers {
-		plan.attempt.err = plan.err
+		current := c.attempts[plan.task.origin]
+		stale := current != plan.attempt
+		admissionFailure := isConnectionAdmissionError(plan.err)
 
-		switch {
-		case plan.err != nil || plan.client == nil:
-			// Nothing to commit; the recorded error is the whole outcome.
-		case c.closed:
+		if admissionFailure && !stale {
+			// A local gate/shutdown error is not an upstream failure. Drop the
+			// attempt so a later request can retry instead of remembering it.
+			delete(c.attempts, plan.task.origin)
+		}
+
+		if plan.client != nil && (c.closed || stale || admissionFailure) {
 			discarded = append(discarded, plan.client)
-		default:
+			plan.client = nil
+		}
+
+		if !stale && !admissionFailure && plan.err == nil && plan.client != nil && !c.closed {
 			if previous := c.clients[plan.task.serverID]; previous != nil {
 				discarded = append(discarded, previous)
 			}
 			c.clients[plan.task.serverID] = plan.client
 		}
 
-		close(plan.attempt.done)
+		if !plan.attempt.finished() {
+			plan.attempt.err = plan.err
+			close(plan.attempt.done)
+		}
 	}
 	c.clientsMu.Unlock()
 
@@ -300,8 +344,13 @@ func (c *UserClients) remoteConnectTask(baseCtx context.Context, serverConfig Se
 		origin:     serverConfig.BaseURL,
 		serverID:   serverConfig.Name,
 		serverName: serverConfig.Name,
+		identity:   remoteOriginIdentity(serverConfig, false),
 		dial: func() (*Client, error) {
-			return NewClient(baseCtx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
+			if err := c.acquireNetworkAdmission(cacheableContext(baseCtx)); err != nil {
+				return nil, err
+			}
+			defer c.releaseNetworkAdmission()
+			return newClientWithTimeout(baseCtx, c.networkConnectTimeout(RemoteConnectTimeout), c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
 		},
 	}
 }
@@ -310,6 +359,10 @@ func (c *UserClients) remoteConnectTask(baseCtx context.Context, serverConfig Se
 // It replaces any cached session because the caller only schedules it when the
 // user's embedded session ID changed.
 func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient) connectTask {
+	var server EmbeddedMCPServer
+	if embeddedClient != nil {
+		server = embeddedClient.server
+	}
 	return connectTask{
 		origin:     EmbeddedClientKey,
 		serverID:   EmbeddedClientKey,
@@ -317,6 +370,7 @@ func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string,
 		retryable:  true,
 		silent:     true,
 		replaces:   true,
+		identity:   embeddedOriginIdentity(server, true),
 		dial: func() (*Client, error) {
 			dialCtx, cancel := context.WithTimeout(ctx, embeddedConnectTimeout)
 			defer cancel()
@@ -333,20 +387,166 @@ func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string,
 // pluginConnectTask builds the task for a plugin-registered MCP server.
 // Failures stay retryable: a source plugin that is briefly unreachable must
 // come back on the next request without waiting for cache invalidation.
-func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) connectTask {
+func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client, registered bool) connectTask {
 	origin := pluginServerOriginKey(cfg.PluginID)
 	return connectTask{
 		origin:     origin,
 		serverID:   origin,
 		serverName: cfg.Name,
 		retryable:  true,
+		identity:   pluginOriginIdentity(cfg, registered),
 		dial: func() (*Client, error) {
-			return connectWithDeadline(ctx, pluginConnectTimeout, "plugin MCP server "+cfg.PluginID,
+			if err := c.acquireNetworkAdmission(ctx); err != nil {
+				return nil, err
+			}
+			defer c.releaseNetworkAdmission()
+			return connectWithDeadline(ctx, c.networkConnectTimeout(pluginConnectTimeout), "plugin MCP server "+cfg.PluginID,
 				func(connectCtx context.Context) (*Client, error) {
 					return NewPluginClient(connectCtx, c.userID, cfg, sourcePluginAPI, c.log)
 				})
 		},
 	}
+}
+
+func (c *UserClients) acquireNetworkAdmission(ctx context.Context) error {
+	if c.admission == nil {
+		return nil
+	}
+	return c.admission.acquire(ctx)
+}
+
+func (c *UserClients) releaseNetworkAdmission() {
+	if c.admission == nil {
+		return
+	}
+	c.admission.release()
+}
+
+func (c *UserClients) networkConnectTimeout(fallback time.Duration) time.Duration {
+	if c.connectTimeout > 0 {
+		return c.connectTimeout
+	}
+	return fallback
+}
+
+// applyOriginIdentities detaches then closes sessions whose recorded
+// connection identity no longer matches the live configuration. Manager
+// ReInit uses detachInvalidIdentities under lifecycleMu and closes after
+// unlock; this wrapper remains for direct callers.
+func (c *UserClients) applyOriginIdentities(valid map[string]string) {
+	c.closeDiscardedClients(c.detachInvalidIdentities(valid))
+}
+
+// detachInvalidIdentities drops attempts and clients whose identity is no
+// longer live. The returned clients must be closed after any manager
+// lifecycle lock is released. A raw BaseURL spelling change is treated as a
+// new origin even when both spellings canonicalize to the same endpoint.
+func (c *UserClients) detachInvalidIdentities(valid map[string]string) []*Client {
+	if c == nil {
+		return nil
+	}
+
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if c.closed {
+		return nil
+	}
+
+	var discarded []*Client
+	for origin, attempt := range c.attempts {
+		if attempt != nil && valid[origin] == attempt.identity {
+			continue
+		}
+		delete(c.attempts, origin)
+		discarded = append(discarded, c.takeClientsForOriginLocked(origin)...)
+	}
+
+	for serverID, client := range c.clients {
+		origin := clientOrigin(client, serverID)
+		attempt := c.attempts[origin]
+		if attempt != nil && valid[origin] == attempt.identity {
+			continue
+		}
+		delete(c.clients, serverID)
+		discarded = append(discarded, client)
+	}
+	return discarded
+}
+
+// forgetOrigins drops cached sessions and in-flight attempts for specific
+// origins, then closes the detached clients.
+func (c *UserClients) forgetOrigins(origins ...string) {
+	c.closeDiscardedClients(c.detachOrigins(origins...))
+}
+
+// detachOrigins removes attempts and clients for the given origins. Callers
+// close the returned clients after releasing manager lifecycle/plugin locks.
+func (c *UserClients) detachOrigins(origins ...string) []*Client {
+	if c == nil || len(origins) == 0 {
+		return nil
+	}
+
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if c.closed {
+		return nil
+	}
+
+	var discarded []*Client
+	for _, origin := range origins {
+		delete(c.attempts, origin)
+		discarded = append(discarded, c.takeClientsForOriginLocked(origin)...)
+	}
+	return discarded
+}
+
+func (c *UserClients) detachAll() []*Client {
+	if c == nil {
+		return nil
+	}
+
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+
+	discarded := make([]*Client, 0, len(c.clients))
+	for _, client := range c.clients {
+		if client != nil {
+			discarded = append(discarded, client)
+		}
+	}
+	c.clients = make(map[string]*Client)
+	c.attempts = make(map[string]*originAttempt)
+	c.closed = true
+	return discarded
+}
+
+func (c *UserClients) closeDiscardedClients(discarded []*Client) {
+	for _, client := range discarded {
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			c.log.Error("Failed to close invalidated MCP client", "userID", c.userID, "error", err)
+		}
+	}
+}
+
+func (c *UserClients) takeClientsForOriginLocked(origin string) []*Client {
+	var discarded []*Client
+	for serverID, client := range c.clients {
+		if clientOrigin(client, serverID) == origin {
+			discarded = append(discarded, client)
+			delete(c.clients, serverID)
+		}
+	}
+	return discarded
+}
+
+func clientOrigin(client *Client, serverID string) string {
+	if client != nil && client.config.BaseURL != "" {
+		return client.config.BaseURL
+	}
+	return serverID
 }
 
 // needsEmbeddedReconnect reports whether the user's embedded session differs
@@ -385,24 +585,10 @@ func (c *UserClients) snapshotClients() []userClientSnapshot {
 	return snapshot
 }
 
-// Close closes all server connections for a user client
+// Close marks the user client torn down and closes detached sessions after
+// releasing the user-client lock.
 func (c *UserClients) Close() {
-	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-
-	// Close all MCP server clients (both remote and embedded)
-	for serverID, client := range c.clients {
-		if err := client.Close(); err != nil {
-			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", serverID, "error", err)
-		}
-	}
-
-	// Clear clients
-	c.clients = make(map[string]*Client)
-	// Drop remembered attempts too: a reused instance must re-dial rather than
-	// keep replaying failures for sessions that no longer exist.
-	c.attempts = make(map[string]*originAttempt)
-	c.closed = true
+	c.closeDiscardedClients(c.detachAll())
 }
 
 // GetTools returns the tools available from the clients

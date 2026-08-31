@@ -295,6 +295,17 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 // lookup repopulates the cache between a manual refresh's invalidation and this reconnect; a plain
 // post-invalidation rediscovery would otherwise cache-miss on its own.
 func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
+	return newClientWithTimeout(ctx, RemoteConnectTimeout, userID, serverConfig, log, oauthManager, httpClient, toolsCache, forceRefresh)
+}
+
+func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
+	if timeout <= 0 {
+		timeout = RemoteConnectTimeout
+	}
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
 	c := &Client{
 		session:      nil,
 		config:       serverConfig,
@@ -306,7 +317,7 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 		toolsCache:   toolsCache,
 	}
 
-	session, err := connectWithDeadline(ctx, RemoteConnectTimeout, "MCP server "+serverConfig.Name,
+	session, err := connectWithDeadline(ctx, timeout, "MCP server "+serverConfig.Name,
 		func(connectCtx context.Context) (*mcp.ClientSession, error) {
 			return c.connectAndDiscover(connectCtx, serverConfig, forceRefresh)
 		})

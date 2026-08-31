@@ -395,13 +395,25 @@ func (p *Plugin) OnActivate() error {
 		return mcp.ServerConfig{}, false
 	}
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), embeddedMCPServer, untrustedHTTPClient, mmClient)
+	var embeddedMu sync.Mutex
 	p.configuration.RegisterUpdateListener(func() {
-		embeddedServer, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
-		if embeddedErr != nil {
-			pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
+		// The constructor reads Mattermost server config and injected services,
+		// not plugin MCP config. Reuse a live instance so a plugin-config update
+		// does not force every embedded session to reconnect. Retry only when
+		// the initial construction failed.
+		embeddedMu.Lock()
+		if embeddedMCPServer == nil {
+			server, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
+			if embeddedErr != nil {
+				pluginAPI.Log.Error("Failed to create embedded MCP server on config update", "error", embeddedErr)
+			} else {
+				embeddedMCPServer = server
+				pluginAPI.Log.Info("Embedded MCP server created successfully")
+			}
 		}
-
-		mcpClientManager.ReInit(p.configuration.MCP(), embeddedServer)
+		embedded := embeddedMCPServer
+		embeddedMu.Unlock()
+		mcpClientManager.ReInit(p.configuration.MCP(), embedded)
 	})
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(

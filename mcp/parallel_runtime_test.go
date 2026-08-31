@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -29,10 +30,40 @@ import (
 // speaking the actual protocol — that records the JSON-RPC methods it is asked
 // to serve. firstRequestDelay stalls only the first request so one slow
 // handshake per server can be distinguished from N sequential handshakes.
+// networkConcurrencyTracker is test-only: it records overlapping HTTP
+// requests across every instrumented remote/plugin server in a harness.
+type networkConcurrencyTracker struct {
+	active atomic.Int64
+	peak   atomic.Int64
+}
+
+func (t *networkConcurrencyTracker) enter() {
+	if t == nil {
+		return
+	}
+	current := t.active.Add(1)
+	for {
+		previous := t.peak.Load()
+		if current <= previous || t.peak.CompareAndSwap(previous, current) {
+			break
+		}
+	}
+}
+
+func (t *networkConcurrencyTracker) exit() {
+	if t == nil {
+		return
+	}
+	t.active.Add(-1)
+}
+
 type instrumentedMCPServer struct {
 	*httptest.Server
 
 	delayOnce sync.Once
+
+	everyRequestDelay time.Duration
+	network           *networkConcurrencyTracker
 
 	mu       sync.Mutex
 	requests int
@@ -40,6 +71,10 @@ type instrumentedMCPServer struct {
 }
 
 func newInstrumentedMCPServer(toolPrefix string, toolCount int, firstRequestDelay time.Duration) *instrumentedMCPServer {
+	return newInstrumentedMCPServerWithTracker(toolPrefix, toolCount, firstRequestDelay, nil)
+}
+
+func newInstrumentedMCPServerWithTracker(toolPrefix string, toolCount int, firstRequestDelay time.Duration, network *networkConcurrencyTracker) *instrumentedMCPServer {
 	server := gomcp.NewServer(&gomcp.Implementation{Name: toolPrefix, Version: "1.0"}, nil)
 	for i := range toolCount {
 		addTestMCPTool(server, fmt.Sprintf("%s_%d", toolPrefix, i))
@@ -50,8 +85,11 @@ func newInstrumentedMCPServer(toolPrefix string, toolCount int, firstRequestDela
 		&gomcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
 	)
 
-	instrumented := &instrumentedMCPServer{methods: map[string]int{}}
+	instrumented := &instrumentedMCPServer{methods: map[string]int{}, network: network}
 	instrumented.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		instrumented.network.enter()
+		defer instrumented.network.exit()
+
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -60,8 +98,12 @@ func newInstrumentedMCPServer(toolPrefix string, toolCount int, firstRequestDela
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		instrumented.record(body)
 
-		if firstRequestDelay > 0 && r.Method == http.MethodPost {
-			instrumented.delayOnce.Do(func() { time.Sleep(firstRequestDelay) })
+		if r.Method == http.MethodPost {
+			if instrumented.everyRequestDelay > 0 {
+				time.Sleep(instrumented.everyRequestDelay)
+			} else if firstRequestDelay > 0 {
+				instrumented.delayOnce.Do(func() { time.Sleep(firstRequestDelay) })
+			}
 		}
 		handler.ServeHTTP(w, r)
 	}))
@@ -71,8 +113,14 @@ func newInstrumentedMCPServer(toolPrefix string, toolCount int, firstRequestDela
 
 // newUnreachableMCPServer records requests and fails every one of them.
 func newUnreachableMCPServer() *instrumentedMCPServer {
-	instrumented := &instrumentedMCPServer{methods: map[string]int{}}
+	return newUnreachableMCPServerWithTracker(nil)
+}
+
+func newUnreachableMCPServerWithTracker(network *networkConcurrencyTracker) *instrumentedMCPServer {
+	instrumented := &instrumentedMCPServer{methods: map[string]int{}, network: network}
 	instrumented.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		instrumented.network.enter()
+		defer instrumented.network.exit()
 		body, _ := io.ReadAll(r.Body)
 		instrumented.record(body)
 		w.WriteHeader(http.StatusInternalServerError)
@@ -154,6 +202,8 @@ func (d *delayedEmbeddedServer) CreateClientTransport(_ string, _ string, _ *plu
 type runtimeHarness struct {
 	t *testing.T
 
+	network *networkConcurrencyTracker
+
 	remote    []ServerConfig
 	remoteSrv map[string]*instrumentedMCPServer
 
@@ -170,6 +220,7 @@ func newRuntimeHarness(t *testing.T, userIDs ...string) *runtimeHarness {
 
 	harness := &runtimeHarness{
 		t:            t,
+		network:      &networkConcurrencyTracker{},
 		remoteSrv:    map[string]*instrumentedMCPServer{},
 		pluginSrv:    map[string]*instrumentedMCPServer{},
 		userSessions: map[string]string{},
@@ -185,7 +236,7 @@ func newRuntimeHarness(t *testing.T, userIDs ...string) *runtimeHarness {
 func (h *runtimeHarness) addRemote(name string, toolCount int, delay time.Duration) ServerConfig {
 	h.t.Helper()
 
-	server := newInstrumentedMCPServer(name, toolCount, delay)
+	server := newInstrumentedMCPServerWithTracker(name, toolCount, delay, h.network)
 	h.t.Cleanup(server.Close)
 	h.remoteSrv[name] = server
 
@@ -199,7 +250,7 @@ func (h *runtimeHarness) addRemote(name string, toolCount int, delay time.Durati
 func (h *runtimeHarness) addUnreachableRemote(name string) ServerConfig {
 	h.t.Helper()
 
-	server := newUnreachableMCPServer()
+	server := newUnreachableMCPServerWithTracker(h.network)
 	h.t.Cleanup(server.Close)
 	h.remoteSrv[name] = server
 
@@ -220,7 +271,7 @@ func (h *runtimeHarness) addDisabledRemote(name string) ServerConfig {
 func (h *runtimeHarness) addPlugin(pluginID, name string, toolCount int, delay time.Duration) PluginServerConfig {
 	h.t.Helper()
 
-	server := newInstrumentedMCPServer(name, toolCount, delay)
+	server := newInstrumentedMCPServerWithTracker(name, toolCount, delay, h.network)
 	h.t.Cleanup(server.Close)
 	h.pluginSrv[pluginID] = server
 
@@ -232,7 +283,7 @@ func (h *runtimeHarness) addPlugin(pluginID, name string, toolCount int, delay t
 func (h *runtimeHarness) addUnreachablePlugin(pluginID, name string) PluginServerConfig {
 	h.t.Helper()
 
-	server := newUnreachableMCPServer()
+	server := newUnreachableMCPServerWithTracker(h.network)
 	h.t.Cleanup(server.Close)
 	h.pluginSrv[pluginID] = server
 
@@ -274,6 +325,16 @@ func (h *runtimeHarness) pluginForwarder() *fakePluginHTTPClient {
 }
 
 func (h *runtimeHarness) newManager() *ClientManager {
+	h.t.Helper()
+	return h.newManagerMaybeRegister(true)
+}
+
+func (h *runtimeHarness) newManagerWithoutPluginRegister() *ClientManager {
+	h.t.Helper()
+	return h.newManagerMaybeRegister(false)
+}
+
+func (h *runtimeHarness) newManagerMaybeRegister(registerPlugins bool) *ClientManager {
 	h.t.Helper()
 
 	sessionByID := map[string]*model.Session{}
@@ -325,8 +386,10 @@ func (h *runtimeHarness) newManager() *ClientManager {
 	)
 	h.t.Cleanup(manager.Close)
 
-	for _, cfg := range h.plugins {
-		manager.RegisterPluginServer(cfg)
+	if registerPlugins {
+		for _, cfg := range h.plugins {
+			manager.RegisterPluginServer(cfg)
+		}
 	}
 
 	return manager
@@ -911,6 +974,54 @@ func TestToolSelectionAllows(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.allowed, tc.selection.Allows(tc.origin))
+		})
+	}
+}
+
+func cloneMCPConfig(cfg Config) Config {
+	clone := cfg
+	clone.Servers = append([]ServerConfig(nil), cfg.Servers...)
+	for i, server := range clone.Servers {
+		clone.Servers[i].Headers = maps.Clone(server.Headers)
+		clone.Servers[i].ToolConfigs = append([]ToolConfig(nil), server.ToolConfigs...)
+	}
+	clone.PluginServers = append([]PluginServerConfig(nil), cfg.PluginServers...)
+	for i, pluginCfg := range clone.PluginServers {
+		clone.PluginServers[i].ToolConfigs = append([]ToolConfig(nil), pluginCfg.ToolConfigs...)
+	}
+	clone.EmbeddedServer.ToolConfigs = append([]ToolConfig(nil), cfg.EmbeddedServer.ToolConfigs...)
+	return clone
+}
+
+func cachedUserClient(manager *ClientManager, userID, serverID string) *Client {
+	if manager == nil {
+		return nil
+	}
+	manager.clientsMu.RLock()
+	userClients := manager.clients[userID]
+	manager.clientsMu.RUnlock()
+	if userClients == nil {
+		return nil
+	}
+	for _, entry := range userClients.snapshotClients() {
+		if entry.serverID == serverID {
+			return entry.client
+		}
+	}
+	return nil
+}
+
+func occupyAdmission(t *testing.T, manager *ClientManager, n int) (release func()) {
+	t.Helper()
+	for range n {
+		require.NoError(t, manager.admission.acquire(context.Background()))
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for range n {
+				manager.admission.release()
+			}
 		})
 	}
 }
