@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	mmcontainer "github.com/mattermost/testcontainers-mattermost-go"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -87,13 +88,19 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Start Mattermost container with PAT enabled.
+	// Enable PATs at container start. SetConfig after boot can return success
+	// before the setting is live, which flakes CreateUserAccessToken.
+	cfg := &model.Config{}
+	cfg.SetDefaults()
+	cfg.ServiceSettings.EnableUserAccessTokens = model.NewPointer(true)
+
 	// Retry once — the container init (team/user creation via mmctl) can hit transient races.
 	var container *mmcontainer.MattermostContainer
 	var err error
 	for attempt := 0; attempt < 2; attempt++ {
 		container, err = mmcontainer.RunContainer(ctx,
 			mmcontainer.WithLicense(""),
+			mmcontainer.WithConfig(cfg),
 		)
 		if err == nil {
 			break
@@ -102,20 +109,27 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	}
 	require.NoError(t, err, "Failed to start Mattermost container")
 
-	// Enable personal access tokens in the server config
 	err = container.SetConfig(ctx, "ServiceSettings.EnableUserAccessTokens", "true")
 	require.NoError(t, err, "Failed to enable personal access tokens")
 
-	// Get connection details
 	serverURL, err := container.URL(ctx)
 	require.NoError(t, err, "Failed to get server URL")
 
-	// Get admin client and create a PAT token
 	adminClient, err := container.GetAdminClient(ctx)
 	require.NoError(t, err, "Failed to get admin client")
 
-	// Create a personal access token for testing
-	pat, _, err := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token", 0)
+	var pat *model.UserAccessToken
+	const maxPATAttempts = 8
+	for attempt := 1; attempt <= maxPATAttempts; attempt++ {
+		pat, _, err = adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token", 0)
+		if err == nil {
+			break
+		}
+		t.Logf("CreateUserAccessToken attempt %d/%d failed: %v", attempt, maxPATAttempts, err)
+		if attempt < maxPATAttempts {
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
 	require.NoError(t, err, "Failed to create PAT token")
 	adminToken := pat.Token
 
