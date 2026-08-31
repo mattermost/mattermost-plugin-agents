@@ -192,7 +192,14 @@ func (p *Plugin) OnActivate() error {
 	}
 	mtx2.Unlock()
 
-	// Load config from DB into memory and set migrated flag
+	// ID migration before in-memory load so a follower that waited on the
+	// cluster lock still sees the winner's remapped IDs (Migrated=false means
+	// the store already has them, not that this process loaded them).
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store)
+	if err != nil {
+		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
+	}
+
 	dbConfig, err := p.store.GetConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config from database: %w", err)
@@ -202,13 +209,6 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	// ABAC ID migrations must run after the config.json->DB migration and
-	// before bots are ensured, so EnsureBots persists agents that already use
-	// already-remapped service IDs into Agents_UserAgents.
-	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store, &p.configuration)
-	if err != nil {
-		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
-	}
 	if idsMigrated {
 		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
 			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
