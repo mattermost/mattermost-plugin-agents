@@ -19,11 +19,11 @@ const (
 	configSaveLockKey       = int32(1)
 )
 
-// ErrStaleLegacyServiceIDs is returned by any config write that still
-// contains legacy UUID service IDs after the one-time service ID migration
-// has run — a stale client writing pre-migration IDs back. Enforced inside
-// insertActiveConfigTx so every writer is covered.
-var ErrStaleLegacyServiceIDs = errors.New("config contains legacy UUID service IDs from before the ID migration; reload the system console and retry")
+// ErrLegacyUUIDServiceID is returned by any config write that contains a
+// dashed UUID in Services[].ID after the ABAC ID migration marker is set.
+// That format is invalid post-migration; the write is rejected, not reminted.
+// Enforced inside insertActiveConfigTx so every writer is covered.
+var ErrLegacyUUIDServiceID = errors.New("config contains invalid UUID service IDs after the ID migration")
 
 // GetConfig retrieves the currently active configuration from the database.
 // Returns nil, nil if no active config exists (e.g., fresh install before migration).
@@ -135,17 +135,17 @@ func configHasLegacyUUIDServiceIDs(cfg *config.Config) bool {
 }
 
 // insertActiveConfigTx deactivates the current active config-history row and
-// inserts cfg as the new active one. It enforces the post-migration invariant
-// that no writer can reintroduce legacy UUID service IDs once the service ID
-// migration marker is set (the migration itself rewrites UUIDs before
-// inserting, so it never trips the guard).
+// inserts cfg as the new active one. After the ABAC ID migration marker is
+// set, a dashed UUID in Services[].ID is an invalid ID format and the write
+// is rejected (the migration itself rewrites UUIDs before inserting, so it
+// never trips the guard).
 func insertActiveConfigTx(tx *sqlx.Tx, cfg config.Config) error {
-	migrated, err := getSystemValueTx(tx, serviceIDMigrationKey)
+	migrated, err := getSystemValueTx(tx, abacIDMigrationKey)
 	if err != nil {
 		return err
 	}
 	if migrated == "1" && configHasLegacyUUIDServiceIDs(&cfg) {
-		return ErrStaleLegacyServiceIDs
+		return ErrLegacyUUIDServiceID
 	}
 
 	configBytes, err := json.Marshal(cfg)

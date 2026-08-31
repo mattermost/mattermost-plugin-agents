@@ -10,107 +10,23 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// ErrServiceIDConflict is the base error for every identity problem
-// ReconcileServiceIDs can detect; callers map it to a client error (stale
-// or corrupt admin console payload).
+// ErrServiceIDConflict is returned when two non-empty service IDs in the
+// incoming payload collide.
 var ErrServiceIDConflict = errors.New("LLM service identity conflict")
 
-// ReconcileServiceIDs carries stable IDs forward from prev onto ID-less
-// entries in next (e.g. from webapp bundles or API automation predating the
-// ID field). Service IDs are ABAC policy identities, so minting a fresh ID
-// for an existing service silently detaches its policy (which fails open).
-// Matching runs in global phases over the whole payload so the outcome cannot
-// depend on payload order; anything suspicious errors:
-//
-//  1. Explicit-ID claims: an ID found in prev claims that entry. An ID
-//     unknown to prev is accepted as a caller-chosen ID for a genuinely new
-//     service (admin-API automation seeds its own IDs) — unless the entry's
-//     Name matches a stored service, which means a stale or corrupt client
-//     is trying to swap an existing service's policy identity.
-//  2. Name claims against the unclaimed remainder: an ID-less entry claims
-//     the single unclaimed prev entry with its Name; any ambiguity or
-//     double-claim is an error.
-//  3. Entries matching nothing stay ID-less; the caller mints a fresh ID.
-//
-// Each prev entry is claimed at most once across both phases.
-func ReconcileServiceIDs(next []llm.ServiceConfig, prev []llm.ServiceConfig) ([]llm.ServiceConfig, error) {
-	// Duplicate stored IDs mean the persisted config is already corrupt;
-	// keeping the last row would let two services share one policy ID.
-	prevByID := make(map[string]int, len(prev))
-	for j := range prev {
-		id := prev[j].ID
+// ValidateServiceIDUniqueness reports ErrServiceIDConflict when two non-empty
+// IDs in services collide. Empty IDs are ignored so the caller can mint.
+func ValidateServiceIDUniqueness(services []llm.ServiceConfig) error {
+	seen := make(map[string]struct{}, len(services))
+	for i := range services {
+		id := services[i].ID
 		if id == "" {
 			continue
 		}
-		if _, dup := prevByID[id]; dup {
-			return nil, fmt.Errorf("%w: stored configuration contains two services with ID %q", ErrServiceIDConflict, id)
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("%w: service %q duplicates the ID of another entry in the payload", ErrServiceIDConflict, services[i].Name)
 		}
-		prevByID[id] = j
+		seen[id] = struct{}{}
 	}
-
-	claimed := make([]bool, len(prev))
-
-	// Phase 1: entries arriving with an ID claim the prev entry holding it.
-	seenIncoming := make(map[string]bool, len(next))
-	for i := range next {
-		id := next[i].ID
-		if id == "" {
-			continue
-		}
-		if seenIncoming[id] {
-			return nil, fmt.Errorf("%w: service %q duplicates the ID of another entry in the payload", ErrServiceIDConflict, next[i].Name)
-		}
-		seenIncoming[id] = true
-		if j, ok := prevByID[id]; ok {
-			claimed[j] = true
-			continue
-		}
-		// Unknown ID: legitimate for a genuinely new service seeded by API
-		// automation. A Name collision with a stored (ID-carrying) service
-		// instead means a stale client is swapping that service's policy
-		// identity, which would detach its policy.
-		for k := range prev {
-			if prev[k].ID != "" && prev[k].Name == next[i].Name {
-				return nil, fmt.Errorf("%w: service %q carries ID %q but a stored service with that name has ID %q", ErrServiceIDConflict, next[i].Name, id, prev[k].ID)
-			}
-		}
-	}
-
-	// Phase 2: Name claims against the unclaimed remainder; every entry sees
-	// the same post-phase-1 snapshot, so this phase is order-independent.
-	nameClaimed := make(map[int]bool, len(prev))
-	nameMatch := make([]int, len(next))
-	for i := range next {
-		nameMatch[i] = -1
-		if next[i].ID != "" {
-			continue
-		}
-
-		candidate := -1
-		for j := range prev {
-			if claimed[j] || prev[j].ID == "" || prev[j].Name != next[i].Name {
-				continue
-			}
-			if candidate >= 0 {
-				return nil, fmt.Errorf("%w: service %q ambiguously matches more than one stored service", ErrServiceIDConflict, next[i].Name)
-			}
-			candidate = j
-		}
-		if candidate < 0 {
-			// Genuinely new: no identity claim to resolve.
-			continue
-		}
-		if nameClaimed[candidate] {
-			return nil, fmt.Errorf("%w: service %q claims a stored service another entry in the payload already claims", ErrServiceIDConflict, next[i].Name)
-		}
-		nameClaimed[candidate] = true
-		nameMatch[i] = candidate
-	}
-	for i, j := range nameMatch {
-		if j >= 0 {
-			next[i].ID = prev[j].ID
-		}
-	}
-
-	return next, nil
+	return nil
 }

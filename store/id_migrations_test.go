@@ -371,14 +371,12 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.True(t, model.IsValidId(cfg.MCP.PluginServers[0].ID))
 				assert.True(t, cfg.MCP.EmbeddedServer.Enabled)
 				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+				requireMarker(t, s, abacIDMigrationKey)
 			},
 		},
 		{
 			name: "embedded and plugin IDs minted once; existing IDs untouched",
 			seed: func(t *testing.T, s *Store) {
-				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
-				require.NoError(t, s.SetSystemValue(mcpServerIDMigrationKey, "1"))
 				seedConfigRow(t, s, config.Config{
 					MCP: config.MCPConfig{
 						Servers: []config.MCPServerConfig{
@@ -410,14 +408,12 @@ func TestMigrateABACIDs(t *testing.T) {
 				require.Len(t, cfg.MCP.PluginServers, 2)
 				assert.True(t, model.IsValidId(cfg.MCP.PluginServers[0].ID))
 				assert.Equal(t, "plugin26charidplugin26char", cfg.MCP.PluginServers[1].ID)
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+				requireMarker(t, s, abacIDMigrationKey)
 			},
 		},
 		{
-			name: "embedded/plugin marker prevents re-run",
+			name: "second run does not remint embedded/plugin IDs",
 			seed: func(t *testing.T, s *Store) {
-				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
-				require.NoError(t, s.SetSystemValue(mcpServerIDMigrationKey, "1"))
 				seedConfigRow(t, s, config.Config{
 					MCP: config.MCPConfig{
 						EmbeddedServer: config.MCPEmbeddedServerConfig{Enabled: true},
@@ -469,9 +465,7 @@ func TestMigrateABACIDs(t *testing.T) {
 				assert.True(t, model.IsValidId(cfg.Services[0].ID))
 				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
 				assert.True(t, model.IsValidId(cfg.MCP.EmbeddedServer.ID))
-				requireMarker(t, s, serviceIDMigrationKey)
-				requireMarker(t, s, mcpServerIDMigrationKey)
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+				requireMarker(t, s, abacIDMigrationKey)
 			},
 		},
 		{
@@ -501,41 +495,7 @@ func TestMigrateABACIDs(t *testing.T) {
 			},
 		},
 		{
-			name: "partial markers: only the unfinished migration runs",
-			seed: func(t *testing.T, s *Store) {
-				// Service migration already done: its marker is set and the
-				// active config carries a migrated (modern) service ID, per
-				// the invariant the atomic migration commit guarantees.
-				require.NoError(t, s.SetSystemValue(serviceIDMigrationKey, "1"))
-				seedConfigRow(t, s, config.Config{
-					Services: []llm.ServiceConfig{
-						{ID: "migrated26charidmigrated26", Name: "A"},
-					},
-					MCP: config.MCPConfig{
-						Servers: []config.MCPServerConfig{
-							{Name: "srv", BaseURL: "https://one.example.com"},
-						},
-						EmbeddedServer: config.MCPEmbeddedServerConfig{ID: "embedded26charidembedded26", Enabled: true},
-					},
-				}, true)
-			},
-			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
-				assert.True(t, report.Migrated)
-				assert.Zero(t, report.ServicesRemapped, "service migration already marked done")
-				assert.Equal(t, 1, report.MCPServerIDsAssigned)
-				assert.Zero(t, report.EmbeddedPluginServerIDsAssigned, "embedded already had an ID")
-
-				cfg, err := s.GetConfig()
-				require.NoError(t, err)
-				assert.Equal(t, "migrated26charidmigrated26", cfg.Services[0].ID, "service IDs untouched when marker already set")
-				assert.True(t, model.IsValidId(cfg.MCP.Servers[0].ID))
-				assert.Equal(t, "embedded26charidembedded26", cfg.MCP.EmbeddedServer.ID)
-				requireMarker(t, s, mcpServerIDMigrationKey)
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
-			},
-		},
-		{
-			name: "content-based no-op sets markers without config write",
+			name: "content-based no-op sets marker without config write",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
 					Services: []llm.ServiceConfig{
@@ -555,20 +515,16 @@ func TestMigrateABACIDs(t *testing.T) {
 			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.False(t, report.Migrated)
 				assert.Equal(t, 1, configHistoryCount(t, s))
-				requireMarker(t, s, serviceIDMigrationKey)
-				requireMarker(t, s, mcpServerIDMigrationKey)
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+				requireMarker(t, s, abacIDMigrationKey)
 			},
 		},
 		{
-			name: "no active config sets markers without error",
+			name: "no active config sets marker without error",
 			seed: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store, report ABACIDMigrationReport) {
 				assert.False(t, report.Migrated)
 				assert.Zero(t, configHistoryCount(t, s))
-				requireMarker(t, s, serviceIDMigrationKey)
-				requireMarker(t, s, mcpServerIDMigrationKey)
-				requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+				requireMarker(t, s, abacIDMigrationKey)
 			},
 		},
 		{
@@ -618,7 +574,7 @@ func TestMigrateABACIDsAtomicRollback(t *testing.T) {
 		corrupt func(t *testing.T, s *Store)
 	}{
 		{
-			name: "agent table missing rolls back config write and markers",
+			name: "agent table missing rolls back config write and marker",
 			corrupt: func(t *testing.T, s *Store) {
 				_, err := s.db.Exec("DROP TABLE Agents_UserAgents")
 				require.NoError(t, err)
@@ -654,11 +610,9 @@ func TestMigrateABACIDsAtomicRollback(t *testing.T) {
 			_, err := s.MigrateABACIDs()
 			require.Error(t, err)
 
-			for _, key := range []string{serviceIDMigrationKey, mcpServerIDMigrationKey, embeddedPluginServerIDMigrationKey} {
-				marker, markerErr := s.GetSystemValue(key)
-				require.NoError(t, markerErr)
-				assert.Empty(t, marker, "marker %q must not be set on failure", key)
-			}
+			marker, markerErr := s.GetSystemValue(abacIDMigrationKey)
+			require.NoError(t, markerErr)
+			assert.Empty(t, marker, "marker must not be set on failure")
 
 			assert.Equal(t, 1, configHistoryCount(t, s), "no new config row on failure")
 
@@ -711,29 +665,25 @@ func TestMigrateABACIDsConcurrentIdempotent(t *testing.T) {
 	assert.Equal(t, 1, migratedCount, "exactly one goroutine must perform the migration")
 	assert.Equal(t, 2, configHistoryCount(t, s), "exactly one new config row")
 
-	requireMarker(t, s, serviceIDMigrationKey)
-	requireMarker(t, s, mcpServerIDMigrationKey)
-	requireMarker(t, s, embeddedPluginServerIDMigrationKey)
+	requireMarker(t, s, abacIDMigrationKey)
 }
 
-// TestUpdateConfigRejectsStaleLegacyServiceIDs is the interleaving regression
-// for the migration/stale-save race: once the service ID migration has run, a
-// save echoing pre-migration UUID service IDs (stale webapp bundle) must be
-// rejected, while a fresh payload goes through.
-func TestUpdateConfigRejectsStaleLegacyServiceIDs(t *testing.T) {
+// TestUpdateConfigRejectsLegacyUUIDServiceIDs is the post-migration format
+// guard: once the ABAC ID migration has run, a save with dashed UUID service
+// IDs is rejected as an invalid ID format, while a payload with migrated IDs
+// goes through.
+func TestUpdateConfigRejectsLegacyUUIDServiceIDs(t *testing.T) {
 	s := setupTestStore(t)
 	require.NoError(t, s.RunMigrations())
 
-	// Stale client loads the pre-migration config...
 	seedConfigRow(t, s, config.Config{
 		Services: []llm.ServiceConfig{
 			{ID: testUUIDA, Name: "A"},
 		},
 	}, true)
-	staleSnapshot, err := s.GetConfig()
+	uuidSnapshot, err := s.GetConfig()
 	require.NoError(t, err)
 
-	// ...then the migration runs.
 	report, err := s.MigrateABACIDs()
 	require.NoError(t, err)
 	require.True(t, report.Migrated)
@@ -742,16 +692,16 @@ func TestUpdateConfigRejectsStaleLegacyServiceIDs(t *testing.T) {
 	migratedID := migratedCfg.Services[0].ID
 	require.True(t, model.IsValidId(migratedID))
 
-	// Stale save replays the UUID payload: rejected, active config untouched.
+	// UUID payload after migration: rejected as invalid format, active config untouched.
 	rowsBefore := configHistoryCount(t, s)
 	_, err = s.UpdateConfig(func(prev *config.Config) (config.Config, error) {
-		return *staleSnapshot, nil
+		return *uuidSnapshot, nil
 	})
-	require.ErrorIs(t, err, ErrStaleLegacyServiceIDs)
+	require.ErrorIs(t, err, ErrLegacyUUIDServiceID)
 	assert.Equal(t, rowsBefore, configHistoryCount(t, s), "rejected save must not write a config row")
 	current, err := s.GetConfig()
 	require.NoError(t, err)
-	assert.Equal(t, migratedID, current.Services[0].ID, "migrated ID must survive the stale save")
+	assert.Equal(t, migratedID, current.Services[0].ID, "migrated ID must survive the rejected save")
 
 	// A fresh payload (post-migration IDs) is accepted.
 	fresh := *migratedCfg
