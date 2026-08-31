@@ -210,7 +210,10 @@ type runtimeHarness struct {
 	plugins   []PluginServerConfig
 	pluginSrv map[string]*instrumentedMCPServer
 
-	embedded *delayedEmbeddedServer
+	// embedded is the server the manager starts with; embeddedServers also
+	// holds the replacements a test swaps in, so dial counts stay comparable.
+	embedded        *delayedEmbeddedServer
+	embeddedServers []*delayedEmbeddedServer
 
 	userSessions map[string]string
 }
@@ -294,15 +297,22 @@ func (h *runtimeHarness) addUnreachablePlugin(pluginID, name string) PluginServe
 
 func (h *runtimeHarness) withEmbedded(toolName string, delay time.Duration) {
 	h.t.Helper()
+	h.embedded = h.newEmbeddedServer(toolName, delay)
+}
+
+func (h *runtimeHarness) newEmbeddedServer(toolName string, delay time.Duration) *delayedEmbeddedServer {
+	h.t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	h.t.Cleanup(cancel)
 
-	h.embedded = &delayedEmbeddedServer{
+	server := &delayedEmbeddedServer{
 		ctx:    ctx,
 		server: newTestMCPServer(0, toolName),
 		delay:  delay,
 	}
+	h.embeddedServers = append(h.embeddedServers, server)
+	return server
 }
 
 // pluginForwarder routes PluginHTTP calls to the right plugin server. The
@@ -393,6 +403,27 @@ func (h *runtimeHarness) newManagerMaybeRegister(registerPlugins bool) *ClientMa
 	}
 
 	return manager
+}
+
+// networkDials counts the handshakes served over HTTP by every remote and
+// plugin server in the harness; totalDials adds the in-memory embedded ones.
+func (h *runtimeHarness) networkDials() int {
+	total := 0
+	for _, server := range h.remoteSrv {
+		total += server.dialCount()
+	}
+	for _, server := range h.pluginSrv {
+		total += server.dialCount()
+	}
+	return total
+}
+
+func (h *runtimeHarness) totalDials() int {
+	total := h.networkDials()
+	for _, server := range h.embeddedServers {
+		total += int(server.transports.Load())
+	}
+	return total
 }
 
 func toolOrigins(tools []llm.Tool) map[string]int {

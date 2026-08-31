@@ -189,7 +189,7 @@ func TestUserClientsGetToolsUsesCachedCatalog(t *testing.T) {
 // need; production always goes through a batch of tasks.
 func connectPluginServer(uc *UserClients, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) *Errors {
 	ctx := context.Background()
-	return uc.ensureConnections(ctx, []connectTask{uc.pluginConnectTask(ctx, cfg, sourcePluginAPI, true)})
+	return uc.ensureConnections(ctx, []connectTask{uc.pluginConnectTask(ctx, cfg, pluginConnectTimeout, sourcePluginAPI)})
 }
 
 // connectEmbeddedServer mirrors the manager's embedded scheduling decision: it

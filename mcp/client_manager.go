@@ -25,24 +25,17 @@ const pluginRegistrationsKVKey = "mcp_plugin_registrations_v1"
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
-func cacheableContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return context.WithoutCancel(ctx)
-}
-
 // ClientManager manages MCP clients for multiple users.
 //
-// Lock order is lifecycleMu -> clientsMu -> pluginServersMu ->
-// UserClients.clientsMu. lifecycleMu write is held while published identity
-// state is mutated and invalid attempts/clients are detached. lifecycleMu
-// read is held for snapshot + connect-task construction + planConnections.
-// Client.Close and MCP network work happen after lifecycleMu is released.
+// Nested locks are always taken in the order lifecycleMu -> clientsMu ->
+// pluginServersMu -> UserClients.clientsMu.
 type ClientManager struct {
-	// lifecycleMu is held exclusively for ReInit/Close/identity-affecting
-	// Register/Update/Unregister, and shared for GetTools plan. See the
-	// package comment on lock order.
+	// lifecycleMu is held exclusively by ReInit, Close, and the plugin
+	// registry mutations, which publish new connection identities and detach
+	// the sessions those identities invalidate. It is held shared while a
+	// request snapshots the runtime, builds its connect tasks, and plans them,
+	// so no plan can straddle an identity change. Client.Close and MCP network
+	// work always happen after it is released.
 	lifecycleMu    sync.RWMutex
 	config         Config
 	log            pluginapi.LogService
@@ -71,9 +64,6 @@ type ClientManager struct {
 	// admission caps overlapping remote/plugin connection sequences on this
 	// manager instance. It outlives ReInit and is closed only by Close.
 	admission *connectionAdmission
-	// connectTimeout overrides production remote/plugin connect budgets in
-	// tests. Zero means the production defaults.
-	connectTimeout time.Duration
 	// closed is set by Close and makes ReInit a no-op so shutdown stays permanent.
 	closed bool
 }
@@ -155,8 +145,6 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 		return
 	}
 
-	firstInit := m.closeChan == nil
-
 	m.config = config
 	m.embeddedClient = newEmbedded
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
@@ -168,12 +156,7 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 		m.activity = make(map[string]time.Time)
 	}
 
-	users := make([]*UserClients, 0, len(m.clients))
-	for _, userClients := range m.clients {
-		users = append(users, userClients)
-	}
-
-	if firstInit {
+	if m.closeChan == nil {
 		m.closeChan = make(chan struct{})
 		m.cleanupTicker = time.NewTicker(5 * time.Minute)
 		go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
@@ -181,16 +164,14 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	m.clientsMu.Unlock()
 
 	m.syncPluginServersFromConfig(config)
-	valid := m.liveOriginIdentities(config, newEmbedded)
 
+	valid := m.liveOriginIdentities(config, newEmbedded)
 	var discarded []*Client
-	if !firstInit {
-		for _, userClients := range users {
-			discarded = append(discarded, userClients.detachInvalidIdentities(valid)...)
-		}
+	for _, userClients := range m.snapshotUserClients() {
+		discarded = append(discarded, userClients.detachInvalidIdentities(valid)...)
 	}
 	m.lifecycleMu.Unlock()
-	closeDetachedMCPClients(m.log, discarded)
+	closeDetachedClients(m.log, discarded)
 }
 
 // Close closes the client manager and all managed clients.
@@ -226,9 +207,7 @@ func (m *ClientManager) Close() {
 	m.lifecycleMu.Unlock()
 
 	for _, client := range clients {
-		if client != nil {
-			client.Close()
-		}
+		client.Close()
 	}
 }
 
@@ -255,7 +234,6 @@ func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
 	if !exists {
 		userClients = NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
 		userClients.admission = m.admission
-		userClients.connectTimeout = m.connectTimeout
 		m.clients[userID] = userClients
 	}
 	m.activity[userID] = time.Now()
@@ -275,11 +253,12 @@ type eligibleServers struct {
 	origins map[string]bool
 }
 
+// snapshotRuntime returns the published config and embedded client. The Config
+// is a shallow copy: its slices and maps belong to the configuration store and
+// must be treated as read-only.
 func (m *ClientManager) snapshotRuntime() (Config, *EmbeddedServerClient) {
 	m.lifecycleMu.RLock()
 	defer m.lifecycleMu.RUnlock()
-	m.clientsMu.RLock()
-	defer m.clientsMu.RUnlock()
 	return m.config, m.embeddedClient
 }
 
@@ -333,13 +312,10 @@ func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *Embed
 func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *UserClients, servers eligibleServers, embeddedClient *EmbeddedServerClient, forceRefresh bool, sessionID string, sessionErr error) []connectTask {
 	tasks := make([]connectTask, 0, len(servers.remote)+len(servers.plugins)+1)
 
-	// Remote sessions are cached across requests, so their dials must not
-	// inherit request cancellation: a closed popover would otherwise leave the
-	// user with a remembered "canceled" failure. Embedded and plugin dials keep
-	// the request context.
-	remoteCtx := cacheableContext(ctx)
+	// Remote dials outlive the request that starts them because they warm a
+	// shared session cache; embedded and plugin dials keep the request context.
 	for _, server := range servers.remote {
-		tasks = append(tasks, userClients.remoteConnectTask(remoteCtx, server, forceRefresh))
+		tasks = append(tasks, userClients.remoteConnectTask(ctx, server, RemoteConnectTimeout, forceRefresh))
 	}
 
 	if servers.embedded {
@@ -353,7 +329,7 @@ func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *User
 	}
 
 	for _, cfg := range servers.plugins {
-		tasks = append(tasks, userClients.pluginConnectTask(ctx, cfg, m.sourcePluginAPI, true))
+		tasks = append(tasks, userClients.pluginConnectTask(ctx, cfg, pluginConnectTimeout, m.sourcePluginAPI))
 	}
 
 	return tasks
@@ -397,7 +373,7 @@ func (m *ClientManager) getToolsForUser(ctx context.Context, userID string, sele
 	plans, discarded := userClients.planConnections(tasks)
 	m.lifecycleMu.RUnlock()
 
-	userClients.closeDiscardedClients(discarded)
+	closeDetachedClients(m.log, discarded)
 	mcpErrors := userClients.executeConnections(ctx, plans)
 
 	rawTools := userClients.GetTools(ctx)
@@ -616,7 +592,7 @@ func (m *ClientManager) GetConfig() Config {
 
 // liveOriginIdentities is the connection-identity map ReInit uses to decide
 // which cached sessions remain valid. Tool policies are not part of identity.
-func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *EmbeddedServerClient) map[string]string {
+func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *EmbeddedServerClient) map[string]originIdentity {
 	identities := remoteOriginIdentities(cfg)
 
 	var embeddedServer EmbeddedMCPServer
@@ -625,24 +601,25 @@ func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *Embedde
 	}
 	identities[EmbeddedClientKey] = embeddedOriginIdentity(embeddedServer, cfg.EmbeddedServer.Enabled)
 
-	for origin, identity := range m.pluginOriginIdentities() {
-		identities[origin] = identity
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	for pluginID := range m.pluginServers {
+		if pluginID == "" {
+			continue
+		}
+		identities[pluginServerOriginKey(pluginID)] = m.pluginIdentityLocked(pluginID)
 	}
 	return identities
 }
 
-func (m *ClientManager) pluginOriginIdentities() map[string]string {
-	m.pluginServersMu.RLock()
-	defer m.pluginServersMu.RUnlock()
-
-	identities := make(map[string]string, len(m.pluginServers))
-	for pluginID, cfg := range m.pluginServers {
-		if pluginID == "" {
-			continue
-		}
-		identities[pluginServerOriginKey(pluginID)] = pluginOriginIdentity(cfg, m.pluginRegistered[pluginID])
+// pluginIdentityLocked reports the live identity of one plugin origin. A
+// config-only row is never contacted, so it has the same zero identity as an
+// absent one: no cached session can match it. Callers hold pluginServersMu.
+func (m *ClientManager) pluginIdentityLocked(pluginID string) originIdentity {
+	if !m.pluginRegistered[pluginID] {
+		return originIdentity{}
 	}
-	return identities
+	return pluginOriginIdentity(m.pluginServers[pluginID])
 }
 
 // RegisterPluginServer stores or overwrites a plugin-server registration.
@@ -650,7 +627,38 @@ func (m *ClientManager) pluginOriginIdentities() map[string]string {
 // (name, path, enabled, registration) invalidate that origin immediately;
 // ToolConfigs and ExposeExternal alone do not.
 func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
-	if m == nil || cfg.PluginID == "" {
+	m.updatePluginRegistry(cfg.PluginID, func() {
+		m.pluginServers[cfg.PluginID] = cfg
+		m.pluginRegistered[cfg.PluginID] = true
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			registrations[cfg.PluginID] = cfg
+		})
+	})
+}
+
+// UpdatePluginServer applies admin-owned fields without changing registration state.
+func (m *ClientManager) UpdatePluginServer(cfg PluginServerConfig) {
+	m.updatePluginRegistry(cfg.PluginID, func() {
+		m.pluginServers[cfg.PluginID] = cfg
+	})
+}
+
+func (m *ClientManager) UnregisterPluginServer(pluginID string) {
+	m.updatePluginRegistry(pluginID, func() {
+		delete(m.pluginServers, pluginID)
+		delete(m.pluginRegistered, pluginID)
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			delete(registrations, pluginID)
+		})
+	})
+}
+
+// updatePluginRegistry applies mutate to the plugin registry and drops every
+// cached session for that origin when the change altered its connection
+// identity. mutate runs under pluginServersMu and must not do network work;
+// the detached sessions are closed after every lock is released.
+func (m *ClientManager) updatePluginRegistry(pluginID string, mutate func()) {
+	if m == nil || pluginID == "" {
 		return
 	}
 
@@ -667,99 +675,20 @@ func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
 	if m.pluginRegistered == nil {
 		m.pluginRegistered = make(map[string]bool)
 	}
-	old, existed := m.pluginServers[cfg.PluginID]
-	oldRegistered := m.pluginRegistered[cfg.PluginID]
-	m.pluginServers[cfg.PluginID] = cfg
-	m.pluginRegistered[cfg.PluginID] = true
-	m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
-		registrations[cfg.PluginID] = cfg
-	})
+	before := m.pluginIdentityLocked(pluginID)
+	mutate()
+	after := m.pluginIdentityLocked(pluginID)
 	m.pluginServersMu.Unlock()
 
 	var discarded []*Client
-	if existed && pluginOriginIdentity(old, oldRegistered) != pluginOriginIdentity(cfg, true) {
-		discarded = m.detachPluginOriginLocked(pluginServerOriginKey(cfg.PluginID))
-	}
-	m.lifecycleMu.Unlock()
-	closeDetachedMCPClients(m.log, discarded)
-}
-
-// UpdatePluginServer applies admin-owned fields without changing registration state.
-func (m *ClientManager) UpdatePluginServer(cfg PluginServerConfig) {
-	if m == nil || cfg.PluginID == "" {
-		return
-	}
-
-	m.lifecycleMu.Lock()
-	if m.closed {
-		m.lifecycleMu.Unlock()
-		return
-	}
-
-	m.pluginServersMu.Lock()
-	if m.pluginServers == nil {
-		m.pluginServers = make(map[string]PluginServerConfig)
-	}
-	old, existed := m.pluginServers[cfg.PluginID]
-	registered := m.pluginRegistered[cfg.PluginID]
-	m.pluginServers[cfg.PluginID] = cfg
-	m.pluginServersMu.Unlock()
-
-	var discarded []*Client
-	if existed && pluginOriginIdentity(old, registered) != pluginOriginIdentity(cfg, registered) {
-		discarded = m.detachPluginOriginLocked(pluginServerOriginKey(cfg.PluginID))
-	}
-	m.lifecycleMu.Unlock()
-	closeDetachedMCPClients(m.log, discarded)
-}
-
-func (m *ClientManager) UnregisterPluginServer(pluginID string) {
-	if m == nil || pluginID == "" {
-		return
-	}
-
-	m.lifecycleMu.Lock()
-	if m.closed {
-		m.lifecycleMu.Unlock()
-		return
-	}
-
-	m.pluginServersMu.Lock()
-	_, existed := m.pluginServers[pluginID]
-	delete(m.pluginServers, pluginID)
-	delete(m.pluginRegistered, pluginID)
-	m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
-		delete(registrations, pluginID)
-	})
-	m.pluginServersMu.Unlock()
-
-	var discarded []*Client
-	if existed {
-		discarded = m.detachPluginOriginLocked(pluginServerOriginKey(pluginID))
-	}
-	m.lifecycleMu.Unlock()
-	closeDetachedMCPClients(m.log, discarded)
-}
-
-// detachPluginOriginLocked removes cached attempts/clients for origin.
-// Caller holds lifecycleMu and must close the result after unlocking.
-func (m *ClientManager) detachPluginOriginLocked(origin string) []*Client {
-	var discarded []*Client
-	for _, userClients := range m.snapshotUserClients() {
-		discarded = append(discarded, userClients.detachOrigins(origin)...)
-	}
-	return discarded
-}
-
-func closeDetachedMCPClients(log pluginapi.LogService, discarded []*Client) {
-	for _, client := range discarded {
-		if client == nil {
-			continue
-		}
-		if err := client.Close(); err != nil {
-			log.Error("Failed to close invalidated MCP client", "error", err)
+	if before != after {
+		origin := pluginServerOriginKey(pluginID)
+		for _, userClients := range m.snapshotUserClients() {
+			discarded = append(discarded, userClients.detachOrigins(origin)...)
 		}
 	}
+	m.lifecycleMu.Unlock()
+	closeDetachedClients(m.log, discarded)
 }
 
 func (m *ClientManager) snapshotUserClients() []*UserClients {

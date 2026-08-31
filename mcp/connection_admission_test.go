@@ -15,100 +15,64 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConnectionAdmissionErrorIsDistinctFromUpstreamFailure(t *testing.T) {
-	err := admissionError(errManagerClosed)
-	require.True(t, isConnectionAdmissionError(err))
-	require.False(t, isConnectionAdmissionError(fmt.Errorf("connection refused")))
-	require.ErrorIs(t, err, errManagerClosed)
-	require.ErrorIs(t, err, errConnectionAdmission)
-}
-
-func TestConnectionAdmissionCloseUnblocksWaiters(t *testing.T) {
-	gate := newConnectionAdmission(1)
-	require.NoError(t, gate.acquire(context.Background()))
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- gate.acquire(context.Background())
-	}()
-
-	gate.close()
-
-	select {
-	case err := <-errCh:
-		require.True(t, isConnectionAdmissionError(err))
-		require.ErrorIs(t, err, errManagerClosed)
-	case <-time.After(2 * time.Second):
-		t.Fatal("queued acquire was not unblocked by close")
+// Close must reject and unblock every acquire, including the ones that race a
+// slot becoming free at the same moment.
+func TestConnectionAdmissionCloseRejectsEveryAcquire(t *testing.T) {
+	testCases := []struct {
+		name string
+		// closeFirst closes the gate before the racing acquires start.
+		closeFirst bool
+	}{
+		{name: "close races acquires"},
+		{name: "acquire after close", closeFirst: true},
 	}
-}
 
-func TestConnectionAdmissionAcquireFailsAfterClose(t *testing.T) {
-	for range 40 {
-		// Close first while slots are free so both closed and sem are ready.
-		// Acquire must not take a post-shutdown permit.
-		gate := newConnectionAdmission(8)
-		gate.close()
-
-		start := make(chan struct{})
-		results := make([]error, 64)
-		var wg sync.WaitGroup
-		for i := range results {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				<-start
-				results[i] = gate.acquire(context.Background())
-			}()
-		}
-		close(start)
-		wg.Wait()
-
-		for i, err := range results {
-			require.Error(t, err, "acquire %d must fail after close", i)
-			require.True(t, isConnectionAdmissionError(err))
-			require.ErrorIs(t, err, errManagerClosed)
-		}
-
-		for range 8 {
-			err := gate.acquire(context.Background())
-			require.Error(t, err)
-			require.True(t, isConnectionAdmissionError(err))
-		}
-	}
-}
-
-func TestConnectionAdmissionCloseRacesWithFreeSlot(t *testing.T) {
-	for range 40 {
-		gate := newConnectionAdmission(32)
-		start := make(chan struct{})
-		results := make([]error, 64)
-		var wg sync.WaitGroup
-		for i := range results {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				<-start
-				err := gate.acquire(context.Background())
-				results[i] = err
-				if err == nil {
-					gate.release()
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			for range 40 {
+				gate := newConnectionAdmission(8)
+				if tc.closeFirst {
+					gate.close()
 				}
-			}()
-		}
-		close(start)
-		gate.close()
-		wg.Wait()
 
-		for range 16 {
-			err := gate.acquire(context.Background())
-			require.Error(t, err)
-			require.True(t, isConnectionAdmissionError(err))
-			require.ErrorIs(t, err, errManagerClosed)
-		}
+				start := make(chan struct{})
+				results := make([]error, 32)
+				var wg sync.WaitGroup
+				for i := range results {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						<-start
+						results[i] = gate.acquire(context.Background())
+						if results[i] == nil {
+							gate.release()
+						}
+					}()
+				}
+				close(start)
+				if !tc.closeFirst {
+					gate.close()
+				}
+				wg.Wait()
+
+				if tc.closeFirst {
+					for i, err := range results {
+						require.ErrorIs(t, err, errAdmissionUnavailable, "acquire %d must fail after close", i)
+					}
+				}
+
+				// Every permit taken before the close was released, so a free
+				// slot must still not admit anyone.
+				for range 8 {
+					require.ErrorIs(t, gate.acquire(context.Background()), errAdmissionUnavailable)
+				}
+			}
+		})
 	}
 }
 
+// A rejected permit is a local failure, not an upstream one, so it must not be
+// remembered as a sticky remote connect error.
 func TestEnsureConnectionsDoesNotRememberAdmissionErrors(t *testing.T) {
 	server := newUnreachableMCPServer()
 	t.Cleanup(server.Close)
@@ -123,7 +87,7 @@ func TestEnsureConnectionsDoesNotRememberAdmissionErrors(t *testing.T) {
 
 	done := make(chan *Errors, 1)
 	go func() {
-		done <- uc.ensureConnections(ctx, []connectTask{uc.remoteConnectTask(ctx, cfg, false)})
+		done <- uc.ensureConnections(ctx, []connectTask{uc.remoteConnectTask(ctx, cfg, RemoteConnectTimeout, false)})
 	}()
 
 	require.Never(t, func() bool { return server.requestCount() > 0 }, 80*time.Millisecond, 10*time.Millisecond)
@@ -132,8 +96,8 @@ func TestEnsureConnectionsDoesNotRememberAdmissionErrors(t *testing.T) {
 	select {
 	case mcpErrors := <-done:
 		require.NotNil(t, mcpErrors)
-		require.NotEmpty(t, mcpErrors.Errors)
-		require.True(t, isConnectionAdmissionError(mcpErrors.Errors[0]))
+		require.Len(t, mcpErrors.Errors, 1)
+		require.ErrorIs(t, mcpErrors.Errors[0], errAdmissionUnavailable)
 	case <-time.After(2 * time.Second):
 		t.Fatal("queued remote connect was not unblocked")
 	}
@@ -141,11 +105,44 @@ func TestEnsureConnectionsDoesNotRememberAdmissionErrors(t *testing.T) {
 	require.Empty(t, uc.snapshotClients())
 
 	uc.admission = newConnectionAdmission(1)
-	mcpErrors := uc.ensureConnections(ctx, []connectTask{uc.remoteConnectTask(ctx, cfg, false)})
+	mcpErrors := uc.ensureConnections(ctx, []connectTask{uc.remoteConnectTask(ctx, cfg, RemoteConnectTimeout, false)})
 	require.NotNil(t, mcpErrors)
 	require.Positive(t, server.requestCount(), "a local admission error must not become a sticky remote failure")
 }
 
+// Waiting for a permit must not spend the connect budget the server itself is
+// entitled to.
+func TestQueuedDialKeepsItsWholeConnectBudget(t *testing.T) {
+	const budget = 150 * time.Millisecond
+
+	server := newInstrumentedMCPServer("remotea", 1, 0)
+	t.Cleanup(server.Close)
+
+	uc := NewUserClients("alice", newTestLogService(), nil, &http.Client{}, nil)
+	uc.admission = newConnectionAdmission(1)
+	require.NoError(t, uc.admission.acquire(context.Background()))
+
+	cfg := ServerConfig{Name: "remotea", BaseURL: server.URL, Enabled: true}
+	ctx := context.Background()
+	done := make(chan *Errors, 1)
+	go func() {
+		done <- uc.ensureConnections(ctx, []connectTask{uc.remoteConnectTask(ctx, cfg, budget, false)})
+	}()
+
+	require.Never(t, func() bool { return server.requestCount() > 0 }, 4*budget, 20*time.Millisecond)
+	uc.admission.release()
+
+	select {
+	case mcpErrors := <-done:
+		require.Nil(t, mcpErrors, "the queued dial must still get its full budget once admitted")
+	case <-time.After(2 * time.Second):
+		t.Fatal("queued connect did not finish after admission")
+	}
+	require.Equal(t, 1, server.dialCount())
+}
+
+// The node-wide cap bounds overlapping network connection sequences across
+// every user, while in-memory embedded connects are not gated at all.
 func TestGetToolsForUserCapsAggregateNetworkDialsAcrossUsers(t *testing.T) {
 	const (
 		users          = 10
@@ -199,51 +196,13 @@ func TestGetToolsForUserCapsAggregateNetworkDialsAcrossUsers(t *testing.T) {
 		"the aggregate gate must actually overlap connections; peak=%d", harness.network.peak.Load())
 	require.Zero(t, harness.network.active.Load())
 
-	var totalDials int
-	for _, server := range harness.remoteSrv {
-		totalDials += server.dialCount()
-	}
-	for _, server := range harness.pluginSrv {
-		totalDials += server.dialCount()
-	}
-	require.Equal(t, expectedDials, totalDials)
+	require.Equal(t, expectedDials, harness.networkDials())
 	require.Equal(t, int64(users), harness.embedded.transports.Load(),
 		"embedded in-memory connects must not consume network admission permits")
 }
 
-func TestConnectionAdmissionQueueDoesNotConsumeConnectTimeout(t *testing.T) {
-	harness := newRuntimeHarness(t, "alice")
-	remote := harness.addRemote("remotea", 1, 0)
-	manager := harness.newManager()
-	manager.connectTimeout = 150 * time.Millisecond
-
-	release := occupyAdmission(t, manager, maxNodeConnections)
-	defer release()
-
-	type outcome struct {
-		tools []llm.Tool
-		errs  *Errors
-	}
-	done := make(chan outcome, 1)
-	go func() {
-		tools, mcpErrors := manager.GetToolsForUser(context.Background(), "alice", ToolSelection{})
-		done <- outcome{tools: tools, errs: mcpErrors}
-	}()
-
-	require.Never(t, func() bool { return harness.remoteSrv["remotea"].requestCount() > 0 }, 350*time.Millisecond, 20*time.Millisecond)
-	release()
-
-	select {
-	case got := <-done:
-		require.Nil(t, got.errs)
-		require.Len(t, got.tools, 1)
-		require.Equal(t, remote.BaseURL, got.tools[0].ServerOrigin)
-	case <-time.After(2 * time.Second):
-		t.Fatal("queued connect did not finish after admission")
-	}
-	require.Equal(t, 1, harness.remoteSrv["remotea"].dialCount())
-}
-
+// Close must free queued connects without letting them reach the network, and
+// a session that finishes afterwards must not be cached.
 func TestClientManagerCloseUnblocksQueuedConnectionsAndDropsLateSessions(t *testing.T) {
 	for range 15 {
 		harness := newRuntimeHarness(t, "alice")
@@ -252,21 +211,18 @@ func TestClientManagerCloseUnblocksQueuedConnectionsAndDropsLateSessions(t *test
 
 		release := occupyAdmission(t, manager, maxNodeConnections)
 
-		type outcome struct {
-			tools []llm.Tool
-		}
-		done := make(chan outcome, 1)
+		done := make(chan []llm.Tool, 1)
 		go func() {
 			tools, _ := manager.GetToolsForUser(context.Background(), "alice", ToolSelection{})
-			done <- outcome{tools: tools}
+			done <- tools
 		}()
 
 		require.Never(t, func() bool { return harness.remoteSrv["remotea"].requestCount() > 0 }, 40*time.Millisecond, 5*time.Millisecond)
 		manager.Close()
 
 		select {
-		case got := <-done:
-			require.Empty(t, got.tools)
+		case tools := <-done:
+			require.Empty(t, tools)
 		case <-time.After(2 * time.Second):
 			t.Fatal("Close must unblock a queued remote connect")
 		}
@@ -282,6 +238,8 @@ func TestClientManagerCloseUnblocksQueuedConnectionsAndDropsLateSessions(t *test
 	}
 }
 
+// A remote dial warms a cache shared by later requests, so losing the caller
+// that queued it must not turn it into a remembered failure.
 func TestCanceledRequestDoesNotTurnQueuedRemoteAttemptIntoStickyFailure(t *testing.T) {
 	harness := newRuntimeHarness(t, "alice")
 	remote := harness.addRemote("remotea", 1, 0)

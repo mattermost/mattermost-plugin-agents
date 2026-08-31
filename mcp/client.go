@@ -298,12 +298,12 @@ func NewClient(ctx context.Context, userID string, serverConfig ServerConfig, lo
 	return newClientWithTimeout(ctx, RemoteConnectTimeout, userID, serverConfig, log, oauthManager, httpClient, toolsCache, forceRefresh)
 }
 
+// newClientWithTimeout is NewClient with an explicit bound on the whole
+// connection sequence. Callers that queue for a connection permit pass their
+// own budget so the wait is not charged against the server.
 func newClientWithTimeout(ctx context.Context, timeout time.Duration, userID string, serverConfig ServerConfig, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache, forceRefresh bool) (*Client, error) {
 	if timeout <= 0 {
 		timeout = RemoteConnectTimeout
-	}
-	if httpClient == nil {
-		httpClient = http.DefaultClient
 	}
 
 	c := &Client{
