@@ -44,7 +44,7 @@ func (p *noToolsTestMCPProvider) GetToolsForUser(context.Context, string) ([]llm
 	return p.tools, nil
 }
 
-func (p *noToolsTestMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsForServiceAccount(context.Context, string, string) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return p.tools, nil
 }

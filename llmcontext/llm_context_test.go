@@ -49,7 +49,7 @@ func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([
 	}, nil
 }
 
-func (p *countingMCPToolProvider) GetToolsForServiceAccount(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForServiceAccount(stdcontext.Context, string, string) ([]llm.Tool, *mcp.Errors) {
 	p.saCalls++
 	return nil, nil
 }
@@ -62,7 +62,12 @@ type staticMCPToolProvider struct {
 	overrides map[string]mcp.ToolRetrievalOverride
 
 	userCalls []string
-	saCalls   []string
+	saCalls   []saCatalogCall
+}
+
+type saCatalogCall struct {
+	botUserID      string
+	invokingUserID string
 }
 
 func (p *staticMCPToolProvider) GetToolsForUser(_ stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors) {
@@ -70,8 +75,8 @@ func (p *staticMCPToolProvider) GetToolsForUser(_ stdcontext.Context, userID str
 	return p.tools, p.errors
 }
 
-func (p *staticMCPToolProvider) GetToolsForServiceAccount(_ stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls = append(p.saCalls, botUserID)
+func (p *staticMCPToolProvider) GetToolsForServiceAccount(_ stdcontext.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
+	p.saCalls = append(p.saCalls, saCatalogCall{botUserID: botUserID, invokingUserID: invokingUserID})
 	return p.saTools, nil
 }
 
@@ -337,9 +342,10 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
-// A service account agent's catalog comes from the bot identity, not the requesting user.
+// A service account agent's catalog is built for the bot (SA remotes) plus the requesting user (embedded/plugin).
 func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	const serviceAccountBotUserID = "bot-user-id"
+	const requestingUserID = "user-id"
 
 	provider := &staticMCPToolProvider{
 		tools:   []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
@@ -362,14 +368,49 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 
 	context := builder.BuildLLMContextUserRequest(
 		bot,
+		&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
+		testChannel(),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+
+	require.Equal(t, []saCatalogCall{{
+		botUserID:      serviceAccountBotUserID,
+		invokingUserID: requestingUserID,
+	}}, provider.saCalls)
+	require.Empty(t, provider.userCalls, "the requesting user's per-user remotes catalog must not be consulted")
+	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
+}
+
+func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
+	provider := &staticMCPToolProvider{
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
+	}
+	builder := newLicenseTestBuilder(t, true,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithMMBot(
+		llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		},
+		&model.Bot{UserId: "", Username: "matty", DisplayName: "Matty"},
+	)
+
+	context := builder.BuildLLMContextUserRequest(
+		bot,
 		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
 		testChannel(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
-	require.Equal(t, []string{serviceAccountBotUserID}, provider.saCalls)
-	require.Empty(t, provider.userCalls, "the requesting user's catalog must not be consulted")
-	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	require.Empty(t, provider.saCalls)
+	require.Empty(t, provider.userCalls)
+	require.ElementsMatch(t, []string{"builtin"}, toolNames(context.Tools))
 	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
 }
 

@@ -31,6 +31,7 @@ type countingMCPToolProvider struct {
 
 	mu           sync.Mutex
 	saIdentities []string
+	saInvokers   []string
 }
 
 func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
@@ -38,9 +39,10 @@ func (p *countingMCPToolProvider) GetToolsForUser(context.Context, string) ([]ll
 	return append([]llm.Tool(nil), p.tools...), nil
 }
 
-func (p *countingMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
 	p.mu.Lock()
 	p.saIdentities = append(p.saIdentities, botUserID)
+	p.saInvokers = append(p.saInvokers, invokingUserID)
 	p.mu.Unlock()
 	return append([]llm.Tool(nil), p.saTools...), nil
 }
@@ -53,6 +55,12 @@ func (p *countingMCPToolProvider) SAIdentities() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.saIdentities...)
+}
+
+func (p *countingMCPToolProvider) SAInvokers() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.saInvokers...)
 }
 
 func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToolProvider) *llmcontext.Builder {

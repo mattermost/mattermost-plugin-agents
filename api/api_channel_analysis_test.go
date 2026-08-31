@@ -35,7 +35,7 @@ func (p *channelAnalysisMCPProvider) GetToolsForUser(context.Context, string) ([
 	return p.tools, nil
 }
 
-func (p *channelAnalysisMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *channelAnalysisMCPProvider) GetToolsForServiceAccount(context.Context, string, string) ([]llm.Tool, *mcp.Errors) {
 	return nil, nil
 }
 

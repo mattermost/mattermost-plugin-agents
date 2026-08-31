@@ -69,7 +69,7 @@ type Client struct {
 	toolsCache     *ToolsCache
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
-	serviceAccount bool                  // auth via static ServiceAccountHeaders; userID is the bot user, oauthManager nil
+	serviceAccount bool                  // auth via static ServiceAccountHeaders; remotes only, oauthManager nil
 }
 
 // clientParams bundles the dependencies for a remote MCP client connection.
@@ -121,13 +121,18 @@ func (c *Client) useSharedToolsCache() bool {
 	return sharedToolsCacheAllowedForServer(c.config)
 }
 
-// ServerAvailableForServiceAccount reports whether a service-account agent can
-// use this server. Embedded and plugin MCP run as the bot and need no SA
-// headers; remote servers are fail-closed without them.
+// IsLocalServerOrigin reports whether origin is the embedded Mattermost server
+// or a plugin-registered MCP server. These always authenticate as the invoking
+// user; they never use service-account headers.
+func IsLocalServerOrigin(origin string) bool {
+	return origin == EmbeddedClientKey || strings.HasPrefix(origin, "plugin://")
+}
+
+// ServerAvailableForServiceAccount reports whether a remote MCP server can be
+// connected in service-account mode. Fail closed: no service-account headers
+// means the server is excluded. Embedded and plugin servers are not remotes;
+// they are attached separately as the invoking user.
 func ServerAvailableForServiceAccount(s ServerConfig) bool {
-	if s.BaseURL == EmbeddedClientKey || strings.HasPrefix(s.BaseURL, "plugin://") {
-		return true
-	}
 	return s.HasServiceAccountAuth()
 }
 

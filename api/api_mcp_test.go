@@ -671,6 +671,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		response, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
 		require.Equal(t, http.StatusOK, status)
 		require.Equal(t, []string{testBotUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
 		require.Empty(t, mcpMock.getContexts)
 
 		require.Len(t, response.Servers, 2)
@@ -729,6 +730,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		response, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
 		require.Equal(t, http.StatusOK, status)
 		require.Equal(t, []string{testBotUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
 		require.True(t, response.Servers[0].Authenticated)
 	})
 

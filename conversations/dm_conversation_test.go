@@ -495,7 +495,7 @@ func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.T
 	return m.tools, m.errors
 }
 
-func (m *testMCPClientManager) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetToolsForServiceAccount(context.Context, string, string) ([]llm.Tool, *mcp.Errors) {
 	return nil, nil
 }
 

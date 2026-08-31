@@ -50,7 +50,7 @@ func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.T
 	return []llm.Tool{}, nil
 }
 
-func (m *mockMCPClientManager) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForServiceAccount(context.Context, string, string) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 

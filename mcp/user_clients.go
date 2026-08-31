@@ -42,8 +42,8 @@ type UserClients struct {
 	// user client is cached; otherwise callers only see those errors once (first
 	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
-	// serviceAccount marks a service-account bag: userID is the acting bot's user ID
-	// and oauthManager is nil.
+	// serviceAccount marks a remotes-only service-account bag: userID is the
+	// agent's bot user ID and oauthManager is nil.
 	serviceAccount bool
 }
 
@@ -63,8 +63,8 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
-// newServiceAccountClients creates a client bag for service-account mode acting as
-// botUserID; it has no OAuthManager, so no OAuth flow can occur.
+// newServiceAccountClients creates a remotes-only client bag for service-account
+// mode, keyed by botUserID. It has no OAuthManager, so no OAuth flow can occur.
 func newServiceAccountClients(botUserID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	userClients := NewUserClients(botUserID, log, nil, httpClient, toolsCache)
 	userClients.serviceAccount = true

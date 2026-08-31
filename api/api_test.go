@@ -111,26 +111,27 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager              *mcp.OAuthManager
-	tools                     []llm.Tool
-	mcpErrors                 *mcp.Errors
-	config                    mcp.Config
-	embeddedServer            mcp.EmbeddedMCPServer
-	processOAuthSession       *mcp.OAuthSession
-	processOAuthErr           error
-	disconnectCalls           []mcpDisconnectCall
-	disconnectErr             error
-	oauthNeededCalls          []mcpDisconnectCall
-	refreshErr                error
-	refreshCalls              []string
-	getContexts               []context.Context
-	getServiceAccountCalls    []string
-	getServiceAccountContexts []context.Context
-	serviceAccountTools       []llm.Tool
-	serviceAccountErrors      *mcp.Errors
-	refreshContexts           []context.Context
-	ensureSessionErr          error
-	ensureSessionCreated      bool
+	oauthManager                  *mcp.OAuthManager
+	tools                         []llm.Tool
+	mcpErrors                     *mcp.Errors
+	config                        mcp.Config
+	embeddedServer                mcp.EmbeddedMCPServer
+	processOAuthSession           *mcp.OAuthSession
+	processOAuthErr               error
+	disconnectCalls               []mcpDisconnectCall
+	disconnectErr                 error
+	oauthNeededCalls              []mcpDisconnectCall
+	refreshErr                    error
+	refreshCalls                  []string
+	getContexts                   []context.Context
+	getServiceAccountCalls        []string
+	getServiceAccountInvokerCalls []string
+	getServiceAccountContexts     []context.Context
+	serviceAccountTools           []llm.Tool
+	serviceAccountErrors          *mcp.Errors
+	refreshContexts               []context.Context
+	ensureSessionErr              error
+	ensureSessionCreated          bool
 
 	registerCalls   []mcp.PluginServerConfig
 	updateCalls     []mcp.PluginServerConfig
@@ -202,8 +203,9 @@ func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([
 	return m.tools, m.mcpErrors
 }
 
-func (m *mockMCPClientManager) GetToolsForServiceAccount(ctx context.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsForServiceAccount(ctx context.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
 	m.getServiceAccountCalls = append(m.getServiceAccountCalls, botUserID)
+	m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, invokingUserID)
 	m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
 	return m.serviceAccountTools, m.serviceAccountErrors
 }

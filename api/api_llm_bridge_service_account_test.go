@@ -87,6 +87,11 @@ func TestBridgeAgentCompletionCatalogSelection(t *testing.T) {
 			require.Equal(t, "done", result)
 
 			require.Equal(t, tc.wantSACalls, provider.saCalls)
+			if tc.serviceAccount {
+				require.Equal(t, []string{testUserID}, provider.saInvokerCalls)
+			} else {
+				require.Empty(t, provider.saInvokerCalls)
+			}
 			require.Equal(t, tc.wantUserCalls, provider.userCalls)
 
 			require.Len(t, fakeLLM.AllRequests, 2)
@@ -158,5 +163,6 @@ func TestBridgeGetAgentToolsUsesServiceAccountCatalog(t *testing.T) {
 	}
 	require.Equal(t, []string{saToolName}, names)
 	require.Equal(t, []string{testBotUserID}, provider.saCalls)
+	require.Equal(t, []string{testUserID}, provider.saInvokerCalls)
 	require.Empty(t, provider.userCalls)
 }

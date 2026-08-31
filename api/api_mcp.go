@@ -47,7 +47,8 @@ const mcpToolsCatalogServiceAccount = "service_account"
 //
 // By default this is the requesting user's per-user catalog (OAuth and user
 // headers). Pass catalog=service_account to preview the service-account
-// catalog an agent actually uses at runtime. agent_id is required unless the
+// catalog an agent actually uses at runtime (SA remotes pooled by the agent's
+// bot, embedded/plugin as the viewer). agent_id is required unless the
 // caller is a system admin creating an agent that does not exist yet.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -59,7 +60,9 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	var tools []llm.Tool
 	var mcpErrors *mcp.Errors
 	if serviceAccount {
-		tools, mcpErrors = a.mcpClientManager.GetToolsForServiceAccount(c.Request.Context(), actingID)
+		// actingID is the agent's bot (SA remotes pool key); the viewer is the
+		// invoking user for embedded/plugin — same catalog path as runtime.
+		tools, mcpErrors = a.mcpClientManager.GetToolsForServiceAccount(c.Request.Context(), actingID, userID)
 	} else {
 		tools, mcpErrors = a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
 	}
@@ -247,7 +250,7 @@ func buildUserMCPServerInfo(
 		Name:                     serverConfig.Name,
 		ServerOrigin:             serverConfig.BaseURL,
 		Tools:                    toolInfos,
-		ServiceAccountConfigured: mcp.ServerAvailableForServiceAccount(*serverConfig),
+		ServiceAccountConfigured: mcp.IsLocalServerOrigin(serverConfig.BaseURL) || mcp.ServerAvailableForServiceAccount(*serverConfig),
 	}
 
 	if serviceAccount {

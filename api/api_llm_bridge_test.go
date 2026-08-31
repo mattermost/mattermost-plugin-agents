@@ -1716,8 +1716,9 @@ type fakeBridgeMCPToolProvider struct {
 	tools   []llm.Tool // user-mode catalog
 	saTools []llm.Tool // service-account catalog (fail-closed subset)
 
-	userCalls []string
-	saCalls   []string
+	userCalls      []string
+	saCalls        []string
+	saInvokerCalls []string
 }
 
 func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, userID string) ([]llm.Tool, *mcp.Errors) {
@@ -1725,8 +1726,9 @@ func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, userID st
 	return p.tools, nil
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors) {
 	p.saCalls = append(p.saCalls, botUserID)
+	p.saInvokerCalls = append(p.saInvokerCalls, invokingUserID)
 	return p.saTools, nil
 }
 

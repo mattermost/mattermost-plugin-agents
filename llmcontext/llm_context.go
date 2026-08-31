@@ -26,8 +26,9 @@ type ToolProvider interface {
 // MCPToolProvider provides MCP tools for a user or for a service-account agent
 type MCPToolProvider interface {
 	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	// GetToolsForServiceAccount returns the catalog for a service-account agent acting as botUserID.
-	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors)
+	// GetToolsForServiceAccount returns the catalog for a service-account invocation:
+	// SA-header remotes pooled by botUserID, plus embedded/plugin tools as invokingUserID.
+	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID, invokingUserID string) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
@@ -287,7 +288,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 				b.pluginAPI.Log.Error("Service account agent has no bot user ID; skipping MCP tools",
 					"bot_name", botCfg.Name, "bot_id", botCfg.ID)
 			} else {
-				mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForServiceAccount(ctx, botUserID)
+				mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForServiceAccount(ctx, botUserID, userID)
 			}
 		} else {
 			mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
