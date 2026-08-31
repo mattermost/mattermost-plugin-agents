@@ -26,13 +26,16 @@ import (
 )
 
 const (
-	autoReplyBotUserID    = "arbot-user-id"
 	autoReplyBotUsername  = "arbot"
-	autoReplyBot2UserID   = "secondbot-user-id"
 	autoReplyBot2Username = "secondbot"
-	autoReplyUserID       = "aruser-id"
-	autoReplyOtherUserID  = "arother-id"
-	autoReplyForeignBotID = "arforeignbot-id"
+	// Well-formed 26-char IDs: the agent access gate denies a user ID no policy
+	// can be evaluated against, so mentions and auto-reply never reach their
+	// own logic. Usernames stay short so @mention strings stay readable.
+	autoReplyBotUserID    = "arbotuserid1234567890123ab"
+	autoReplyBot2UserID   = "secondbotid1234567890123ab"
+	autoReplyUserID       = "aruserid1234567890123456ab"
+	autoReplyOtherUserID  = "arotherid123456789012345ab"
+	autoReplyForeignBotID = "arforeignbot1234567890123a"
 	autoReplyChannelID    = "archannel-id"
 	autoReplyTeamID       = "arteam-id"
 	autoReplyRootID       = "arroot-id"
