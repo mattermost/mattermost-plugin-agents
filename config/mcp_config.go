@@ -171,9 +171,9 @@ func (c *MCPConfig) OriginByServerID() map[string]string {
 	return out
 }
 
-// ErrMCPServerIDConflict is the base error for every identity problem
-// ReconcileMCPConfigIDs / kind-specific reconcilers can detect; callers map
-// it to a client error (stale or corrupt admin console payload).
+// ErrMCPServerIDConflict is returned when the config being written contains
+// duplicate non-empty MCP server IDs, or when an incoming embedded server ID
+// differs from the stored ID.
 var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 
 // ReconcileMCPConfigIDs is the single entry point for MCP identity on config
@@ -183,16 +183,13 @@ var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 //     unconditionally. Full config save never accepts client-provided plugin
 //     rows (bridge register/unregister and PUT /admin/mcp/plugin-servers/:id
 //     are the only writers).
-//  2. Runs kind-specific ID carry-forward for remote and embedded servers.
-//  3. Rejects any ID shared by two MCP resources of any kind.
+//  2. Copies the embedded server ID from prev when next is empty. A
+//     non-empty next ID that differs from a non-empty prev ID is a conflict.
+//     Empty remote IDs stay empty for the caller to mint.
+//  3. Rejects any ID shared by two MCP resources of any kind on the config
+//     being written. Duplicate IDs in prev alone are not a conflict.
 func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
 	next.PluginServers = append([]PluginServerConfig(nil), prev.PluginServers...)
-
-	servers, err := ReconcileMCPServerIDs(next.Servers, prev.Servers)
-	if err != nil {
-		return MCPConfig{}, err
-	}
-	next.Servers = servers
 
 	embedded, err := ReconcileEmbeddedMCPServerID(next.EmbeddedServer, prev.EmbeddedServer)
 	if err != nil {
@@ -204,26 +201,6 @@ func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
 		return MCPConfig{}, err
 	}
 	return next, nil
-}
-
-// OccupiedMCPServerIDs returns every non-empty MCP resource ID across remote,
-// embedded, and plugin entries. Used by mint paths to avoid cross-kind collisions.
-func OccupiedMCPServerIDs(cfg MCPConfig) map[string]struct{} {
-	out := make(map[string]struct{}, len(cfg.Servers)+len(cfg.PluginServers)+1)
-	for i := range cfg.Servers {
-		if id := cfg.Servers[i].ID; id != "" {
-			out[id] = struct{}{}
-		}
-	}
-	if id := cfg.EmbeddedServer.ID; id != "" {
-		out[id] = struct{}{}
-	}
-	for i := range cfg.PluginServers {
-		if id := cfg.PluginServers[i].ID; id != "" {
-			out[id] = struct{}{}
-		}
-	}
-	return out
 }
 
 // ValidateMCPServerIDUniqueness returns ErrMCPServerIDConflict when any two
@@ -258,159 +235,11 @@ func ValidateMCPServerIDUniqueness(cfg MCPConfig) error {
 	return nil
 }
 
-// ReconcileMCPServerIDs carries stable IDs forward from prev onto ID-less
-// entries in next (e.g. from webapp bundles predating the ID field). Server
-// IDs are ABAC policy identities, so identity mistakes are never papered
-// over: minting a fresh ID for an existing server detaches its policy (which
-// fails open). Matching runs in global phases over the whole payload so the
-// outcome cannot depend on payload order; anything suspicious errors:
-//
-//  1. Explicit-ID claims: an ID found in prev claims that entry. An ID
-//     unknown to prev is accepted as a caller-chosen ID for a genuinely new
-//     server (admin-API automation seeds its own IDs) — unless the entry's
-//     Name or BaseURL matches a stored server, which means a stale or
-//     corrupt client is trying to swap an existing server's policy identity.
-//  2. Exact (Name, BaseURL) claims against the full stored list; claiming an
-//     already-claimed prev entry is an error, never a silent fallback.
-//  3. Weak claims against the unclaimed remainder: by unique Name or unique
-//     BaseURL; any ambiguity or double-claim is an error.
-//  4. Entries matching nothing stay ID-less; the caller mints a fresh ID.
-//
-// Each prev entry is claimed at most once across all phases.
-func ReconcileMCPServerIDs(next []MCPServerConfig, prev []MCPServerConfig) ([]MCPServerConfig, error) {
-	// Duplicate stored IDs mean the persisted config is already corrupt;
-	// keeping the last row would let two servers share one policy ID.
-	prevByID := make(map[string]int, len(prev))
-	for j := range prev {
-		id := prev[j].ID
-		if id == "" {
-			continue
-		}
-		if _, dup := prevByID[id]; dup {
-			return nil, fmt.Errorf("%w: stored configuration contains two servers with ID %q", ErrMCPServerIDConflict, id)
-		}
-		prevByID[id] = j
-	}
-
-	claimed := make([]bool, len(prev))
-
-	// Phase 1: entries arriving with an ID claim the prev entry holding it.
-	seenIncoming := make(map[string]bool, len(next))
-	for i := range next {
-		id := next[i].ID
-		if id == "" {
-			continue
-		}
-		if seenIncoming[id] {
-			return nil, fmt.Errorf("%w: server %q duplicates the ID of another entry in the payload", ErrMCPServerIDConflict, next[i].Name)
-		}
-		seenIncoming[id] = true
-		if j, ok := prevByID[id]; ok {
-			claimed[j] = true
-			continue
-		}
-		// Unknown ID: legitimate for a genuinely new server seeded by API
-		// automation. A Name or BaseURL collision with a stored
-		// (ID-carrying) server instead means a stale client is swapping
-		// that server's policy identity, which would detach its policy.
-		for k := range prev {
-			if prev[k].ID == "" {
-				continue
-			}
-			if prev[k].Name == next[i].Name || prev[k].BaseURL == next[i].BaseURL {
-				return nil, fmt.Errorf("%w: server %q carries ID %q that the stored configuration never issued", ErrMCPServerIDConflict, next[i].Name, id)
-			}
-		}
-	}
-
-	// Phase 2: exact (Name, BaseURL) claims, resolved for the whole payload
-	// before any weak claim so a weak match can never shadow an exact one.
-	exactMatch := make([]int, len(next))
-	for i := range next {
-		exactMatch[i] = -1
-		if next[i].ID != "" {
-			continue
-		}
-		candidate := -1
-		for j := range prev {
-			if prev[j].ID == "" || prev[j].Name != next[i].Name || prev[j].BaseURL != next[i].BaseURL {
-				continue
-			}
-			if candidate >= 0 {
-				return nil, fmt.Errorf("%w: server %q matches multiple identical stored servers", ErrMCPServerIDConflict, next[i].Name)
-			}
-			candidate = j
-		}
-		if candidate < 0 {
-			continue
-		}
-		if claimed[candidate] {
-			return nil, fmt.Errorf("%w: server %q claims a stored server another entry in the payload already claims", ErrMCPServerIDConflict, next[i].Name)
-		}
-		claimed[candidate] = true
-		exactMatch[i] = candidate
-	}
-	for i, j := range exactMatch {
-		if j >= 0 {
-			next[i].ID = prev[j].ID
-		}
-	}
-
-	// Phase 3: weak claims against the unclaimed remainder; every entry sees
-	// the same post-phase-2 snapshot, so this phase is order-independent too.
-	weakClaimed := make(map[int]bool, len(prev))
-	weakMatch := make([]int, len(next))
-	for i := range next {
-		weakMatch[i] = -1
-		if next[i].ID != "" {
-			continue
-		}
-
-		var nameMatches, urlMatches []int
-		for j := range prev {
-			if claimed[j] || prev[j].ID == "" {
-				continue
-			}
-			if prev[j].Name == next[i].Name {
-				nameMatches = append(nameMatches, j)
-			}
-			if prev[j].BaseURL == next[i].BaseURL {
-				urlMatches = append(urlMatches, j)
-			}
-		}
-
-		var match int
-		switch {
-		case len(nameMatches) == 0 && len(urlMatches) == 0:
-			// Genuinely new: no identity claim to resolve.
-			continue
-		case len(nameMatches) == 1 && len(urlMatches) == 0:
-			match = nameMatches[0]
-		case len(nameMatches) == 0 && len(urlMatches) == 1:
-			match = urlMatches[0]
-		default:
-			return nil, fmt.Errorf("%w: server %q ambiguously matches more than one stored server", ErrMCPServerIDConflict, next[i].Name)
-		}
-		if weakClaimed[match] {
-			return nil, fmt.Errorf("%w: server %q claims a stored server another entry in the payload already claims", ErrMCPServerIDConflict, next[i].Name)
-		}
-		weakClaimed[match] = true
-		weakMatch[i] = match
-	}
-	for i, j := range weakMatch {
-		if j >= 0 {
-			next[i].ID = prev[j].ID
-		}
-	}
-
-	return next, nil
-}
-
-// ReconcileEmbeddedMCPServerID carries the embedded server's stable ID forward
-// from prev onto an ID-less next. A non-empty next ID that differs from a
-// non-empty prev ID is a conflict (same ErrMCPServerIDConflict contract as
-// remote servers). Caller-chosen IDs on a previously ID-less embedded server
-// are kept; both empty leaves next ID-less for the caller to mint.
+// ReconcileEmbeddedMCPServerID copies prev.ID onto an ID-less next (one
+// embedded server, not a list heuristic). A non-empty next ID that differs
+// from a non-empty prev ID is a conflict. Caller-chosen IDs on a previously
+// ID-less embedded server are kept; both empty leaves next ID-less for the
+// caller to mint.
 func ReconcileEmbeddedMCPServerID(next, prev MCPEmbeddedServerConfig) (MCPEmbeddedServerConfig, error) {
 	if next.ID == "" {
 		next.ID = prev.ID

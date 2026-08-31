@@ -155,16 +155,19 @@ func (a *API) persistPluginServerID(pluginID string, registration *mcp.PluginSer
 			return config.Config{}, errors.New("no plugin configuration available")
 		}
 		cfg := prev.Clone()
+		id := registration.ID
+		if id == "" {
+			id = model.NewId()
+		}
 		for i := range cfg.MCP.PluginServers {
 			if cfg.MCP.PluginServers[i].PluginID != pluginID {
 				continue
 			}
 			if cfg.MCP.PluginServers[i].ID == "" {
-				cfg.MCP.PluginServers[i].ID = uniquePluginServerID(cfg.MCP, registration.ID)
+				cfg.MCP.PluginServers[i].ID = id
 			}
 			return *cfg, nil
 		}
-		id := uniquePluginServerID(cfg.MCP, registration.ID)
 		cfg.MCP.PluginServers = append(cfg.MCP.PluginServers, config.PluginServerConfig{
 			ID:             id,
 			PluginID:       registration.PluginID,
@@ -235,22 +238,6 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
-}
-
-// uniquePluginServerID keeps candidate when free across all MCP kinds; otherwise mints.
-func uniquePluginServerID(mcpCfg config.MCPConfig, candidate string) string {
-	occupied := config.OccupiedMCPServerIDs(mcpCfg)
-	if candidate != "" {
-		if _, taken := occupied[candidate]; !taken {
-			return candidate
-		}
-	}
-	for {
-		id := model.NewId()
-		if _, taken := occupied[id]; !taken {
-			return id
-		}
-	}
 }
 
 func (a *API) findPersistedPluginServer(pluginID string) (mcp.PluginServerConfig, bool) {

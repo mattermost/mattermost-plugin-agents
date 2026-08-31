@@ -15,29 +15,13 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// Agents_System markers for the one-time ABAC ID migrations (value "1").
-const (
-	serviceIDMigrationKey              = "abac_service_id_migration_done"
-	mcpServerIDMigrationKey            = "abac_mcp_server_id_migration_done"
-	embeddedPluginServerIDMigrationKey = "abac_embedded_plugin_server_id_migration_done"
-)
+// Agents_System marker for the one-time ABAC ID migration (value "1").
+const abacIDMigrationKey = "abac_id_migration_done"
 
 // isLegacyUUID reports whether s is a canonical dashed UUID, the legacy
 // service-ID format that predates model.NewId()-style IDs.
 func isLegacyUUID(s string) bool {
 	return len(s) == 36 && uuid.Validate(s) == nil
-}
-
-// mintUniqueMCPServerID returns a fresh model.NewId not present in occupied
-// and records it so subsequent mints in the same pass stay unique across kinds.
-func mintUniqueMCPServerID(occupied map[string]struct{}) string {
-	for {
-		id := model.NewId()
-		if _, taken := occupied[id]; !taken {
-			occupied[id] = struct{}{}
-			return id
-		}
-	}
 }
 
 // ABACIDMigrationReport summarizes what MigrateABACIDs did so the caller
@@ -54,9 +38,9 @@ type ABACIDMigrationReport struct {
 	DanglingServiceRefs             []string
 }
 
-// MigrateABACIDs runs the one-time ABAC ID migrations in a single transaction
-// that writes at most one new active config row and sets Agents_System markers
-// atomically:
+// MigrateABACIDs runs the one-time ABAC ID migration in a single transaction
+// that writes at most one new active config row and sets the Agents_System
+// marker atomically:
 //
 //   - service IDs: legacy UUID service IDs in the active config and in
 //     Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
@@ -66,26 +50,18 @@ type ABACIDMigrationReport struct {
 //   - embedded/plugin MCP server IDs: EmbeddedServer.ID and every
 //     PluginServers entry with no ID get a stable model.NewId().
 //
-// Idempotent: markers short-circuit re-runs, and the rewrite is content-based
-// (only UUID service IDs / empty MCP IDs are touched), so a crash between the
-// config write and the marker write is recovered safely.
+// Idempotent: the marker short-circuits re-runs, and the rewrite is content-based
+// (only UUID service IDs / empty MCP IDs are touched). Config and marker writes
+// share one Postgres transaction; on failure the transaction is rolled back.
 func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	report := ABACIDMigrationReport{}
 
 	// Fast path; the authoritative re-check happens inside the tx under the lock.
-	serviceDone, err := s.GetSystemValue(serviceIDMigrationKey)
+	done, err := s.GetSystemValue(abacIDMigrationKey)
 	if err != nil {
 		return report, err
 	}
-	mcpDone, err := s.GetSystemValue(mcpServerIDMigrationKey)
-	if err != nil {
-		return report, err
-	}
-	embeddedPluginDone, err := s.GetSystemValue(embeddedPluginServerIDMigrationKey)
-	if err != nil {
-		return report, err
-	}
-	if serviceDone == "1" && mcpDone == "1" && embeddedPluginDone == "1" {
+	if done == "1" {
 		return report, nil
 	}
 
@@ -105,19 +81,11 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 		return report, fmt.Errorf("failed to lock ABAC ID migration transaction: %w", err)
 	}
 
-	serviceDone, err = getSystemValueTx(tx, serviceIDMigrationKey)
+	done, err = getSystemValueTx(tx, abacIDMigrationKey)
 	if err != nil {
 		return report, err
 	}
-	mcpDone, err = getSystemValueTx(tx, mcpServerIDMigrationKey)
-	if err != nil {
-		return report, err
-	}
-	embeddedPluginDone, err = getSystemValueTx(tx, embeddedPluginServerIDMigrationKey)
-	if err != nil {
-		return report, err
-	}
-	if serviceDone == "1" && mcpDone == "1" && embeddedPluginDone == "1" {
+	if done == "1" {
 		// Another node finished between the fast path and the lock.
 		_ = tx.Rollback()
 		return report, nil
@@ -129,31 +97,27 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	}
 
 	configChanged := false
-	if found && serviceDone != "1" {
+	if found {
 		if err = migrateServiceIDsTx(tx, cfg, &report); err != nil {
 			return report, err
 		}
 		configChanged = configChanged || report.ServicesRemapped > 0
-	}
-	if found && mcpDone != "1" {
-		occupied := config.OccupiedMCPServerIDs(cfg.MCP)
+
 		for i := range cfg.MCP.Servers {
 			if cfg.MCP.Servers[i].ID == "" {
-				cfg.MCP.Servers[i].ID = mintUniqueMCPServerID(occupied)
+				cfg.MCP.Servers[i].ID = model.NewId()
 				report.MCPServerIDsAssigned++
 			}
 		}
 		configChanged = configChanged || report.MCPServerIDsAssigned > 0
-	}
-	if found && embeddedPluginDone != "1" {
-		occupied := config.OccupiedMCPServerIDs(cfg.MCP)
+
 		if cfg.MCP.EmbeddedServer.ID == "" {
-			cfg.MCP.EmbeddedServer.ID = mintUniqueMCPServerID(occupied)
+			cfg.MCP.EmbeddedServer.ID = model.NewId()
 			report.EmbeddedPluginServerIDsAssigned++
 		}
 		for i := range cfg.MCP.PluginServers {
 			if cfg.MCP.PluginServers[i].ID == "" {
-				cfg.MCP.PluginServers[i].ID = mintUniqueMCPServerID(occupied)
+				cfg.MCP.PluginServers[i].ID = model.NewId()
 				report.EmbeddedPluginServerIDsAssigned++
 			}
 		}
@@ -165,20 +129,8 @@ func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 			return report, err
 		}
 	}
-	if serviceDone != "1" {
-		if err = setSystemValueTx(tx, serviceIDMigrationKey, "1"); err != nil {
-			return report, err
-		}
-	}
-	if mcpDone != "1" {
-		if err = setSystemValueTx(tx, mcpServerIDMigrationKey, "1"); err != nil {
-			return report, err
-		}
-	}
-	if embeddedPluginDone != "1" {
-		if err = setSystemValueTx(tx, embeddedPluginServerIDMigrationKey, "1"); err != nil {
-			return report, err
-		}
+	if err = setSystemValueTx(tx, abacIDMigrationKey, "1"); err != nil {
+		return report, err
 	}
 	if err = tx.Commit(); err != nil {
 		return report, fmt.Errorf("failed to commit ABAC ID migration: %w", err)

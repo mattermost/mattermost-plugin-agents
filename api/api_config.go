@@ -27,38 +27,31 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 		}
 	}
 
-	// Backstop for direct API automation and stale webapp bundles: every
-	// persisted service and MCP server (external, embedded, plugin) must
-	// have a stable ID. Minting avoids IDs already occupied across kinds.
+	return cfg
+}
+
+// mintEmptyAdminIDs assigns a stable ID to every service and MCP server
+// (external, embedded, plugin) that arrived without one. Empty IDs are
+// creates; this runs on write only so GET cannot invent unpersisted identities.
+func mintEmptyAdminIDs(cfg config.Config) config.Config {
 	for i := range cfg.Services {
 		if cfg.Services[i].ID == "" {
 			cfg.Services[i].ID = model.NewId()
 		}
 	}
-	occupied := config.OccupiedMCPServerIDs(cfg.MCP)
-	mintMCPID := func() string {
-		for {
-			id := model.NewId()
-			if _, taken := occupied[id]; !taken {
-				occupied[id] = struct{}{}
-				return id
-			}
-		}
-	}
 	for i := range cfg.MCP.Servers {
 		if cfg.MCP.Servers[i].ID == "" {
-			cfg.MCP.Servers[i].ID = mintMCPID()
+			cfg.MCP.Servers[i].ID = model.NewId()
 		}
 	}
 	if cfg.MCP.EmbeddedServer.ID == "" {
-		cfg.MCP.EmbeddedServer.ID = mintMCPID()
+		cfg.MCP.EmbeddedServer.ID = model.NewId()
 	}
 	for i := range cfg.MCP.PluginServers {
 		if cfg.MCP.PluginServers[i].ID == "" {
-			cfg.MCP.PluginServers[i].ID = mintMCPID()
+			cfg.MCP.PluginServers[i].ID = model.NewId()
 		}
 	}
-
 	return cfg
 }
 
@@ -106,44 +99,37 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	// Read-previous → reconcile → normalize → save runs atomically under the
-	// config advisory lock. Reconciliation carries stable service and MCP
-	// server IDs forward before normalizeAdminConfig mints fresh ones, so
-	// clients that drop the id field cannot rotate IDs on every save;
-	// identity conflicts abort the save entirely.
+	// Read-previous → identity checks → mint empty IDs → save runs atomically
+	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
+	// abort with 409. Empty IDs stay empty so mintEmptyAdminIDs assigns them
+	// (the add-service/add-server path).
 	var changedKeys []string
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
 		next := cfg
-		// Reconcile even on the first write (empty previous lists) so
-		// fabricated or duplicate incoming IDs cannot slip in unvalidated.
-		var prevServices []llm.ServiceConfig
+		if err := config.ValidateServiceIDUniqueness(next.Services); err != nil {
+			return config.Config{}, err
+		}
 		var prevMCP config.MCPConfig
 		if prev != nil {
-			prevServices = prev.Services
 			prevMCP = prev.MCP
 		}
-		reconciledServices, reconcileErr := config.ReconcileServiceIDs(next.Services, prevServices)
-		if reconcileErr != nil {
-			return config.Config{}, reconcileErr
-		}
-		next.Services = reconciledServices
 		reconciledMCP, reconcileErr := config.ReconcileMCPConfigIDs(next.MCP, prevMCP)
 		if reconcileErr != nil {
 			return config.Config{}, reconcileErr
 		}
 		next.MCP = reconciledMCP
-		normalized := normalizeAdminConfig(next)
+		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
 		changedKeys = audit.ChangedJSONKeys(prev, normalized)
 		return normalized, nil
 	})
 	switch {
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
-		// Minting fresh IDs here would silently detach existing policies.
-		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload conflicts with the stored service or MCP server identities; reload the System Console and retry: %w", err))
+		// Duplicate payload IDs, or an embedded server ID that does not match storage.
+		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
 		return
-	case errors.Is(err, store.ErrStaleLegacyServiceIDs):
-		// A pre-upgrade client echoing UUID service IDs would undo the migration.
-		c.AbortWithError(http.StatusConflict, fmt.Errorf("stale configuration payload; reload the System Console and retry: %w", err))
+	case errors.Is(err, store.ErrLegacyUUIDServiceID):
+		// After the ABAC ID migration, a dashed UUID is an invalid service ID format.
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid service ID format: %w", err))
 		return
 	case err != nil:
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
