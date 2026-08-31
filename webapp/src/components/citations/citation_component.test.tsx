@@ -169,4 +169,14 @@ describe('CitationComponent with unsafe links allowed', () => {
 
         expect(windowOpenSpy).not.toHaveBeenCalled();
     });
+
+    test('is not exposed as an interactive control when the annotation has no URL', () => {
+        const annotation = makeAnnotation();
+        delete annotation.url;
+        renderComponent(annotation);
+
+        const badge = screen.getByTestId('llm-citation');
+        expect(badge.getAttribute('role')).not.toBe('button');
+        expect(badge.getAttribute('tabindex')).toBeNull();
+    });
 });

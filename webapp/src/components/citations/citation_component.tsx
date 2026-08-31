@@ -65,7 +65,7 @@ export const CitationComponent = (props: CitationComponentProps) => {
                 </TooltipContent>
             }
             onClick={handleClick}
-            interactive={allowUnsafeLinks}
+            interactive={allowUnsafeLinks && Boolean(props.annotation.url)}
             ariaLabel={ariaLabel}
             testId='llm-citation'
             tooltipTestId='llm-citation-tooltip'
