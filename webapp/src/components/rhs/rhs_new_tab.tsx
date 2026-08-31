@@ -116,6 +116,7 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
         editorComponent = (
             <AdvancedTextEditor
                 channelId={botChannelId}
+                rootId={''}
                 placeholder={intl.formatMessage({defaultMessage: 'Ask Agents anything...'})}
                 isThreadView={true}
                 location={'RHS_COMMENT'}
