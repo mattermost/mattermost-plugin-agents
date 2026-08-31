@@ -4,6 +4,8 @@
 package bots
 
 import (
+	"sync"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -24,7 +26,10 @@ type Bot struct {
 	cfg     llm.BotConfig
 	service llm.ServiceConfig
 	mmBot   *model.Bot
-	llm     llm.LanguageModel
+
+	llmMu    sync.RWMutex
+	llm      llm.LanguageModel
+	llmEntry *agentLLMEntry
 }
 
 func (b *Bot) GetConfig() llm.BotConfig {
@@ -36,7 +41,19 @@ func (b *Bot) GetMMBot() *model.Bot {
 }
 
 func (b *Bot) LLM() llm.LanguageModel {
+	if b == nil {
+		return nil
+	}
+	b.llmMu.RLock()
+	defer b.llmMu.RUnlock()
 	return b.llm
+}
+
+func (b *Bot) setLLM(model llm.LanguageModel, entry *agentLLMEntry) {
+	b.llmMu.Lock()
+	defer b.llmMu.Unlock()
+	b.llm = model
+	b.llmEntry = entry
 }
 
 func (b *Bot) GetService() llm.ServiceConfig {
@@ -66,8 +83,8 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 	return false
 }
 
-func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {
-	b.llm = llm
+func (b *Bot) SetLLMForTest(model llm.LanguageModel) {
+	b.setLLM(model, nil)
 }
 
 func (b *Bot) SetServiceForTest(service llm.ServiceConfig) {

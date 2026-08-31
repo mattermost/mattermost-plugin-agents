@@ -539,10 +539,11 @@ func (p *Plugin) OnDeactivate() error {
 	}
 	p.telemetryMu.Unlock()
 
-	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
-	// fail before bots is assigned, so guard against a nil registry.
+	// Release Bifrost worker pools held by service-backed and agent LLMs.
+	// OnActivate can fail before bots is assigned, so guard against a nil registry.
 	if p.bots != nil {
 		p.bots.ShutdownServiceLLMs()
+		p.bots.ShutdownAgentLLMs()
 	}
 
 	// Clean up MCP client manager if it exists

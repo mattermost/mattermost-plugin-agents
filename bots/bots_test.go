@@ -147,7 +147,7 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	model, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, _, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
@@ -160,12 +160,12 @@ func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
+	_, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 	require.Contains(t, err.Error(), "loadtest profile")
 
-	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
+	_, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 }
