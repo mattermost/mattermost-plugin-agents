@@ -1035,7 +1035,7 @@ func TestEnrichToolCall(t *testing.T) {
 	newStore := func() *ToolStore {
 		store := NewNoTools()
 		store.AddTools([]Tool{
-			{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
+			{Name: "jira__create_issue", Description: "Create a Jira issue", Title: "Create Issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 			{Name: "builtin_tool", Description: "A builtin tool", Schema: map[string]any{"type": "string"}},
 			{Name: "AskUserQuestion", Description: "Ask the user", Schema: map[string]any{"type": "object"}, UserInteraction: UserInteractionSelect},
 		})
@@ -1048,71 +1048,79 @@ func TestEnrichToolCall(t *testing.T) {
 		opts EnrichToolCallOptions
 
 		wantDescription     string
+		wantTitle           string
 		wantServer          string
 		wantBareName        string
-		wantSchema          any
 		wantUserInteraction string
 	}{
 		{
-			name:            "preserves model description when OverwriteDescription is false",
-			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", ServerOrigin: "https://jira.example.com"},
+			name:            "preserves model description and title when OverwriteDescription is false",
+			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", Title: "Model Title", ServerOrigin: "https://jira.example.com"},
 			opts:            EnrichToolCallOptions{},
 			wantDescription: "model text",
+			wantTitle:       "Model Title",
 			wantServer:      "https://jira.example.com",
 			wantBareName:    "create_issue",
-			wantSchema:      map[string]any{"type": "object"},
 		},
 		{
-			name:            "overwrites description when OverwriteDescription is true",
-			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", ServerOrigin: "https://jira.example.com"},
-			opts:            EnrichToolCallOptions{OverwriteDescription: true},
+			name:            "fills title from store when call has none",
+			tc:              &ToolCall{Name: "jira__create_issue", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{},
 			wantDescription: "Create a Jira issue",
+			wantTitle:       "Create Issue",
 			wantServer:      "https://jira.example.com",
 			wantBareName:    "create_issue",
-			wantSchema:      map[string]any{"type": "object"},
+		},
+		{
+			name:            "overwrites description and title when OverwriteDescription is true",
+			tc:              &ToolCall{Name: "jira__create_issue", Description: "model text", Title: "Model Title", ServerOrigin: "https://jira.example.com"},
+			opts:            EnrichToolCallOptions{OverwriteDescription: true},
+			wantDescription: "Create a Jira issue",
+			wantTitle:       "Create Issue",
+			wantServer:      "https://jira.example.com",
+			wantBareName:    "create_issue",
 		},
 		{
 			name:            "BareNameFallback resolves when primary lookup misses",
 			tc:              &ToolCall{Name: "missing", MCPBareName: "create_issue", ServerOrigin: "https://jira.example.com"},
 			opts:            EnrichToolCallOptions{BareNameFallback: true},
 			wantDescription: "Create a Jira issue",
+			wantTitle:       "Create Issue",
 			wantServer:      "https://jira.example.com",
 			wantBareName:    "create_issue",
-			wantSchema:      map[string]any{"type": "object"},
 		},
 		{
 			name:            "no fallback when BareNameFallback is false leaves call untouched",
 			tc:              &ToolCall{Name: "missing", MCPBareName: "create_issue", ServerOrigin: "https://jira.example.com"},
 			opts:            EnrichToolCallOptions{},
 			wantDescription: "",
+			wantTitle:       "",
 			wantServer:      "https://jira.example.com",
 			wantBareName:    "create_issue",
-			wantSchema:      nil,
 		},
 		{
 			name:            "populates ServerOrigin from lookup when empty",
 			tc:              &ToolCall{Name: "jira__create_issue"},
 			opts:            EnrichToolCallOptions{},
 			wantDescription: "Create a Jira issue",
+			wantTitle:       "Create Issue",
 			wantServer:      "https://jira.example.com",
 			wantBareName:    "create_issue",
-			wantSchema:      map[string]any{"type": "object"},
 		},
 		{
 			name:            "leaves MCPBareName empty for a builtin tool",
 			tc:              &ToolCall{Name: "builtin_tool"},
 			opts:            EnrichToolCallOptions{},
 			wantDescription: "A builtin tool",
+			wantTitle:       "",
 			wantServer:      "",
 			wantBareName:    "",
-			wantSchema:      map[string]any{"type": "string"},
 		},
 		{
 			name:                "populates UserInteraction from the store",
 			tc:                  &ToolCall{Name: "AskUserQuestion"},
 			opts:                EnrichToolCallOptions{},
 			wantDescription:     "Ask the user",
-			wantSchema:          map[string]any{"type": "object"},
 			wantUserInteraction: UserInteractionSelect,
 		},
 	}
@@ -1121,9 +1129,9 @@ func TestEnrichToolCall(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			EnrichToolCall(tt.tc, newStore(), tt.opts)
 			assert.Equal(t, tt.wantDescription, tt.tc.Description)
+			assert.Equal(t, tt.wantTitle, tt.tc.Title)
 			assert.Equal(t, tt.wantServer, tt.tc.ServerOrigin)
 			assert.Equal(t, tt.wantBareName, tt.tc.MCPBareName)
-			assert.Equal(t, tt.wantSchema, tt.tc.Schema)
 			assert.Equal(t, tt.wantUserInteraction, tt.tc.UserInteraction)
 		})
 	}
@@ -1140,5 +1148,5 @@ func TestEnrichToolCallNilSafe(t *testing.T) {
 	tc := ToolCall{Name: "builtin_tool"}
 	EnrichToolCall(&tc, nil, EnrichToolCallOptions{})
 	assert.Empty(t, tc.Description)
-	assert.Nil(t, tc.Schema)
+	assert.Empty(t, tc.Title)
 }
