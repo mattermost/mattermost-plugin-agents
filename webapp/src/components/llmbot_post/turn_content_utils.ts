@@ -100,7 +100,11 @@ function toolUseBlockToToolCall(block: ContentBlock, resultMap: Map<string, Cont
     return {
         id: block.id ?? '',
         name: block.name ?? '',
-        description: '',
+
+        description: block.description ?? '',
+        title: block.title,
+        server_origin: block.server_origin,
+        mcp_bare_name: block.mcp_bare_name,
         arguments: (block.input as ToolCall['arguments']) ?? undefined, // eslint-disable-line no-undefined
         result: resultBlock?.content ?? undefined, // eslint-disable-line no-undefined
         status: statusStringToEnum(block.status),

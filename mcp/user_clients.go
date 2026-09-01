@@ -259,9 +259,17 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 			}
 			seenTools[runtimeToolName] = serverID
 
+			// Title/Description are server-supplied; sanitize Unicode at this
+			// single capture point for embedded/plugin/external metadata.
+			// MCP display-name precedence: title > annotations.title.
+			title := sanitizeDisplayTitle(tool.Title)
+			if title == "" && tool.Annotations != nil {
+				title = sanitizeDisplayTitle(tool.Annotations.Title)
+			}
 			tools = append(tools, llm.Tool{
 				Name:         runtimeToolName,
-				Description:  tool.Description,
+				Description:  llm.SanitizeNonPrintableChars(tool.Description),
+				Title:        title,
 				Schema:       tool.InputSchema,
 				Resolver:     c.createToolResolver(client, toolName),
 				ServerOrigin: client.config.BaseURL,
@@ -270,6 +278,13 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 	}
 
 	return tools
+}
+
+// sanitizeDisplayTitle sanitizes a server-supplied display title and treats
+// whitespace-only titles as absent so the webapp falls back to the prettified
+// tool name instead of rendering a blank header.
+func sanitizeDisplayTitle(title string) string {
+	return llm.SanitizeNonPrintableChars(strings.TrimSpace(title))
 }
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
