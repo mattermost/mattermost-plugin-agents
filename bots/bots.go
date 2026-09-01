@@ -73,6 +73,13 @@ type MMBots struct {
 	// serviceLLMBuildMu serializes concurrent first builds. It is held across a
 	// build, so it must never be taken while holding serviceLLMMu.
 	serviceLLMBuildMu sync.Mutex
+	// agentLLMMu guards retiredAgentLLMs. It is never held while a model is
+	// being built or while waiting for an entry's leases to drain.
+	agentLLMMu sync.Mutex
+	// retiredAgentLLMs holds agent models that are no longer assigned to a
+	// live bot but may still have in-flight holders; each shuts down once
+	// its leases drain.
+	retiredAgentLLMs map[*agentLLMEntry]struct{}
 	// baseLLMBuilderForTest replaces provider client construction so tests can
 	// exercise the real wrapper chain and the registry without starting Bifrost
 	// worker pools. Always nil in production;
@@ -89,6 +96,9 @@ type MMBots struct {
 	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
 	// Set to true by the cluster event handler or API handlers after agent CRUD.
 	forceRefresh bool
+	// agentLLMsStopped is set by ShutdownAgentLLMs so a concurrent EnsureBots
+	// cannot publish new clients after deactivation has snapshotted.
+	agentLLMsStopped bool
 }
 
 // SetBaseLLMBuilderForTest installs a test-only provider client builder. The
@@ -327,7 +337,17 @@ func (b *MMBots) EnsureBots() error {
 	}
 	botCfgs := currentBotCfgs
 
+	b.botsLock.RLock()
+	previousEntries := make([]*agentLLMEntry, 0, len(b.bots))
+	for _, bot := range b.bots {
+		if entry := bot.llmEntryLocked(); entry != nil {
+			previousEntries = append(previousEntries, entry)
+		}
+	}
+	b.botsLock.RUnlock()
+
 	var bots []*Bot
+	var builtEntries []*agentLLMEntry
 	aiBotsByUsername := make(map[string]*Bot)
 	for _, botCfg := range botCfgs {
 		if !botCfg.IsValid() {
@@ -419,16 +439,25 @@ func (b *MMBots) EnsureBots() error {
 		// fails bot setup so the admin finds out now, not at failover time.
 		fallbackServices, err := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
 		if err != nil {
+			b.shutdownAgentLLMEntries(builtEntries)
 			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
 		}
 
-		bot.llm, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
+		model, entry, err := b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
+			b.shutdownAgentLLMEntries(builtEntries)
 			return err
 		}
+		bot.setLLM(model, entry)
+		builtEntries = append(builtEntries, entry)
 	}
 
 	b.botsLock.Lock()
+	if b.agentLLMsStopped {
+		b.botsLock.Unlock()
+		b.shutdownAgentLLMEntries(builtEntries)
+		return fmt.Errorf("agent LLMs are shutting down")
+	}
 	b.bots = bots
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)
@@ -438,12 +467,19 @@ func (b *MMBots) EnsureBots() error {
 	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
 	if copyErr != nil {
 		b.botsLock.Unlock()
+		for _, entry := range previousEntries {
+			b.retireAgentLLM(entry)
+		}
 		return fmt.Errorf("failed to deep copy bot configs for change tracking: %w", copyErr)
 	}
 	b.lastEnsuredBotCfgs = copiedBotCfgs
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.forceRefresh = false
 	b.botsLock.Unlock()
+
+	for _, entry := range previousEntries {
+		b.retireAgentLLM(entry)
+	}
 
 	return nil
 }
@@ -464,12 +500,15 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-// getLLM builds the language model for an agent. The base client's shutdown
-// handle is discarded: agent LLMs are replaced wholesale by EnsureBots, and the
-// replaced clients are not currently shut down.
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
-	model, _, err := b.buildLLM(serviceConfig, &botConfig, fallbackServices)
-	return model, err
+// getLLM builds the language model for an agent and returns the lifecycle
+// entry that EnsureBots retires when the agent is rebuilt or removed.
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *agentLLMEntry, error) {
+	model, shutdown, err := b.buildLLM(serviceConfig, &botConfig, fallbackServices)
+	if err != nil {
+		return nil, nil, err
+	}
+	entry := &agentLLMEntry{shutdown: shutdown}
+	return newAgentLLMHandle(model, entry), entry, nil
 }
 
 // buildLLM assembles the wrapper chain shared by agent LLMs and service LLMs.
