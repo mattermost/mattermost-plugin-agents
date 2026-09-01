@@ -87,6 +87,8 @@ func BlocksToPost(
 				Arguments:        arguments,
 				MCPBareName:      block.MCPBareName,
 				Status:           StatusFromString(block.Status),
+				Title:            block.Title,
+				Description:      block.Description,
 				UserInteraction:  block.UserInteraction,
 				WouldAutoExecute: block.WouldAutoExecute,
 			}
@@ -270,6 +272,8 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 			MCPBareName:      tc.MCPBareName,
 			Status:           StatusToString(tc.Status),
 			Shared:           BoolPtr(shared),
+			Title:            tc.Title,
+			Description:      tc.Description,
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
 		})

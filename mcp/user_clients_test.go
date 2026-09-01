@@ -136,6 +136,84 @@ func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
 	requireToolNames(t, tools, "mattermost__search_users")
 }
 
+func TestUserClientsGetToolsResolvesAndSanitizesTitle(t *testing.T) {
+	tests := []struct {
+		name string
+		tool *gomcp.Tool
+
+		wantTitle       string
+		wantDescription string
+	}{
+		{
+			// Hostile bidi-override (U+202E) must be escaped at capture, and
+			// the top-level title takes precedence over annotations.title.
+			name: "sanitizes hostile unicode and prefers top-level title",
+			tool: &gomcp.Tool{
+				Name:        "create_issue",
+				Description: "Create\u202ean issue",
+				Title:       "Create\u202eIssue",
+				Annotations: &gomcp.ToolAnnotations{Title: "Annotation Title"},
+			},
+			wantTitle:       "Create[U+202E]Issue",
+			wantDescription: "Create[U+202E]an issue",
+		},
+		{
+			name: "effective title falls back to annotations.title",
+			tool: &gomcp.Tool{
+				Name:        "read_issue",
+				Description: "Read an issue",
+				Annotations: &gomcp.ToolAnnotations{Title: "Read\u202eIssue"},
+			},
+			wantTitle:       "Read[U+202E]Issue",
+			wantDescription: "Read an issue",
+		},
+		{
+			name: "no title or annotations leaves Title empty",
+			tool: &gomcp.Tool{
+				Name:        "plain",
+				Description: "Plain tool",
+			},
+			wantTitle:       "",
+			wantDescription: "Plain tool",
+		},
+		{
+			// A whitespace-only title must not become the display name; the
+			// webapp would render a blank header instead of the bare name.
+			name: "whitespace-only titles are treated as absent",
+			tool: &gomcp.Tool{
+				Name:        "spacey",
+				Description: "Spacey tool",
+				Title:       "  \t ",
+				Annotations: &gomcp.ToolAnnotations{Title: " \t  "},
+			},
+			wantTitle:       "",
+			wantDescription: "Spacey tool",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userClients := &UserClients{
+				userID: "user-id",
+				clients: map[string]*Client{
+					"jira": {
+						config: ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+						tools:  map[string]*gomcp.Tool{tt.tool.Name: tt.tool},
+					},
+				},
+			}
+
+			tools := userClients.GetTools(context.Background())
+			require.Len(t, tools, 1)
+			got := tools[0]
+
+			require.Equal(t, "jira__"+tt.tool.Name, got.Name)
+			require.Equal(t, tt.wantTitle, got.Title)
+			require.Equal(t, tt.wantDescription, got.Description)
+		})
+	}
+}
+
 func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
 	userClients := &UserClients{
 		userID: "user-id",

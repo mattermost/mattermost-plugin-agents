@@ -231,7 +231,6 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		assert.JSONEq(t, `{}`, args["t-nilshared"])
 		for _, tc := range got.ToolUse {
 			if tc.ID == "t-private" {
-				assert.Nil(t, tc.Schema)
 				assert.Empty(t, tc.MCPBareName)
 				assert.Empty(t, tc.Description)
 			}
@@ -246,6 +245,7 @@ func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
 			ID:           "tc1",
 			Name:         "jira__get_issue",
 			Description:  "Get a Jira issue",
+			Title:        "Get Issue",
 			ServerOrigin: "https://jira.example.com",
 			Arguments:    json.RawMessage(`{"key":"MM-1"}`),
 			Schema: map[string]any{
@@ -268,13 +268,15 @@ func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", blocks[0].Name)
 	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
+	assert.Equal(t, "Get Issue", blocks[0].Title)
+	assert.Equal(t, "Get a Jira issue", blocks[0].Description)
 	assert.Equal(t, llm.UserInteractionSelect, blocks[0].UserInteraction)
 	assert.True(t, blocks[0].WouldAutoExecute)
 
 	data, err := json.Marshal(blocks[0])
 	require.NoError(t, err)
 	assert.NotContains(t, string(data), "input_schema")
-	assert.NotContains(t, string(data), "tool_description")
+	assert.NotContains(t, string(data), "\"schema\"")
 }
 
 func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
@@ -294,6 +296,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	toolStore.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		Description:  "Get a Jira issue",
+		Title:        "Get Issue",
 		Schema:       schema,
 		ServerOrigin: "https://jira.example.com",
 	}})
@@ -307,8 +310,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	assert.Equal(t, "https://jira.example.com", toolCall.ServerOrigin)
 	assert.Equal(t, "get_issue", toolCall.MCPBareName)
 	assert.Equal(t, "Get a Jira issue", toolCall.Description)
-	require.IsType(t, json.RawMessage{}, toolCall.Schema)
-	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(toolCall.Schema.(json.RawMessage)))
+	assert.Equal(t, "Get Issue", toolCall.Title)
 }
 
 func TestBlocksToPostPreservesRejectionSignalsThroughRedaction(t *testing.T) {

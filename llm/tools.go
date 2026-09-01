@@ -33,6 +33,12 @@ type Tool struct {
 	Schema      any
 	Resolver    ToolResolver
 
+	// Title is an optional human-readable display name resolved from MCP
+	// metadata (title > annotations.title) and Unicode-sanitized at capture
+	// (mcp.UserClients.GetTools). Empty for built-in tools and MCP tools that
+	// do not declare one.
+	Title string
+
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
@@ -251,10 +257,14 @@ type ToolCall struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Arguments   json.RawMessage `json:"arguments"`
-	Schema      any             `json:"schema,omitempty"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
 	MCPBareName string          `json:"mcp_bare_name,omitempty"`
+
+	// Title is the resolved display name for MCP tools that declare one
+	// (title > annotations.title, resolved at capture). When empty the webapp
+	// prettifies the bare name. Visible to non-requesters like Name.
+	Title string `json:"title,omitempty"`
 
 	// UserInteraction mirrors Tool.UserInteraction so the webapp can render
 	// the matching interaction UI (e.g. a question card) for pending calls.
@@ -443,9 +453,11 @@ type EnrichToolCallOptions struct {
 	BareNameFallback bool
 }
 
-// EnrichToolCall fills a tool call's Description, Schema, ServerOrigin, and
+// EnrichToolCall fills a tool call's Description, Title, ServerOrigin, and
 // MCPBareName from the resolved store entry. MCPBareName is only set for MCP
-// tools (those with a server origin); builtins are left untouched.
+// tools (those with a server origin); builtins are left untouched. Title and
+// Description follow the same overwrite semantics: rehydration trusts the store
+// (OverwriteDescription), approval preserves any value already present.
 func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) {
 	if tc == nil || store == nil {
 		return
@@ -461,7 +473,9 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 	if opts.OverwriteDescription || tc.Description == "" {
 		tc.Description = tool.Description
 	}
-	tc.Schema = tool.Schema
+	if opts.OverwriteDescription || tc.Title == "" {
+		tc.Title = tool.Title
+	}
 	tc.UserInteraction = tool.UserInteraction
 	if tc.ServerOrigin == "" {
 		tc.ServerOrigin = lookup.ServerOrigin
