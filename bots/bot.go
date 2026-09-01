@@ -56,6 +56,15 @@ func (b *Bot) setLLM(model llm.LanguageModel, entry *agentLLMEntry) {
 	b.llmEntry = entry
 }
 
+func (b *Bot) llmEntryLocked() *agentLLMEntry {
+	if b == nil {
+		return nil
+	}
+	b.llmMu.RLock()
+	defer b.llmMu.RUnlock()
+	return b.llmEntry
+}
+
 func (b *Bot) GetService() llm.ServiceConfig {
 	return b.service
 }

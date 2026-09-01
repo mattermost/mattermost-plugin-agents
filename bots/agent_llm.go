@@ -63,7 +63,7 @@ func (h *agentLLMHandle) ChatCompletion(ctx context.Context, request llm.Complet
 		h.entry.inUse.Done()
 		return nil, err
 	}
-	return releaseStreamWhenConsumed(result, h.entry.inUse.Done), nil
+	return releaseStreamWhenConsumed(ctx, result, h.entry.inUse.Done), nil
 }
 
 func (h *agentLLMHandle) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
@@ -86,7 +86,7 @@ func (h *agentLLMHandle) OutputTokenLimit() int {
 	return h.inner.OutputTokenLimit()
 }
 
-func releaseStreamWhenConsumed(result *llm.TextStreamResult, done func()) *llm.TextStreamResult {
+func releaseStreamWhenConsumed(ctx context.Context, result *llm.TextStreamResult, done func()) *llm.TextStreamResult {
 	if result == nil {
 		done()
 		return nil
@@ -96,7 +96,15 @@ func releaseStreamWhenConsumed(result *llm.TextStreamResult, done func()) *llm.T
 		defer done()
 		defer close(out)
 		for event := range result.Stream {
-			out <- event
+			select {
+			case out <- event:
+			case <-ctx.Done():
+				// Consumer stopped (e.g. StreamToPost on cancel). Drop the
+				// remainder so the producer can exit, then release the lease.
+				for range result.Stream { //nolint:revive // drain only
+				}
+				return
+			}
 		}
 	}()
 	return &llm.TextStreamResult{Stream: out}
@@ -142,14 +150,15 @@ func (b *MMBots) shutdownAgentLLMEntries(entries []*agentLLMEntry) {
 // of outstanding leases. Called on plugin deactivation alongside
 // ShutdownServiceLLMs.
 func (b *MMBots) ShutdownAgentLLMs() {
-	b.botsLock.RLock()
+	b.botsLock.Lock()
+	b.agentLLMsStopped = true
 	live := make([]*agentLLMEntry, 0, len(b.bots))
 	for _, bot := range b.bots {
-		if bot != nil && bot.llmEntry != nil {
-			live = append(live, bot.llmEntry)
+		if entry := bot.llmEntryLocked(); entry != nil {
+			live = append(live, entry)
 		}
 	}
-	b.botsLock.RUnlock()
+	b.botsLock.Unlock()
 
 	b.agentLLMMu.Lock()
 	entries := append([]*agentLLMEntry{}, live...)

@@ -140,9 +140,10 @@ func TestEnsureBotsInFlightRequestSurvivesReplace(t *testing.T) {
 	held := mmBots.GetAllBots()[0].LLM()
 
 	done := make(chan string, 1)
+	errCh := make(chan error, 1)
 	go func() {
 		answer, err := held.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{})
-		require.NoError(t, err)
+		errCh <- err
 		done <- answer
 	}()
 	<-first.started
@@ -156,6 +157,7 @@ func TestEnsureBotsInFlightRequestSurvivesReplace(t *testing.T) {
 	shutdownMu.Unlock()
 
 	close(first.release)
+	require.NoError(t, <-errCh)
 	require.Equal(t, "first", <-done)
 
 	held = nil
@@ -199,4 +201,64 @@ func TestEnsureBotsFailedBuildShutsDownAlreadyBuilt(t *testing.T) {
 	require.Error(t, mmBots.EnsureBots())
 	require.Empty(t, mmBots.GetAllBots())
 	require.Equal(t, []string{"svc"}, builder.shutdownIDs())
+}
+
+func TestReleaseStreamWhenConsumedDropsLeaseOnCancel(t *testing.T) {
+	inner := make(chan llm.TextStreamEvent)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	released := make(chan struct{})
+	out := releaseStreamWhenConsumed(ctx, &llm.TextStreamResult{Stream: inner}, func() { close(released) })
+
+	inner <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "a"}
+	ev := <-out.Stream
+	require.Equal(t, "a", ev.Value)
+
+	cancel()
+	inner <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "b"}
+	close(inner)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-released:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, time.Millisecond)
+
+	_, ok := <-out.Stream
+	require.False(t, ok, "canceled relay must close the outbound stream")
+}
+
+func TestEnsureBotsDoesNotCommitAfterShutdown(t *testing.T) {
+	mmBots, store, builder := newAgentLLMTestBots(t)
+	require.NoError(t, mmBots.EnsureBots())
+	require.Equal(t, 1, builder.buildCount())
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	builder.beforeReturn = func(llm.ServiceConfig) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+	}
+
+	store.agents[0].CustomInstructions = "changed"
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- mmBots.EnsureBots()
+	}()
+	<-started
+
+	mmBots.ShutdownAgentLLMs()
+	close(release)
+
+	require.ErrorContains(t, <-errCh, "shutting down")
+	require.Equal(t, 1, len(mmBots.GetAllBots()), "EnsureBots must not replace bots after shutdown")
+	requireAgentShutdownIDs(t, builder, []string{"svc", "svc"})
 }
