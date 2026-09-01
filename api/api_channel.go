@@ -111,13 +111,23 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 		a.contextBuilder.WithLLMContextDefaultTools(c.Request.Context(), toolBot),
 	}
 
-	// If the channel is a DM/GM and we have a team ID from the client, use it for context
+	// If the channel is a DM/GM and we have a team ID from the client, use it for
+	// context, but only when the requesting user is a member of that team.
 	if (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup) && data.TeamID != "" {
-		team, teamErr := a.pluginAPI.Team.Get(data.TeamID)
-		if teamErr == nil && team != nil {
-			opts = append(opts, func(c *llm.Context) {
-				c.Team = team
-			})
+		isMember, memberErr := bots.TeamMemberActive(a.pluginAPI, data.TeamID, userID)
+		if memberErr != nil {
+			a.pluginAPI.Log.Warn("Unable to confirm team membership for channel analysis context",
+				"userID", userID,
+				"teamID", data.TeamID,
+				"error", memberErr.Error())
+		}
+		if isMember {
+			team, teamErr := a.pluginAPI.Team.Get(data.TeamID)
+			if teamErr == nil && team != nil {
+				opts = append(opts, func(c *llm.Context) {
+					c.Team = team
+				})
+			}
 		}
 	}
 

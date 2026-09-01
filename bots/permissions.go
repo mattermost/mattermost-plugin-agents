@@ -58,7 +58,9 @@ func (m *MMBots) checkUsageRestrictionsForChannel(bot *Bot, channel *model.Chann
 	return fmt.Errorf("unknown channel assistance level")
 }
 
-func teamMemberActive(client *pluginapi.Client, teamID, userID string) (bool, error) {
+// TeamMemberActive reports whether userID has a non-deleted membership in teamID.
+// A missing membership is reported as false rather than an error.
+func TeamMemberActive(client *pluginapi.Client, teamID, userID string) (bool, error) {
 	if client == nil {
 		return false, fmt.Errorf("team membership check requires plugin client")
 	}
@@ -85,7 +87,7 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 			return nil
 		}
 		for _, teamID := range cfg.TeamIDs {
-			isMember, err := teamMemberActive(client, teamID, requestingUserID)
+			isMember, err := TeamMemberActive(client, teamID, requestingUserID)
 			if err != nil {
 				return err
 			}
@@ -99,7 +101,7 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 			return fmt.Errorf("user blocked: %w", ErrUsageRestriction)
 		}
 		for _, teamID := range cfg.TeamIDs {
-			isMember, err := teamMemberActive(client, teamID, requestingUserID)
+			isMember, err := TeamMemberActive(client, teamID, requestingUserID)
 			if err != nil {
 				return err
 			}
