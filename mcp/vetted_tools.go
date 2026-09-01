@@ -296,7 +296,6 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 
 	// Reactions & emoji
 	"get_post_reactions",
-	"get_bulk_reactions",
 	"list_custom_emoji",
 	"search_custom_emoji",
 

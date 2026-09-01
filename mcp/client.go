@@ -544,8 +544,9 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 	// protocol version (2026-07-28 down to 2025-03-26) via a server/discover request,
 	// falling back to a legacy initialize request when the server does not support it.
 	streamableTransport := &mcp.StreamableClientTransport{
-		Endpoint:   serverConfig.BaseURL,
-		HTTPClient: httpClient,
+		Endpoint:             serverConfig.BaseURL,
+		HTTPClient:           httpClient,
+		DisableStandaloneSSE: true,
 	}
 	if oauthHandler != nil {
 		streamableTransport.OAuthHandler = oauthHandler

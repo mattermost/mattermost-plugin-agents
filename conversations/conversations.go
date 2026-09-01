@@ -200,6 +200,17 @@ func (c *Conversations) ProcessDMRequest(
 	llmCtx *llm.Context,
 	maxToolTurns int,
 ) (*DMStreamResult, error) {
+	return c.processDMRequest(ctx, convID, lm, llmCtx, maxToolTurns, nil)
+}
+
+func (c *Conversations) processDMRequest(
+	ctx stdcontext.Context,
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+	maxToolTurns int,
+	beforeProvider func(),
+) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
 
@@ -220,6 +231,9 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
+	if beforeProvider != nil {
+		beforeProvider()
+	}
 	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
 			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
