@@ -44,6 +44,10 @@ type Context struct {
 	BotServiceType     string
 	CustomInstructions string
 
+	// ToolAuthMode records the identity mode the tool catalog was built with
+	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
+	ToolAuthMode string
+
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]interface{}

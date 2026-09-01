@@ -44,6 +44,11 @@ func (p *noToolsTestMCPProvider) GetToolsForUser(context.Context, string) ([]llm
 	return p.tools, nil
 }
 
+func (p *noToolsTestMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	p.calls++
+	return p.tools, nil
+}
+
 type noToolsTestContextConfigProvider struct{}
 
 func (p *noToolsTestContextConfigProvider) GetServiceByID(string) (llm.ServiceConfig, bool) {

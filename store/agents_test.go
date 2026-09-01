@@ -43,6 +43,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ThinkingBudget:          10000,
 		StructuredOutputEnabled: true,
 		MaxToolTurns:            42,
+		UseServiceAccountAuth:   true,
 	}
 }
 
@@ -102,6 +103,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
 	assert.True(t, fetched.StructuredOutputEnabled)
 	assert.Equal(t, 42, fetched.MaxToolTurns)
+	assert.True(t, fetched.UseServiceAccountAuth)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -222,6 +224,7 @@ func TestAgentUpdate(t *testing.T) {
 	agent.ChannelIDs = []string{"ch-3"}
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
+	agent.UseServiceAccountAuth = false
 
 	require.NoError(t, s.UpdateAgent(agent))
 
@@ -238,6 +241,7 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Equal(t, []string{"ch-3"}, fetched.ChannelIDs)
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
+	assert.False(t, fetched.UseServiceAccountAuth)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)

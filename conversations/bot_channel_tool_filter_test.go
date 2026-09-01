@@ -56,6 +56,10 @@ func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, st
 	return p.tools, nil
 }
 
+func (p *channelFollowUpTestMCPToolProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+	return nil, nil
+}
+
 type channelFollowUpTestConfig struct {
 	enableChannelMentionToolCalling bool
 }

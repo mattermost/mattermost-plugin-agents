@@ -23,9 +23,11 @@ type ToolProvider interface {
 	GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.Tool
 }
 
-// MCPToolProvider provides MCP tools for a user
+// MCPToolProvider provides MCP tools for a user or for a service-account agent
 type MCPToolProvider interface {
 	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
+	// GetToolsForServiceAccount returns the catalog for a service-account agent acting as botUserID.
+	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
@@ -223,6 +225,17 @@ func sanitizeUserProfileField(s string) string {
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
+// isRemoteMCPLicensed reports whether the licensed remote-MCP feature is available.
+func (b *Builder) isRemoteMCPLicensed() bool {
+	return b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+}
+
+// UsesServiceAccountCatalog reports whether tool catalogs for this bot are built in
+// service-account mode; on an unlicensed server SA agents behave like normal agents.
+func (b *Builder) UsesServiceAccountCatalog(bot *bots.Bot) bool {
+	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.isRemoteMCPLicensed()
+}
+
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
 func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, userID string, forceConcrete bool) *llm.ToolStore {
 	// Check for nil bot, which is unexpected
@@ -236,6 +249,11 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		b.pluginAPI.Log.Error("Unexpected empty userID when getting tool store for user")
 		return llm.NewNoTools()
 	}
+
+	// useServiceAccount implies remoteMCPLicensed, so the license filter below
+	// never strips service account catalogs.
+	remoteMCPLicensed := b.isRemoteMCPLicensed()
+	useServiceAccount := b.UsesServiceAccountCatalog(bot)
 
 	// Check if tools are disabled for this bot
 	if bot.GetConfig().DisableTools {
@@ -261,7 +279,19 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		}
 
 		// Get tools from all connected servers
-		mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
+		if useServiceAccount {
+			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
+			botUserID := bot.BotUserID()
+			if botUserID == "" {
+				// Fail closed: no acting identity means no MCP catalog at all.
+				b.pluginAPI.Log.Error("Service account agent has no bot user ID; skipping MCP tools",
+					"bot_name", botCfg.Name, "bot_id", botCfg.ID)
+			} else {
+				mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForServiceAccount(ctx, botUserID)
+			}
+		} else {
+			mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
+		}
 
 		// Remote/external MCP servers are the licensed "MCP Support" feature.
 		// Without a license their tools are never supplied to the LLM: they
@@ -269,7 +299,6 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		// loading registry is built, so the model cannot see, load, or call
 		// them. Embedded Mattermost MCP tools are basic tool integrations
 		// and are not filtered.
-		remoteMCPLicensed := b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
 		if !remoteMCPLicensed {
 			mcpTools = filterMCPToolsByPredicate(mcpTools, func(tool llm.Tool) bool {
 				return !mcp.IsRemoteServerOrigin(tool.ServerOrigin)
@@ -278,8 +307,9 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 
 		// Per-agent MCP tool filtering: unless the agent is configured to pick up
 		// every MCP tool automatically, retain only tools listed in its allowlist.
-		// This runs AFTER admin policy (filterToolsByConfig inside GetToolsForUser)
-		// and BEFORE per-user/channel filtering and strict registry construction.
+		// This runs AFTER admin policy (filterToolsByConfig inside the MCP
+		// provider) and BEFORE per-user/channel filtering and strict registry
+		// construction.
 		if !botCfg.AutoEnableNewMCPTools {
 			mcpTools = llm.FilterMCPToolsByEnabledAllowlist(mcpTools, botCfg.EnabledMCPTools)
 		}
@@ -516,11 +546,7 @@ func (b *Builder) WithLLMContextParameters(params map[string]interface{}) llm.Co
 
 func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
-		var botUserID string
-		if mmbot := bot.GetMMBot(); mmbot != nil {
-			botUserID = mmbot.UserId
-		}
-		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, bot.BotUserID(), bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 		c.ToolCatalog.MCPDynamicToolLoading = bot.GetConfig().MCPDynamicToolLoading
 		c.ToolRuntime.MCPDynamicToolTelemetry = b.mcpDynamicToolTelemetry
 	}

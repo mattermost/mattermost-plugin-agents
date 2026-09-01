@@ -110,3 +110,35 @@ func TestOriginComparableKeyIPv6(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "http://[::1]", originComparableKey(u2))
 }
+
+// Origin normalization is covered by TestValidateResourceMetadataMatchesServerBaseURL;
+// this pins the nil handling and the comparison direction.
+func TestSameOrigin(t *testing.T) {
+	t.Parallel()
+
+	parse := func(raw string) *url.URL {
+		u, err := url.Parse(raw)
+		require.NoError(t, err)
+		return u
+	}
+
+	tests := []struct {
+		name string
+		a    *url.URL
+		b    *url.URL
+		want bool
+	}{
+		{name: "same origin with default port normalized", a: parse("https://example.com/mcp"), b: parse("https://example.com:443/other"), want: true},
+		{name: "different host", a: parse("https://trusted.example/mcp"), b: parse("https://evil.example/mcp"), want: false},
+		{name: "nil first", a: nil, b: parse("https://example.com"), want: false},
+		{name: "nil second", a: parse("https://example.com"), b: nil, want: false},
+		{name: "both nil", a: nil, b: nil, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, tt.want, sameOrigin(tt.a, tt.b))
+		})
+	}
+}

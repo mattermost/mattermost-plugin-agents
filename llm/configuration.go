@@ -150,6 +150,11 @@ type BotConfig struct {
 	// It defaults to true for omitted legacy config.
 	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
 
+	// UseServiceAccountAuth switches all MCP access for this agent to the service
+	// account identity (admin ServiceAccountHeaders for external servers, the bot
+	// user for embedded/plugin servers) instead of per-user OAuth.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`

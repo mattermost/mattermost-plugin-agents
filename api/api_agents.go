@@ -25,6 +25,10 @@ import (
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
+// errServiceAccountAuthRequiresAdmin is returned when a caller without
+// PermissionManageSystem tries to save an agent with the service account flag on.
+var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can save an agent with service account authentication enabled; turn the setting off to make other changes")
+
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
 
@@ -74,6 +78,7 @@ type CreateAgentRequest struct {
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -101,6 +106,7 @@ type UpdateAgentRequest struct {
 	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
 	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
 	Model                   string               `json:"model"`
 	EnableVision            bool                 `json:"enableVision"`
 	DisableTools            bool                 `json:"disableTools"`
@@ -169,43 +175,6 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	return true
 }
 
-// canManageAgent reports whether userID may update or delete cfg: agent admin, PermissionManageOthersAgent,
-// or (agent with empty CreatorID) PermissionManageSystem for migrated legacy bots.
-func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.IsAdmin(userID) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	if cfg.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
-		return true
-	}
-	return false
-}
-
-// canCreateAgent returns true if the user may create new agents via POST /agents.
-func canCreateAgent(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
-// canConfigureAgentServices reports whether userID may list services or fetch models (ManageOwnAgent, ManageOthersAgent, or ManageSystem).
-func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
 // loadPluginConfigForAgents loads plugin config; on failure it aborts with 500.
 func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
 	cfg, err := a.configStore.GetConfig()
@@ -259,6 +228,7 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 		EnabledMCPTools:         req.EnabledMCPTools,
 		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
 		MCPDynamicToolLoading:   req.MCPDynamicToolLoading,
+		UseServiceAccountAuth:   req.UseServiceAccountAuth,
 		Model:                   req.Model,
 		EnableVision:            req.EnableVision,
 		DisableTools:            req.DisableTools,
@@ -286,6 +256,7 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.EnabledMCPTools = req.EnabledMCPTools
 	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
 	cfg.MCPDynamicToolLoading = req.MCPDynamicToolLoading
+	cfg.UseServiceAccountAuth = req.UseServiceAccountAuth
 	cfg.Model = req.Model
 	cfg.EnableVision = req.EnableVision
 	cfg.DisableTools = req.DisableTools
@@ -345,6 +316,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 			return
 		}
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
 
@@ -496,6 +472,15 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
+	proposed := *cfg
+	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
+
+	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return
+	}
+
 	if req.usernameProvided && req.Username != cfg.Name {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
 		return
@@ -504,11 +489,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Snapshot before apply: applyAgentUpdateRequest replaces field values on
-	// cfg (it never mutates the slices in place), so a shallow copy is enough
-	// for the before/after field diff.
+	// Snapshot the stored config for the audit field diff, then adopt the
+	// already-applied proposed update (apply-then-compare ACL above).
 	prev := *cfg
-	displayNameChanged := applyAgentUpdateRequest(cfg, req)
+	cfg = &proposed
 
 	// Audit which fields the update changed — never their values, since
 	// customInstructions carries prompt content.

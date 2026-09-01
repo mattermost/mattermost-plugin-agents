@@ -20,7 +20,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns,
+	MaxToolTurns, UseServiceAccountAuth,
 	CreateAt, UpdateAt, DeleteAt`
 
 // mustMarshalSlice marshals a string slice to JSON, returning "[]" on nil/empty or error.
@@ -120,6 +120,7 @@ type agentRow struct {
 	ThinkingBudget          int    `db:"thinkingbudget"`
 	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
 	MaxToolTurns            int    `db:"maxtoolturns"`
+	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -147,6 +148,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		ThinkingBudget:          r.ThinkingBudget,
 		StructuredOutputEnabled: r.StructuredOutputEnabled,
 		MaxToolTurns:            r.MaxToolTurns,
+		UseServiceAccountAuth:   r.UseServiceAccountAuth,
 		CreateAt:                r.CreateAt,
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
@@ -191,9 +193,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns,
+			MaxToolTurns, UseServiceAccountAuth,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -219,6 +221,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
 		cfg.MaxToolTurns,
+		cfg.UseServiceAccountAuth,
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -345,8 +348,9 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			ThinkingBudget = $20,
 			StructuredOutputEnabled = $21,
 			MaxToolTurns = $22,
-			UpdateAt = $23
-		WHERE ID = $24 AND DeleteAt = 0`,
+			UseServiceAccountAuth = $23,
+			UpdateAt = $24
+		WHERE ID = $25 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -369,6 +373,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
 		cfg.MaxToolTurns,
+		cfg.UseServiceAccountAuth,
 		cfg.UpdateAt,
 		cfg.ID,
 	)

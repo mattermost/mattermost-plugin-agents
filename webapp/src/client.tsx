@@ -34,6 +34,7 @@ export type UserMCPServerInfo = {
     needsOAuth: boolean;
     authEmail?: string;
     authURL?: string;
+    serviceAccountConfigured: boolean;
     tools: UserMCPToolInfo[];
 };
 export type UserMCPToolsResponse = {
@@ -759,8 +760,19 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(): Promise<UserMCPToolsResponse> {
-    const url = `${baseRoute()}/mcp/tools`;
+export async function getUserMCPTools(opts?: {
+    agentId?: string;
+    serviceAccount?: boolean;
+}): Promise<UserMCPToolsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.serviceAccount) {
+        params.set('catalog', 'service_account');
+    }
+    if (opts?.agentId) {
+        params.set('agent_id', opts.agentId);
+    }
+    const query = params.toString();
+    const url = `${baseRoute()}/mcp/tools${query ? `?${query}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));

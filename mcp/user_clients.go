@@ -42,6 +42,9 @@ type UserClients struct {
 	// user client is cached; otherwise callers only see those errors once (first
 	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
+	// serviceAccount marks a service-account bag: userID is the acting bot's user ID
+	// and oauthManager is nil.
+	serviceAccount bool
 }
 
 type userClientSnapshot struct {
@@ -60,6 +63,14 @@ func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuth
 	}
 }
 
+// newServiceAccountClients creates a client bag for service-account mode acting as
+// botUserID; it has no OAuthManager, so no OAuth flow can occur.
+func newServiceAccountClients(botUserID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	userClients := NewUserClients(botUserID, log, nil, httpClient, toolsCache)
+	userClients.serviceAccount = true
+	return userClients
+}
+
 // ConnectToRemoteServers initializes connections to remote MCP servers.
 func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
 	if len(servers) == 0 {
@@ -73,6 +84,14 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 	for _, serverConfig := range servers {
 		if serverConfig.BaseURL == "" {
 			c.log.Warn("Skipping MCP server with empty BaseURL", "serverID", serverConfig.Name)
+			continue
+		}
+
+		// Fail closed: no service account credential means the server is excluded,
+		// never a fallback to user OAuth.
+		if c.serviceAccount && !ServerAvailableForServiceAccount(serverConfig) {
+			c.log.Debug("Skipping MCP server without service account headers in service account mode",
+				"userID", c.userID, "serverID", serverConfig.Name)
 			continue
 		}
 
@@ -154,7 +173,14 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, se
 
 // connectToServer establishes a connection to a single server
 func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig, forceRefresh bool) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
+	serverClient, err := newClient(ctx, c.userID, serverConfig, clientParams{
+		log:            c.log,
+		oauthManager:   c.oauthManager,
+		httpClient:     c.httpClient,
+		toolsCache:     c.toolsCache,
+		forceRefresh:   forceRefresh,
+		serviceAccount: c.serviceAccount,
+	})
 	if err != nil {
 		return err
 	}
