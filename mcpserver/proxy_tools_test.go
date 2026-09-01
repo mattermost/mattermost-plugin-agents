@@ -39,7 +39,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *
 	}
 	streamable := gosdkmcp.NewStreamableHTTPHandler(
 		func(*http.Request) *gosdkmcp.Server { return srv },
-		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: true},
 	)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if sawUserIDOut != nil {

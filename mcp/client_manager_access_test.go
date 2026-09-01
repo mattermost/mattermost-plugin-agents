@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 
@@ -355,4 +356,166 @@ func TestCreateAndStoreUserClientSkipsDeniedServers(t *testing.T) {
 	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false, map[string]bool{"http://127.0.0.1:1": true})
 	require.NotNil(t, userClients)
 	assert.Nil(t, mcpErrors, "a denied server must never be connected to, so it can produce no error artifacts")
+}
+
+func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker ServerAccessChecker, httpClient *http.Client) *ClientManager {
+	t.Helper()
+	mockAPI := &plugintest.API{}
+	setupTestLogger(mockAPI)
+	client := pluginapi.NewClient(mockAPI, nil)
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+	return &ClientManager{
+		log:           client.Log,
+		config:        Config{Servers: servers},
+		clients:       make(map[string]*UserClients),
+		activity:      make(map[string]time.Time),
+		httpClient:    httpClient,
+		accessChecker: checker,
+	}
+}
+
+func hasToolFromOrigin(tools []llm.Tool, origin string) bool {
+	for _, tool := range tools {
+		if tool.ServerOrigin == origin {
+			return true
+		}
+	}
+	return false
+}
+
+func TestUnconnectedAllowedRemotes(t *testing.T) {
+	const (
+		originA = "https://mcp-a.example.com"
+		originB = "https://mcp-b.example.com"
+		originC = "https://mcp-c.example.com"
+	)
+	client := NewUserClients("user-1", newTestLogService(), nil, http.DefaultClient, nil)
+	client.clients["Already"] = &Client{}
+
+	m := &ClientManager{
+		config: Config{
+			Servers: []ServerConfig{
+				{Name: "A", Enabled: true, BaseURL: originA},
+				{Name: "Already", Enabled: true, BaseURL: originB},
+				{Name: "Disabled", Enabled: false, BaseURL: originC},
+				{Name: "EmptyURL", Enabled: true, BaseURL: ""},
+				{Name: "Denied", Enabled: true, BaseURL: originC},
+			},
+		},
+	}
+
+	tests := []struct {
+		name      string
+		denied    map[string]bool
+		wantNames []string
+	}{
+		{
+			name:      "skips connected, disabled, empty URL, and denied origins",
+			denied:    map[string]bool{originC: true},
+			wantNames: []string{"A"},
+		},
+		{
+			name:      "nil denied origins still skips already connected",
+			wantNames: []string{"A", "Denied"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := m.unconnectedAllowedRemotes(client, tt.denied)
+			var names []string
+			for _, server := range got {
+				names = append(names, server.Name)
+			}
+			assert.Equal(t, tt.wantNames, names)
+		})
+	}
+}
+
+func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
+	ctx := context.Background()
+	const userID = "user-1"
+	const remoteName = "RemoteA"
+
+	tests := []struct {
+		name              string
+		realMCP           bool
+		wantToolAfter     bool
+		wantErrorsAfter   bool
+		thenDenyDropsTool bool
+	}{
+		{
+			name:              "deny then allow connects remote without refresh",
+			realMCP:           true,
+			wantToolAfter:     true,
+			thenDenyDropsTool: true,
+		},
+		{
+			name:            "deny then allow stores connect errors on cache hit",
+			wantErrorsAfter: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			origin := "http://127.0.0.1:1"
+			var httpClient *http.Client
+			if tt.realMCP {
+				httpServer := startStreamableMCPServer(t, newTestMCPServer(0, "remote_tool"))
+				origin = httpServer.URL
+				httpClient = httpServer.Client()
+			}
+
+			checker := &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}}
+			m := newRemoteAccessTestManager(t, []ServerConfig{{
+				ID: accessDeniedID, Name: remoteName, Enabled: true, BaseURL: origin,
+			}}, checker, httpClient)
+			t.Cleanup(func() {
+				if uc := m.clients[userID]; uc != nil {
+					uc.Close()
+				}
+			})
+
+			first := m.GetUserToolsAccess(ctx, userID)
+			assert.False(t, hasToolFromOrigin(first.Tools, origin))
+			assert.Nil(t, first.Errors)
+			cached := m.clients[userID]
+			require.NotNil(t, cached)
+			assert.False(t, cached.hasClient(remoteName))
+
+			stillDenied := m.GetUserToolsAccess(ctx, userID)
+			assert.False(t, hasToolFromOrigin(stillDenied.Tools, origin))
+			assert.Nil(t, stillDenied.Errors)
+			assert.False(t, cached.hasClient(remoteName))
+			assert.Same(t, cached, m.clients[userID])
+
+			checker.denied = map[string]bool{}
+			require.Len(t, m.unconnectedAllowedRemotes(cached, m.deniedExternalOrigins(ctx, userID, nil)), 1)
+
+			allowed := m.GetUserToolsAccess(ctx, userID)
+			assert.Same(t, cached, m.clients[userID], "RefreshUserToolsAccess must not be required")
+			if tt.wantToolAfter {
+				assert.True(t, hasToolFromOrigin(allowed.Tools, origin))
+				assert.True(t, cached.hasClient(remoteName))
+				assert.Nil(t, allowed.Errors)
+			}
+			if tt.wantErrorsAfter {
+				require.NotNil(t, allowed.Errors)
+				assert.NotEmpty(t, allowed.Errors.Errors)
+				assert.False(t, cached.hasClient(remoteName))
+			}
+
+			if !tt.thenDenyDropsTool {
+				return
+			}
+
+			checker.denied = map[string]bool{accessDeniedID: true}
+			deniedAgain := m.GetUserToolsAccess(ctx, userID)
+			assert.False(t, hasToolFromOrigin(deniedAgain.Tools, origin))
+			assert.True(t, cached.hasClient(remoteName), "allow→deny filters tools without disconnecting")
+			assert.Same(t, cached, m.clients[userID])
+		})
+	}
 }

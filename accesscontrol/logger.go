@@ -3,8 +3,7 @@
 
 package accesscontrol
 
-// Logger is the minimal logging surface this package needs; satisfied by
-// *pluginapi.LogService. A nil Logger disables logging (tests).
+// Logger is satisfied by *pluginapi.LogService. A nil Logger disables logging (tests).
 type Logger interface {
 	Debug(message string, keyValuePairs ...any)
 	Error(message string, keyValuePairs ...any)

@@ -300,7 +300,8 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	}
 	// The Anthropic provider reads cache_control from ExtraParams on the
 	// Responses path (there is no typed field on ResponsesParameters).
-	if b.promptCachingEnabled() {
+	fallbacks := b.requestFallbacks(request)
+	if b.promptCachingEnabledFor(fallbacks) {
 		params.ExtraParams = map[string]any{
 			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
 		}
@@ -308,7 +309,7 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
-	req.Fallbacks = b.fallbacks
+	req.Fallbacks = fallbacks
 
 	return req, nil
 }

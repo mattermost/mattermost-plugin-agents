@@ -66,8 +66,10 @@ type LLM struct {
 	useResponsesAPI bool
 
 	// fallbacks is attached to every outgoing request so Bifrost retries with
-	// alternative providers when the primary fails.
-	fallbacks []schemas.Fallback
+	// alternative providers when the primary fails. fallbackServiceIDs is
+	// parallel and used to prefix-filter the chain per requesting user.
+	fallbacks          []schemas.Fallback
+	fallbackServiceIDs []string
 
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
@@ -168,6 +170,7 @@ func New(cfg Config) (*LLM, error) {
 	}
 
 	var fallbacks []schemas.Fallback
+	var fallbackServiceIDs []string
 	for _, fb := range cfg.Fallbacks {
 		if fb.APIKey != "" {
 			redactKeys = append(redactKeys, fb.APIKey)
@@ -205,6 +208,7 @@ func New(cfg Config) (*LLM, error) {
 			Provider: name,
 			Model:    fb.DefaultModel,
 		})
+		fallbackServiceIDs = append(fallbackServiceIDs, fb.ID)
 	}
 
 	client, err := newBifrostClient(account, redactKeys...)
@@ -232,6 +236,7 @@ func New(cfg Config) (*LLM, error) {
 		thinkingBudget:             cfg.ThinkingBudget,
 		useResponsesAPI:            cfg.UseResponsesAPI,
 		fallbacks:                  fallbacks,
+		fallbackServiceIDs:         fallbackServiceIDs,
 		providerFileDownloadRoutes: providerFileDownloadRoutes,
 	}, nil
 }
@@ -562,16 +567,49 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 // primary and every fallback are Anthropic; a mixed chain would 400 the
 // fallback request.
 func (b *LLM) promptCachingEnabled() bool {
+	return b.promptCachingEnabledFor(b.fallbacks)
+}
+
+func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
 	if b.provider != schemas.Anthropic {
 		return false
 	}
-	for _, fb := range b.fallbacks {
+	for _, fb := range fallbacks {
 		if fb.Provider != schemas.Anthropic &&
 			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
 			return false
 		}
 	}
 	return true
+}
+
+// requestFallbacks returns the fallback chain to attach to this request.
+// RestrictFallbacks truncates at the first hop whose service ID is not in
+// AllowedFallbackServiceIDs so a denied hop is never skipped over.
+func (b *LLM) requestFallbacks(request llm.CompletionRequest) []schemas.Fallback {
+	if !request.RestrictFallbacks {
+		return b.fallbacks
+	}
+
+	allowed := make(map[string]struct{}, len(request.AllowedFallbackServiceIDs))
+	for _, id := range request.AllowedFallbackServiceIDs {
+		if id != "" {
+			allowed[id] = struct{}{}
+		}
+	}
+
+	var out []schemas.Fallback
+	for i, fallback := range b.fallbacks {
+		var id string
+		if i < len(b.fallbackServiceIDs) {
+			id = b.fallbackServiceIDs[i]
+		}
+		if _, ok := allowed[id]; !ok {
+			break
+		}
+		out = append(out, fallback)
+	}
+	return out
 }
 
 // isNativeToolEnabled checks if a native tool is enabled by name.

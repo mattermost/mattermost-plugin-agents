@@ -76,12 +76,10 @@ type MMBots struct {
 	forceRefresh bool
 }
 
-// New builds the bot registry. accessChecker must be non-nil; tests wanting
-// no-policies-anywhere decision behavior pass an accesscontrol.New with the
-// PassthroughClient.
+// New builds the bot registry. accessChecker must be non-nil; tests that want
+// no-policies-anywhere pass accesscontrol.New with PassthroughClient.
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, accessChecker *accesscontrol.Checker, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
-	// Enforce the documented invariant here: a nil checker would otherwise
-	// panic much later, inside a permission check on a live request path.
+	// A nil checker would panic later inside a live permission check.
 	if accessChecker == nil {
 		panic("bots: New requires a non-nil access checker")
 	}
@@ -464,6 +462,8 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	if err != nil {
 		return nil, nil, err
 	}
+
+	result = newFallbackAccessLLM(result, b, serviceConfig.ID)
 
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)

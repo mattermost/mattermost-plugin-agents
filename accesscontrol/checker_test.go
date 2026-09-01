@@ -51,7 +51,6 @@ func (s *stubDecisionClient) EvaluateAccessRequest(_ context.Context, userID, re
 	return s.decision, nil
 }
 
-// Decision shorthands for the tables below.
 func allowDecision() *model.AccessDecision { return &model.AccessDecision{Decision: true} }
 func denyDecision() *model.AccessDecision  { return &model.AccessDecision{Decision: false} }
 
@@ -154,7 +153,6 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
 	evalErr := errors.New("pdp exploded")
 
-	// legacy check variants shared by the table rows
 	const (
 		legacyNil = iota
 		legacyPass
@@ -379,13 +377,8 @@ func TestEvaluateInvalidUserIDDenies(t *testing.T) {
 
 // --- IsAvailable probe (CEL readiness path) + TTL cache ---
 
-// The probe must report available in exactly one server state: enterprise,
-// licensed for Enterprise Advanced, with ABAC enabled. Each row below is what
-// GetAccessControlVisualAST returns in one state, read off the platform:
-// App.ExpressionToVisualAST answers 501 when the access-control service is
-// absent, the enterprise service's readiness gate answers 501 unlicensed and 406
-// with ABAC disabled, and past that gate a "true" expression is special-cased to
-// an empty condition set — so only the ready state yields a non-nil AST.
+// Available only when enterprise, licensed, and ABAC-enabled. Rows are what
+// GetAccessControlVisualAST returns in each platform state.
 func TestIsAvailable(t *testing.T) {
 	noService := model.NewAppError("ExpressionToVisualAST", "app.pap.expression_to_visual_ast.app_error", nil, "Policy Administration Point is not initialized", http.StatusNotImplemented)
 	unlicensed := model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)
@@ -418,11 +411,9 @@ func TestIsAvailable(t *testing.T) {
 			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
 			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 1)
 
-			// Second call within the TTL is served from cache.
 			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
 			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 1)
 
-			// Expiring the cache re-probes.
 			c.availabilityChecked = c.availabilityChecked.Add(-2 * availabilityCacheTTL)
 			assert.Equal(t, tt.want, c.IsAvailable(context.Background(), actingUserID))
 			api.AssertNumberOfCalls(t, "GetAccessControlVisualAST", 2)
@@ -466,10 +457,7 @@ func TestValidateAgentWrite(t *testing.T) {
 		unknownOrigin  = "https://mcp-unknown-no-id.example.com"
 	)
 
-	// Availability-probe variants for the attribute-based rows: the probe is the
-	// CEL readiness path (GetAccessControlVisualAST for a trivial expression), so
-	// those rows inject a plugintest mock; the rest keep papi = nil (probe never
-	// runs).
+	// Attribute-based rows mock the CEL readiness probe; others leave papi nil.
 	const (
 		probeNone = iota
 		probeAvailable

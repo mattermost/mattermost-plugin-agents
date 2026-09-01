@@ -1,11 +1,10 @@
 // spec: .planning/phase-4/PLAN.md — per-channel agent auto-reply (API -> trigger -> streamed reply)
 // seed: tests/seed.spec.ts
 //
-// Auto-reply is CONFIGURED VIA THE REST API rather than the channel-settings tab UI:
-// the e2e harness runs mattermost-enterprise-edition:release-11.9 (helpers/mmcontainer.ts),
-// and registerChannelSettingsTab only exists on servers >= 11.10, so the phase-3 tab does
-// not register here. The tab component is covered by webapp unit tests; this spec covers
-// the end-to-end contract. Run locally with MM_IMAGE=...release-11.10 to see the tab.
+// Auto-reply is configured via the REST API rather than the channel-settings tab UI.
+// The tab component is covered by webapp unit tests; this spec covers the
+// end-to-end contract. On servers < 11.10 the tab does not register
+// (registerChannelSettingsTab is missing); REST endpoints remain available.
 
 import { test, expect } from '@playwright/test';
 import type { Client4 } from '@mattermost/client';

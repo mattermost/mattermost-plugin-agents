@@ -18,38 +18,32 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// ErrAccessDenied is wrapped by all deny returns of the decision tables.
+// ErrAccessDenied is wrapped by every deny return.
 var ErrAccessDenied = errors.New("access denied by policy")
 
-// ErrABACUnavailable is returned by ValidateAgentWrite when an agent is being
-// saved into attribute-based mode while ABAC is not available on the server.
+// ErrABACUnavailable is returned when saving an agent as attribute-based while ABAC is not available.
 var ErrABACUnavailable = errors.New("attribute-based access requires Attribute-Based Access Control to be licensed and enabled on this server")
 
-// availabilityCacheTTL caps how often the availability probe hits the PAP.
 const availabilityCacheTTL = 30 * time.Second
 
-// Checker gates end-user access to agents, services, and external MCP servers,
-// and hosts the PAP proxying (pap.go).
+// Checker is the plugin-side PEP; PAP methods live here so api never holds a raw plugin.API.
 type Checker struct {
 	client DecisionClient
 	papi   plugin.API // PAP calls (pap.go); nil in decision-only tests
 	log    Logger
 
-	// mcpIDsByOrigin resolves MCP server origins (remote, embedded, plugin) to
-	// stable IDs for ValidateAgentWrite.
-	mcpIDsByOrigin func() map[string]string
+	mcpIDsByOrigin func() map[string]string // origin → stable ID for ValidateAgentWrite
 
 	availabilityMu      sync.Mutex
 	availabilityValue   bool
 	availabilityChecked time.Time
 }
 
-// NoMCPServerIDs is an mcpIDsByOrigin resolver for wirings without external
-// MCP servers (tests, passthrough checkers).
+// NoMCPServerIDs is the empty origin→ID resolver (tests, passthrough).
 func NoMCPServerIDs() map[string]string { return nil }
 
 // New builds a Checker. papi may be nil in decision-only tests. mcpIDsByOrigin
-// must be non-nil (use NoMCPServerIDs); a nil resolver is a wiring bug.
+// must be non-nil (use NoMCPServerIDs).
 func New(client DecisionClient, papi plugin.API, mcpIDsByOrigin func() map[string]string, log Logger) *Checker {
 	if mcpIDsByOrigin == nil {
 		panic("accesscontrol: New requires a non-nil MCP server ID resolver (use NoMCPServerIDs)")
@@ -67,12 +61,8 @@ func New(client DecisionClient, papi plugin.API, mcpIDsByOrigin func() map[strin
 // dereferencing nil inside an access gate.
 var errNoDecision = errors.New("access control evaluation returned no decision")
 
-// errInvalidSubject reports a caller that supplied a user ID no policy can be
-// evaluated against.
 var errInvalidSubject = errors.New("access control evaluation requires a valid user ID")
 
-// evaluate runs one decision call.
-//
 // A resource ID that is not policy-addressable (a legacy UUID bot ID, or a
 // caller-chosen service/MCP ID) is a designed case: no policy can be stored
 // against it, so it short-circuits to no_policy and the caller applies its own
@@ -101,10 +91,9 @@ func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID
 	return decision, nil
 }
 
-// CanUseAgent gates end-user use of an agent, combining the resource policy
-// with the agent's UserAccessLevel. legacyCheck supplies the legacy
-// allow/block outcome; attribute-based mode never invokes it. Any failure to
-// obtain a decision denies unconditionally, in every agent mode.
+// CanUseAgent combines the resource policy with cfg.UserAccessLevel.
+// Attribute-based mode never invokes legacyCheck. Any failure to obtain a
+// decision denies in every agent mode.
 func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotConfig, legacyCheck func() error) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "abac can_use_agent", trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -138,19 +127,15 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 	if !decision.Decision {
 		return deny()
 	}
-	// An allow hands the verdict to the agent's own access level. Both kinds of
-	// allow land here: an explicit grant, and the vacuous allow reporting that
-	// no policy governs this agent — which is the deliberate fail-open for
-	// attribute-based agents. The span attribute keeps the two apart.
+	// Vacuous no_policy allow is the deliberate fail-open for attribute-based
+	// agents; explicit grants land here too. The span attribute keeps them apart.
 	if attributeBased {
 		return nil
 	}
 	return runLegacy()
 }
 
-// canUseResource is the shared service/MCP decision table: an allow (explicit,
-// or the vacuous allow meaning no policy governs the resource) permits use;
-// a deny or any failure to obtain a decision denies.
+// canUseResource: allow (including no_policy) permits; deny or evaluation failure denies.
 func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resourceType, resourceID string) error {
 	ctx, span := telemetry.Tracer().Start(ctx, spanName, trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -180,43 +165,24 @@ func (c *Checker) canUseResource(ctx context.Context, spanName, userID, resource
 	return nil
 }
 
-// CanUseService gates end-user use of an LLM service (by stable service ID).
 func (c *Checker) CanUseService(ctx context.Context, userID, serviceID string) error {
 	return c.canUseResource(ctx, "abac can_use_service", userID, ResourceTypeService, serviceID)
 }
 
-// CanUseMCPServer gates end-user visibility/use of an external MCP server
-// (by stable ID).
 func (c *Checker) CanUseMCPServer(ctx context.Context, userID, serverID string) error {
 	return c.canUseResource(ctx, "abac can_use_mcp_server", userID, ResourceTypeMCP, serverID)
 }
 
-// availabilityProbeExpression is the expression the availability probe sends.
-// Enterprise special-cases it to "no conditions" without touching the CEL
-// engine, so it is the cheapest expression to ask about — the probe still pays
-// for the RPC round trip, the scope check, and an acting-user lookup, which is
-// what the TTL cache is for.
+// Enterprise special-cases "true" to "no conditions" without touching the CEL
+// engine — cheapest expression to ask about. The probe still pays for the RPC,
+// scope check, and acting-user lookup, which is what the TTL cache is for.
 const availabilityProbeExpression = "true"
 
-// IsAvailable probes whether the ABAC PAP is usable, on behalf of actingUserID:
-// one GetAccessControlVisualAST for a trivial expression. Only a non-nil AST
-// with no error means available — that is reachable solely past the server's
-// readiness gate, so open-core (no access-control service), unlicensed, and
-// ABAC-disabled servers all report unavailable, as does the RPC client's silent
-// (nil, nil) transport failure. The result is cached for availabilityCacheTTL
-// and gates both the status endpoint (ABAC UI) and ValidateAgentWrite.
+// IsAvailable reports whether the ABAC PAP is usable. Only a non-nil VisualAST
+// means available (past the server's readiness gate). Cached for availabilityCacheTTL.
 //
-// Probing a policy read instead is NOT sound: the server resolves plugin policy
-// ownership against a raw store read and answers an absent row with its uniform
-// 404 before consulting the license or the ABAC config, and its access-control
-// service is registered on any enterprise binary whatever the license. An
-// unlicensed server would therefore answer 404 and look available, offering
-// policy UI whose every save fails and — worse — letting attribute-based agents
-// through ValidateAgentWrite to fail open for everyone.
-//
-// A probe needs an acting user because the server validates one on every CEL
-// call. Availability itself is server-wide (license and config), so the cached
-// result is shared across users; both call sites pass a request's own user.
+// A policy-read probe is unsound: the server 404s an absent row before consulting
+// license or ABAC config, so an unlicensed enterprise binary would look available.
 func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	_, span := telemetry.Tracer().Start(ctx, "abac is_available")
 	defer span.End()
@@ -243,13 +209,10 @@ func (c *Checker) IsAvailable(ctx context.Context, actingUserID string) bool {
 	return available
 }
 
-// ValidateAgentWrite validates an agent create/update: it rejects
-// UserAccessLevelAttributeBased when ABAC is unavailable, and rejects
-// newly-assigned service/MCP references the acting user may not use. prev is
-// the pre-update config (nil on create); only changed assignments are checked,
-// so unrelated edits are never blocked by a since-tightened policy.
-// AutoEnableNewMCPTools skips write-time MCP validation — runtime per-user
-// filtering is the gate.
+// ValidateAgentWrite rejects attribute-based mode when ABAC is unavailable, and
+// newly-assigned service/MCP refs the acting user may not use. prev is nil on
+// create; only changed assignments are checked. AutoEnableNewMCPTools skips
+// write-time MCP checks — runtime per-user filtering is the gate.
 func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, cfg, prev *llm.BotConfig) error {
 	if cfg.UserAccessLevel == llm.UserAccessLevelAttributeBased && !c.IsAvailable(ctx, actingUserID) {
 		return ErrABACUnavailable
@@ -297,8 +260,6 @@ func (c *Checker) ValidateAgentWrite(ctx context.Context, actingUserID string, c
 	return nil
 }
 
-// newlyReferencedMCPOrigins returns the distinct enabled-MCP-tool origins in
-// cfg not already referenced by prev (all of them on create), in first-appearance order.
 func newlyReferencedMCPOrigins(cfg, prev *llm.BotConfig) []string {
 	prevOrigins := make(map[string]struct{})
 	if prev != nil {
