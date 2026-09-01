@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -113,10 +114,10 @@ func (s *Service) Get(channelID string) (*Setting, error) {
 
 // Set validates and persists an auto-reply setting for a channel, updates the
 // local cache, and broadcasts an invalidation to peer nodes. mode must be
-// ModeRootPosts or ModeThreads; turning auto-reply off is Delete, not
-// Set(ModeOff). Validation failures wrap ErrValidation. Returns the stored
-// setting (with UpdateAt populated).
-func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Setting, error) {
+// ModeRootPosts, ModeThreads, or ModeAmbient; turning auto-reply off is
+// Delete, not Set(ModeOff). Validation failures wrap ErrValidation. Returns
+// the stored setting (with UpdateAt populated).
+func (s *Service) Set(channelID, botID string, mode Mode, updatedBy, instructions, analysisModel string) (*Setting, error) {
 	if channelID == "" {
 		return nil, fmt.Errorf("channel ID is required: %w", ErrValidation)
 	}
@@ -125,6 +126,12 @@ func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Se
 	}
 	if !mode.IsStorable() {
 		return nil, fmt.Errorf("mode %q is not a storable auto-reply mode: %w", mode, ErrValidation)
+	}
+	if utf8.RuneCountInString(instructions) > MaxInstructionsRunes {
+		return nil, fmt.Errorf("instructions exceed %d runes: %w", MaxInstructionsRunes, ErrValidation)
+	}
+	if len(analysisModel) > MaxAnalysisModelLen || utf8.RuneCountInString(analysisModel) > MaxAnalysisModelLen {
+		return nil, fmt.Errorf("analysis_model exceeds %d characters: %w", MaxAnalysisModelLen, ErrValidation)
 	}
 
 	bot := s.bots.GetBotByID(botID)
@@ -145,11 +152,13 @@ func (s *Service) Set(channelID, botID string, mode Mode, updatedBy string) (*Se
 	}
 
 	setting := Setting{
-		ChannelID: channelID,
-		BotID:     botID,
-		Mode:      mode,
-		UpdatedBy: updatedBy,
-		UpdateAt:  model.GetMillis(),
+		ChannelID:     channelID,
+		BotID:         botID,
+		Mode:          mode,
+		UpdatedBy:     updatedBy,
+		UpdateAt:      model.GetMillis(),
+		Instructions:  instructions,
+		AnalysisModel: analysisModel,
 	}
 
 	s.writeMu.Lock()

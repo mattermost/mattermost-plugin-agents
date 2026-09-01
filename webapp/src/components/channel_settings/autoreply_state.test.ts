@@ -9,6 +9,7 @@ import {
     getChannelAutoReplyDraft,
     handleChannelAutoReplyUpdated,
     normalizeChannelAutoReply,
+    parseChannelAutoReplyMode,
     setChannelAutoReplyDraft,
     setChannelAutoReplySaveError,
     subscribeChannelAutoReplyDraft,
@@ -56,10 +57,20 @@ function makeBot(id: string, overrides: Partial<LLMBot> = {}): LLMBot {
 
 const CHANNEL_ID = 'chan1';
 
+function settings(overrides: Partial<ChannelAutoReplySettings> = {}): ChannelAutoReplySettings {
+    return {
+        bot_id: 'alpha',
+        mode: 'root_posts',
+        instructions: '',
+        analysis_model: '',
+        ...overrides,
+    };
+}
+
 function makeDraft(overrides: Partial<{channelId: string; saved: ChannelAutoReplySettings; saveError: 'forbidden' | 'no_agent' | 'generic' | null}> = {}) {
     return {
         channelId: CHANNEL_ID,
-        saved: {bot_id: 'alpha', mode: 'root_posts'} as ChannelAutoReplySettings,
+        saved: settings(),
         saveError: null,
         ...overrides,
     };
@@ -136,6 +147,21 @@ describe('draft store', () => {
     });
 });
 
+describe('parseChannelAutoReplyMode', () => {
+    test.each([
+        {raw: 'off', want: 'off'},
+        {raw: 'root_posts', want: 'root_posts'},
+        {raw: 'threads', want: 'threads'},
+        {raw: 'ambient', want: 'ambient'},
+        {raw: 'banana', want: 'off'},
+        {raw: '', want: 'off'},
+        // eslint-disable-next-line no-undefined
+        {raw: undefined, want: 'off'},
+    ])('maps $raw to $want', ({raw, want}) => {
+        expect(parseChannelAutoReplyMode(raw)).toBe(want);
+    });
+});
+
 describe('normalizeChannelAutoReply', () => {
     const defaultBot = makeBot('def', {isDefault: true});
     const other = makeBot('other');
@@ -152,37 +178,38 @@ describe('normalizeChannelAutoReply', () => {
     });
 
     test.each([
-        {mode: 'root_posts'},
-        {mode: 'threads'},
-        {mode: 'off'},
+        {mode: 'root_posts' as const},
+        {mode: 'threads' as const},
+        {mode: 'off' as const},
+        {mode: 'ambient' as const},
     ])('keeps the known mode $mode', ({mode}) => {
-        const normalized = normalizeChannelAutoReply({bot_id: 'other', mode} as ChannelAutoReplySettings, bots, CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: 'other', mode}), bots, CHANNEL_ID);
         expect(normalized.mode).toBe(mode);
     });
 
     test('keeps the saved bot when it is available in the channel', () => {
-        const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'threads'}, bots, CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: 'other', mode: 'threads'}), bots, CHANNEL_ID);
         expect(normalized.bot_id).toBe('other');
     });
 
     test('falls back to the default agent when the saved bot no longer exists', () => {
-        const normalized = normalizeChannelAutoReply({bot_id: 'deleted', mode: 'threads'}, bots, CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: 'deleted', mode: 'threads'}), bots, CHANNEL_ID);
         expect(normalized.bot_id).toBe('def');
     });
 
     test('falls back to the default agent when the saved bot is filtered out of the channel', () => {
         const blocked = makeBot('blocked', {channelAccessLevel: ChannelAccessLevel.Allow, channelIDs: ['some-other-channel']});
-        const normalized = normalizeChannelAutoReply({bot_id: 'blocked', mode: 'threads'}, [blocked, defaultBot], CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: 'blocked', mode: 'threads'}), [blocked, defaultBot], CHANNEL_ID);
         expect(normalized.bot_id).toBe('def');
     });
 
     test('falls back to the first agent when no default exists', () => {
-        const normalized = normalizeChannelAutoReply({bot_id: 'deleted', mode: 'threads'}, [other], CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: 'deleted', mode: 'threads'}), [other], CHANNEL_ID);
         expect(normalized.bot_id).toBe('other');
     });
 
     test('resolves the default agent when bot_id is unset', () => {
-        const normalized = normalizeChannelAutoReply({bot_id: '', mode: 'off'}, bots, CHANNEL_ID);
+        const normalized = normalizeChannelAutoReply(settings({bot_id: '', mode: 'off'}), bots, CHANNEL_ID);
         expect(normalized.bot_id).toBe('def');
     });
 
@@ -192,20 +219,50 @@ describe('normalizeChannelAutoReply', () => {
         expect(normalized.bot_id).toBe('def');
     });
 
-    test('returns an empty bot_id when no agents are available in the channel', () => {
-        const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'threads'}, [], CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: '', mode: 'threads'});
+    test('returns an empty bot_id when no agents are available in the channel, preserving extras', () => {
+        const normalized = normalizeChannelAutoReply(settings({
+            bot_id: 'other',
+            mode: 'threads',
+            instructions: 'keep me',
+            analysis_model: 'gpt-4.1',
+        }), [], CHANNEL_ID);
+        expect(normalized).toEqual({
+            bot_id: '',
+            mode: 'threads',
+            instructions: 'keep me',
+            analysis_model: 'gpt-4.1',
+        });
     });
 
     test('preserves the saved bot (while still validating the mode) when the bot list is unknown', () => {
         const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'banana'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: 'other', mode: 'off'});
+        expect(normalized).toEqual({bot_id: 'other', mode: 'off', instructions: '', analysis_model: ''});
     });
 
     test('tolerates a missing bot_id when the bot list is unknown', () => {
         // eslint-disable-next-line no-undefined
         const normalized = normalizeChannelAutoReply({bot_id: undefined, mode: 'threads'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: '', mode: 'threads'});
+        expect(normalized).toEqual({bot_id: '', mode: 'threads', instructions: '', analysis_model: ''});
+    });
+
+    test('fills empty extras when instructions and analysis_model are missing', () => {
+        const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'ambient'} as unknown as ChannelAutoReplySettings, bots, CHANNEL_ID);
+        expect(normalized).toEqual({bot_id: 'other', mode: 'ambient', instructions: '', analysis_model: ''});
+    });
+
+    test('keeps ambient extras when they are present', () => {
+        const normalized = normalizeChannelAutoReply(settings({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        }), bots, CHANNEL_ID);
+        expect(normalized).toEqual({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        });
     });
 });
 
@@ -215,35 +272,54 @@ describe('handleChannelAutoReplyUpdated', () => {
     const getBots = () => [defaultBot, other];
 
     test('re-fetches and updates the draft (clearing saveError) when the event targets the hydrated channel', async () => {
-        setChannelAutoReplyDraft(makeDraft({saved: {bot_id: 'def', mode: 'off'}, saveError: 'generic'}));
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        setChannelAutoReplyDraft(makeDraft({saved: settings({bot_id: 'def', mode: 'off'}), saveError: 'generic'}));
+        mockedGetChannelAutoReply.mockResolvedValue(settings({bot_id: 'other', mode: 'threads'}));
 
         await handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
 
         expect(mockedGetChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID);
         expect(getChannelAutoReplyDraft()).toEqual({
             channelId: CHANNEL_ID,
-            saved: {bot_id: 'other', mode: 'threads'},
+            saved: settings({bot_id: 'other', mode: 'threads'}),
             saveError: null,
         });
     });
 
     test('normalizes untrusted fetched data against the current bots', async () => {
-        setChannelAutoReplyDraft(makeDraft({saved: {bot_id: 'def', mode: 'off'}}));
+        setChannelAutoReplyDraft(makeDraft({saved: settings({bot_id: 'def', mode: 'off'})}));
         mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'deleted', mode: 'banana'} as unknown as ChannelAutoReplySettings);
 
         await handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
 
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'def', mode: 'off'});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual(settings({bot_id: 'def', mode: 'off'}));
     });
 
     test('preserves the fetched bot_id when the bots cache is cold during a re-sync', async () => {
-        setChannelAutoReplyDraft(makeDraft({saved: {bot_id: 'def', mode: 'off'}}));
-        mockedGetChannelAutoReply.mockResolvedValue({bot_id: 'other', mode: 'threads'});
+        setChannelAutoReplyDraft(makeDraft({saved: settings({bot_id: 'def', mode: 'off'})}));
+        mockedGetChannelAutoReply.mockResolvedValue(settings({bot_id: 'other', mode: 'threads'}));
 
         await handleChannelAutoReplyUpdated(() => null, {channel_id: CHANNEL_ID});
 
-        expect(getChannelAutoReplyDraft()?.saved).toEqual({bot_id: 'other', mode: 'threads'});
+        expect(getChannelAutoReplyDraft()?.saved).toEqual(settings({bot_id: 'other', mode: 'threads'}));
+    });
+
+    test('writes ambient extras from a re-fetch into the draft', async () => {
+        setChannelAutoReplyDraft(makeDraft({saved: settings({bot_id: 'def', mode: 'off'})}));
+        mockedGetChannelAutoReply.mockResolvedValue(settings({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        }));
+
+        await handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
+
+        expect(getChannelAutoReplyDraft()?.saved).toEqual(settings({
+            bot_id: 'other',
+            mode: 'ambient',
+            instructions: 'only if asked',
+            analysis_model: 'gpt-4.1',
+        }));
     });
 
     test('does not fetch when the event targets a different channel', async () => {
@@ -291,9 +367,9 @@ describe('handleChannelAutoReplyUpdated', () => {
         const handled = handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
 
         // The modal re-hydrates for a different channel before the GET settles.
-        const newerDraft = makeDraft({channelId: 'newer-channel', saved: {bot_id: 'def', mode: 'off'}});
+        const newerDraft = makeDraft({channelId: 'newer-channel', saved: settings({bot_id: 'def', mode: 'off'})});
         setChannelAutoReplyDraft(newerDraft);
-        resolveFetch({bot_id: 'other', mode: 'threads'});
+        resolveFetch(settings({bot_id: 'other', mode: 'threads'}));
         await handled;
 
         expect(getChannelAutoReplyDraft()).toBe(newerDraft);

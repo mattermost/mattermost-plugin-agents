@@ -104,7 +104,7 @@ function makeStore(bots: LLMBot[] | null) {
 function seedDraft(botId: string, saveError: ChannelAutoReplySaveErrorKind | null = null) {
     setChannelAutoReplyDraft({
         channelId: CHANNEL_ID,
-        saved: {bot_id: botId, mode: 'root_posts'},
+        saved: {bot_id: botId, mode: 'root_posts', instructions: '', analysis_model: ''},
         saveError,
     });
 }
@@ -226,7 +226,7 @@ describe('AutoReplyAgentPicker', () => {
         act(() => {
             setChannelAutoReplyDraft({
                 channelId: CHANNEL_ID,
-                saved: {bot_id: 'beta', mode: 'threads'},
+                saved: {bot_id: 'beta', mode: 'threads', instructions: '', analysis_model: ''},
                 saveError: null,
             });
         });
@@ -243,7 +243,7 @@ describe('AutoReplyAgentPicker', () => {
         act(() => {
             setChannelAutoReplyDraft({
                 channelId: CHANNEL_ID,
-                saved: {bot_id: 'alpha', mode: 'root_posts'},
+                saved: {bot_id: 'alpha', mode: 'root_posts', instructions: '', analysis_model: ''},
                 saveError: null,
             });
         });
