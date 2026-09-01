@@ -242,18 +242,12 @@ func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
 	post := llm.Post{
 		Role: llm.PostRoleBot,
 		ToolUse: []llm.ToolCall{{
-			ID:           "tc1",
-			Name:         "jira__get_issue",
-			Description:  "Get a Jira issue",
-			Title:        "Get Issue",
-			ServerOrigin: "https://jira.example.com",
-			Arguments:    json.RawMessage(`{"key":"MM-1"}`),
-			Schema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"key": map[string]any{"type": "string"},
-				},
-			},
+			ID:               "tc1",
+			Name:             "jira__get_issue",
+			Description:      "Get a Jira issue",
+			Title:            "Get Issue",
+			ServerOrigin:     "https://jira.example.com",
+			Arguments:        json.RawMessage(`{"key":"MM-1"}`),
 			MCPBareName:      "get_issue",
 			Status:           llm.ToolCallStatusPending,
 			UserInteraction:  llm.UserInteractionSelect,
