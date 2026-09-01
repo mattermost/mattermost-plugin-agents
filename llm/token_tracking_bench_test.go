@@ -67,7 +67,7 @@ func BenchmarkTokenTracking(b *testing.B) {
 				sinks.SetPluginEnabled(false)
 				sinks.SetFileEnabled(true)
 				sinks.SetFileLogger(logger)
-				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, "bench-bot", sinks, nil)
+				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, TokenUsageIdentity{BotUsername: "bench-bot"}, sinks, nil)
 
 				result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
 					Context: &Context{

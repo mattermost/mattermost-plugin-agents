@@ -61,55 +61,61 @@ func abortAgentRequest(c *gin.Context, status int, err error) {
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
 //   - Otherwise, the agent gets only the tools listed in enabledMCPTools (empty/missing = no MCP tools).
 type CreateAgentRequest struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	Username                string               `json:"username" binding:"required"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	DisplayName           string               `json:"displayName" binding:"required"`
+	Username              string               `json:"username" binding:"required"`
+	ServiceID             string               `json:"serviceID" binding:"required"`
+	CustomInstructions    string               `json:"customInstructions"`
+	ChannelAccessLevel    int                  `json:"channelAccessLevel"`
+	ChannelIDs            []string             `json:"channelIDs"`
+	UserAccessLevel       int                  `json:"userAccessLevel"`
+	UserIDs               []string             `json:"userIDs"`
+	TeamIDs               []string             `json:"teamIDs"`
+	AdminUserIDs          []string             `json:"adminUserIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
+	Model                 string               `json:"model"`
+	EnableVision          bool                 `json:"enableVision"`
+	DisableTools          bool                 `json:"disableTools"`
+	EnabledNativeTools    []string             `json:"enabledNativeTools"`
+	ReasoningEnabled      bool                 `json:"reasoningEnabled"`
+	ReasoningEffort       string               `json:"reasoningEffort"`
+	ThinkingBudget        int                  `json:"thinkingBudget"`
+	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
+	// compatibility with existing callers, but ignored at runtime. Structured
+	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+	MaxToolTurns            int  `json:"maxToolTurns"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
 // Username cannot change after create (enforced in the handler).
 type UpdateAgentRequest struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	Username                string               `json:"username"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	DisplayName           string               `json:"displayName" binding:"required"`
+	Username              string               `json:"username"`
+	ServiceID             string               `json:"serviceID" binding:"required"`
+	CustomInstructions    string               `json:"customInstructions"`
+	ChannelAccessLevel    int                  `json:"channelAccessLevel"`
+	ChannelIDs            []string             `json:"channelIDs"`
+	UserAccessLevel       int                  `json:"userAccessLevel"`
+	UserIDs               []string             `json:"userIDs"`
+	TeamIDs               []string             `json:"teamIDs"`
+	AdminUserIDs          []string             `json:"adminUserIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
+	Model                 string               `json:"model"`
+	EnableVision          bool                 `json:"enableVision"`
+	DisableTools          bool                 `json:"disableTools"`
+	EnabledNativeTools    []string             `json:"enabledNativeTools"`
+	ReasoningEnabled      bool                 `json:"reasoningEnabled"`
+	ReasoningEffort       string               `json:"reasoningEffort"`
+	ThinkingBudget        int                  `json:"thinkingBudget"`
+	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
+	// compatibility with existing callers, but ignored at runtime. Structured
+	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+	MaxToolTurns            int  `json:"maxToolTurns"`
 
 	usernameProvided bool
 }
@@ -293,7 +299,9 @@ func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displa
 	cfg.ReasoningEnabled = req.ReasoningEnabled
 	cfg.ReasoningEffort = req.ReasoningEffort
 	cfg.ThinkingBudget = req.ThinkingBudget
-	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
+	// Persisted verbatim so existing callers keep round-tripping; the runtime
+	// reads ServiceConfig.StructuredOutputPolicy instead.
+	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled //nolint:staticcheck
 	cfg.MaxToolTurns = req.MaxToolTurns
 	return displayNameChanged
 }

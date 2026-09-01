@@ -39,6 +39,26 @@ export type LLMService = {
     // Optional: mirrors the backend's omitempty — may be absent on services
     // saved before the fallback feature existed.
     fallbackServiceID?: string
+
+    // structuredOutputPolicy declares how this service handles JSON-schema
+    // structured output: '' (or 'auto') detect, 'native' force native schema
+    // support, 'prompt_fallback' always use prompt-based instructions.
+    // Optional: mirrors the backend's omitempty — absent means auto.
+    structuredOutputPolicy?: string
+}
+
+const StructuredOutputPolicyAuto = '';
+const StructuredOutputPolicyNative = 'native';
+const StructuredOutputPolicyPromptFallback = 'prompt_fallback';
+
+// The backend accepts both '' and 'auto' for detection, and may grow values this
+// build doesn't know. Anything unrecognized reads back as auto so the selector
+// always has a matching option.
+function normalizeStructuredOutputPolicy(policy: string | undefined): string {
+    if (policy === StructuredOutputPolicyNative || policy === StructuredOutputPolicyPromptFallback) {
+        return policy;
+    }
+    return StructuredOutputPolicyAuto;
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -435,6 +455,22 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                             {s.name || serviceTypeToDisplayName(intl, s.type)}
                         </SelectionItemOption>
                     ))}
+            </SelectionItem>
+            <SelectionItem
+                label={intl.formatMessage({defaultMessage: 'Structured output'})}
+                value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
+                onChange={(e) => props.onChange({...props.service, structuredOutputPolicy: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
+            >
+                <SelectionItemOption value={StructuredOutputPolicyAuto}>
+                    {intl.formatMessage({defaultMessage: 'Auto (recommended)'})}
+                </SelectionItemOption>
+                <SelectionItemOption value={StructuredOutputPolicyNative}>
+                    {intl.formatMessage({defaultMessage: 'Native supported'})}
+                </SelectionItemOption>
+                <SelectionItemOption value={StructuredOutputPolicyPromptFallback}>
+                    {intl.formatMessage({defaultMessage: 'Prompt fallback'})}
+                </SelectionItemOption>
             </SelectionItem>
         </>
     );

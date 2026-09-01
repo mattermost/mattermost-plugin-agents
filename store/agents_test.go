@@ -100,7 +100,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.True(t, fetched.ReasoningEnabled)
 	assert.Equal(t, "medium", fetched.ReasoningEffort)
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
-	assert.True(t, fetched.StructuredOutputEnabled)
+	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
 }
 

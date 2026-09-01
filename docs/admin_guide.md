@@ -76,12 +76,29 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) always uses the Responses API, so this control isn't shown for that service type. |
+| **Structured output** | How this service handles requests that ask for JSON matching a schema. Defaults to **Auto (recommended)**. See [Structured output](#structured-output). |
 
 Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
 
-Fallback only changes which configured service handles an LLM request. It doesn't change user permissions, channel scoping, tool execution, or prompt construction. OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
+Fallback selects which configured service handles an LLM request. It doesn't change user permissions, channel scoping, or tool execution. One exception affects prompt construction: for requests that ask for structured output, the complete fallback chain determines up front whether the request uses native schema support or the prompt fallback (see [Structured output](#structured-output)). OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.
 
 Input and output token limits are detected independently, so one field can be auto-detected while the other remains editable. If you switch back from an auto-detected model to an unknown or custom model, Mattermost restores the previously saved manual values.
+
+#### Structured output
+
+Some requests ask the LLM for JSON matching a schema — agent features that need machine-readable output, and LLM Bridge callers that supply a `json_output_format` schema. The **Structured output** setting on the service controls how that schema reaches the provider:
+
+| Option | Stored value | Behavior |
+|--------|--------------|----------|
+| **Auto (recommended)** | `auto`, or empty | Sends the schema natively only when this service's provider, model, and API path are positively known to support native structured output. Every other combination, including unrecognized models and operator-supplied endpoints, uses the prompt fallback: the schema is converted into JSON instructions in the prompt and is not sent to the provider. |
+| **Native supported** | `native` | Asserts that this service accepts a native JSON schema. Use it for custom or OpenAI-compatible endpoints whose capabilities Mattermost can't detect. If the assertion is wrong, the provider rejects those requests. |
+| **Prompt fallback** | `prompt_fallback` | Never sends the schema natively. The schema is always converted into prompt instructions. |
+
+The stored configuration key is `structuredOutputPolicy` on each service entry. An empty value means `auto`, so services configured before this setting existed remain valid without any change.
+
+The setting describes one service's capability, but the decision is made once per request and covers the service's entire fallback chain, because the prompt conversion happens before Mattermost picks which service actually serves the request. A schema is sent natively only when every possible attempt — the primary service and every service in its fallback chain — is either known-capable under **Auto (recommended)** or marked **Native supported**. If any link in the chain needs the prompt fallback, the whole request uses prompt instructions. Marking a service as **Native supported** therefore doesn't force native output for a chain that contains a service requiring the fallback.
+
+Structured output is configured on the service only. The former agent-level structured output setting (`structuredOutputEnabled` in agent configuration) is deprecated: it's no longer shown in the agent editor and is ignored at runtime. The service policy applies both to agent conversations and to direct service calls through the LLM Bridge.
 
 #### Provider Specific Settings
 
@@ -144,9 +161,10 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 | **Web Fetch** (native tool) | Available for Anthropic. Lets the agent retrieve the full content of specific web pages and PDFs during a response. See Anthropic's [web fetch tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) docs for capabilities and pricing. |
 | **Code Execution / Code Interpreter** (native tool) | Available for Anthropic, OpenAI, and (with **Use Responses API**) OpenAI Compatible and Azure. Lets the agent run code in the provider's managed sandbox. For Anthropic, enabling this also permits web search and web fetch to post-process results inside that sandbox (Anthropic's [dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering)); when it is **not** enabled, the plugin pins those tools' `allowed_callers` to `direct` so no sandbox is ever provisioned. Refer to Anthropic's [code execution tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) docs for pricing, data-retention, and ZDR implications. |
 | **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the schema is sent natively to the provider so the model returns structured JSON matching it. Compatible model support is still required. When disabled, the schema is converted into prompt instructions instead of being sent to the provider, so requests still work with models that lack native structured output support. |
 
-New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
+Structured output is not an agent setting. It's configured per service — see [Structured output](#structured-output) — and applies to every request that asks for JSON matching a schema, whichever agent makes it.
+
+New agents enable native web search by default where the selected provider supports it. For providers that don't support native tools, native tool selections are ignored.
 
 Native tool activity (searches performed, pages fetched, code runs) is shown on the agent's response as it streams and is preserved with the conversation. Known limitations of the native tool integration:
 
@@ -155,7 +173,7 @@ Native tool activity (searches performed, pages fetched, code runs) is shown on 
 - Files created by provider code execution are referenced by name only; they are not downloadable from Mattermost.
 - Native tool activity is display-only context: it is not replayed to the model in later conversation turns.
 
-For Anthropic services, **Structured Output** and extended thinking can both be enabled on the same agent, but Anthropic doesn't support using them on the same request. Requests that ask for structured JSON output skip extended thinking for that request; all other requests keep using it.
+For Anthropic services, extended thinking and native structured output can't be used on the same request. Requests that send a JSON schema natively skip extended thinking for that request; all other requests keep using it. Requests served through the prompt fallback don't send a native schema, so they keep extended thinking.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 
@@ -348,6 +366,7 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 - **User ID**: The Mattermost user who initiated the request
 - **Team ID**: The team context for the request
 - **Bot Username**: Which agent was used for the interaction
+- **Service ID** and **Service Name**: Which configured LLM service handled the request, logged as `service_id` and `service_name` directly after the existing `service_type` field
 - **Input Tokens**: Number of tokens in the request to the LLM
 - **Output Tokens**: Number of tokens in the LLM response
 - **Total Tokens**: Combined input and output token count
@@ -357,6 +376,10 @@ The Agents plugin can track token usage for all LLM interactions to support bill
 - **Cost**: Provider-reported request cost, when reported
 
 To enable token usage tracking, navigate to **System Console > Plugins > Agents** and set **Enable Token Usage Logging** to **True**. When enabled, log files automatically rotate when they reach 100MB in size, and rotated log files are compressed to save disk space. The token usage logs provide administrators with visibility into LLM usage patterns and can be used for cost tracking, chargeback, resource planning, and debugging. Providers that report usage data populate these fields. When a provider does not expose cached token, reasoning token, or cost details, those values remain `0`.
+
+`service_id` and `service_name` are additive, so the log schema version stays `1` and existing queries and dashboards keep working.
+
+Requests that go directly to a service through the LLM Bridge have no agent behind them. Those records carry the service fields and log the agent dimensions — `agent_name`, `agent_username`, `bot_username`, and `agent_user_id` — as empty strings, while the Prometheus token usage metrics continue to count them under `bot_name="unknown"`. In the service fields, an empty `service_name` means the configured service itself has a blank name (a known-blank identity that callers reach by service ID), whereas the value `unknown` means the identity was missing.
 
 #### Converting token usage logs for analysis
 

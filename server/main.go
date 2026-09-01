@@ -202,6 +202,13 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
+	// Runs before any language model is built from the stored services, so
+	// agents that had the deprecated structured output toggle keep their
+	// behavior from the first request after the upgrade.
+	if structuredOutputErr := migrateAgentStructuredOutputToServicePolicy(p.API, pluginAPI, p.store, &p.configuration); structuredOutputErr != nil {
+		pluginAPI.Log.Error("failed to migrate deprecated agent structured output to service policies", "error", structuredOutputErr)
+	}
+
 	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
@@ -225,6 +232,10 @@ func (p *Plugin) OnActivate() error {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 		}
+		// Drop cached service-backed LLMs whose configuration changed. Local
+		// saves and HA updates both flow through config.Container.Update, so
+		// this listener covers every node.
+		bots.ReconcileServiceLLMs(p.configuration.GetServices())
 		migrateAndRefresh("config_update")
 	})
 
@@ -527,6 +538,12 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
+	// fail before bots is assigned, so guard against a nil registry.
+	if p.bots != nil {
+		p.bots.ShutdownServiceLLMs()
+	}
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()

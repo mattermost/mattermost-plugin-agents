@@ -53,7 +53,6 @@ type Props = {
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
 const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'];
-const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure'];
 const CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD = MaxCustomInstructionsRunes * 0.9;
 
 const ConfigTab = (props: Props) => {
@@ -80,7 +79,7 @@ const ConfigTab = (props: Props) => {
     // runs, then hydrate the real `serviceId`. Treating that as a "service change" would incorrectly wipe
     // `enabledNativeTools` and other fields loaded from the agent.
     // When only switching between services with the same `type` (e.g. two OpenAI-compatible entries), keep
-    // reasoning/thinking/structured-output fields so users can compare services without losing migrated values.
+    // reasoning/thinking fields so users can compare services without losing migrated values.
     useEffect(() => {
         const prev = prevServiceIdRef.current;
         if (prev !== null && prev !== '' && prev !== draft.serviceId) {
@@ -96,7 +95,6 @@ const ConfigTab = (props: Props) => {
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: false,
                     }),
             });
         }
@@ -156,7 +154,6 @@ const ConfigTab = (props: Props) => {
         reasoningEnabled: draft.reasoningEnabled,
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
-        structuredOutputEnabled: draft.structuredOutputEnabled,
     }), [draft]);
 
     useEffect(() => {
@@ -212,8 +209,6 @@ const ConfigTab = (props: Props) => {
     const isOpenAIWithResponses = Boolean(selectedService &&
         (selectedService.type === 'openai' ||
          (['openaicompatible', 'azure'].includes(selectedService.type) && selectedService.useResponsesAPI)));
-    const supportsStructuredOutput = Boolean(selectedService &&
-        (isAnthropic || openAIStructuredOutputServiceTypes.includes(selectedService.type)));
 
     const maxTokens = selectedService?.outputTokenLimit || 4096;
     const serviceDefaultModel = selectedService?.defaultModel?.trim() || '';
@@ -291,7 +286,7 @@ const ConfigTab = (props: Props) => {
                     error={errors.serviceId}
                     helptext={intl.formatMessage({
                         defaultMessage:
-                            'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
+                            'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
                     })}
                 >
                     <SelectionItemOption value=''>
@@ -449,30 +444,6 @@ const ConfigTab = (props: Props) => {
                                             onChange={handleReasoningBotChange}
                                         />
                                     )}
-                                    {supportsStructuredOutput && (
-                                        <>
-                                            <BooleanItem
-                                                label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                                value={draft.structuredOutputEnabled}
-                                                onChange={(to: boolean) => onChange({structuredOutputEnabled: to})}
-                                                helpText={isAnthropic ?
-                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+).'}) :
-                                                    intl.formatMessage({defaultMessage: 'Enable structured JSON output for this agent. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                                }
-                                            />
-                                            {isAnthropic && draft.structuredOutputEnabled && draft.reasoningEnabled && (
-                                                <FormRow>
-                                                    <span aria-hidden={true}/>
-                                                    <StructuredOutputNote>
-                                                        {intl.formatMessage({
-                                                            defaultMessage:
-                                                                'Anthropic does not support extended thinking together with structured output. Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.',
-                                                        })}
-                                                    </StructuredOutputNote>
-                                                </FormRow>
-                                            )}
-                                        </>
-                                    )}
                                 </>
                             )}
                         </ItemList>
@@ -541,16 +512,6 @@ const AdvancedHeaderHint = styled.span`
 
 const AdvancedContent = styled.div`
     padding: 24px 16px;
-`;
-
-const StructuredOutputNote = styled.div`
-    font-size: 13px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    line-height: 20px;
-    padding: 10px 12px;
-    border-radius: 4px;
-    background: rgba(var(--center-channel-color-rgb), 0.04);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 `;
 
 export default ConfigTab;

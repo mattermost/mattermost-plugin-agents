@@ -27,6 +27,23 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 	return cfg
 }
 
+// validateServiceStructuredOutputPolicies rejects a service whose
+// structured-output policy is not a value the runtime understands. Persisting a
+// typo would take every agent on that service offline (EnsureBots skips an
+// invalid service) and 404 every LLM Bridge call to it, while the admin UI
+// still renders the unrecognized value as "Auto".
+func validateServiceStructuredOutputPolicies(cfg config.Config) error {
+	for _, svc := range cfg.Services {
+		if llm.IsValidStructuredOutputPolicy(svc.StructuredOutputPolicy) {
+			continue
+		}
+		return fmt.Errorf("service %q has an unrecognized structuredOutputPolicy %q: accepted values are %q, %q, %q, or empty for the default",
+			svc.ID, svc.StructuredOutputPolicy,
+			llm.StructuredOutputPolicyAuto, llm.StructuredOutputPolicyNative, llm.StructuredOutputPolicyPromptFallback)
+	}
+	return nil
+}
+
 // handleGetConfig returns the current plugin configuration from the database.
 // GET /admin/config
 func (a *API) handleGetConfig(c *gin.Context) {
@@ -66,6 +83,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	var cfg config.Config
 	if err := c.BindJSON(&cfg); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	if err := validateServiceStructuredOutputPolicies(cfg); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 

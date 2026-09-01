@@ -54,6 +54,11 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+
+	// GetServices returns a snapshot of the stored service configurations, in
+	// configuration order. The bridge service endpoints operate on this
+	// snapshot directly rather than going through an agent.
+	GetServices() []llm.ServiceConfig
 }
 
 type MCPClientManager interface {

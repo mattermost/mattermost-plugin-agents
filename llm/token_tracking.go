@@ -4,6 +4,7 @@
 package llm
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,21 +23,40 @@ type TokenUsagePluginLogger interface {
 	Info(message string, keyValuePairs ...any)
 }
 
+// TokenUsageIdentity describes who is spending the tokens a wrapped model
+// reports. Agent LLMs carry a BotUsername plus the service backing the agent;
+// service LLMs (LLM Bridge calls that address a service directly) leave
+// BotUsername empty and carry only service fields.
+type TokenUsageIdentity struct {
+	BotUsername  string
+	ServiceID    string
+	ServiceName  string
+	DefaultModel string
+	ServiceType  string
+}
+
+// isServiceOnly reports whether this identity has no agent behind it, in which
+// case the agent dimensions are logged blank rather than "unknown": the call
+// genuinely has no agent, as opposed to an agent we failed to identify.
+func (i TokenUsageIdentity) isServiceOnly() bool {
+	return i.BotUsername == "" && i.ServiceID != ""
+}
+
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
-	wrapped     LanguageModel
-	botUsername string
-	sinks       *TokenUsageSinks
-	metrics     MetricsObserver
+	wrapped  LanguageModel
+	identity TokenUsageIdentity
+	sinks    *TokenUsageSinks
+	metrics  MetricsObserver
 }
 
 // NewTokenUsageLoggingWrapper creates a wrapper using a shared sink controller.
-func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
+func NewTokenUsageLoggingWrapper(wrapped LanguageModel, identity TokenUsageIdentity, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
-		wrapped:     wrapped,
-		botUsername: botUsername,
-		sinks:       sinks,
-		metrics:     metrics,
+		wrapped:  wrapped,
+		identity: identity,
+		sinks:    sinks,
+		metrics:  metrics,
 	}
 }
 
@@ -89,7 +109,7 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 
 	interceptedStream := make(chan TextStreamEvent)
 	effectiveModel := extractRequestedModel(opts...)
-	dimensions := extractTokenUsageDimensions(request, w.botUsername, effectiveModel)
+	dimensions := extractTokenUsageDimensions(request, w.identity, effectiveModel)
 
 	go func() {
 		defer close(interceptedStream)
@@ -135,6 +155,8 @@ type tokenUsageDimensions struct {
 	botUserID        string
 	model            string
 	serviceType      string
+	serviceID        string
+	serviceName      string
 	operation        string
 	operationSubType string
 }
@@ -177,6 +199,8 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		"agent_user_id", dimensions.botUserID,
 		"model", dimensions.model,
 		"service_type", dimensions.serviceType,
+		"service_id", dimensions.serviceID,
+		"service_name", dimensions.serviceName,
 		"operation", dimensions.operation,
 		"operation_subtype", dimensions.operationSubType,
 		"input_tokens", usage.InputTokens,
@@ -201,30 +225,51 @@ func tokenUsageKeyValuePairsToMlogFields(keyValuePairs []any) []mlog.Field {
 	return fields
 }
 
-func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername, optionModel string) tokenUsageDimensions {
+func extractTokenUsageDimensions(request CompletionRequest, identity TokenUsageIdentity, optionModel string) tokenUsageDimensions {
+	// A service-only call has no agent, so its agent dimensions are blank
+	// rather than "unknown" — blank says "not applicable", "unknown" says
+	// "should have been there and wasn't".
+	missingAgent := TokenUsageUnknown
+	if identity.isServiceOnly() {
+		missingAgent = ""
+	}
+
+	// The request context describes the agent, so it wins over the identity the
+	// model was built with; a per-call model override wins over both.
+	var ctxBotName, ctxBotUsername, ctxBotUserID, ctxBotModel, ctxServiceType string
+	if request.Context != nil {
+		ctxBotName = request.Context.BotName
+		ctxBotUsername = request.Context.BotUsername
+		ctxBotUserID = request.Context.BotUserID
+		ctxBotModel = request.Context.BotModel
+		ctxServiceType = request.Context.BotServiceType
+	}
+
 	dimensions := tokenUsageDimensions{
 		userID:           TokenUsageUnknown,
 		teamID:           TokenUsageUnknown,
 		channelID:        TokenUsageUnknown,
 		channelType:      TokenUsageUnknown,
-		botName:          TokenUsageUnknown,
-		botUsername:      fallbackBotUsername,
-		botUserID:        TokenUsageUnknown,
-		model:            TokenUsageUnknown,
-		serviceType:      TokenUsageUnknown,
-		operation:        request.Operation,
-		operationSubType: request.OperationSubType,
+		botName:          cmp.Or(ctxBotName, missingAgent),
+		botUsername:      cmp.Or(ctxBotUsername, identity.BotUsername, missingAgent),
+		botUserID:        cmp.Or(ctxBotUserID, missingAgent),
+		model:            cmp.Or(optionModel, ctxBotModel, identity.DefaultModel, TokenUsageUnknown),
+		serviceType:      cmp.Or(ctxServiceType, identity.ServiceType, TokenUsageUnknown),
+		operation:        cmp.Or(request.Operation, TokenUsageUnknown),
+		operationSubType: cmp.Or(request.OperationSubType, TokenUsageUnknown),
 	}
 
-	if dimensions.botUsername == "" {
-		dimensions.botUsername = TokenUsageUnknown
+	// Service identity comes from the wrapper only: the request context
+	// describes the agent, not the service the model was built from. A missing
+	// identity normalizes both fields to "unknown"; a known service with a
+	// blank name keeps the blank so it stays distinguishable.
+	dimensions.serviceID = TokenUsageUnknown
+	dimensions.serviceName = TokenUsageUnknown
+	if identity.ServiceID != "" {
+		dimensions.serviceID = identity.ServiceID
+		dimensions.serviceName = identity.ServiceName
 	}
-	if dimensions.operation == "" {
-		dimensions.operation = TokenUsageUnknown
-	}
-	if dimensions.operationSubType == "" {
-		dimensions.operationSubType = TokenUsageUnknown
-	}
+
 	if request.Context != nil {
 		if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
 			dimensions.userID = request.Context.RequestingUser.Id
@@ -247,28 +292,10 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 			}
 			dimensions.channelType = normalizeChannelType(request.Context.Channel.Type)
 		}
-
-		if request.Context.BotName != "" {
-			dimensions.botName = request.Context.BotName
-		}
-		if request.Context.BotUsername != "" {
-			dimensions.botUsername = request.Context.BotUsername
-		}
-		if request.Context.BotUserID != "" {
-			dimensions.botUserID = request.Context.BotUserID
-		}
-		if request.Context.BotModel != "" {
-			dimensions.model = request.Context.BotModel
-		}
-		if request.Context.BotServiceType != "" {
-			dimensions.serviceType = request.Context.BotServiceType
-		}
 	}
 
-	if optionModel != "" {
-		dimensions.model = optionModel
-	}
-	if dimensions.botName == TokenUsageUnknown {
+	// An agent that could not be named at all is reported by its username.
+	if dimensions.botName == missingAgent {
 		dimensions.botName = dimensions.botUsername
 	}
 

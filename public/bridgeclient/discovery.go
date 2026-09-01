@@ -78,8 +78,17 @@ func (c *Client) GetAgents(userID string) ([]BridgeAgentInfo, error) {
 	return agentsResp.Agents, nil
 }
 
-// GetServices retrieves all available services from the bridge API.
-// If userID is provided, only services accessible to that user (via their permitted bots) are returned.
+// GetServices retrieves the configured LLM services the bridge can call.
+//
+// A service is returned when its stored configuration is valid and usable by the bridge:
+// it has a non-empty default model, its provider type is supported by the bridge's LLM
+// adapter, and any fallback chain it declares resolves to services that are themselves
+// bridge-capable. Services that no agent references are included.
+//
+// userID is still sent as the user_id query parameter for compatibility with older
+// servers, which filtered services by the agents a user could access. New servers accept
+// and syntax-validate the value but ignore it: service discovery no longer depends on
+// agent access.
 func (c *Client) GetServices(userID string) ([]BridgeServiceInfo, error) {
 	requestURL := fmt.Sprintf("/%s/bridge/v1/services", AiPluginID)
 	updatedRequestURL, err := appendValidatedUserIDQuery(requestURL, userID)

@@ -134,7 +134,7 @@ func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
 		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
 	).Return().Once()
 
-	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	mockAPI.AssertExpectations(t)
@@ -200,7 +200,7 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	svc := loadTestService(nil)
 	svc.LoadTestMockConfig = nil
 
-	model, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
+	model, _, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)
@@ -230,7 +230,7 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 		"realistic_fast":    0.0,
 		"realistic_slow":    0.0,
 	}
-	model, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
+	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)

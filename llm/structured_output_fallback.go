@@ -12,21 +12,80 @@ import (
 )
 
 // StructuredOutputFallbackWrapper wraps a LanguageModel and encapsulates the
-// structured output capability decision. When structured output is enabled,
-// requests pass through untouched and any JSON schema is sent natively to the
-// provider. When disabled and a JSON schema is requested, the schema is
-// stripped from the provider request and converted into a prompt-level system
-// instruction, and markdown code fencing is stripped from non-streaming
-// responses.
+// structured output capability decision. Requests without a JSON schema pass
+// through untouched. When a schema is requested, the wrapper resolves a single
+// mode for the whole request before calling the provider: either the schema is
+// sent natively, or it is stripped from the provider request and converted
+// into a prompt-level system instruction (with markdown code fencing stripped
+// from non-streaming responses).
 type StructuredOutputFallbackWrapper struct {
-	wrapped                 LanguageModel
-	structuredOutputEnabled bool
+	wrapped LanguageModel
+	// nativeAllowed answers, for the model a request will actually run, whether
+	// its schema may be sent natively. See NewNativeStructuredOutputDecision.
+	nativeAllowed func(requestedModel string) bool
 }
 
-func NewStructuredOutputFallbackWrapper(llm LanguageModel, structuredOutputEnabled bool) *StructuredOutputFallbackWrapper {
+// NewStructuredOutputFallbackWrapper wraps llm with the structured-output
+// decision in nativeAllowed. A nil nativeAllowed keeps every schema request on
+// the prompt fallback.
+func NewStructuredOutputFallbackWrapper(wrapped LanguageModel, nativeAllowed func(requestedModel string) bool) *StructuredOutputFallbackWrapper {
 	return &StructuredOutputFallbackWrapper{
-		wrapped:                 llm,
-		structuredOutputEnabled: structuredOutputEnabled,
+		wrapped:       wrapped,
+		nativeAllowed: nativeAllowed,
+	}
+}
+
+// NewNativeStructuredOutputDecision builds the native-schema decision for one
+// provider chain: the primary service with the model it would run, plus the
+// services Bifrost may fail over to. resolver answers the auto policy; a nil
+// resolver puts every auto target on the prompt fallback.
+//
+// The decision has to cover every attempt Bifrost may make, because the
+// prompt/schema transformation happens before Bifrost picks which provider
+// actually serves the request: one incapable attempt puts the whole request on
+// the prompt fallback. Only the primary's model can change per request (a
+// per-call WithModel override), so the fallbacks' verdict is fixed and is
+// computed once here rather than on every call.
+func NewNativeStructuredOutputDecision(primary ServiceConfig, primaryModel string, fallbacks []ServiceConfig, resolver StructuredOutputCapabilityResolver) func(requestedModel string) bool {
+	fallbacksAllowNative := true
+	for _, fallback := range fallbacks {
+		// A Bifrost fallback always runs its own default model.
+		if !serviceAllowsNativeOutput(fallback, fallback.DefaultModel, resolver) {
+			fallbacksAllowNative = false
+			break
+		}
+	}
+
+	return func(requestedModel string) bool {
+		if !fallbacksAllowNative {
+			return false
+		}
+		model := primaryModel
+		if requestedModel != "" {
+			model = requestedModel
+		}
+		return serviceAllowsNativeOutput(primary, model, resolver)
+	}
+}
+
+// serviceAllowsNativeOutput applies svc's structured-output policy to the model
+// this attempt would run.
+func serviceAllowsNativeOutput(svc ServiceConfig, model string, resolver StructuredOutputCapabilityResolver) bool {
+	switch svc.EffectiveStructuredOutputPolicy() {
+	case StructuredOutputPolicyNative:
+		// Administratively asserted capable.
+		return true
+	case StructuredOutputPolicyPromptFallback:
+		return false
+	case StructuredOutputPolicyAuto:
+		if resolver == nil {
+			return false
+		}
+		// Only positive knowledge earns a native schema.
+		return resolver(svc, model)
+	default:
+		// An unrecognized stored value must never send a native schema.
+		return false
 	}
 }
 
@@ -64,16 +123,16 @@ func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
 }
 
 // applyFallback strips the JSON output schema from the downstream request and
-// injects an equivalent prompt-level instruction when structured output is
-// disabled but a schema is requested. The caller's request and opts are never
+// injects an equivalent prompt-level instruction when the resolved chain
+// cannot take a native schema. The caller's request and opts are never
 // mutated. Returns whether the fallback was applied.
 func (w *StructuredOutputFallbackWrapper) applyFallback(request CompletionRequest, opts []LanguageModelOption) (CompletionRequest, []LanguageModelOption, bool) {
-	if w.structuredOutputEnabled {
+	schema, requestedModel := resolveOutputOptions(opts)
+	if schema == nil {
 		return request, opts, false
 	}
 
-	schema := resolveJSONOutputSchema(opts)
-	if schema == nil {
+	if w.nativeAllowed != nil && w.nativeAllowed(requestedModel) {
 		return request, opts, false
 	}
 
@@ -130,10 +189,16 @@ func jsonOutputInstruction(schema *jsonschema.Schema) string {
 	return fmt.Sprintf("%s The JSON must conform to the following JSON schema:\n%s", base, schemaJSON)
 }
 
-func resolveJSONOutputSchema(opts []LanguageModelOption) *jsonschema.Schema {
+// resolveOutputOptions applies the caller's options once and returns the two
+// values the structured-output decision needs: the requested JSON schema, if
+// any, and the per-call model override.
+func resolveOutputOptions(opts []LanguageModelOption) (*jsonschema.Schema, string) {
 	var cfg LanguageModelConfig
 	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
 		opt(&cfg)
 	}
-	return cfg.JSONOutputFormat
+	return cfg.JSONOutputFormat, cfg.Model
 }

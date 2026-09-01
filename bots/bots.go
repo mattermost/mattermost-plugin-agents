@@ -62,6 +62,23 @@ type MMBots struct {
 	botsLock     sync.RWMutex
 	bots         []*Bot
 
+	// serviceLLMMu guards the service LLM registry below. It is never held
+	// while a model is being built.
+	serviceLLMMu sync.Mutex
+	// serviceLLMs holds the live service-backed models keyed by service ID.
+	serviceLLMs map[string]*serviceLLMEntry
+	// retiredServiceLLMs holds models that are no longer handed out but may
+	// still have in-flight leases; each shuts down once its leases drain.
+	retiredServiceLLMs map[*serviceLLMEntry]struct{}
+	// serviceLLMBuildMu serializes concurrent first builds. It is held across a
+	// build, so it must never be taken while holding serviceLLMMu.
+	serviceLLMBuildMu sync.Mutex
+	// baseLLMBuilderForTest replaces provider client construction so tests can
+	// exercise the real wrapper chain and the registry without starting Bifrost
+	// worker pools. Always nil in production;
+	// SetBaseLLMBuilderForTest is the only supported entry point.
+	baseLLMBuilderForTest func(svc llm.ServiceConfig, botConfig llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)
+
 	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured.
 	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition.
 	lastEnsuredBotCfgs []llm.BotConfig
@@ -72,6 +89,12 @@ type MMBots struct {
 	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
 	// Set to true by the cluster event handler or API handlers after agent CRUD.
 	forceRefresh bool
+}
+
+// SetBaseLLMBuilderForTest installs a test-only provider client builder. The
+// wrapper chain around it stays the production one.
+func (b *MMBots) SetBaseLLMBuilderForTest(builder func(svc llm.ServiceConfig, botConfig llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)) {
+	b.baseLLMBuilderForTest = builder
 }
 
 func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
@@ -441,14 +464,33 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
+// getLLM builds the language model for an agent. The base client's shutdown
+// handle is discarded: agent LLMs are replaced wholesale by EnsureBots, and the
+// replaced clients are not currently shut down.
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
-	result, err := b.getBaseLLM(serviceConfig, botConfig, fallbackServices)
+	model, _, err := b.buildLLM(serviceConfig, &botConfig, fallbackServices)
+	return model, err
+}
+
+// buildLLM assembles the wrapper chain shared by agent LLMs and service LLMs.
+// botConfig carries the agent's provider capability settings (native tools,
+// reasoning) and is nil for direct service calls, which have no agent.
+//
+// The returned shutdown releases the underlying Bifrost client's worker pool
+// and queue. It is a no-op for the load-test mock.
+func (b *MMBots) buildLLM(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+	var effectiveBotConfig llm.BotConfig
+	if botConfig != nil {
+		effectiveBotConfig = *botConfig
+	}
+
+	base, shutdown, err := b.getBaseLLM(serviceConfig, effectiveBotConfig, fallbackServices)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Truncation Support
-	result = llm.NewLLMTruncationWrapper(result)
+	var result llm.LanguageModel = llm.NewLLMTruncationWrapper(base)
 
 	// Token Usage Logging
 	// NOTE: This wrapper converts ChatCompletionNoStream into a streaming call
@@ -457,23 +499,63 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	if b.tokenUsageSinks != nil || b.metrics != nil {
 		result = llm.NewTokenUsageLoggingWrapper(
 			result,
-			botConfig.Name,
+			tokenUsageIdentity(serviceConfig, botConfig),
 			b.tokenUsageSinks,
 			b.metrics,
 		)
 	}
 
-	// Structured output fallback
-	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
+	// Structured output fallback. The decision covers the primary and every
+	// fallback provider, because it is applied before Bifrost picks one.
+	result = llm.NewStructuredOutputFallbackWrapper(result, llm.NewNativeStructuredOutputDecision(
+		serviceConfig,
+		effectiveModelFor(serviceConfig, botConfig),
+		fallbackServices,
+		bifrost.ResolveStructuredOutputCapability,
+	))
 
-	return result, nil
+	return result, shutdown, nil
 }
 
-func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, error) {
+// effectiveModelFor returns the model the primary service will actually run:
+// the agent's override when it has one, otherwise the service default.
+func effectiveModelFor(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig) string {
+	if botConfig != nil && botConfig.Model != "" {
+		return botConfig.Model
+	}
+	return serviceConfig.DefaultModel
+}
+
+// tokenUsageIdentity describes the spender for token usage logging. botConfig is
+// nil for a direct service call, which has no agent and so logs blank agent
+// dimensions. EnsureBots may already have folded an agent's model override into
+// the service's DefaultModel, so the effective model is computed explicitly.
+func tokenUsageIdentity(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig) llm.TokenUsageIdentity {
+	identity := llm.TokenUsageIdentity{
+		ServiceID:    serviceConfig.ID,
+		ServiceName:  serviceConfig.Name,
+		DefaultModel: effectiveModelFor(serviceConfig, botConfig),
+		ServiceType:  serviceConfig.Type,
+	}
+	if botConfig != nil {
+		identity.BotUsername = botConfig.Name
+	}
+	return identity
+}
+
+// getBaseLLM constructs the provider client behind a service. The returned
+// shutdown releases that client's Bifrost worker pool and queue — only the base
+// client owns it, and the wrappers buildLLM adds hide it behind
+// llm.LanguageModel — and is a no-op for the load-test mock.
+func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+	if b.baseLLMBuilderForTest != nil {
+		return b.baseLLMBuilderForTest(serviceConfig, botConfig, fallbackServices)
+	}
+
 	if serviceConfig.Type == llm.ServiceTypeLoadTestMock {
 		profile, err := loadtest.ParseProfile(serviceConfig.LoadTestMockConfig)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
+			return nil, nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
 		}
 		if b.pluginAPI != nil {
 			// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
@@ -484,7 +566,7 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 				"profile_summary", profile.Summary(),
 			)
 		}
-		return loadtest.NewMockLLM(profile), nil
+		return loadtest.NewMockLLM(profile), func() {}, nil
 	}
 
 	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
@@ -492,9 +574,9 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 		if b.pluginAPI != nil {
 			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
 		}
-		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
+		return nil, nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	return bifrostLLM, nil
+	return bifrostLLM, bifrostLLM.Shutdown, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.
