@@ -1002,11 +1002,13 @@ func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
 
 func TestClientManagerInvalidateUserClients(t *testing.T) {
 	now := time.Now()
-	user1OAuth := clientKey{userID: "user-1"}
-	user1SA := clientKey{userID: "user-1", serviceAccount: true}
-	user2OAuth := clientKey{userID: "user-2"}
-	user2SA := clientKey{userID: "user-2", serviceAccount: true}
-	allKeys := []clientKey{user1OAuth, user1SA, user2OAuth, user2SA}
+	user1Remote := clientKey{userID: "user-1", kind: clientKindUserRemote}
+	user1SA := clientKey{userID: "user-1", kind: clientKindSARemote}
+	user1Local := clientKey{userID: "user-1", kind: clientKindLocal}
+	user2Remote := clientKey{userID: "user-2", kind: clientKindUserRemote}
+	user2SA := clientKey{userID: "user-2", kind: clientKindSARemote}
+	user2Local := clientKey{userID: "user-2", kind: clientKindLocal}
+	allKeys := []clientKey{user1Remote, user1SA, user1Local, user2Remote, user2SA, user2Local}
 
 	testCases := []struct {
 		name         string
@@ -1014,9 +1016,9 @@ func TestClientManagerInvalidateUserClients(t *testing.T) {
 		expectedKeys []clientKey
 	}{
 		{
-			name:         "removes both auth modes for the user",
+			name:         "removes remotes and local bags for the user",
 			userID:       "user-1",
-			expectedKeys: []clientKey{user2OAuth, user2SA},
+			expectedKeys: []clientKey{user2Remote, user2SA, user2Local},
 		},
 		{
 			name:         "ignores missing user",
@@ -1049,7 +1051,7 @@ func TestClientManagerInvalidateUserClients(t *testing.T) {
 				require.Contains(t, manager.clients, key)
 				require.Contains(t, manager.activity, key)
 			}
-			require.Equal(t, now.Add(2*time.Minute), manager.activity[user2OAuth])
+			require.Equal(t, now.Add(3*time.Minute), manager.activity[user2Remote])
 		})
 	}
 }

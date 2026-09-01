@@ -49,10 +49,11 @@ const toolToggleName = /Enable tool \{toolName\} on \{serverName\}|Disable tool 
 const mattermostServer = {
     name: 'Mattermost',
     serverOrigin: 'embedded://mattermost',
+    kind: 'embedded' as const,
     authenticated: true,
     needsOAuth: false,
     authEmail: '',
-    serviceAccountConfigured: true,
+    serviceAccountConfigured: false,
     tools: [
         {name: 'read_post', description: '', enabled: true, policy: 'auto_run'},
     ],
@@ -275,6 +276,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'n8n',
                 serverOrigin: 'https://n8n.example.com/mcp',
+                kind: 'remote',
                 authenticated: true,
                 needsOAuth: false,
                 serviceAccountConfigured: true,
@@ -299,6 +301,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'OAuth Only',
                 serverOrigin: 'https://oauth.example.com/mcp',
+                kind: 'remote',
                 authenticated: false,
                 needsOAuth: true,
                 authURL: 'http://localhost/oauth/start',
@@ -321,6 +324,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'n8n',
                 serverOrigin: 'https://n8n.example.com/mcp',
+                kind: 'remote',
                 authenticated: false,
                 needsOAuth: false,
                 serviceAccountConfigured: true,
@@ -337,10 +341,32 @@ describe('McpsTab', () => {
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
     });
 
+    test('does not treat a local plugin without tools as an SA credential failure', async () => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Example Plugin',
+                serverOrigin: 'plugin://com.example.mcp',
+                kind: 'plugin',
+                authenticated: false,
+                needsOAuth: false,
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: true});
+
+        await screen.findByText('Example Plugin');
+        expect(screen.getByText('Not connected')).not.toBeNull();
+        expect(screen.queryByText('No service account credentials')).toBeNull();
+        expect(screen.queryByText("Couldn't connect")).toBeNull();
+    });
+
     test('shows Unavailable for an SA-only server in user mode without persisting off', async () => {
         const server = {
             name: 'n8n',
             serverOrigin: 'https://n8n.example.com/mcp',
+            kind: 'remote' as const,
             authenticated: false,
             needsOAuth: false,
             serviceAccountConfigured: true,
@@ -382,6 +408,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'n8n',
                 serverOrigin: 'https://n8n.example.com/mcp',
+                kind: 'remote',
                 authenticated: false,
                 needsOAuth: false,
                 serviceAccountConfigured: true,
@@ -408,6 +435,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'OAuth Server',
                 serverOrigin: 'https://oauth.example.com/mcp',
+                kind: 'remote',
                 authenticated: false,
                 needsOAuth: true,
                 authURL: 'http://localhost/oauth/start',
@@ -428,6 +456,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'n8n',
                 serverOrigin: 'https://n8n.example.com/mcp',
+                kind: 'remote',
                 authenticated: true,
                 needsOAuth: false,
                 serviceAccountConfigured: true,
@@ -455,6 +484,7 @@ describe('McpsTab', () => {
             servers: [{
                 name: 'Headers Only',
                 serverOrigin: 'https://headers.example.com/mcp',
+                kind: 'remote',
                 authenticated: false,
                 needsOAuth: false,
                 serviceAccountConfigured: false,

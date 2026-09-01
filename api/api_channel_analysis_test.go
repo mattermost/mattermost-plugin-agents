@@ -31,12 +31,8 @@ type channelAnalysisMCPProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelAnalysisMCPProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *channelAnalysisMCPProvider) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, nil
-}
-
-func (p *channelAnalysisMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
-	return nil, nil
 }
 
 type channelAnalysisSequenceLLM struct {

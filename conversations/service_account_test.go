@@ -100,7 +100,9 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 
 	require.Equal(t, []string{serviceAccountBotUserID}, provider.SAIdentities(),
 		"the approval resume must re-derive the catalog for the agent bot identity")
-	require.Equal(t, 0, provider.Calls(), "service account agents never build the per-user catalog")
+	require.Equal(t, []string{"user-id"}, provider.SAInvokers(),
+		"embedded/plugin identity on the SA catalog is the initiator")
+	require.Equal(t, 0, provider.Calls(), "service account agents never build the per-user remotes catalog")
 	require.Equal(t, 1, executed, "the service account resolver must run exactly once")
 
 	turns, err := convStore.GetTurnsForConversation(conv.ID)

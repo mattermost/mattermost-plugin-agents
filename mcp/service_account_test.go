@@ -105,7 +105,7 @@ func TestNewClientServiceAccountSendsStaticHeaders(t *testing.T) {
 func TestServiceAccountConnectToRemoteServersFailClosed(t *testing.T) {
 	liveHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "sa_tool"))
 
-	bag := newServiceAccountClients("bot-1", newTestLogService(), liveHTTP.Client(), newTestToolsCache())
+	bag := newRemoteClients("bot-1", clientKindSARemote, newTestLogService(), nil, liveHTTP.Client(), newTestToolsCache())
 	t.Cleanup(bag.Close)
 
 	mcpErrors := bag.ConnectToRemoteServers(context.Background(), []ServerConfig{
@@ -202,36 +202,60 @@ func TestServiceAccountUsesSharedCacheDespiteStaticOAuthCreds(t *testing.T) {
 	require.ElementsMatch(t, []string{"sa_tool"}, cachedToolNames(second.Tools()))
 }
 
-// The two auth modes must pool separately even for the same user ID.
+// The two auth modes must connect separately even for the same remote-owner ID.
 func TestClientManagerModeIsolationPooling(t *testing.T) {
+	server := newTestMCPServer(0, "shared_tool")
+	httpServer, recorder := startRecordingStreamableMCPServer(t, server)
 	pluginAPI := newTestPluginAPIForEmbeddedManager("bot-1", "session-1")
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, http.DefaultClient, nil)
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			Name:                  "shared-server",
+			BaseURL:               httpServer.URL,
+			Enabled:               true,
+			ServiceAccountHeaders: testServiceAccountHeaders(),
+		}},
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, httpServer.Client(), nil)
 	t.Cleanup(m.Close)
 
-	_, userErrors := m.GetToolsForUser(context.Background(), "bot-1")
+	userTools, userErrors := m.GetTools(context.Background(), UserCatalogRequest("bot-1"))
 	require.Nil(t, userErrors)
-	_, saErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1")
+	requireToolNames(t, userTools, "shared_server__shared_tool")
+
+	saTools, saErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-1"))
 	require.Nil(t, saErrors)
+	requireToolNames(t, saTools, "shared_server__shared_tool")
 
-	require.Len(t, m.clients, 2)
-	userBag := m.clients[clientKey{userID: "bot-1"}]
-	saBag := m.clients[clientKey{userID: "bot-1", serviceAccount: true}]
-	require.NotNil(t, userBag)
-	require.NotNil(t, saBag)
-	require.NotSame(t, userBag, saBag)
-
-	require.False(t, userBag.serviceAccount)
-	require.NotNil(t, userBag.oauthManager)
-	require.True(t, saBag.serviceAccount)
-	require.Nil(t, saBag.oauthManager, "service account bags must have no OAuth machinery")
+	var sawUser, sawSA bool
+	for _, headers := range recorder.snapshot() {
+		if headers.Get(testSAHeaderName) == testSAHeaderValue {
+			sawSA = true
+			require.Equal(t, "bot-1", headers.Get(MMUserIDHeader))
+			require.Empty(t, headers.Get("Authorization"))
+			continue
+		}
+		if headers.Get(MMUserIDHeader) == "bot-1" {
+			sawUser = true
+			require.Empty(t, headers.Get(testSAHeaderName))
+		}
+	}
+	require.True(t, sawUser, "user-mode remotes must connect without service-account headers")
+	require.True(t, sawSA, "service-account remotes must connect with service-account headers")
 }
 
-func TestClientManagerServiceAccountEmbeddedSessionAsBot(t *testing.T) {
+func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	t.Cleanup(cancelRun)
 
-	pluginAPI := newTestPluginAPIForEmbeddedUser(&model.User{Id: "bot-1", Roles: "system_user", IsBot: true}, "session-1")
-	embeddedServer := &fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")}
+	const botUserID = "bot-1"
+	const invokingUserID = "user-a"
+	pluginAPI := newTestPluginAPIForEmbeddedUsers(map[string]string{
+		botUserID:      "bot-session",
+		invokingUserID: "user-a-session",
+	})
+	embeddedServer := &recordingEmbeddedMCPServer{
+		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+	}
 	m := NewClientManager(Config{
 		IdleTimeoutMinutes: 30,
 		EmbeddedServer: EmbeddedServerConfig{
@@ -241,12 +265,14 @@ func TestClientManagerServiceAccountEmbeddedSessionAsBot(t *testing.T) {
 	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
 	t.Cleanup(m.Close)
 
-	tools, mcpErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1")
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest(botUserID, invokingUserID))
 	require.Nil(t, mcpErrors)
 	requireToolNames(t, tools, "mattermost__search_users")
+	require.Equal(t, []string{invokingUserID}, embeddedServer.recordedUserIDs())
+	require.Equal(t, []string{"user-a-session"}, embeddedServer.recordedSessionIDs())
 }
 
-func TestClientManagerServiceAccountPluginServerGetsBotUserIDHeader(t *testing.T) {
+func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testing.T) {
 	target := newFakePluginMCPServer(t, 1)
 	t.Cleanup(target.Close)
 
@@ -272,7 +298,7 @@ func TestClientManagerServiceAccountPluginServerGetsBotUserIDHeader(t *testing.T
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetToolsForServiceAccount(context.Background(), "bot-1")
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 1)
 
@@ -280,48 +306,198 @@ func TestClientManagerServiceAccountPluginServerGetsBotUserIDHeader(t *testing.T
 	defer mu.Unlock()
 	require.NotEmpty(t, recordedUserIDs)
 	for _, userID := range recordedUserIDs {
-		require.Equal(t, "bot-1", userID, "plugin MCP servers must see the acting bot user ID")
+		require.Equal(t, "user-a", userID, "plugin MCP servers must see the invoking user ID")
 	}
 }
 
-func TestServerAvailableForServiceAccount(t *testing.T) {
-	t.Parallel()
+func TestClientManagerServiceAccountRemoteBagExcludesLocalServers(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
 
-	tests := []struct {
-		name   string
-		server ServerConfig
-		want   bool
-	}{
-		{
-			name:   "embedded server does not need SA headers",
-			server: ServerConfig{BaseURL: EmbeddedClientKey},
-			want:   true,
+	saHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "sa_tool"))
+	pluginAPI := newTestPluginAPIForEmbeddedUsers(map[string]string{"user-a": "user-a-session"})
+	embeddedServer := &fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")}
+
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+	mockAPI := newPluginHTTPForwarder(t, target)
+
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			Name:                  "sa-server",
+			BaseURL:               saHTTP.URL,
+			Enabled:               true,
+			ServiceAccountHeaders: testServiceAccountHeaders(),
+		}},
+		EmbeddedServer: EmbeddedServerConfig{
+			Enabled:     true,
+			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-		{
-			name:   "plugin server does not need SA headers",
-			server: ServerConfig{BaseURL: "plugin://com.example.mcp"},
-			want:   true,
+	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, saHTTP.Client(), mockAPI)
+	t.Cleanup(m.Close)
+	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
+
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
+	require.Nil(t, mcpErrors)
+	requireToolNames(t, tools, "sa_server__sa_tool", "mattermost__search_users", "example__test_tool_0")
+}
+
+func TestClientManagerServiceAccountInvokersDoNotShareEmbeddedSession(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+
+	pluginAPI := newTestPluginAPIForEmbeddedUsers(map[string]string{
+		"user-a": "session-a",
+		"user-b": "session-b",
+	})
+	embeddedServer := &recordingEmbeddedMCPServer{
+		fakeEmbeddedMCPServer: fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")},
+	}
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		EmbeddedServer: EmbeddedServerConfig{
+			Enabled:     true,
+			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
 		},
-		{
-			name:   "remote server without SA headers is excluded",
-			server: ServerConfig{BaseURL: "https://mcp.example.com", Name: "n8n"},
-			want:   false,
-		},
-		{
-			name: "remote server with SA headers is available",
-			server: ServerConfig{
-				BaseURL:               "https://mcp.example.com",
+	}, pluginAPI.Log, pluginAPI, nil, embeddedServer, http.DefaultClient, nil)
+	t.Cleanup(m.Close)
+
+	_, errA := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
+	require.Nil(t, errA)
+	_, errB := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-b"))
+	require.Nil(t, errB)
+
+	require.Equal(t, []string{"user-a", "user-b"}, embeddedServer.recordedUserIDs())
+	require.Equal(t, []string{"session-a", "session-b"}, embeddedServer.recordedSessionIDs())
+}
+
+func TestClientManagerServiceAccountCatalogExcludesNonSARemotes(t *testing.T) {
+	saHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "sa_tool"))
+	pluginAPI := newTestPluginAPIForEmbeddedManager("user-a", "session-a")
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{
+			{
+				Name:                  "sa-server",
+				BaseURL:               saHTTP.URL,
+				Enabled:               true,
 				ServiceAccountHeaders: testServiceAccountHeaders(),
 			},
-			want: true,
+			{Name: "no-sa-server", BaseURL: deadServerURL(t), Enabled: true},
 		},
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), nil, saHTTP.Client(), nil)
+	t.Cleanup(m.Close)
+
+	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
+	require.Nil(t, mcpErrors, "excluded remotes are not failures and must not be dialed as the user")
+	requireToolNames(t, tools, "sa_server__sa_tool")
+}
+
+// A remote named "Mattermost" slugs to the same prefix as the embedded server.
+// Namespacing must run once across both bags so both tools survive.
+func TestCollectCatalogCrossBagToolNameCollision(t *testing.T) {
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	t.Cleanup(cancelRun)
+
+	remoteHTTP := startStreamableMCPServer(t, newTestMCPServer(0, "search_users"))
+	pluginAPI := newTestPluginAPIForEmbeddedUsers(map[string]string{"user-a": "user-a-session"})
+	embeddedServer := &fakeEmbeddedMCPServer{ctx: runCtx, server: newTestMCPServer(0, "search_users")}
+
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+	mockAPI := newPluginHTTPForwarder(t, target)
+
+	m := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			Name:                  "Mattermost",
+			BaseURL:               remoteHTTP.URL,
+			Enabled:               true,
+			ServiceAccountHeaders: testServiceAccountHeaders(),
+		}},
+		EmbeddedServer: EmbeddedServerConfig{
+			Enabled:     true,
+			ToolConfigs: []ToolConfig{{Name: "search_users", Policy: ToolPolicyAsk, Enabled: true}},
+		},
+	}, pluginAPI.Log, pluginAPI, newTestOAuthManager(), embeddedServer, remoteHTTP.Client(), mockAPI)
+	t.Cleanup(m.Close)
+	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Mattermost", Path: "/mcp", Enabled: true})
+
+	tests := []struct {
+		name string
+		req  CatalogRequest
+	}{
+		{name: "user catalog", req: UserCatalogRequest("user-a")},
+		{name: "service account catalog", req: ServiceAccountCatalogRequest("bot-1", "user-a")},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, ServerAvailableForServiceAccount(tt.server))
+			tools, mcpErrors := m.GetTools(context.Background(), tt.req)
+			require.Nil(t, mcpErrors)
+			require.GreaterOrEqual(t, len(tools), 3, "remote, embedded, and plugin tools must all be present")
+
+			seen := make(map[string]struct{}, len(tools))
+			for _, tool := range tools {
+				_, exists := seen[tool.Name]
+				require.False(t, exists, "duplicate runtime tool name %q after cross-bag namespacing", tool.Name)
+				seen[tool.Name] = struct{}{}
+			}
 		})
 	}
+}
+
+type recordingEmbeddedMCPServer struct {
+	fakeEmbeddedMCPServer
+	mu         sync.Mutex
+	userIDs    []string
+	sessionIDs []string
+}
+
+func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	f.mu.Lock()
+	f.userIDs = append(f.userIDs, userID)
+	f.sessionIDs = append(f.sessionIDs, sessionID)
+	f.mu.Unlock()
+	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
+}
+
+func (f *recordingEmbeddedMCPServer) recordedUserIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.userIDs...)
+}
+
+func (f *recordingEmbeddedMCPServer) recordedSessionIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.sessionIDs...)
+}
+
+// newTestPluginAPIForEmbeddedUsers maps each user ID to a pre-minted session ID.
+func newTestPluginAPIForEmbeddedUsers(users map[string]string) *pluginapi.Client {
+	sessionByID := make(map[string]*model.Session, len(users))
+	userByID := make(map[string]*model.User, len(users))
+	kv := make(map[string][]byte, len(users))
+	for userID, sessionID := range users {
+		userByID[userID] = &model.User{Id: userID, Roles: "system_user"}
+		sessionByID[sessionID] = &model.Session{
+			Id:        sessionID,
+			UserId:    userID,
+			Token:     "test-token",
+			ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+		}
+		kv[buildEmbeddedSessionKey(userID)] = []byte(sessionID)
+	}
+	fakeAPI := &fixedPluginAPI{
+		kvGet: func(key string) ([]byte, *model.AppError) {
+			return kv[key], nil
+		},
+		sessionByID: sessionByID,
+		userByID:    userByID,
+	}
+	return pluginapi.NewClient(fakeAPI, nil)
 }
 
 func cachedToolNames(tools map[string]*gomcp.Tool) []string {

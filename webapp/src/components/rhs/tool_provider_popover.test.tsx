@@ -48,6 +48,7 @@ const unavailableTooltip = /not available to this agent/;
 const saOnlyServer: UserMCPServerInfo = {
     name: 'n8n',
     serverOrigin: 'https://n8n.example.com/mcp',
+    kind: 'remote',
     authenticated: false,
     needsOAuth: false,
     serviceAccountConfigured: true,
@@ -57,6 +58,7 @@ const saOnlyServer: UserMCPServerInfo = {
 const initialServer: UserMCPServerInfo = {
     name: 'Initial Server',
     serverOrigin: 'https://initial.example.com',
+    kind: 'remote',
     authenticated: true,
     needsOAuth: false,
     serviceAccountConfigured: false,
@@ -66,6 +68,7 @@ const initialServer: UserMCPServerInfo = {
 const refreshedServer: UserMCPServerInfo = {
     name: 'Refreshed Server',
     serverOrigin: 'https://refreshed.example.com',
+    kind: 'remote',
     authenticated: true,
     needsOAuth: false,
     serviceAccountConfigured: false,
@@ -137,6 +140,7 @@ describe('ToolProviderPopover', () => {
         const oauthServer: UserMCPServerInfo = {
             name: 'OAuth Server',
             serverOrigin: 'https://oauth.example.com/mcp',
+            kind: 'remote',
             authenticated: false,
             needsOAuth: true,
             authURL: 'http://localhost/oauth/start',
@@ -158,6 +162,7 @@ describe('ToolProviderPopover', () => {
         const connectedServer: UserMCPServerInfo = {
             name: 'n8n',
             serverOrigin: 'https://n8n.example.com/mcp',
+            kind: 'remote',
             authenticated: true,
             needsOAuth: false,
             serviceAccountConfigured: true,

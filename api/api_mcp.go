@@ -25,6 +25,7 @@ type UserMCPToolsResponse struct {
 type UserMCPServerInfo struct {
 	Name                     string            `json:"name"`
 	ServerOrigin             string            `json:"serverOrigin"`
+	Kind                     string            `json:"kind"`
 	Authenticated            bool              `json:"authenticated"`
 	NeedsOAuth               bool              `json:"needsOAuth"`
 	AuthEmail                string            `json:"authEmail,omitempty"`
@@ -47,70 +48,65 @@ const mcpToolsCatalogServiceAccount = "service_account"
 //
 // By default this is the requesting user's per-user catalog (OAuth and user
 // headers). Pass catalog=service_account to preview the service-account
-// catalog an agent actually uses at runtime. agent_id is required unless the
+// catalog an agent actually uses at runtime (SA remotes pooled by the agent's
+// bot, embedded/plugin as the viewer). agent_id is required unless the
 // caller is a system admin creating an agent that does not exist yet.
 func (a *API) handleGetUserMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	actingID, serviceAccount, ok := a.resolveMCPToolsCatalog(c, userID)
+	req, ok := a.resolveMCPToolsCatalog(c, userID)
 	if !ok {
 		return
 	}
 
-	var tools []llm.Tool
-	var mcpErrors *mcp.Errors
-	if serviceAccount {
-		tools, mcpErrors = a.mcpClientManager.GetToolsForServiceAccount(c.Request.Context(), actingID)
-	} else {
-		tools, mcpErrors = a.mcpClientManager.GetToolsForUser(c.Request.Context(), userID)
-	}
-
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, serviceAccount))
+	tools, mcpErrors := a.mcpClientManager.GetTools(c.Request.Context(), req)
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.ServiceAccount))
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
 // handler has already aborted.
-func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (actingID string, serviceAccount bool, ok bool) {
+func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.CatalogRequest, bool) {
 	catalog := c.Query("catalog")
 	agentID := c.Query("agent_id")
 	if catalog != "" && catalog != mcpToolsCatalogServiceAccount {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("catalog must be empty or %s", mcpToolsCatalogServiceAccount))
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
 	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.IsBasicsLicensed() {
-		return userID, false, true
+		return mcp.UserCatalogRequest(userID), true
 	}
 
 	if agentID == "" {
 		if !isSystemAdmin(a.pluginAPI, userID) {
 			c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view the service account catalog"))
-			return "", false, false
+			return mcp.CatalogRequest{}, false
 		}
-		return userID, true, true
+		// Unsaved-agent preview: the viewer is both remote-pool owner and invoker.
+		return mcp.ServiceAccountCatalogRequest(userID, userID), true
 	}
 
 	cfg, err := a.agentStore.GetAgent(agentID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
 	if cfg == nil {
 		c.AbortWithStatus(http.StatusNotFound)
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
 	if !canManageAgent(a.pluginAPI, cfg, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view this agent's catalog"))
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
 	if !cfg.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
 		c.AbortWithError(http.StatusForbidden, errors.New("not authorized to view the service account catalog"))
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
 
 	if cfg.BotUserID == "" {
 		c.AbortWithError(http.StatusInternalServerError, errors.New("agent has no bot user"))
-		return "", false, false
+		return mcp.CatalogRequest{}, false
 	}
-	return cfg.BotUserID, true, true
+	return mcp.ServiceAccountCatalogRequest(cfg.BotUserID, userID), true
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.
@@ -243,16 +239,20 @@ func buildUserMCPServerInfo(
 		return toolInfos[i].Name < toolInfos[j].Name
 	})
 
+	kind := mcp.ServerKind(serverConfig.BaseURL)
 	info := UserMCPServerInfo{
 		Name:                     serverConfig.Name,
 		ServerOrigin:             serverConfig.BaseURL,
+		Kind:                     kind,
 		Tools:                    toolInfos,
-		ServiceAccountConfigured: mcp.ServerAvailableForServiceAccount(*serverConfig),
+		ServiceAccountConfigured: serverConfig.HasServiceAccountAuth(),
 	}
 
 	if serviceAccount {
 		// SA mode never uses per-user OAuth; a Connect URL would be misleading.
-		info.Authenticated = serverConfig.BaseURL == mcp.EmbeddedClientKey || len(originTools) > 0
+		// Authenticated means tools were discovered. Local servers are not
+		// service-account connections — the UI uses Kind for that, not this flag.
+		info.Authenticated = len(originTools) > 0
 		return info
 	}
 

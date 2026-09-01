@@ -1716,18 +1716,19 @@ type fakeBridgeMCPToolProvider struct {
 	tools   []llm.Tool // user-mode catalog
 	saTools []llm.Tool // service-account catalog (fail-closed subset)
 
-	userCalls []string
-	saCalls   []string
+	userCalls      []string
+	saCalls        []string
+	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, userID string) ([]llm.Tool, *mcp.Errors) {
-	p.userCalls = append(p.userCalls, userID)
+func (p *fakeBridgeMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
+		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, nil
-}
-
-func (p *fakeBridgeMCPToolProvider) GetToolsForServiceAccount(_ context.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls = append(p.saCalls, botUserID)
-	return p.saTools, nil
 }
 
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider

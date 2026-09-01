@@ -69,7 +69,7 @@ type Client struct {
 	toolsCache     *ToolsCache
 	embeddedClient *EmbeddedServerClient // for reconnection (nil for remote servers)
 	sessionID      string                // session ID for embedded server reconnection
-	serviceAccount bool                  // auth via static ServiceAccountHeaders; userID is the bot user, oauthManager nil
+	serviceAccount bool                  // auth via static ServiceAccountHeaders; remotes only, oauthManager nil
 }
 
 // clientParams bundles the dependencies for a remote MCP client connection.
@@ -119,16 +119,6 @@ func (c *Client) useSharedToolsCache() bool {
 		return true
 	}
 	return sharedToolsCacheAllowedForServer(c.config)
-}
-
-// ServerAvailableForServiceAccount reports whether a service-account agent can
-// use this server. Embedded and plugin MCP run as the bot and need no SA
-// headers; remote servers are fail-closed without them.
-func ServerAvailableForServiceAccount(s ServerConfig) bool {
-	if s.BaseURL == EmbeddedClientKey || strings.HasPrefix(s.BaseURL, "plugin://") {
-		return true
-	}
-	return s.HasServiceAccountAuth()
 }
 
 // remoteConnectionHeaders builds the static headers for a remote MCP connection.

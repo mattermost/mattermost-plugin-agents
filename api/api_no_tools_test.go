@@ -39,12 +39,7 @@ type noToolsTestMCPProvider struct {
 	tools []llm.Tool
 }
 
-func (p *noToolsTestMCPProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
-	p.calls++
-	return p.tools, nil
-}
-
-func (p *noToolsTestMCPProvider) GetToolsForServiceAccount(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return p.tools, nil
 }

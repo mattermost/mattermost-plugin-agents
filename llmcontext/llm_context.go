@@ -25,9 +25,7 @@ type ToolProvider interface {
 
 // MCPToolProvider provides MCP tools for a user or for a service-account agent
 type MCPToolProvider interface {
-	GetToolsForUser(ctx stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	// GetToolsForServiceAccount returns the catalog for a service-account agent acting as botUserID.
-	GetToolsForServiceAccount(ctx stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors)
+	GetTools(ctx stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
 }
 
 type MCPToolRetrievalOverrideProvider interface {
@@ -278,20 +276,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 			return store
 		}
 
-		// Get tools from all connected servers
+		// Get tools from all connected servers. GetTools validates the request
+		// fail-closed (e.g. an agent with no bot user yields an error, not tools).
+		req := mcp.UserCatalogRequest(userID)
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
-			botUserID := bot.BotUserID()
-			if botUserID == "" {
-				// Fail closed: no acting identity means no MCP catalog at all.
-				b.pluginAPI.Log.Error("Service account agent has no bot user ID; skipping MCP tools",
-					"bot_name", botCfg.Name, "bot_id", botCfg.ID)
-			} else {
-				mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForServiceAccount(ctx, botUserID)
-			}
-		} else {
-			mcpTools, mcpErrors = b.mcpToolProvider.GetToolsForUser(ctx, userID)
+			req = mcp.ServiceAccountCatalogRequest(bot.BotUserID(), userID)
 		}
+		mcpTools, mcpErrors = b.mcpToolProvider.GetTools(ctx, req)
 
 		// Remote/external MCP servers are the licensed "MCP Support" feature.
 		// Without a license their tools are never supplied to the LLM: they

@@ -319,13 +319,13 @@ const McpsTab = (props: Props) => {
                         <FormattedMessage defaultMessage='Use service accounts for authentication'/>
                     </CheckboxTitle>
                     <CheckboxHint>
-                        <FormattedMessage defaultMessage="Tool calls from this agent authenticate with admin-configured service account credentials on external MCP servers and act as the agent's bot account inside Mattermost. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
+                        <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
                     </CheckboxHint>
                 </CheckboxLabel>
             </CheckboxRow>
             {useServiceAccountAuth && (
                 <WarningBanner>
-                    <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers and with its bot account's access inside Mattermost. The bot's channel membership is the internal access boundary. Restrict who can use this agent on the Access tab, and only add its bot account to channels it should be able to read. External MCP servers without service account credentials configured are excluded from this agent."/>
+                    <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
                 </WarningBanner>
             )}
         </ServiceAccountSection>

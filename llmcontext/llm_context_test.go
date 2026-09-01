@@ -38,7 +38,11 @@ type countingMCPToolProvider struct {
 	saCalls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		p.saCalls++
+		return nil, nil
+	}
 	p.calls++
 	return []llm.Tool{
 		{
@@ -49,11 +53,6 @@ func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string) ([
 	}, nil
 }
 
-func (p *countingMCPToolProvider) GetToolsForServiceAccount(stdcontext.Context, string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls++
-	return nil, nil
-}
-
 // staticMCPToolProvider serves a fixed catalog per auth mode and records the identity each mode was asked for.
 type staticMCPToolProvider struct {
 	tools     []llm.Tool
@@ -62,17 +61,28 @@ type staticMCPToolProvider struct {
 	overrides map[string]mcp.ToolRetrievalOverride
 
 	userCalls []string
-	saCalls   []string
+	saCalls   []saCatalogCall
 }
 
-func (p *staticMCPToolProvider) GetToolsForUser(_ stdcontext.Context, userID string) ([]llm.Tool, *mcp.Errors) {
-	p.userCalls = append(p.userCalls, userID)
+type saCatalogCall struct {
+	remoteOwnerID  string
+	invokingUserID string
+}
+
+func (p *staticMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	// Mirror mcp.ClientManager.GetTools: invalid requests fail closed.
+	if req.RemoteOwnerID == "" || req.InvokingUserID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogRemoteOwnerRequired}}
+	}
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, saCatalogCall{
+			remoteOwnerID:  req.RemoteOwnerID,
+			invokingUserID: req.InvokingUserID,
+		})
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, p.errors
-}
-
-func (p *staticMCPToolProvider) GetToolsForServiceAccount(_ stdcontext.Context, botUserID string) ([]llm.Tool, *mcp.Errors) {
-	p.saCalls = append(p.saCalls, botUserID)
-	return p.saTools, nil
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
@@ -337,9 +347,10 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
 }
 
-// A service account agent's catalog comes from the bot identity, not the requesting user.
+// A service account agent's catalog is built for the bot (SA remotes) plus the requesting user (embedded/plugin).
 func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	const serviceAccountBotUserID = "bot-user-id"
+	const requestingUserID = "user-id"
 
 	provider := &staticMCPToolProvider{
 		tools:   []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
@@ -362,14 +373,49 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 
 	context := builder.BuildLLMContextUserRequest(
 		bot,
+		&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
+		testChannel(),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+
+	require.Equal(t, []saCatalogCall{{
+		remoteOwnerID:  serviceAccountBotUserID,
+		invokingUserID: requestingUserID,
+	}}, provider.saCalls)
+	require.Empty(t, provider.userCalls, "the requesting user's per-user remotes catalog must not be consulted")
+	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
+}
+
+func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
+	provider := &staticMCPToolProvider{
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
+	}
+	builder := newLicenseTestBuilder(t, true,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithMMBot(
+		llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		},
+		&model.Bot{UserId: "", Username: "matty", DisplayName: "Matty"},
+	)
+
+	context := builder.BuildLLMContextUserRequest(
+		bot,
 		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
 		testChannel(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
-	require.Equal(t, []string{serviceAccountBotUserID}, provider.saCalls)
-	require.Empty(t, provider.userCalls, "the requesting user's catalog must not be consulted")
-	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	// The catalog build fails closed downstream; no MCP tools reach the store.
+	require.Empty(t, provider.userCalls)
+	require.ElementsMatch(t, []string{"builtin"}, toolNames(context.Tools))
 	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
 }
 
