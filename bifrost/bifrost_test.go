@@ -1813,6 +1813,53 @@ func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
 	}
 }
 
+func TestConvertToBifrostRequest_RestrictedFallbacks(t *testing.T) {
+	configured := []schemas.Fallback{
+		{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+		{Provider: schemas.Bedrock, Model: "anthropic.claude-3-sonnet-20240229-v1:0"},
+	}
+	ids := []string{"svc-b", "svc-c"}
+	tests := []struct {
+		name      string
+		allowed   []string
+		want      []schemas.Fallback
+		responses bool
+	}{
+		{name: "chat, prefix of one", allowed: []string{"svc-b"}, want: configured[:1]},
+		{name: "chat, full prefix", allowed: []string{"svc-b", "svc-c"}, want: configured},
+		{name: "chat, empty prefix", allowed: nil, want: nil},
+		{name: "chat, skip-over denied hop drops later", allowed: []string{"svc-c"}, want: nil},
+		{name: "responses, prefix of one", allowed: []string{"svc-b"}, want: configured[:1], responses: true},
+		{name: "responses, empty prefix", allowed: nil, want: nil, responses: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:           schemas.OpenAI,
+				defaultModel:       "gpt-4o",
+				useResponsesAPI:    tt.responses,
+				fallbacks:          configured,
+				fallbackServiceIDs: ids,
+			}
+			request := llm.CompletionRequest{
+				RestrictFallbacks:         true,
+				AllowedFallbackServiceIDs: tt.allowed,
+			}
+
+			var got []schemas.Fallback
+			if tt.responses {
+				req, err := b.convertToBifrostResponsesRequest(request, b.GetDefaultConfig())
+				require.NoError(t, err)
+				got = req.Fallbacks
+			} else {
+				got = b.convertToBifrostRequest(request, b.GetDefaultConfig()).Fallbacks
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 // --- NewFromServiceConfig with fallbacks tests ---
 
 func TestNewFromServiceConfig_NoFallbacks(t *testing.T) {
@@ -1867,6 +1914,7 @@ func TestNewFromServiceConfig_WithFallbackServices(t *testing.T) {
 	require.Len(t, llmInstance.fallbacks, 1)
 	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
 	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	require.Equal(t, []string{"svc-anthropic"}, llmInstance.fallbackServiceIDs)
 }
 
 func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {

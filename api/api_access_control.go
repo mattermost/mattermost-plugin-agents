@@ -18,12 +18,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// Access-control authoring routes. Request/response bodies are
-// model.AccessControlPolicy JSON verbatim; identity fields (ID, Type, Version,
-// Active) are always overwritten from the route, never trusted from the body.
+// Identity fields (ID, Type, Version, Active) are always overwritten from the
+// route, never trusted from the body.
 
-// abortPolicyRequest maps PAP errors onto HTTP statuses using the
-// abortAgentRequest response conventions.
 func abortPolicyRequest(c *gin.Context, err error) {
 	var appErr *model.AppError
 	switch {
@@ -43,9 +40,7 @@ func abortPolicyRequest(c *gin.Context, err error) {
 // APIs reject them. The gates below keep the upstream 400 from surfacing as a
 // UI load failure.
 
-// policyReadableID gates policy GETs: an invalid resource ID means the
-// policy cannot exist, which is exactly ErrPolicyNotFound (404). Returns
-// false after writing the response.
+// policyReadableID: an invalid resource ID means the policy cannot exist (404).
 func policyReadableID(c *gin.Context, resourceID string) bool {
 	if model.IsValidId(resourceID) {
 		return true
@@ -54,9 +49,8 @@ func policyReadableID(c *gin.Context, resourceID string) bool {
 	return false
 }
 
-// policyWritableID gates policy PUT/DELETE: writes against an invalid
-// resource ID get an explicit 400 instead of a confusing upstream error.
-// Returns false after writing the response.
+// policyWritableID: writes against an invalid resource ID get an explicit 400
+// instead of a confusing upstream error.
 func policyWritableID(c *gin.Context, resourceID string) bool {
 	if model.IsValidId(resourceID) {
 		return true
@@ -65,8 +59,6 @@ func policyWritableID(c *gin.Context, resourceID string) bool {
 	return false
 }
 
-// validPolicyResourceType reports whether t is one of the three plugin
-// resource types accepted by the CEL proxy routes.
 func validPolicyResourceType(t string) bool {
 	switch t {
 	case accesscontrol.ResourceTypeAgent, accesscontrol.ResourceTypeService, accesscontrol.ResourceTypeMCP:
@@ -75,8 +67,6 @@ func validPolicyResourceType(t string) bool {
 	return false
 }
 
-// bindCappedJSONBody binds the request body into out with the same size cap
-// as agent writes. Returns false after aborting on bind failure.
 func bindCappedJSONBody(c *gin.Context, out any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
 	if err := c.ShouldBindJSON(out); err != nil {
@@ -91,8 +81,6 @@ func bindCappedJSONBody(c *gin.Context, out any) bool {
 	return true
 }
 
-// bindPolicyBody binds the request body into an AccessControlPolicy with the
-// same size cap as agent writes. Returns nil after aborting on bind failure.
 func bindPolicyBody(c *gin.Context) *model.AccessControlPolicy {
 	var policy model.AccessControlPolicy
 	if !bindCappedJSONBody(c, &policy) {
@@ -101,9 +89,6 @@ func bindPolicyBody(c *gin.Context) *model.AccessControlPolicy {
 	return &policy
 }
 
-// loadManagedAgent loads the :agentid agent and authorizes the caller as an
-// agent manager (creator / agent admin / ManageOthersAgent / legacy
-// ManageSystem). Returns nil after writing the response on failure.
 func (a *API) loadManagedAgent(c *gin.Context) *llm.BotConfig {
 	userID := c.GetHeader("Mattermost-User-Id")
 	agentID := c.Param("agentid")
@@ -184,9 +169,7 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// resolveServiceForPolicy resolves :serviceid to a configured service. The
-// existence check doubles as the ID-validity gate: policies can never be
-// written against nonexistent resources. Returns nil after aborting.
+// Existence doubles as the ID-validity gate: policies cannot be written against nonexistent resources.
 func (a *API) resolveServiceForPolicy(c *gin.Context) *llm.ServiceConfig {
 	serviceID := c.Param("serviceid")
 	cfg, ok := a.loadPluginConfigForAgents(c)
@@ -257,9 +240,7 @@ func (a *API) handleDeleteServicePolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// resolveMCPServerForPolicy resolves :serverid to a configured MCP server
-// (remote, embedded, or plugin). Returns a synthetic MCPServerConfig for
-// embedded/plugin entries so handlers can reuse ID/Name. Returns nil after aborting.
+// Embedded/plugin entries return a synthetic MCPServerConfig so handlers can reuse ID/Name.
 func (a *API) resolveMCPServerForPolicy(c *gin.Context) *config.MCPServerConfig {
 	serverID := c.Param("serverid")
 	cfg, ok := a.loadPluginConfigForAgents(c)
@@ -350,10 +331,8 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// celRouteAuthzRequired gates the CEL proxy routes: system
-// admins and agent managers (canConfigureAgentServices) pass outright;
-// otherwise a per-agent admin passes when the agent_id query param names an
-// agent they manage.
+// celRouteAuthzRequired: system admins and agent managers pass; otherwise a
+// per-agent admin passes when agent_id names an agent they manage.
 func (a *API) celRouteAuthzRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if canConfigureAgentServices(a.pluginAPI, userID) {
@@ -370,7 +349,6 @@ func (a *API) celRouteAuthzRequired(c *gin.Context) {
 	abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to use the access policy editor"))
 }
 
-// celExpressionRequest is the JSON body shared by the check/visual_ast routes.
 type celExpressionRequest struct {
 	ResourceType string `json:"resource_type"`
 	Expression   string `json:"expression"`
@@ -405,7 +383,6 @@ func (a *API) handleCELCheck(c *gin.Context) {
 	c.JSON(http.StatusOK, celErrors)
 }
 
-// celTestRequest is the JSON body for POST /access_control/cel/test.
 type celTestRequest struct {
 	ResourceType string `json:"resource_type"`
 	Expression   string `json:"expression"`
@@ -474,13 +451,11 @@ func (a *API) handleCELVisualAST(c *gin.Context) {
 	c.JSON(http.StatusOK, ast)
 }
 
-// ABACStatusResponse is the JSON body of GET /access_control/status.
 type ABACStatusResponse struct {
 	Available bool `json:"available"`
 }
 
-// handleABACStatus reports whether the server-side ABAC engine is usable;
-// the webapp hides all policy UI when it is not.
+// handleABACStatus: the webapp hides all policy UI when ABAC is not available.
 func (a *API) handleABACStatus(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	c.JSON(http.StatusOK, ABACStatusResponse{

@@ -18,19 +18,16 @@ import (
 // (nil, nil) transport-failure mode; the checkers' error path denies it.
 var errRPCTransportFailure = errors.New("plugin RPC transport failure: EvaluateAccessControl returned no decision")
 
-// PluginAPIClient implements DecisionClient over plugin.API.EvaluateAccessControl.
 type PluginAPIClient struct {
 	papi plugin.API
 }
 
-// NewPluginAPIClient builds a DecisionClient backed by the raw plugin API.
 func NewPluginAPIClient(papi plugin.API) *PluginAPIClient {
 	return &PluginAPIClient{papi: papi}
 }
 
-// EvaluateAccessRequest proxies one PDP decision call (ctx is span-only; the
-// plugin RPC hop carries no context). The server's decision is returned
-// verbatim; every failure to obtain one is an error, which the checkers deny.
+// EvaluateAccessRequest proxies one PDP call. ctx is span-only; the plugin RPC
+// hop carries no context. A missing decision is an error (checkers deny).
 func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, resourceType, resourceID, action string) (*model.AccessDecision, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac evaluate", trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -56,10 +53,8 @@ func (c *PluginAPIClient) EvaluateAccessRequest(ctx context.Context, userID, res
 	return decision, nil
 }
 
-// outcomeAttribute renders a decision for the ABACOutcome span attribute,
-// keeping the allow/deny/no_policy distinction the AuthZEN shape folds into
-// one boolean. There is no "unavailable" value any more: failing to obtain a
-// decision is an error, recorded on the span as an error status instead.
+// outcomeAttribute keeps allow/deny/no_policy distinct for the ABACOutcome span
+// attribute; AuthZEN folds them into one boolean.
 func outcomeAttribute(decision model.AccessDecision) string {
 	switch {
 	case decision.IsNoPolicy():

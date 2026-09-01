@@ -49,9 +49,7 @@ type agentErrorResponse struct {
 	Error string `json:"error"`
 }
 
-// statusForAccessErr maps ValidateAgentWrite errors onto HTTP statuses: policy
-// denials are 403, saving into attribute-based mode without ABAC is a 400
-// (bad request, actionable), anything else is an infrastructure 500.
+// statusForAccessErr: policy denials are 403; saving as attribute-based without ABAC is 400.
 func statusForAccessErr(err error) int {
 	switch {
 	case errors.Is(err, accesscontrol.ErrAccessDenied):
@@ -331,7 +329,6 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	// ABAC write-time validation, before bot creation.
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
@@ -510,7 +507,6 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// ABAC write-time validation; only changed assignments are checked.
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
@@ -614,16 +610,12 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// canBypassServicePolicies reports whether userID sees policy-gated services
-// regardless of ABAC decisions: system admins author the policies and must be
-// able to see the full catalog.
+// canBypassServicePolicies: system admins author the policies and must see the full catalog.
 func (a *API) canBypassServicePolicies(userID string) bool {
 	return a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem)
 }
 
-// handleListServices handles GET /services (non-secret fields only). System
-// admins get the full catalog; other callers only see services the ABAC
-// service policy lets them use.
+// handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	if !canConfigureAgentServices(a.pluginAPI, userID) {
@@ -704,8 +696,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	// Same gate as GET /services: non-admins may not probe models of a
-	// service the ABAC service policy denies them.
+	// Same gate as GET /services.
 	if !a.canBypassServicePolicies(userID) {
 		if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
 			abortAgentRequest(c, http.StatusForbidden, errors.New("you do not have access to the selected service"))
@@ -749,11 +740,9 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 }
 
 // canUserAccessAgent reports whether userID may see the agent on list/get.
-// System admins may see agents even when CanUseService would deny them (they
-// author policies). Everyone else — including creators and per-agent admins —
-// must pass the agent gate and CanUseService, matching the runtime composite
-// in bots.CheckUsageRestrictionsForUserConfig. Hiding denied-service agents
-// prevents existence leaks via ghost rows / "Service unavailable".
+// System admins see agents even when CanUseService would deny (they author
+// policies). Everyone else must pass the agent gate and CanUseService for the
+// primary service. Denied fallback hops are truncated per request, not here.
 func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false

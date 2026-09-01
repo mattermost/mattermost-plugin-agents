@@ -742,9 +742,6 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 	}
 }
 
-// TestSearchHandlersEnforceUsageRestrictions pins the previously-missing
-// usage-restriction gate on the search entry points: a user blocked from the
-// bot gets 403 before any search work happens.
 func TestSearchHandlersEnforceUsageRestrictions(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

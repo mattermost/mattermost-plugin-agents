@@ -23,9 +23,7 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 		appErr   *model.AppError
 
 		wantErr error
-		// wantAttribute is the value reported on the ABACOutcome span
-		// attribute, which keeps allow/deny/no_policy apart even though the
-		// AuthZEN decision folds them into one boolean.
+		// wantAttribute keeps allow/deny/no_policy apart; AuthZEN folds them into one boolean.
 		wantAttribute string
 		wantNoPolicy  bool
 	}{
@@ -102,7 +100,6 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			// The server's decision is returned verbatim.
 			require.Equal(t, tt.decision, decision)
 			assert.Equal(t, tt.wantNoPolicy, decision.IsNoPolicy())
 			assert.Equal(t, tt.wantAttribute, outcomeAttribute(*decision))

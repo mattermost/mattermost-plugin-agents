@@ -23,17 +23,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// erroringDecisionClient fails every evaluation, as an unlicensed, disabled, or
-// unreachable PDP does. The decision tables translate that to an unconditional
-// deny.
+// erroringDecisionClient fails every evaluation; the decision tables deny.
 type erroringDecisionClient struct{}
 
 func (erroringDecisionClient) EvaluateAccessRequest(_ context.Context, _, _, _, _ string) (*model.AccessDecision, error) {
 	return nil, errors.New("access control evaluation unavailable")
 }
 
-// setupAccessControlTestEnvironment builds an API whose accessChecker proxies
-// PAP calls to e.mockAPI.
 func setupAccessControlTestEnvironment(t *testing.T) *TestEnvironment {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -485,11 +481,8 @@ func TestPluginMCPPolicyPutFallsBackNameToPluginID(t *testing.T) {
 	assert.Equal(t, pluginServerPluginID, savedPolicy.Name)
 }
 
-// TestLegacyIDPolicyRoutes: resources whose stored ID is a hand-crafted
-// legacy string (set via a raw config PUT before server-side minting) can
-// never carry a policy — the PDP short-circuits them to no_policy. GET must
-// report the policy absent (404) instead of surfacing the upstream "Invalid
-// identifier" 400, and writes must fail with an explicit 400.
+// Legacy IDs can never carry a policy. GET reports absent (404) instead of the
+// upstream "Invalid identifier" 400; writes fail with an explicit 400.
 func TestLegacyIDPolicyRoutes(t *testing.T) {
 	adminID := model.NewId()
 	const legacyServiceID = "mock-openai"
@@ -695,10 +688,8 @@ func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
-// TestUpdateAgentUnchangedDeniedServiceSucceeds covers the write-path
-// exception in ValidateAgentWrite: an unchanged pre-existing service
-// assignment is not re-checked. List/get still hide the agent from
-// non-sysadmins when CanUseService denies (see TestListAgentsAppliesServicePolicies).
+// Unchanged pre-existing service assignments are not re-checked on write.
+// List/get still hide the agent from non-sysadmins when CanUseService denies.
 func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	serviceID := model.NewId()
 	userID := model.NewId()
@@ -724,9 +715,8 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 }
 
-// GET /agents hides agents the caller cannot use. Non-sysadmins need both
-// agent access and CanUseService; system admins keep seeing agents whose
-// service policy would deny them.
+// GET /agents: non-sysadmins need agent access and CanUseService; sysadmins
+// still see agents whose service policy would deny them.
 func TestListAgentsAppliesServicePolicies(t *testing.T) {
 	deniedServiceID := model.NewId()
 	allowedServiceID := model.NewId()
@@ -801,6 +791,54 @@ func TestListAgentsAppliesServicePolicies(t *testing.T) {
 	}
 }
 
+func TestListAgentsKeepsAgentWhenFallbackServiceDenied(t *testing.T) {
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+	plainServiceID := model.NewId()
+	agentWithDeniedFallback := model.NewId()
+	agentOnPlainService := model.NewId()
+	creatorID := model.NewId()
+	userID := model.NewId()
+
+	e := setupAccessControlTestEnvironment(t)
+	defer e.Cleanup(t)
+	e.api.configStore = &mockConfigStore{
+		cfg: &config.Config{
+			Services: []llm.ServiceConfig{
+				{ID: primaryID, Name: "Primary", Type: llm.ServiceTypeOpenAI, APIKey: "sk-primary", FallbackServiceID: fallbackID},
+				{ID: fallbackID, Name: "Fallback", Type: llm.ServiceTypeOpenAI, APIKey: "sk-fallback"},
+				{ID: plainServiceID, Name: "Plain", Type: llm.ServiceTypeOpenAI, APIKey: "sk-plain"},
+			},
+		},
+	}
+	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{fallbackID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
+
+	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.agentStore.agents[agentWithDeniedFallback] = &llm.BotConfig{
+		ID: agentWithDeniedFallback, Name: "fallback-gated", DisplayName: "Fallback Gated Agent",
+		ServiceID: primaryID, CreatorID: creatorID, UserAccessLevel: llm.UserAccessLevelAll,
+	}
+	e.agentStore.agents[agentOnPlainService] = &llm.BotConfig{
+		ID: agentOnPlainService, Name: "plain", DisplayName: "Plain Agent",
+		ServiceID: plainServiceID, CreatorID: creatorID, UserAccessLevel: llm.UserAccessLevelAll,
+	}
+
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, userID)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	var agents []llm.BotConfig
+	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agents))
+	gotIDs := make([]string, 0, len(agents))
+	for _, agent := range agents {
+		gotIDs = append(gotIDs, agent.ID)
+	}
+	assert.ElementsMatch(t, []string{agentWithDeniedFallback, agentOnPlainService}, gotIDs)
+}
+
 // Per-agent admins (and creators) do not bypass service ABAC on list/get —
 // only PermissionManageSystem does.
 func TestListAgentsHidesDeniedServiceFromAgentAdmin(t *testing.T) {
@@ -831,9 +869,6 @@ func TestListAgentsHidesDeniedServiceFromAgentAdmin(t *testing.T) {
 	assert.Empty(t, agents)
 }
 
-// TestABACStatusRoute drives the status endpoint through the availability probe,
-// which asks the server to render a trivial CEL expression: an AST means the
-// server is past its ABAC readiness gate, a readiness error means it is not.
 func TestABACStatusRoute(t *testing.T) {
 	unlicensed := model.NewAppError("Init", "app.pap.init.app_error", nil, "enterprise advanced license required", http.StatusNotImplemented)
 	abacDisabled := model.NewAppError("isReady", "app.pap.is_ready.app_error", nil, "access control is disabled", http.StatusNotAcceptable)
@@ -866,7 +901,6 @@ func TestABACStatusRoute(t *testing.T) {
 	}
 }
 
-// seedTwoServiceConfig registers two services with valid stable IDs.
 func seedTwoServiceConfig(e *TestEnvironment, firstID, secondID string) {
 	e.api.configStore = &mockConfigStore{
 		cfg: &config.Config{
@@ -941,8 +975,6 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 	}
 }
 
-// On POST /agents/models/fetch a non-admin probing a denied service gets 403;
-// admins bypass the policy (and then fail later on missing credentials, 400).
 func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 	serviceID := model.NewId()
 

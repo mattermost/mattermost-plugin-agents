@@ -12,7 +12,6 @@ import (
 
 // Audit event names for every state-changing operation in the plugin: 29
 // routed events plus the non-gin MCP session grant. All are declared here,
-// routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
 // names here rather than inline.

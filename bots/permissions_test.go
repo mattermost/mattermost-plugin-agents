@@ -505,11 +505,15 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 type abacStubClient struct {
 	perType    map[string]*model.AccessDecision
 	perTypeErr map[string]error
+	perID      map[string]*model.AccessDecision
 }
 
-func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, _, _ string) (*model.AccessDecision, error) {
+func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, resourceID, _ string) (*model.AccessDecision, error) {
 	if err, ok := s.perTypeErr[resourceType]; ok {
 		return nil, err
+	}
+	if decision, ok := s.perID[resourceID]; ok {
+		return decision, nil
 	}
 	if decision, ok := s.perType[resourceType]; ok {
 		return decision, nil
@@ -518,7 +522,6 @@ func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType
 	return &noPolicy, nil
 }
 
-// Decision shorthands for the table below.
 func abacAllow() *model.AccessDecision { return &model.AccessDecision{Decision: true} }
 func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: false} }
 
@@ -531,8 +534,6 @@ func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironmen
 	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
 }
 
-// TestCheckUsageRestrictionsForUserConfigComposite exercises the composite
-// agent+service ABAC gate layered over the legacy UserAccessLevel check.
 func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 	userID := model.NewId()
 	agentID := model.NewId()
@@ -624,6 +625,185 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+func openAIService(id, fallbackID string) llm.ServiceConfig {
+	return llm.ServiceConfig{
+		ID:                id,
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "sk-test",
+		FallbackServiceID: fallbackID,
+	}
+}
+
+func TestCheckUsageRestrictionsForUserConfigServiceChain(t *testing.T) {
+	userID := model.NewId()
+	agentID := model.NewId()
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+	fallback2ID := model.NewId()
+
+	tests := []struct {
+		name       string
+		perID      map[string]*model.AccessDecision
+		services   []llm.ServiceConfig
+		cfg        llm.BotConfig
+		wantDenied bool
+	}{
+		{
+			name:     "primary allow, no fallbacks",
+			services: []llm.ServiceConfig{openAIService(primaryID, "")},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name: "primary allow, fallback deny",
+			perID: map[string]*model.AccessDecision{
+				fallbackID: abacDeny(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name: "primary deny, fallback allow",
+			perID: map[string]*model.AccessDecision{
+				primaryID:  abacDeny(),
+				fallbackID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name: "primary allow, all fallbacks allow",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perID: tc.perID})
+			defer e.Cleanup(t)
+			e.bots.config = &mockConfig{services: tc.services}
+
+			err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, userID)
+			if tc.wantDenied {
+				require.ErrorIs(t, err, ErrUsageRestriction)
+				require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAllowedFallbackServiceIDs(t *testing.T) {
+	userID := model.NewId()
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+	fallback2ID := model.NewId()
+
+	tests := []struct {
+		name     string
+		perID    map[string]*model.AccessDecision
+		services []llm.ServiceConfig
+		nilGet   bool
+		want     []string
+		wantErr  bool
+	}{
+		{
+			name:     "no fallbacks",
+			services: []llm.ServiceConfig{openAIService(primaryID, "")},
+		},
+		{
+			name: "first fallback allowed, second denied",
+			perID: map[string]*model.AccessDecision{
+				fallback2ID: abacDeny(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			want: []string{fallbackID},
+		},
+		{
+			name: "first fallback denied drops later hops",
+			perID: map[string]*model.AccessDecision{
+				fallbackID:  abacDeny(),
+				fallback2ID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+		},
+		{
+			name: "all fallbacks allowed",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			want: []string{fallbackID, fallback2ID},
+		},
+		{
+			name:   "nil getServiceByID drops fallbacks",
+			nilGet: true,
+		},
+		{
+			name: "cycle fails closed",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				{ID: fallbackID, Type: llm.ServiceTypeOpenAI, APIKey: "sk-test", FallbackServiceID: primaryID},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perID: tc.perID})
+			defer e.Cleanup(t)
+			e.bots.config = &mockConfig{services: tc.services}
+
+			var get func(id string) (llm.ServiceConfig, bool)
+			if !tc.nilGet {
+				get = e.bots.serviceByID()
+			}
+			got, err := AllowedFallbackServiceIDs(context.Background(), e.bots.accessChecker, userID, primaryID, get)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
 		})
 	}
 }
