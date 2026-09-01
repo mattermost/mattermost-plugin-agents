@@ -87,6 +87,8 @@ func BlocksToPost(
 				Arguments:    arguments,
 				MCPBareName:  block.MCPBareName,
 				Status:       StatusFromString(block.Status),
+				Title:        block.Title,
+				Description:  block.Description,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""

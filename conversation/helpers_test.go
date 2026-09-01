@@ -65,9 +65,9 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 		ID:           "tc1",
 		Name:         "jira__get_issue",
 		Description:  "Get a Jira issue",
+		Title:        "Get Issue",
 		ServerOrigin: "https://jira.example.com",
 		Arguments:    json.RawMessage(`{"key":"MM-1"}`),
-		Schema:       json.RawMessage(`{"type":"object"}`),
 		MCPBareName:  "get_issue",
 		Status:       llm.ToolCallStatusPending,
 	}}, false)
@@ -77,6 +77,8 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", blocks[0].Name)
 	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
+	assert.Equal(t, "Get Issue", blocks[0].Title)
+	assert.Equal(t, "Get a Jira issue", blocks[0].Description)
 }
 
 // TestToolUseBlocksIncludesServerToolActivity pins the fix for server-tool

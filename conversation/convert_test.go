@@ -231,7 +231,6 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 		assert.JSONEq(t, `{}`, args["t-nilshared"])
 		for _, tc := range got.ToolUse {
 			if tc.ID == "t-private" {
-				assert.Nil(t, tc.Schema)
 				assert.Empty(t, tc.MCPBareName)
 				assert.Empty(t, tc.Description)
 			}
@@ -256,6 +255,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	toolStore.AddTools([]llm.Tool{{
 		Name:         "jira__get_issue",
 		Description:  "Get a Jira issue",
+		Title:        "Get Issue",
 		Schema:       schema,
 		ServerOrigin: "https://jira.example.com",
 	}})
@@ -269,8 +269,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	assert.Equal(t, "https://jira.example.com", toolCall.ServerOrigin)
 	assert.Equal(t, "get_issue", toolCall.MCPBareName)
 	assert.Equal(t, "Get a Jira issue", toolCall.Description)
-	require.IsType(t, json.RawMessage{}, toolCall.Schema)
-	assert.JSONEq(t, `{"type":"object","properties":{"key":{"type":"string"}}}`, string(toolCall.Schema.(json.RawMessage)))
+	assert.Equal(t, "Get Issue", toolCall.Title)
 }
 
 func TestRoleMapping(t *testing.T) {

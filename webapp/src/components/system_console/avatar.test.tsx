@@ -5,6 +5,10 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
+// Suite-wide mapper stubs pngs; import the same module id avatar.tsx uses.
+//@ts-ignore it exists
+import aiIcon from 'src/../../assets/bot_icon.png';
+
 import AvatarItem from './avatar';
 
 jest.mock('react-intl', () => {
@@ -21,8 +25,6 @@ jest.mock('react-intl', () => {
 jest.mock('@/client', () => ({
     getBotProfilePictureUrl: jest.fn(),
 }));
-
-jest.mock('src/../../assets/bot_icon.png', () => 'placeholder-icon.png', {virtual: true});
 
 const {getBotProfilePictureUrl} = jest.requireMock('@/client') as {
     getBotProfilePictureUrl: jest.Mock<Promise<string>, [string]>;
@@ -104,7 +106,7 @@ describe('AvatarItem', () => {
             expect(getBotProfilePictureUrl).toHaveBeenCalledWith('newbot');
         });
 
-        expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
+        expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
     });
 
     it('keeps the placeholder when the avatar fetch rejects (no unhandled rejection)', async () => {
@@ -122,7 +124,7 @@ describe('AvatarItem', () => {
 
             await new Promise((resolve) => setTimeout(resolve, 0));
 
-            expect(screen.getByRole('img').getAttribute('src')).toBe('placeholder-icon.png');
+            expect(screen.getByRole('img').getAttribute('src')).toBe(aiIcon);
             expect(unhandled).not.toHaveBeenCalled();
         } finally {
             process.off('unhandledRejection', unhandled);

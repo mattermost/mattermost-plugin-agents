@@ -124,6 +124,8 @@ func toolUseBlocks(
 			Status:          StatusToString(tc.Status),
 			Shared:          new(shared),
 			UserInteraction: tc.UserInteraction,
+			Title:           tc.Title,
+			Description:     tc.Description,
 		})
 	}
 

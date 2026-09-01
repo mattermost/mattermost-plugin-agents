@@ -16,11 +16,6 @@ type GetPostReactionsArgs struct {
 	PostID string `json:"post_id" jsonschema:"The ID of the post,minLength=26,maxLength=26"`
 }
 
-// GetBulkReactionsArgs represents arguments for the get_bulk_reactions tool.
-type GetBulkReactionsArgs struct {
-	PostIDs []string `json:"post_ids" jsonschema:"The IDs of the posts to fetch reactions for"`
-}
-
 // ListCustomEmojiArgs represents arguments for the list_custom_emoji tool.
 type ListCustomEmojiArgs struct {
 	Page    int `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
@@ -46,7 +41,6 @@ type RemoveReactionArgs struct {
 
 const (
 	getPostReactionsDescription  = "List the emoji reactions on a post and who reacted. Parameters: post_id (required). Returns each emoji with its count and reacting usernames."
-	getBulkReactionsDescription  = "Fetch reactions for many posts at once. Parameters: post_ids (required list). Returns reactions grouped per post."
 	listCustomEmojiDescription   = "List the server's custom emoji. Parameters: page, per_page. Returns each emoji's name and ID."
 	searchCustomEmojiDescription = "Search custom emoji by name. Parameters: term (required). Returns matching custom emoji."
 	addReactionDescription       = "Add an emoji reaction to a post. Parameters: post_id (required), emoji_name (required, no colons)."
@@ -57,7 +51,6 @@ const (
 func (p *MattermostToolProvider) getReactionTools() []MCPTool {
 	return []MCPTool{
 		mcpTool(p, "get_post_reactions", getPostReactionsDescription, p.toolGetPostReactions),
-		mcpTool(p, "get_bulk_reactions", getBulkReactionsDescription, p.toolGetBulkReactions),
 		mcpTool(p, "list_custom_emoji", listCustomEmojiDescription, p.toolListCustomEmoji),
 		mcpTool(p, "search_custom_emoji", searchCustomEmojiDescription, p.toolSearchCustomEmoji),
 		mcpTool(p, "add_reaction", addReactionDescription, p.toolAddReaction),
@@ -80,32 +73,6 @@ func (p *MattermostToolProvider) toolGetPostReactions(mcpContext *MCPToolContext
 
 	var result strings.Builder
 	format.WriteReactions(&result, args.PostID, reactions, usernames)
-	return result.String(), nil
-}
-
-// toolGetBulkReactions implements the get_bulk_reactions tool.
-func (p *MattermostToolProvider) toolGetBulkReactions(mcpContext *MCPToolContext, args GetBulkReactionsArgs) (string, error) {
-	if err := requireIDs("post_ids", args.PostIDs); err != nil {
-		return "", err
-	}
-
-	byPost, _, err := mcpContext.Client.GetBulkReactions(mcpContext.Ctx, args.PostIDs)
-	if err != nil {
-		return "", fmt.Errorf("error fetching reactions: %w", err)
-	}
-
-	// Collect all reactions for a single username lookup.
-	all := make([]*model.Reaction, 0)
-	for _, reactions := range byPost {
-		all = append(all, reactions...)
-	}
-	usernames := p.reactionUsernames(mcpContext, all)
-
-	var result strings.Builder
-	for _, postID := range args.PostIDs {
-		format.WriteReactions(&result, postID, byPost[postID], usernames)
-		result.WriteString("\n")
-	}
 	return result.String(), nil
 }
 
