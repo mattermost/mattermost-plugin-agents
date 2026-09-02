@@ -1,0 +1,52 @@
+# Editor contract drift check against the live mattermost/mattermost master.
+#
+# The plugin mirrors the host's window.Components access-control editor prop
+# types (webapp/src/types/access_control_editors.ts). ci.yml checks those
+# mirrors against a committed host snapshot; this workflow additionally
+# type-checks them against a fresh checkout of mattermost master.
+#
+# Runs on every push to this repo's master and on demand; it checks the
+# mirrors against whatever mattermost master is at that moment. Host-side
+# drift between plugin pushes is caught on the next push or by a manual
+# dispatch. A failing run is the signal; there are no notifications or issue
+# creation.
+name: editor-contract-drift
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-host-probe:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check out mattermost/mattermost master (webapp only)
+        uses: actions/checkout@v5
+        with:
+          repository: mattermost/mattermost
+          ref: master
+          path: mattermost
+          fetch-depth: 1
+          sparse-checkout: webapp
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: '.nvmrc'
+      - name: Install plugin webapp dependencies
+        run: cd webapp && npm ci
+      - name: Install host webapp dependencies
+        # The host webapp is an npm workspace; `npm ci` at its root installs
+        # every workspace package and its postinstall builds platform/*.
+        # --include=dev mirrors the host's own CI (webapp/Makefile node_modules).
+        run: cd mattermost/webapp && npm ci --include=dev
+      - name: Check editor contract against the live host checkout
+        # MM_WEBAPP_PATH makes the script strict: it exits 1 if the checkout
+        # is unusable, so the live probe cannot be silently skipped.
+        env:
+          MM_WEBAPP_PATH: ${{ github.workspace }}/mattermost/webapp
+        run: cd webapp && npm run check-editor-contract
