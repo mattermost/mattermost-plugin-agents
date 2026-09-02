@@ -204,4 +204,15 @@ describe('RHS', () => {
         });
         errorLog.mockRestore();
     });
+
+    test('still mounts the RHS when the plugin redux slice is missing', () => {
+        mockUseSelector.mockImplementation((selector) => selector({
+            entities: baseState.entities,
+        }));
+
+        renderRHS();
+
+        expect(screen.getByTestId('mattermost-ai-rhs')).toBeTruthy();
+        expect(screen.getByTestId('rhs-new-tab')).toBeTruthy();
+    });
 });

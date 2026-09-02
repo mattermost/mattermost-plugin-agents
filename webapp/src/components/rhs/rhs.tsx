@@ -23,6 +23,7 @@ import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
 import RHSNewTab from './rhs_new_tab';
 import RhsFileDropZone from './rhs_file_drop_zone';
+import RHSErrorBoundary from './rhs_error_boundary';
 
 const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
     height: 100%;
@@ -63,7 +64,7 @@ export default function RHS() {
     const dispatch = useDispatch();
     const intl = useIntl();
     const [currentTab, setCurrentTab] = useState('new');
-    const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
+    const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id]?.selectedPostId);
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
@@ -189,21 +190,23 @@ export default function RHS() {
         <RhsContainer
             data-testid='mattermost-ai-rhs'
         >
-            <RHSHeader
-                currentTab={currentTab}
-                setCurrentTab={setCurrentTab}
-                selectPost={selectPost}
-                bots={bots}
-                activeBot={activeBot}
-                setActiveBot={setActiveBot}
-                disabledServers={disabledServers}
-                onDisabledServersChange={setDisabledServers}
-                preloadedServers={preloadedServers}
-                activeConversationId={activeConversationId}
-            />
-            {wrapInDropZone ? (
-                <RhsFileDropZone>{content}</RhsFileDropZone>
-            ) : content}
+            <RHSErrorBoundary>
+                <RHSHeader
+                    currentTab={currentTab}
+                    setCurrentTab={setCurrentTab}
+                    selectPost={selectPost}
+                    bots={bots}
+                    activeBot={activeBot}
+                    setActiveBot={setActiveBot}
+                    disabledServers={disabledServers}
+                    onDisabledServersChange={setDisabledServers}
+                    preloadedServers={preloadedServers}
+                    activeConversationId={activeConversationId}
+                />
+                {wrapInDropZone ? (
+                    <RhsFileDropZone>{content}</RhsFileDropZone>
+                ) : content}
+            </RHSErrorBoundary>
         </RhsContainer>
     );
 }

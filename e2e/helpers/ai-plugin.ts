@@ -92,6 +92,21 @@ export class AIPlugin {
         await expect(rhsContainer).toBeVisible({ timeout: 10000 });
       }
     }
+
+    await this.assertRhsDidNotCrash();
+  }
+
+  /**
+   * Inner plugin error boundary (distinct from Mattermost's "An error
+   * occurred in the mattermost-ai plugin" chrome). Fail with the real
+   * exception so a render crash is not mistaken for a missing RHS.
+   */
+  async assertRhsDidNotCrash() {
+    const rhsError = this.page.getByTestId('mattermost-ai-rhs-error');
+    if (await rhsError.isVisible().catch(() => false)) {
+      const detail = (await rhsError.textContent())?.trim() || 'unknown error';
+      throw new Error(`Agents RHS crashed: ${detail}`);
+    }
   }
 
   async sendMessage(message: string) {
