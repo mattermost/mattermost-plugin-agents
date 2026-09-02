@@ -12,7 +12,7 @@
 
 import type {ComponentType} from 'react';
 
-import type {AccessControlPropertyField, AccessControlTestResult, CELExpressionError, VisualExpression} from './access_control';
+import type {AccessControlPropertyField, AccessControlTestResult, AccessControlVisualAST, CELExpressionError} from './access_control';
 
 // Mirrors mattermost-redux's ActionResult. The host editors receive plugin
 // promises adapted onto this {data}/{error} shape.
@@ -23,7 +23,7 @@ export type ActionResult<Data = unknown, Err = unknown> = {
 
 // Mirrors the subset of TableEditorProps['actions'] this plugin supplies.
 export type TableEditorActions = {
-    getVisualAST: (expr: string) => Promise<ActionResult<VisualExpression>>;
+    getVisualAST: (expr: string) => Promise<ActionResult<AccessControlVisualAST>>;
 
     // Overrides the redux thunk backing the built-in TestResultsModal so the
     // request routes through the plugin's proxy.
