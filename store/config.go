@@ -19,10 +19,9 @@ const (
 	configSaveLockKey       = int32(1)
 )
 
-// ErrLegacyUUIDServiceID is returned by any config write that contains a
-// dashed UUID in Services[].ID after the ABAC ID migration marker is set.
-// That format is invalid post-migration; the write is rejected, not reminted.
-// Enforced inside insertActiveConfigTx so every writer is covered.
+// ErrLegacyUUIDServiceID is returned when a config write carries a dashed UUID in
+// Services[].ID after the ABAC ID migration. Enforced in insertActiveConfigTx so every
+// writer is covered; the write is rejected, not reminted.
 var ErrLegacyUUIDServiceID = errors.New("config contains invalid UUID service IDs after the ID migration")
 
 // GetConfig retrieves the currently active configuration from the database.
@@ -123,8 +122,6 @@ func (s *Store) UpdateConfig(transform func(prev *config.Config) (config.Config,
 	return next, nil
 }
 
-// configHasLegacyUUIDServiceIDs reports whether any service entry carries a
-// pre-migration 36-char UUID as its ID.
 func configHasLegacyUUIDServiceIDs(cfg *config.Config) bool {
 	for i := range cfg.Services {
 		if isLegacyUUID(cfg.Services[i].ID) {
@@ -135,10 +132,8 @@ func configHasLegacyUUIDServiceIDs(cfg *config.Config) bool {
 }
 
 // insertActiveConfigTx deactivates the current active config-history row and
-// inserts cfg as the new active one. After the ABAC ID migration marker is
-// set, a dashed UUID in Services[].ID is an invalid ID format and the write
-// is rejected (the migration itself rewrites UUIDs before inserting, so it
-// never trips the guard).
+// inserts cfg as the new active one. The migration rewrites UUIDs before
+// inserting, so it never trips the ErrLegacyUUIDServiceID guard.
 func insertActiveConfigTx(tx *sqlx.Tx, cfg config.Config) error {
 	migrated, err := getSystemValueTx(tx, abacIDMigrationKey)
 	if err != nil {
