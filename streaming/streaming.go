@@ -170,10 +170,13 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			Name:             tc.Name,
 			ServerOrigin:     tc.ServerOrigin,
 			Input:            tc.Arguments,
+			MCPBareName:      tc.MCPBareName,
 			Status:           conversation.StatusToString(tc.Status),
 			Shared:           conversation.BoolPtr(a.isDM),
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			Title:            tc.Title,
+			Description:      tc.Description,
 		})
 	}
 
@@ -474,14 +477,19 @@ func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
 	return true
 }
 
-// redactToolCalls returns a copy of the tool calls with Arguments and Result
-// cleared so that non-requesters see tool names and status but not payloads.
+// redactToolCalls returns a copy of the tool calls with Arguments, Result, and
+// MCPBareName cleared so non-requesters see tool identity and status but not
+// payloads. Must stay in lockstep with conversation.FilterForNonRequester
+// (enforced by tool_call_parity_test.go); new llm.ToolCall fields default to
+// redacted here by omission.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
 		redacted[i] = llm.ToolCall{
 			ID:               tc.ID,
 			Name:             tc.Name,
+			Title:            tc.Title,
+			Description:      tc.Description,
 			ServerOrigin:     tc.ServerOrigin,
 			Status:           tc.Status,
 			UserInteraction:  tc.UserInteraction,

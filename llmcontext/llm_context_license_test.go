@@ -34,9 +34,15 @@ func newLicenseTestBuilder(t *testing.T, licensed bool, toolProvider ToolProvide
 	} else {
 		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
 	}
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
-	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
-	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+	for i := 1; i <= 10; i++ {
+		args := make([]interface{}, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe().Return()
+		mockAPI.On("LogWarn", args...).Maybe().Return()
+		mockAPI.On("LogError", args...).Maybe().Return()
+	}
 
 	return NewLLMContextBuilder(
 		pluginapi.NewClient(mockAPI, nil),
@@ -138,6 +144,35 @@ func TestUnlicensedBuilderDropsRemoteMCPToolsFromDynamicRegistry(t *testing.T) {
 			}
 		})
 	}
+}
+
+// SA auth inherits the remote-MCP enterprise gate: unlicensed SA-flagged agents behave like normal agents.
+func TestServiceAccountModeFullyOffWhenUnlicensed(t *testing.T) {
+	provider := &staticMCPToolProvider{
+		tools: []llm.Tool{
+			testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+			testMCPTool("jira__get_issue", licenseTestRemoteOrigin, "fetch Jira issue details"),
+		},
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", licenseTestRemoteOrigin, "service account Jira")},
+	}
+	builder := newLicenseTestBuilder(t, false,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithConfig(llm.BotConfig{
+		ID:                    "bot-id",
+		Name:                  "matty",
+		DisplayName:           "Matty",
+		AutoEnableNewMCPTools: true,
+		UseServiceAccountAuth: true,
+	})
+
+	context := buildToolsContext(builder, bot)
+
+	require.Equal(t, []string{"user-id"}, provider.userCalls, "unlicensed SA agents use the per-user catalog")
+	require.Empty(t, provider.saCalls, "unlicensed servers must never build a service account catalog")
+	require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel"}, toolNames(context.Tools))
+	require.Empty(t, context.ToolAuthMode, "unlicensed SA agents are attributed as user mode")
 }
 
 // TestUnlicensedBuilderDropsRemoteMCPAuthErrors pins that OAuth prompts for

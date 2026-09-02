@@ -53,6 +53,9 @@ func TestRedactSecrets(t *testing.T) {
 			ClientID:     "client-id",
 			ClientSecret: "client-secret",
 			Headers:      map[string]string{"Authorization": "Bearer header-token"},
+			ServiceAccountHeaders: map[string]string{
+				"Authorization": "Bearer sa-header-token",
+			},
 		}}},
 		WebSearch: WebSearchConfig{
 			Google: WebSearchGoogleConfig{APIKey: "google-key", SearchEngineID: "engine-id"},
@@ -78,6 +81,7 @@ func TestRedactSecrets(t *testing.T) {
 		{name: "inline bot service api key", got: func(cfg Config) string { return cfg.Bots[0].Service.APIKey }, want: SecretPlaceholder},
 		{name: "mcp client secret", got: func(cfg Config) string { return cfg.MCP.Servers[0].ClientSecret }, want: SecretPlaceholder},
 		{name: "mcp header value", got: func(cfg Config) string { return cfg.MCP.Servers[0].Headers["Authorization"] }, want: SecretPlaceholder},
+		{name: "mcp service account header value", got: func(cfg Config) string { return cfg.MCP.Servers[0].ServiceAccountHeaders["Authorization"] }, want: SecretPlaceholder},
 		{name: "google api key", got: func(cfg Config) string { return cfg.WebSearch.Google.APIKey }, want: SecretPlaceholder},
 		{name: "unset brave api key stays empty", got: func(cfg Config) string { return cfg.WebSearch.Brave.APIKey }, want: ""},
 		{name: "service org id", got: func(cfg Config) string { return cfg.Services[0].OrgID }, want: "org-1"},
@@ -104,6 +108,7 @@ func TestRedactSecrets(t *testing.T) {
 		assert.Equal(t, "service-key", stored.Services[0].APIKey)
 		assert.Equal(t, "inline-key", stored.Bots[0].Service.APIKey)
 		assert.Equal(t, "Bearer header-token", stored.MCP.Servers[0].Headers["Authorization"])
+		assert.Equal(t, "Bearer sa-header-token", stored.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
 	})
 }
 
@@ -126,6 +131,9 @@ func TestRestoreSecrets(t *testing.T) {
 				Headers: map[string]string{
 					"Authorization": "Bearer header-token",
 					"X-Tenant":      "tenant-1",
+				},
+				ServiceAccountHeaders: map[string]string{
+					"Authorization": "Bearer sa-header-token",
 				},
 			}}},
 			WebSearch: WebSearchConfig{
@@ -176,6 +184,11 @@ func TestRestoreSecrets(t *testing.T) {
 			name: "mcp header value",
 			get:  func(cfg Config) string { return cfg.MCP.Servers[0].Headers["Authorization"] },
 			set:  func(cfg *Config, v string) { cfg.MCP.Servers[0].Headers["Authorization"] = v },
+		},
+		{
+			name: "mcp service account header value",
+			get:  func(cfg Config) string { return cfg.MCP.Servers[0].ServiceAccountHeaders["Authorization"] },
+			set:  func(cfg *Config, v string) { cfg.MCP.Servers[0].ServiceAccountHeaders["Authorization"] = v },
 		},
 		{
 			name: "google api key",
@@ -246,6 +259,9 @@ func TestRestoreSecrets(t *testing.T) {
 				Name:         "Confluence",
 				ClientSecret: SecretPlaceholder,
 				Headers:      map[string]string{"Authorization": SecretPlaceholder},
+				ServiceAccountHeaders: map[string]string{
+					"Authorization": SecretPlaceholder,
+				},
 			}}},
 			WebSearch: WebSearchConfig{Google: WebSearchGoogleConfig{APIKey: SecretPlaceholder}},
 			EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
@@ -260,6 +276,7 @@ func TestRestoreSecrets(t *testing.T) {
 		assert.Empty(t, restored.Services[0].APIKey)
 		assert.Empty(t, restored.MCP.Servers[0].ClientSecret)
 		assert.Empty(t, restored.MCP.Servers[0].Headers["Authorization"])
+		assert.Empty(t, restored.MCP.Servers[0].ServiceAccountHeaders["Authorization"])
 		assert.Empty(t, restored.WebSearch.Google.APIKey)
 
 		params := map[string]string{}

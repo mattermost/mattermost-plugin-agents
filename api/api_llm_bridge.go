@@ -137,11 +137,7 @@ func (a *API) buildLLMBridgeContext(bot *bots.Bot, req bridgeclient.CompletionRe
 	} else {
 		context = llm.NewContext()
 		if bot != nil {
-			var botUserID string
-			if mmBot := bot.GetMMBot(); mmBot != nil {
-				botUserID = mmBot.UserId
-			}
-			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
+			context.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, bot.BotUserID(), bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 		}
 	}
 
@@ -171,6 +167,10 @@ func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *b
 	}
 
 	bridgeContext := llm.NewContext()
+	if a.contextBuilder != nil {
+		// Populate bot identity for token-usage attribution and embedded MCP metadata.
+		a.contextBuilder.WithLLMContextBot(bot)(bridgeContext)
+	}
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
 	if includeTools && a.contextBuilder != nil {
 		a.contextBuilder.WithLLMContextConcreteTools(ctx, bot)(bridgeContext)

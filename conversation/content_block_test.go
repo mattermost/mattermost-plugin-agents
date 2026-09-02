@@ -113,6 +113,22 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 			expected: `{"type":"tool_use","id":"tc_02","name":"read_file","input":{"path":"/etc/passwd"},"status":"pending","shared":false}`,
 		},
 		{
+			name: "tool_use block with title/description/mcp_bare_name",
+			block: ContentBlock{
+				Type:         BlockTypeToolUse,
+				ID:           "tc_03",
+				Name:         "mattermost__create_post",
+				ServerOrigin: "embedded://mattermost",
+				MCPBareName:  "create_post",
+				Title:        "Create Post",
+				Description:  "Create a new post in Mattermost.",
+				Input:        json.RawMessage(`{"channel_id":"c1"}`),
+				Status:       StatusPending,
+				Shared:       BoolPtr(true),
+			},
+			expected: `{"type":"tool_use","id":"tc_03","name":"mattermost__create_post","server_origin":"embedded://mattermost","input":{"channel_id":"c1"},"mcp_bare_name":"create_post","status":"pending","shared":true,"title":"Create Post","description":"Create a new post in Mattermost."}`,
+		},
+		{
 			name: "server_tool_use block",
 			block: ContentBlock{
 				Type: BlockTypeServerToolUse,
@@ -211,6 +227,8 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 		Type:        BlockTypeToolUse,
 		ID:          "tc_private",
 		Name:        "jira__get_issue",
+		Title:       "Get Issue",
+		Description: "Get a Jira issue",
 		Input:       json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName: "get_issue",
 		Status:      StatusPending,
@@ -222,6 +240,10 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Nil(t, result[0].Input)
 	assert.Empty(t, result[0].MCPBareName)
+	// Tool identity stays visible to non-requesters, matching redactToolCalls.
+	assert.Equal(t, "Get Issue", result[0].Title)
+	assert.Equal(t, "Get a Jira issue", result[0].Description)
+	assert.Equal(t, "jira__get_issue", result[0].Name)
 	assert.NotNil(t, blocks[0].Input, "original block must not be mutated")
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName, "original block must not be mutated")
 }
@@ -389,4 +411,44 @@ func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 
 	assert.Equal(t, originalInputCopy, original[0].Input)
 	assert.Equal(t, originalContentCopy, original[1].Content)
+}
+
+func TestSanitizeForDisplaySanitizesTitleAndDescription(t *testing.T) {
+	// U+202E (right-to-left override) is a classic bidi spoofing character.
+	blocks := []ContentBlock{{
+		Type:        BlockTypeToolUse,
+		ID:          "tc1",
+		Name:        "jira__get_issue",
+		Title:       "Get\u202eIssue",
+		Description: "Get\u202ean issue",
+		Input:       json.RawMessage("{\"key\":\"MM\u202e-1\"}"),
+		Status:      StatusPending,
+	}}
+
+	result := SanitizeForDisplay(blocks)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "Get[U+202E]Issue", result[0].Title)
+	assert.Equal(t, "Get[U+202E]an issue", result[0].Description)
+	assert.Contains(t, string(result[0].Input), "[U+202E]")
+
+	// Original is not mutated.
+	assert.Equal(t, "Get\u202eIssue", blocks[0].Title)
+	assert.Equal(t, "Get\u202ean issue", blocks[0].Description)
+}
+
+func TestSanitizeForDisplayLeavesCleanTitleAndDescription(t *testing.T) {
+	blocks := []ContentBlock{{
+		Type:        BlockTypeToolUse,
+		ID:          "tc1",
+		Name:        "jira__get_issue",
+		Title:       "Get Issue",
+		Description: "Get a Jira issue",
+	}}
+
+	result := SanitizeForDisplay(blocks)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "Get Issue", result[0].Title)
+	assert.Equal(t, "Get a Jira issue", result[0].Description)
 }

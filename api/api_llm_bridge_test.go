@@ -1316,7 +1316,7 @@ func (e *TestEnvironment) setupMCPWithEligibleTools(t *testing.T, toolNames []st
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},
@@ -1392,7 +1392,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},
@@ -1708,28 +1708,45 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
-// fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider that returns
-// a fixed set of (namespaced) MCP tools regardless of user. Unlike
+// fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider with
+// separate user-mode and service-account catalogs. Unlike
 // testLLMContextToolProvider (which feeds the built-in tool path), this exercises
 // the real MCP path: per-agent allowlist filtering and namespacing.
 type fakeBridgeMCPToolProvider struct {
-	tools []llm.Tool
+	tools   []llm.Tool // user-mode catalog
+	saTools []llm.Tool // service-account catalog (fail-closed subset)
+
+	userCalls      []string
+	saCalls        []string
+	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
+		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, nil
 }
 
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider
 // returning the given namespaced tools, so bridge discovery and completion run
 // through getToolsStoreForUser (namespacing + EnabledMCPTools filtering).
-func (e *TestEnvironment) setupBridgeMCPProvider(tools []llm.Tool) {
+func (e *TestEnvironment) setupBridgeMCPProvider(tools []llm.Tool) *fakeBridgeMCPToolProvider {
+	return e.setupBridgeMCPProviderSA(tools, nil)
+}
+
+func (e *TestEnvironment) setupBridgeMCPProviderSA(userTools, saTools []llm.Tool) *fakeBridgeMCPToolProvider {
+	provider := &fakeBridgeMCPToolProvider{tools: userTools, saTools: saTools}
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
 		&testLLMContextToolProvider{},
-		&fakeBridgeMCPToolProvider{tools: tools},
+		provider,
 		&testLLMContextConfigProvider{},
 	)
+	return provider
 }
 
 // bridgeMCPTool builds a namespaced MCP tool (slug__bare) with the given origin.
@@ -2415,7 +2432,7 @@ func TestBridgeClientAgentCompletionRejectsBuiltinToolInAllowedTools(t *testing.
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},

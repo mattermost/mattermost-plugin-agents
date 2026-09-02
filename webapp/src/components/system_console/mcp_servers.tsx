@@ -36,6 +36,9 @@ export type MCPServerConfig = {
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};
+
+    // Optional: the backend tag has omitempty, so pre-feature servers omit the key entirely.
+    serviceAccountHeaders?: {[key: string]: string};
     tool_configs?: MCPToolConfig[];
     clientID?: string;
     clientSecret?: string;
@@ -73,24 +76,105 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    serviceAccountHeaders: {},
     clientID: '',
     clientSecret: '',
 };
 
+const headerMapHasMask = (headers: {[key: string]: string} | undefined): boolean =>
+    Object.values(headers || {}).some((value) => value === SECRET_PLACEHOLDER);
+
+const withoutMaskedHeaderValues = (headers: {[key: string]: string} | undefined): {[key: string]: string} =>
+    Object.fromEntries(
+        Object.entries(headers || {}).map(([key, value]) => [key, value === SECRET_PLACEHOLDER ? '' : value]),
+    );
+
 const hasMaskedCredential = (server: MCPServerConfig): boolean =>
     server.clientSecret === SECRET_PLACEHOLDER ||
-    Object.values(server.headers || {}).some((value) => value === SECRET_PLACEHOLDER);
+    headerMapHasMask(server.headers) ||
+    headerMapHasMask(server.serviceAccountHeaders);
 
 // The server keeps a stored credential with the base URL it was saved against,
 // so a mask the admin never replaced means nothing once the URL points
 // somewhere else.
 const withoutMaskedCredentials = (server: MCPServerConfig): MCPServerConfig => ({
     ...server,
-    headers: Object.fromEntries(
-        Object.entries(server.headers || {}).map(([key, value]) => [key, value === SECRET_PLACEHOLDER ? '' : value]),
-    ),
+    headers: withoutMaskedHeaderValues(server.headers),
+    serviceAccountHeaders: withoutMaskedHeaderValues(server.serviceAccountHeaders),
     clientSecret: server.clientSecret === SECRET_PLACEHOLDER ? '' : server.clientSecret,
 });
+
+// Renaming a key deletes the old entry; blank rows are legal (the backend ignores them).
+const HeaderMapEditor = ({
+    headers,
+    onChange,
+    namePlaceholder,
+    valuePlaceholder,
+}: {
+    headers: {[key: string]: string};
+    onChange: (headers: {[key: string]: string}) => void;
+    namePlaceholder?: string;
+    valuePlaceholder?: string;
+}) => {
+    const intl = useIntl();
+    const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
+    const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
+
+    const addHeader = () => {
+        onChange({...headers, '': ''});
+    };
+
+    // Rebuild in place: appending the renamed entry would reorder rows rendered by index.
+    const updateHeader = (oldKey: string, newKey: string, value: string) => {
+        const updated: {[key: string]: string} = {};
+        for (const [k, v] of Object.entries(headers)) {
+            if (k === oldKey) {
+                updated[newKey] = value;
+            } else {
+                updated[k] = v;
+            }
+        }
+        onChange(updated);
+    };
+
+    const removeHeader = (key: string) => {
+        const updated = {...headers};
+        delete updated[key];
+        onChange(updated);
+    };
+
+    return (
+        <>
+            <HeadersList>
+                {Object.entries(headers).map(([key, value], index) => (
+                    <HeaderRow key={index}>
+                        <HeaderInput
+                            placeholder={headerNamePlaceholder}
+                            value={key}
+                            onChange={(e) => updateHeader(key, e.target.value, value)}
+                        />
+                        <HeaderInput
+                            type='password'
+                            placeholder={headerValuePlaceholder}
+                            value={value}
+                            onChange={(e) => updateHeader(key, key, e.target.value)}
+                        />
+                        <RemoveHeaderButton
+                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                            onClick={() => removeHeader(key)}
+                        >
+                            <TrashCanOutlineIcon size={14}/>
+                        </RemoveHeaderButton>
+                    </HeaderRow>
+                ))}
+            </HeadersList>
+            <AddHeaderButton onClick={addHeader}>
+                <PlusIcon size={14}/>
+                <FormattedMessage defaultMessage='Add Header'/>
+            </AddHeaderButton>
+        </>
+    );
+};
 
 // Component for a single MCP server configuration
 const MCPServer = ({
@@ -116,6 +200,7 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        serviceAccountHeaders: serverConfig.serviceAccountHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
         clientSecret: serverConfig.clientSecret || '',
@@ -204,47 +289,6 @@ const MCPServer = ({
         });
     };
 
-    // Add a new header
-    const addHeader = () => {
-        const headers = config.headers || {};
-        onChange(serverIndex, {
-            ...config,
-            headers: {
-                ...headers,
-                '': '',
-            },
-        });
-    };
-
-    // Update a header's key or value
-    const updateHeader = (oldKey: string, newKey: string, value: string) => {
-        const headers = {...(config.headers || {})};
-
-        // If the key has changed, remove the old one
-        if (oldKey !== newKey) {
-            delete headers[oldKey];
-        }
-
-        // Set the new key-value pair
-        headers[newKey] = value;
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
-        });
-    };
-
-    // Remove a header
-    const removeHeader = (key: string) => {
-        const headers = {...(config.headers || {})};
-        delete headers[key];
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
-        });
-    };
-
     // Handle renaming the server
     const handleRename = () => {
         const newName = serverName.trim();
@@ -324,36 +368,25 @@ const MCPServer = ({
                 <HeadersSectionTitle>
                     {intl.formatMessage({defaultMessage: 'Headers'})}
                 </HeadersSectionTitle>
+                <HeaderMapEditor
+                    headers={config.headers}
+                    onChange={(headers) => onChange(serverIndex, {...config, headers})}
+                />
+            </HeadersSection>
 
-                <HeadersList>
-                    {Object.entries(config.headers || {}).map(([key, value], index) => (
-                        <HeaderRow key={index}>
-                            <HeaderInput
-                                placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
-                                value={key}
-                                onChange={(e) => updateHeader(key, e.target.value, value)}
-                            />
-                            <HeaderInput
-                                type='password'
-                                placeholder={intl.formatMessage({defaultMessage: 'Value'})}
-                                value={value}
-                                onChange={(e) => updateHeader(key, key, e.target.value)}
-                            />
-                            <RemoveHeaderButton
-                                onClick={() => removeHeader(key)}
-                            >
-                                <TrashCanOutlineIcon size={14}/>
-                            </RemoveHeaderButton>
-                        </HeaderRow>
-                    ))}
-                </HeadersList>
-
-                <AddHeaderButton
-                    onClick={addHeader}
-                >
-                    <PlusIcon size={14}/>
-                    <FormattedMessage defaultMessage='Add Header'/>
-                </AddHeaderButton>
+            <HeadersSection>
+                <HeadersSectionTitle>
+                    {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
+                </HeadersSectionTitle>
+                <SectionHelpText>
+                    {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
+                </SectionHelpText>
+                <HeaderMapEditor
+                    headers={config.serviceAccountHeaders}
+                    onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
+                />
             </HeadersSection>
 
             <OAuthSection>
@@ -384,9 +417,9 @@ const MCPServer = ({
                 </OAuthSectionHeader>
                 {isOAuthExpanded && (
                     <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
-                        <OAuthHelpText>
+                        <SectionHelpText>
                             {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
-                        </OAuthHelpText>
+                        </SectionHelpText>
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Client ID'})}
                             value={config.clientID}
@@ -812,7 +845,7 @@ const OAuthSectionContent = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
-const OAuthHelpText = styled.div`
+const SectionHelpText = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: 4px;

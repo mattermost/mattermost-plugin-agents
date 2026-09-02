@@ -9,8 +9,10 @@ import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
+import {mcpServerStatus} from '@/utils/mcp_availability';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
+import MCPUnavailableBadge from '../mcp_unavailable_badge';
 import {ToggleSwitch} from '../toggle_switch';
 
 export type {UserMCPServerInfo};
@@ -155,34 +157,44 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                     <FormattedMessage defaultMessage='No tool providers available'/>
                 </EmptyRow>
             )}
-            {servers.map((server) => (
-                <ProviderRow key={server.serverOrigin}>
-                    <ProviderAvatar>
-                        {server.name.charAt(0).toUpperCase()}
-                    </ProviderAvatar>
-                    <ProviderName>{server.name}</ProviderName>
-                    {!server.authenticated && server.needsOAuth ? (
-                        <ConnectButton
-                            onClick={() => server.authURL && handleConnect(server.authURL)}
-                            disabled={!server.authURL}
-                        >
-                            <FormattedMessage defaultMessage='Connect'/>
-                        </ConnectButton>
-                    ) : (
-                        <ProviderActions>
-                            {server.needsOAuth && (
-                                <DisconnectButton onClick={() => handleDisconnect(server.name)}>
-                                    <FormattedMessage defaultMessage='Disconnect'/>
-                                </DisconnectButton>
-                            )}
-                            <ToggleSwitch
-                                checked={!disabledServers.includes(server.serverOrigin)}
-                                onChange={(checked) => handleToggle(server.serverOrigin, checked)}
-                            />
-                        </ProviderActions>
-                    )}
-                </ProviderRow>
-            ))}
+            {servers.map((server) => {
+                const status = mcpServerStatus(server, false);
+                const unavailable = status === 'sa-only-unavailable';
+                const showConnect = !server.authenticated && server.needsOAuth && !unavailable;
+                return (
+                    <ProviderRow
+                        key={server.serverOrigin}
+                        $unavailable={unavailable}
+                    >
+                        <ProviderAvatar>
+                            {server.name.charAt(0).toUpperCase()}
+                        </ProviderAvatar>
+                        <ProviderName>{server.name}</ProviderName>
+                        {showConnect ? (
+                            <ConnectButton
+                                onClick={() => server.authURL && handleConnect(server.authURL)}
+                                disabled={!server.authURL}
+                            >
+                                <FormattedMessage defaultMessage='Connect'/>
+                            </ConnectButton>
+                        ) : (
+                            <ProviderActions>
+                                {unavailable && <MCPUnavailableBadge/>}
+                                {!unavailable && server.needsOAuth && (
+                                    <DisconnectButton onClick={() => handleDisconnect(server.name)}>
+                                        <FormattedMessage defaultMessage='Disconnect'/>
+                                    </DisconnectButton>
+                                )}
+                                <ToggleSwitch
+                                    checked={!unavailable && !disabledServers.includes(server.serverOrigin)}
+                                    disabled={unavailable}
+                                    onChange={(checked) => handleToggle(server.serverOrigin, checked)}
+                                />
+                            </ProviderActions>
+                        )}
+                    </ProviderRow>
+                );
+            })}
         </DotMenu>
     );
 };
@@ -257,12 +269,13 @@ const RefreshToolsButton = styled.button`
     }
 `;
 
-const ProviderRow = styled.div`
+const ProviderRow = styled.div<{$unavailable?: boolean}>`
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr) auto;
     align-items: center;
     column-gap: 8px;
     padding: 6px 16px;
+    opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.08);

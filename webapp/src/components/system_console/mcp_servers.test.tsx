@@ -66,12 +66,13 @@ function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
     };
 }
 
-function makeRemoteServer(): MCPServerConfig {
+function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerConfig {
     return {
         name: 'Jira',
         enabled: true,
         baseURL: 'https://mcp.example.com',
         headers: {},
+        ...overrides,
     };
 }
 
@@ -86,6 +87,7 @@ function makeServerWithStoredCredentials(): MCPServerConfig {
         enabled: true,
         baseURL: STORED_URL,
         headers: {Authorization: SECRET_PLACEHOLDER},
+        serviceAccountHeaders: {Authorization: SECRET_PLACEHOLDER},
         clientID: 'client-id',
         clientSecret: SECRET_PLACEHOLDER,
     };
@@ -194,6 +196,8 @@ const renameServer = (from: string, to: string) => {
     fireEvent.blur(nameField);
 };
 
+const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
+
 describe('MCPServers credentials when the server URL changes', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -209,6 +213,7 @@ describe('MCPServers credentials when the server URL changes', () => {
         edit: () => Promise<void>;
         clientSecret: string;
         headerValue: string;
+        serviceAccountHeaderValue: string;
     }[] = [
         {
             name: 'moving the server to another URL empties the untouched credential fields',
@@ -218,6 +223,7 @@ describe('MCPServers credentials when the server URL changes', () => {
             },
             clientSecret: '',
             headerValue: '',
+            serviceAccountHeaderValue: '',
         },
         {
             name: 'a client secret entered before the move is kept',
@@ -228,6 +234,7 @@ describe('MCPServers credentials when the server URL changes', () => {
             },
             clientSecret: 'entered-secret',
             headerValue: '',
+            serviceAccountHeaderValue: '',
         },
         {
             name: 'a header value entered before the move is kept',
@@ -238,6 +245,18 @@ describe('MCPServers credentials when the server URL changes', () => {
             },
             clientSecret: '',
             headerValue: 'entered-header',
+            serviceAccountHeaderValue: '',
+        },
+        {
+            name: 'a service account header entered before the move is kept',
+            edit: async () => {
+                fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'entered-sa-header'}});
+                typeURL(MOVED_URL);
+                await leaveURLField();
+            },
+            clientSecret: '',
+            headerValue: '',
+            serviceAccountHeaderValue: 'entered-sa-header',
         },
         {
             name: 'editing another field and leaving the URL alone keeps the credential fields',
@@ -247,6 +266,7 @@ describe('MCPServers credentials when the server URL changes', () => {
             },
             clientSecret: SECRET_PLACEHOLDER,
             headerValue: SECRET_PLACEHOLDER,
+            serviceAccountHeaderValue: SECRET_PLACEHOLDER,
         },
         {
             name: 'putting the original URL back before leaving the field keeps the credential fields',
@@ -257,16 +277,18 @@ describe('MCPServers credentials when the server URL changes', () => {
             },
             clientSecret: SECRET_PLACEHOLDER,
             headerValue: SECRET_PLACEHOLDER,
+            serviceAccountHeaderValue: SECRET_PLACEHOLDER,
         },
     ];
 
-    test.each(cases)('$name', async ({edit, clientSecret, headerValue}) => {
+    test.each(cases)('$name', async ({edit, clientSecret, headerValue, serviceAccountHeaderValue}) => {
         const {server} = renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
 
         await edit();
 
         expect(server().clientSecret).toBe(clientSecret);
         expect(server().headers.Authorization).toBe(headerValue);
+        expect(server().serviceAccountHeaders?.Authorization).toBe(serviceAccountHeaderValue);
     });
 
     test('mid-edit keystrokes leave the credential fields alone', async () => {
@@ -276,6 +298,7 @@ describe('MCPServers credentials when the server URL changes', () => {
 
         expect(server().clientSecret).toBe(SECRET_PLACEHOLDER);
         expect(server().headers.Authorization).toBe(SECRET_PLACEHOLDER);
+        expect(server().serviceAccountHeaders?.Authorization).toBe(SECRET_PLACEHOLDER);
     });
 
     test('the URL field explains why the credential fields emptied', async () => {
@@ -307,5 +330,73 @@ describe('MCPServers credentials when the server URL changes', () => {
 
         expect(server().clientSecret).toBe('typed-while-seeding');
         expect(server().baseURL).toBe(MOVED_URL);
+    });
+});
+
+describe('MCPServers service account headers', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+    });
+
+    // Rows render in DOM order: base Headers first, then Service Account headers.
+    const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
+
+    async function renderOneServer(server: MCPServerConfig) {
+        const rendered = renderServers(makeMCPConfig([server]));
+        await screen.findByText('Service Account Authentication');
+        return rendered;
+    }
+
+    function savedServer(onChange: jest.Mock): MCPServerConfig {
+        expect(onChange).toHaveBeenCalledTimes(1);
+        const saved = (onChange.mock.calls[0][0] as MCPConfig).servers;
+        expect(saved).not.toBeNull();
+        return saved![0];
+    }
+
+    // Editing either map must leave the other intact; the base-header half is
+    // also the regression pin for the config rebuild dropping serviceAccountHeaders.
+    test('editing one header map leaves the other map untouched', async () => {
+        const server = makeRemoteServer({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        });
+
+        const base = await renderOneServer(server);
+        fireEvent.change(baseHeaderValueInput(), {target: {value: 'base-value-2'}});
+        expect(savedServer(base.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value-2'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+        base.unmount();
+
+        const serviceAccount = await renderOneServer(server);
+        fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'Bearer rotated'}});
+        expect(savedServer(serviceAccount.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer rotated'},
+        }));
+    });
+
+    // Rows render by index, so a rename that appends would swap rows under the cursor.
+    test('renaming a header keeps its position in the emitted map', async () => {
+        const {onChange} = await renderOneServer(makeRemoteServer({
+            headers: {'X-First': 'one', 'X-Second': 'two'},
+        }));
+
+        fireEvent.change(screen.getAllByPlaceholderText('Header name')[0], {target: {value: 'X-Renamed'}});
+
+        expect(Object.keys(savedServer(onChange).headers)).toEqual(['X-Renamed', 'X-Second']);
+    });
+
+    test('service account header editor explains name and value are separate fields', async () => {
+        await renderOneServer(makeRemoteServer({
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+
+        expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
+        expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
+        expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
     });
 });

@@ -559,8 +559,8 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			ID:           tc.ID,
 			Name:         tc.Name,
 			Description:  tc.Description,
+			Title:        tc.Title,
 			Arguments:    tc.Arguments,
-			Schema:       tc.Schema,
 			ServerOrigin: tc.ServerOrigin,
 			MCPBareName:  tc.MCPBareName,
 		}

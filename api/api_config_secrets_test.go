@@ -34,6 +34,7 @@ const (
 	sentinelBotServiceVertexJSON = "sentinel-bot-service-vertex-json"
 	sentinelMCPClientSecret      = "sentinel-mcp-client-secret" // #nosec G101 -- test fixture value
 	sentinelMCPHeaderToken       = "sentinel-mcp-header-token"
+	sentinelMCPServiceAccount    = "sentinel-mcp-sa-header-token"
 	sentinelGoogleAPIKey         = "sentinel-google-key"
 	sentinelBraveAPIKey          = "sentinel-brave-key"
 	sentinelEmbeddingAPIKey      = "sentinel-embedding-key"
@@ -107,6 +108,9 @@ func storedCredentialConfig() *config.Config {
 					Headers: map[string]string{
 						visibleMCPHeaderName:      "Bearer " + sentinelMCPHeaderToken,
 						visibleMCPOtherHeaderName: "tenant-visible",
+					},
+					ServiceAccountHeaders: map[string]string{
+						visibleMCPHeaderName: "Bearer " + sentinelMCPServiceAccount,
 					},
 				},
 			},
@@ -229,6 +233,13 @@ func credentialFields() []credentialField {
 			},
 		},
 		{
+			name: "mcp.servers[0].serviceAccountHeaders[Authorization]",
+			get:  func(cfg config.Config) string { return cfg.MCP.Servers[0].ServiceAccountHeaders[visibleMCPHeaderName] },
+			set: func(cfg *config.Config, v string) {
+				cfg.MCP.Servers[0].ServiceAccountHeaders[visibleMCPHeaderName] = v
+			},
+		},
+		{
 			name: "webSearch.google.apiKey",
 			get:  func(cfg config.Config) string { return cfg.WebSearch.Google.APIKey },
 			set:  func(cfg *config.Config, v string) { cfg.WebSearch.Google.APIKey = v },
@@ -278,6 +289,7 @@ func TestGetConfigDoesNotReturnStoredCredentials(t *testing.T) {
 		{field: "bots[0].service.vertexAuthCredentials", sentinel: sentinelBotServiceVertexJSON},
 		{field: "mcp.servers[0].clientSecret", sentinel: sentinelMCPClientSecret},
 		{field: "mcp.servers[0].headers[Authorization]", sentinel: sentinelMCPHeaderToken},
+		{field: "mcp.servers[0].serviceAccountHeaders[Authorization]", sentinel: sentinelMCPServiceAccount},
 		{field: "webSearch.google.apiKey", sentinel: sentinelGoogleAPIKey},
 		{field: "webSearch.brave.apiKey", sentinel: sentinelBraveAPIKey},
 		{field: "embeddingSearchConfig.embeddingProvider.parameters.apiKey", sentinel: sentinelEmbeddingAPIKey},

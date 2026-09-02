@@ -41,9 +41,8 @@ func RedactSecrets(cfg Config) Config {
 	for i := range out.MCP.Servers {
 		server := &out.MCP.Servers[i]
 		server.ClientSecret = maskSecret(server.ClientSecret)
-		for name, value := range server.Headers {
-			server.Headers[name] = maskSecret(value)
-		}
+		redactHeaderMap(server.Headers)
+		redactHeaderMap(server.ServiceAccountHeaders)
 	}
 
 	out.WebSearch.Google.APIKey = maskSecret(out.WebSearch.Google.APIKey)
@@ -62,7 +61,8 @@ func RedactSecrets(cfg Config) Config {
 //
 // Counterparts are matched by service ID, bot ID (for the deprecated inline
 // service), by base URL for an MCP server (see matchStoredMCPServers), by header
-// key within that server, and by parameter key for the embedding provider.
+// key within that server (including service-account headers), and by parameter
+// key for the embedding provider.
 func RestoreSecrets(incoming Config, stored *Config) Config {
 	out := *incoming.Clone()
 	if stored == nil {
@@ -89,14 +89,17 @@ func RestoreSecrets(incoming Config, stored *Config) Config {
 		server := &out.MCP.Servers[i]
 
 		var storedHeaders map[string]string
+		var storedServiceAccountHeaders map[string]string
 		storedClientSecret := ""
 		if storedServer := matchedServers[i]; storedServer != nil {
 			storedHeaders = storedServer.Headers
+			storedServiceAccountHeaders = storedServer.ServiceAccountHeaders
 			storedClientSecret = storedServer.ClientSecret
 		}
 
 		server.ClientSecret = resolveSecret(server.ClientSecret, storedClientSecret)
 		server.Headers = restoreHeaderSecrets(server.Headers, storedHeaders)
+		server.ServiceAccountHeaders = restoreHeaderSecrets(server.ServiceAccountHeaders, storedServiceAccountHeaders)
 	}
 
 	out.WebSearch.Google.APIKey = resolveSecret(out.WebSearch.Google.APIKey, stored.WebSearch.Google.APIKey)
@@ -116,6 +119,12 @@ func maskSecret(value string) string {
 		return ""
 	}
 	return SecretPlaceholder
+}
+
+func redactHeaderMap(headers map[string]string) {
+	for name, value := range headers {
+		headers[name] = maskSecret(value)
+	}
 }
 
 func resolveSecret(incoming, stored string) string {
