@@ -113,11 +113,6 @@ func (s *Search) checkAvailability() error {
 	return nil
 }
 
-// Search performs a semantic search and returns enriched results with channel/user metadata.
-func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
-	return s.executeSearch(ctx, query, opts)
-}
-
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
 func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGResult {
 	var ragResults []RAGResult
@@ -182,9 +177,9 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 	return ragResults
 }
 
-// executeSearch performs the embedding search and enriches results with metadata.
-// This is the core search operation without any LLM concerns.
-func (s *Search) executeSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+// Search performs the embedding search and enriches results with channel/user
+// metadata. This is the core search operation without any LLM concerns.
+func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
@@ -220,7 +215,7 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 	return s.enrichResults(searchResults), nil
 }
 
-func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, teamID, channelID string, ragResults []RAGResult) *llm.Context {
+func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, channelID string, ragResults []RAGResult) *llm.Context {
 	promptCtx := llm.NewContext()
 	promptCtx.RequestingUser = &model.User{Id: userID}
 	if channelID != "" {
@@ -246,7 +241,7 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 		}
 		promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
-	promptCtx.Parameters = map[string]interface{}{
+	promptCtx.Parameters = map[string]any{
 		"Query":   query,
 		"Results": ragResults,
 	}
@@ -255,12 +250,12 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 }
 
 // buildPrompt creates an LLM completion request for answering a search query.
-func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, teamID, channelID string, results []RAGResult, operationSubType string) (llm.CompletionRequest, error) {
+func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, channelID string, results []RAGResult, operationSubType string) (llm.CompletionRequest, error) {
 	if s.prompts == nil {
 		return llm.CompletionRequest{}, fmt.Errorf("failed to format prompt: prompts not configured")
 	}
 
-	promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+	promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 
 	systemMessage, err := s.prompts.Format("search_system", promptCtx)
 	if err != nil {
@@ -349,7 +344,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 	}()
 
 	// Execute search
-	results, err := s.executeSearch(ctx, query, Options{
+	results, err := s.Search(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -380,7 +375,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 	}
 
 	// Build system prompt from template (contains RAG results)
-	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeStreaming)
+	prompt, err := s.buildPrompt(userID, bot, query, channelID, results, llm.SubTypeStreaming)
 	if err != nil {
 		s.mmclient.LogError("Error building prompt", "error", err)
 		processingError = err
@@ -413,7 +408,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 		// Set ConversationIDProp on response post so streaming turn persistence picks it up
 		responsePost.AddProp(streaming.ConversationIDProp, createResult.ConversationID)
 
-		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
 		if convErr != nil {
 			s.mmclient.LogError("Error getting search conversation", "error", convErr)
@@ -462,7 +457,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	ctx, span := telemetry.Tracer().Start(ctx, "search query")
 	defer span.End()
 
-	results, err := s.executeSearch(ctx, query, Options{
+	results, err := s.Search(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -480,7 +475,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	}
 
 	// Build system prompt from template (contains RAG results)
-	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeNoStream)
+	prompt, err := s.buildPrompt(userID, bot, query, channelID, results, llm.SubTypeNoStream)
 	if err != nil {
 		return Response{}, err
 	}
@@ -501,7 +496,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 			return Response{}, fmt.Errorf("failed to create search conversation: %w", convErr)
 		}
 
-		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
 		if convErr != nil {
 			return Response{}, fmt.Errorf("failed to get search conversation: %w", convErr)

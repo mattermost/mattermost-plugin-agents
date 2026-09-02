@@ -60,7 +60,7 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 		return entry.model, releaseLease(entry), nil
 	}
 
-	model, shutdown, err := b.buildLLM(svc, nil, fallbacks)
+	built, err := b.buildLLM(svc, nil, fallbacks)
 	if err != nil {
 		// Build failures are never cached: the next request retries, which
 		// matters when the failure is transient or the admin just fixed the
@@ -69,8 +69,8 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 	}
 
 	entry := &serviceLLMEntry{
-		model:     model,
-		shutdown:  shutdown,
+		model:     built.model,
+		shutdown:  built.shutdown,
 		svc:       svc,
 		fallbacks: fallbacks,
 	}

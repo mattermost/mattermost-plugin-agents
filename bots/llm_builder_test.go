@@ -108,7 +108,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			service: mockServiceWithPolicy("mock", llm.StructuredOutputPolicyAuto),
 			botConfig: &llm.BotConfig{
 				Name:                    "agent",
-				StructuredOutputEnabled: true,
+				StructuredOutputEnabled: true, //nolint:staticcheck // the deprecated flag must be ignored
 			},
 			wantPromptFallback: true,
 		},
@@ -117,7 +117,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			service: mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative),
 			botConfig: &llm.BotConfig{
 				Name:                    "agent",
-				StructuredOutputEnabled: false,
+				StructuredOutputEnabled: false, //nolint:staticcheck // the deprecated flag must be ignored
 			},
 			wantPromptFallback: false,
 		},
@@ -162,16 +162,16 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			mockAPI := mockPluginAPI(mmBots)
 			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			model, shutdown, err := mmBots.buildLLM(tt.service, tt.botConfig, tt.fallbacks)
+			built, err := mmBots.buildLLM(tt.service, tt.botConfig, tt.fallbacks)
 			require.NoError(t, err)
-			require.NotNil(t, model)
-			require.NotNil(t, shutdown)
+			require.NotNil(t, built.model)
+			require.NotNil(t, built.shutdown)
 			// Release only after the model has been exercised: today the
 			// primary is always the load-test mock so shutdown is a no-op,
 			// but a future Bifrost-backed case must not call a released client.
-			defer shutdown()
+			defer built.shutdown()
 
-			assert.Equal(t, tt.wantPromptFallback, promptFallbackApplied(t, model))
+			assert.Equal(t, tt.wantPromptFallback, promptFallbackApplied(t, built.model))
 		})
 	}
 }
@@ -184,9 +184,10 @@ func TestBuildLLMServiceCallKeepsServiceDefaults(t *testing.T) {
 	service := mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative)
 	service.LoadTestMockConfig = buildTinyLoadTestProfile(t, nil)
 
-	model, shutdown, err := mmBots.buildLLM(service, nil, nil)
+	built, err := mmBots.buildLLM(service, nil, nil)
 	require.NoError(t, err)
-	defer shutdown()
+	defer built.shutdown()
+	model := built.model
 
 	// The chain is usable end to end without an agent behind it.
 	assert.Equal(t, 100000, model.InputTokenLimit())
@@ -227,7 +228,7 @@ func TestAgentModelOverrideParticipatesInCapabilityResolution(t *testing.T) {
 		},
 		{
 			name:               "deprecated structured output flag does not change the decision",
-			botConfig:          &llm.BotConfig{Name: "agent", Model: "gemma-3-27b-it", StructuredOutputEnabled: true},
+			botConfig:          &llm.BotConfig{Name: "agent", Model: "gemma-3-27b-it", StructuredOutputEnabled: true}, //nolint:staticcheck // the deprecated flag must be ignored
 			wantPromptFallback: true,
 		},
 	}

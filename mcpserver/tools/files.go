@@ -34,42 +34,12 @@ const readFileDescription = "Read the text contents of a Mattermost file attachm
 // getFileTools returns the file-related tools.
 func (p *MattermostToolProvider) getFileTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "read_file",
-			Description: readFileDescription,
-			Schema:      NewJSONSchemaForAccessMode[ReadFileArgs](string(p.accessMode)),
-			Resolver:    typed("read_file", p.toolReadFile),
-		},
-		{
-			Name:        "get_file_info",
-			Description: getFileInfoDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetFileInfoArgs](string(p.accessMode)),
-			Resolver:    typed("get_file_info", p.toolGetFileInfo),
-		},
-		{
-			Name:        "get_post_files",
-			Description: getPostFilesDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetPostFilesArgs](string(p.accessMode)),
-			Resolver:    typed("get_post_files", p.toolGetPostFiles),
-		},
-		{
-			Name:        "get_file_link",
-			Description: getFileLinkDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetFileLinkArgs](string(p.accessMode)),
-			Resolver:    typed("get_file_link", p.toolGetFileLink),
-		},
-		{
-			Name:        "search_files",
-			Description: searchFilesDescription,
-			Schema:      NewJSONSchemaForAccessMode[SearchFilesArgs](string(p.accessMode)),
-			Resolver:    typed("search_files", p.toolSearchFiles),
-		},
-		{
-			Name:        "upload_file",
-			Description: uploadFileDescription,
-			Schema:      NewJSONSchemaForAccessMode[UploadFileArgs](string(p.accessMode)),
-			Resolver:    typed("upload_file", p.toolUploadFile),
-		},
+		mcpTool(p, "read_file", readFileDescription, p.toolReadFile),
+		mcpTool(p, "get_file_info", getFileInfoDescription, p.toolGetFileInfo),
+		mcpTool(p, "get_post_files", getPostFilesDescription, p.toolGetPostFiles),
+		mcpTool(p, "get_file_link", getFileLinkDescription, p.toolGetFileLink),
+		mcpTool(p, "search_files", searchFilesDescription, p.toolSearchFiles),
+		mcpTool(p, "upload_file", uploadFileDescription, p.toolUploadFile),
 	}
 }
 
@@ -183,7 +153,7 @@ func (p *MattermostToolProvider) toolGetPostFiles(mcpContext *MCPToolContext, ar
 		return "no files attached to this post", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d file(s) on post %s:\n\n", len(infos), args.PostID))
+	fmt.Fprintf(&result, "Found %d file(s) on post %s:\n\n", len(infos), args.PostID)
 	for i, info := range infos {
 		format.WriteFileDescriptor(&result, format.FileDescriptorEntry{Number: i + 1, FileInfo: info})
 	}
@@ -220,7 +190,7 @@ func (p *MattermostToolProvider) toolSearchFiles(mcpContext *MCPToolContext, arg
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d file(s) for %q:\n\n", len(results.Order), args.Terms))
+	fmt.Fprintf(&result, "Found %d file(s) for %q:\n\n", len(results.Order), args.Terms)
 	for i, id := range results.Order {
 		info := results.FileInfos[id]
 		if info == nil {

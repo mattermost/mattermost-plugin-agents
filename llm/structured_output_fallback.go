@@ -19,7 +19,7 @@ import (
 // into a prompt-level system instruction (with markdown code fencing stripped
 // from non-streaming responses).
 type StructuredOutputFallbackWrapper struct {
-	wrapped LanguageModel
+	LanguageModel
 	// nativeAllowed answers, for the model a request will actually run, whether
 	// its schema may be sent natively. See NewNativeStructuredOutputDecision.
 	nativeAllowed func(requestedModel string) bool
@@ -30,7 +30,7 @@ type StructuredOutputFallbackWrapper struct {
 // the prompt fallback.
 func NewStructuredOutputFallbackWrapper(wrapped LanguageModel, nativeAllowed func(requestedModel string) bool) *StructuredOutputFallbackWrapper {
 	return &StructuredOutputFallbackWrapper{
-		wrapped:       wrapped,
+		LanguageModel: wrapped,
 		nativeAllowed: nativeAllowed,
 	}
 }
@@ -44,7 +44,7 @@ func NewStructuredOutputFallbackWrapper(wrapped LanguageModel, nativeAllowed fun
 // prompt/schema transformation happens before Bifrost picks which provider
 // actually serves the request: one incapable attempt puts the whole request on
 // the prompt fallback. Only the primary's model can change per request (a
-// per-call WithModel override), so the fallbacks' verdict is fixed and is
+// per-call model override), so the fallbacks' verdict is fixed and is
 // computed once here rather than on every call.
 func NewNativeStructuredOutputDecision(primary ServiceConfig, primaryModel string, fallbacks []ServiceConfig, resolver StructuredOutputCapabilityResolver) func(requestedModel string) bool {
 	fallbacksAllowNative := true
@@ -91,12 +91,12 @@ func serviceAllowsNativeOutput(svc ServiceConfig, model string, resolver Structu
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	request, opts, _ = w.applyFallback(request, opts)
-	return w.wrapped.ChatCompletion(ctx, request, opts...)
+	return w.LanguageModel.ChatCompletion(ctx, request, opts...)
 }
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	downstreamRequest, downstreamOpts, fallbackApplied := w.applyFallback(request, opts)
-	response, err := w.wrapped.ChatCompletionNoStream(ctx, downstreamRequest, downstreamOpts...)
+	response, err := w.LanguageModel.ChatCompletionNoStream(ctx, downstreamRequest, downstreamOpts...)
 	if err != nil {
 		return response, err
 	}
@@ -111,15 +111,7 @@ func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Con
 // CountTokens applies the fallback so counts reflect the request actually sent.
 func (w *StructuredOutputFallbackWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
 	request, opts, _ = w.applyFallback(request, opts)
-	return w.wrapped.CountTokens(ctx, request, opts...)
-}
-
-func (w *StructuredOutputFallbackWrapper) InputTokenLimit() int {
-	return w.wrapped.InputTokenLimit()
-}
-
-func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
-	return w.wrapped.OutputTokenLimit()
+	return w.LanguageModel.CountTokens(ctx, request, opts...)
 }
 
 // applyFallback strips the JSON output schema from the downstream request and

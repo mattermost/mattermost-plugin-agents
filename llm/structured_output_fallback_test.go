@@ -339,7 +339,7 @@ func TestStructuredOutputFallbackWrapperResolvesEveryTarget(t *testing.T) {
 		},
 		{
 			name:             "per-call model override wins for the primary",
-			opts:             []LanguageModelOption{WithModel("override-model")},
+			opts:             []LanguageModelOption{func(cfg *LanguageModelConfig) { cfg.Model = "override-model" }},
 			wantPrimaryModel: "override-model",
 		},
 	}

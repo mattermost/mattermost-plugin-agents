@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -172,9 +173,9 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}
@@ -381,7 +382,7 @@ func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convService := conversation.NewService(convStore, nil, nil, nil)
 	lm := &loadedStateLLM{}
 	c := &Conversations{convService: convService}
-	llmContext := &llm.Context{Tools: llm.NewNoTools()}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext, 0)
 	require.NoError(t, err)

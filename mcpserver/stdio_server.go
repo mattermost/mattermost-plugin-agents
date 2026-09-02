@@ -6,7 +6,6 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -17,7 +16,6 @@ import (
 // MattermostStdioMCPServer wraps MattermostMCPServer for STDIO transport
 type MattermostStdioMCPServer struct {
 	*MattermostMCPServer
-	config StdioConfig
 }
 
 // NewStdioServer creates a new STDIO transport MCP server.
@@ -44,7 +42,6 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 			logger: logger,
 			config: config,
 		},
-		config: config,
 	}
 
 	// Create authentication provider
@@ -64,12 +61,12 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 	}
 
 	// Use provided services or create default HTTP callback services
-	pluginURL := strings.TrimRight(config.GetMMServerURL(), "/") + "/plugins/mattermost-ai"
+	defaultSearchService, defaultFileContentService := newPluginCallbackServices(config.GetMMServerURL())
 	if searchService == nil {
-		searchService = tools.NewHTTPSemanticSearchService(pluginURL)
+		searchService = defaultSearchService
 	}
 	if fileContentService == nil {
-		fileContentService = tools.NewHTTPFileContentService(pluginURL)
+		fileContentService = defaultFileContentService
 	}
 
 	// Register tools with local access mode

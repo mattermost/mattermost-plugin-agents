@@ -115,12 +115,7 @@ func pickValidID(rng *rand.Rand, vals []string) string {
 }
 
 func hasValidID(vals []string) bool {
-	for _, v := range vals {
-		if model.IsValidId(v) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(vals, model.IsValidId)
 }
 
 func webSearchAllowedURLs(ctx *llm.Context) []string {
@@ -241,7 +236,7 @@ func splitUsernames(rng *rand.Rand, pool []string, need int) []string {
 	}
 	idx := rng.Perm(len(pool))
 	out := make([]string, need)
-	for i := 0; i < need; i++ {
+	for i := range need {
 		out[i] = pool[idx[i]]
 	}
 	return out

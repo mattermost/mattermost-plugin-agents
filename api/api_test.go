@@ -117,22 +117,27 @@ type mcpDisconnectCall struct {
 
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager         *mcp.OAuthManager
-	tools                []llm.Tool
-	mcpErrors            *mcp.Errors
-	config               mcp.Config
-	embeddedServer       mcp.EmbeddedMCPServer
-	processOAuthSession  *mcp.OAuthSession
-	processOAuthErr      error
-	disconnectCalls      []mcpDisconnectCall
-	disconnectErr        error
-	oauthNeededCalls     []mcpDisconnectCall
-	refreshErr           error
-	refreshCalls         []string
-	getContexts          []context.Context
-	refreshContexts      []context.Context
-	ensureSessionErr     error
-	ensureSessionCreated bool
+	oauthManager                  *mcp.OAuthManager
+	tools                         []llm.Tool
+	mcpErrors                     *mcp.Errors
+	config                        mcp.Config
+	embeddedServer                mcp.EmbeddedMCPServer
+	processOAuthSession           *mcp.OAuthSession
+	processOAuthErr               error
+	disconnectCalls               []mcpDisconnectCall
+	disconnectErr                 error
+	oauthNeededCalls              []mcpDisconnectCall
+	refreshErr                    error
+	refreshCalls                  []string
+	getContexts                   []context.Context
+	getServiceAccountCalls        []string
+	getServiceAccountInvokerCalls []string
+	getServiceAccountContexts     []context.Context
+	serviceAccountTools           []llm.Tool
+	serviceAccountErrors          *mcp.Errors
+	refreshContexts               []context.Context
+	ensureSessionErr              error
+	ensureSessionCreated          bool
 
 	registerCalls   []mcp.PluginServerConfig
 	updateCalls     []mcp.PluginServerConfig
@@ -199,7 +204,13 @@ func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
 	return nil
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID)
+		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID)
+		m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
+		return m.serviceAccountTools, m.serviceAccountErrors
+	}
 	m.getContexts = append(m.getContexts, ctx)
 	return m.tools, m.mcpErrors
 }
@@ -650,7 +661,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
 	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}
@@ -698,7 +709,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		llmPrompts,
 		nil,
 		nil,
-		nil,
+		enterprise.NewLicenseChecker(client),
 		nil,
 		nil,
 		mcpMgr,
@@ -1054,12 +1065,14 @@ func TestHandleGetAIBots(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	tests := []struct {
-		name                     string
-		searchService            *search.Search
-		expectedSearchEnabled    bool
-		expectedAllowUnsafeLinks bool
-		expectedStatus           int
-		envSetup                 func(e *TestEnvironment)
+		name                          string
+		searchService                 *search.Search
+		useServiceAccountAuth         bool
+		expectedUseServiceAccountAuth bool
+		expectedSearchEnabled         bool
+		expectedAllowUnsafeLinks      bool
+		expectedStatus                int
+		envSetup                      func(e *TestEnvironment)
 	}{
 		{
 			name: "search enabled - non-nil service with non-nil embedding search",
@@ -1095,13 +1108,31 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
-			name:                     "unsafe links enabled via config",
-			searchService:            nil,
-			expectedSearchEnabled:    false,
-			expectedAllowUnsafeLinks: true,
-			expectedStatus:           http.StatusOK,
+			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
+			name:                          "unsafe links enabled via config",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: true,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      true,
+			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			// Unlicensed servers run service account agents in per-user mode, so the
+			// response must report the effective mode instead of the raw agent flag.
+			name:                          "service account agent reports user mode when unlicensed",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: false,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      false,
+			expectedStatus:                http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.OverrideLicense(nil)
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -1117,8 +1148,9 @@ func TestHandleGetAIBots(t *testing.T) {
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
-				Name:        "test-bot",
-				DisplayName: "Test Bot",
+				Name:                  "test-bot",
+				DisplayName:           "Test Bot",
+				UseServiceAccountAuth: test.useServiceAccountAuth,
 			})
 
 			// Setup mock expectations
@@ -1145,6 +1177,8 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
+				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
+					"UseServiceAccountAuth field should report the effective service account mode")
 			}
 		})
 	}

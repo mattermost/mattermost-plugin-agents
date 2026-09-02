@@ -295,6 +295,26 @@ response and SSE formats, so callers parse JSON from the completion text as usua
 Agent-level structured output configuration is deprecated and ignored; the service policy
 applies to both agent and direct-service completions.
 
+## Service Account Agents
+
+An agent can be configured (on its MCPs tab) to use **service account authentication**: external
+MCP tool calls run with admin-configured service account credentials instead of per-user OAuth.
+Embedded Mattermost and plugin tools still run as the caller-asserted user. For bridge callers
+this changes what `UserID` means:
+
+- **External MCP tools come from the agent's service account catalog.** For a service account
+  agent, `GetAgentTools` and `AllowedTools` resolution use that catalog for remotes. External
+  MCP servers without service account headers configured are excluded (fail closed) — they never
+  appear in discovery and never execute. Mattermost and plugin tools are discovered and executed
+  as the caller-asserted `UserID`.
+- **`UserID` selects Mattermost and plugin identity, and is still used for permission checks
+  and attribution.** Passing `UserID` still enforces the agent's user and channel access rules
+  and is recorded in token usage logs.
+- **`UserID` is still required for `AllowedTools`**, in both modes.
+
+Service account authentication requires a license. Without one, an agent flagged for it behaves
+like any other agent: the caller-asserted `user_id` selects per-user MCP credentials.
+
 ## Token Usage Dimensions
 
 Bridge callers can optionally provide `Operation` and `OperationSubType` in `CompletionRequest` to customize token usage categorization in logs.

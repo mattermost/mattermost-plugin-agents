@@ -32,22 +32,22 @@ type Client interface {
 	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
-	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
+	PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)
 	GetConfig() *model.Config
-	LogError(msg string, keyValuePairs ...interface{})
-	LogWarn(msg string, keyValuePairs ...interface{})
-	KVGet(key string, value interface{}) error
-	KVSet(key string, value interface{}) error
-	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
-	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
-	KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error)
+	LogError(msg string, keyValuePairs ...any)
+	LogWarn(msg string, keyValuePairs ...any)
+	KVGet(key string, value any) error
+	KVSet(key string, value any) error
+	KVSetWithExpiry(key string, value any, ttl time.Duration) error
+	KVCompareAndSet(key string, oldValue, newValue any) (bool, error)
+	KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
 	HasPermissionTo(userID string, permission *model.Permission) bool
 	GetPluginStatus(pluginID string) (*model.PluginStatus, error)
 	PluginHTTP(req *http.Request) *http.Response
-	LogDebug(msg string, keyValuePairs ...interface{})
+	LogDebug(msg string, keyValuePairs ...any)
 	GetChannelByName(teamID, name string, includeDeleted bool) (*model.Channel, error)
 	HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool
 	GetFileInfo(fileID string) (*model.FileInfo, error)
@@ -90,17 +90,17 @@ func (m *client) GetDirectChannel(userID1, userID2 string) (*model.Channel, erro
 	return m.pluginAPI.Channel.GetDirect(userID1, userID2)
 }
 
-func (m *client) LogError(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogError(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Error(msg, keyValuePairs...)
 }
 
-func (m *client) LogWarn(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogWarn(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Warn(msg, keyValuePairs...)
 }
 
 // KVGet reads raw bytes from pluginapi so it can translate the upstream
 // "(nil err, empty bytes)" reply for a missing key into ErrKVNotFound.
-func (m *client) KVGet(key string, value interface{}) error {
+func (m *client) KVGet(key string, value any) error {
 	var raw []byte
 	if err := m.pluginAPI.KV.Get(key, &raw); err != nil {
 		return err
@@ -122,12 +122,12 @@ func IsKVNotFound(err error) bool {
 	return errors.Is(err, ErrKVNotFound)
 }
 
-func (m *client) KVSet(key string, value interface{}) error {
+func (m *client) KVSet(key string, value any) error {
 	_, err := m.pluginAPI.KV.Set(key, value)
 	return err
 }
 
-func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+func (m *client) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
 	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
 	return err
 }
@@ -135,7 +135,7 @@ func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duratio
 // KVCompareAndSet performs an atomic compare-and-set. If oldValue is nil, the
 // write only succeeds when the key does not currently exist. Returns true when
 // the write was applied, false when the current value differed from oldValue.
-func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+func (m *client) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
 }
 
@@ -143,7 +143,7 @@ func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bo
 // the written value. It is used to acquire self-expiring leases: pass a nil
 // oldValue so the write only succeeds when the key is absent (or its previous
 // lease has expired).
-func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error) {
+func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error) {
 	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue), pluginapi.SetExpiry(ttl))
 }
 
@@ -167,7 +167,7 @@ func (m *client) PluginHTTP(req *http.Request) *http.Response {
 	return m.pluginAPI.Plugin.HTTP(req)
 }
 
-func (m *client) LogDebug(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogDebug(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Debug(msg, keyValuePairs...)
 }
 

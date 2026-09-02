@@ -167,7 +167,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				OperationSubType: SubTypeStreaming,
 			},
 			opts: []LanguageModelOption{
-				WithModel("override-model"),
+				func(cfg *LanguageModelConfig) { cfg.Model = "override-model" },
 			},
 			stream: makeStream(
 				TextStreamEvent{Type: EventTypeText, Value: "hello"},
@@ -196,6 +196,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "testbot",
 				"bot_username":      "testbot",
 				"agent_user_id":     "bot-user-id",
+				"acting_user_id":    "user-123",
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             "override-model",
 				"service_type":      "openai",
 				"service_id":        "svc-1",
@@ -205,6 +207,41 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"input_tokens":      int64(12),
 				"output_tokens":     int64(8),
 				"total_tokens":      int64(20),
+			},
+		},
+		{
+			name:     "service account requests are attributed to the agent bot",
+			identity: agentIdentity,
+			request: CompletionRequest{
+				Context: &Context{
+					RequestingUser: &model.User{Id: "user-123"},
+					Channel:        &model.Channel{Id: "channel-789", Type: model.ChannelTypeOpen},
+					BotUsername:    "testbot",
+					BotUserID:      "bot-user-id",
+					ToolAuthMode:   ToolAuthModeServiceAccount,
+				},
+				Operation:        OperationConversation,
+				OperationSubType: SubTypeStreaming,
+			},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 4, OutputTokens: 6}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "testbot",
+					teamID:       TokenUsageUnknown,
+					userID:       "user-123",
+					inputTokens:  4,
+					outputTokens: 6,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"user_id":        "user-123",
+				"agent_user_id":  "bot-user-id",
+				"acting_user_id": "bot-user-id",
+				"tool_auth_mode": ToolAuthModeServiceAccount,
 			},
 		},
 		{
@@ -238,6 +275,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "fallback-bot",
 				"bot_username":      "fallback-bot",
 				"agent_user_id":     TokenUsageUnknown,
+				"acting_user_id":    TokenUsageUnknown,
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             TokenUsageUnknown,
 				"service_type":      TokenUsageUnknown,
 				"service_id":        TokenUsageUnknown,
@@ -437,6 +476,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	dimensions := tokenUsageDimensions{
 		userID:           "user-1",
+		actingUserID:     "bot-user-1",
+		toolAuthMode:     ToolAuthModeServiceAccount,
 		teamID:           "team-1",
 		channelID:        "channel-1",
 		channelType:      "open",
@@ -498,6 +539,8 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 			assert.Equal(t, TokenUsageLogEvent, keyed["event"])
 			assert.Equal(t, TokenUsageLogSchemaVersion, keyed["schema_version"])
 			assert.Equal(t, "user-1", keyed["user_id"])
+			assert.Equal(t, "bot-user-1", keyed["acting_user_id"])
+			assert.Equal(t, ToolAuthModeServiceAccount, keyed["tool_auth_mode"])
 			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
 			assert.Equal(t, "svc-1", keyed["service_id"])
 			assert.Equal(t, "Primary Anthropic", keyed["service_name"])

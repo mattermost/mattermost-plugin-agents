@@ -65,13 +65,16 @@ const RHSHeader = (props: Props) => {
                 )}
                 {props.currentTab === 'new' ? (
                     <>
-                        <ToolProviderPopover
-                            disabledServers={props.disabledServers}
-                            onDisabledServersChange={props.onDisabledServersChange}
-                            preloadedServers={props.preloadedServers}
-                            enabledMCPTools={props.activeBot?.enabledMCPTools}
-                            autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
-                        />
+                        {/* SA agents have no per-user connections or preferences to manage. */}
+                        {props.activeBot?.useServiceAccountAuth !== true && (
+                            <ToolProviderPopover
+                                disabledServers={props.disabledServers}
+                                onDisabledServersChange={props.onDisabledServersChange}
+                                preloadedServers={props.preloadedServers}
+                                enabledMCPTools={props.activeBot?.enabledMCPTools}
+                                autoEnableNewMCPTools={props.activeBot?.autoEnableNewMCPTools}
+                            />
+                        )}
                         {props.bots && (
                             <BotDropdown
                                 bots={props.bots}

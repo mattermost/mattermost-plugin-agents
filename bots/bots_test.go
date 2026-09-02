@@ -134,9 +134,9 @@ func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
 		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
 	).Return().Once()
 
-	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	base, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, base.model)
 	mockAPI.AssertExpectations(t)
 }
 
@@ -147,25 +147,74 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	model, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, providerServices, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
 	n, err := model.CountTokens(context.Background(), llm.CompletionRequest{Posts: []llm.Post{{Message: "abcd"}}})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+
+	// The mock talks to no provider, so tools needing provider-side services
+	// (e.g. sandbox file attachment) must not be offered for a load-test bot.
+	require.False(t, providerServices.CanDownloadFiles())
+}
+
+func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+
+	service := llm.ServiceConfig{
+		ID:           "anthropic-svc",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "test-key",
+		DefaultModel: "claude-sonnet-4-6",
+	}
+	botCfg := llm.BotConfig{
+		Name:               "sandbox-bot",
+		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	}
+
+	model, providerServices, err := mmBots.getLLM(service, botCfg, nil)
+	require.NoError(t, err)
+	require.NotNil(t, model)
+
+	require.True(t, providerServices.CanDownloadFiles(), "an Anthropic bot must expose provider file download")
+
+	_, assertable := model.(llm.ProviderFileDownloader)
+	require.False(t, assertable, "the wrapped model must not be relied on for provider capabilities")
+}
+
+func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+
+	service := llm.ServiceConfig{
+		ID:           "openai-svc",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "test-key",
+		DefaultModel: "gpt-5",
+	}
+	botCfg := llm.BotConfig{
+		Name:               "openai-sandbox-bot",
+		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	}
+
+	_, providerServices, err := mmBots.getLLM(service, botCfg, nil)
+	require.NoError(t, err)
+	require.False(t, providerServices.CanDownloadFiles())
 }
 
 func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
+	_, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 	require.Contains(t, err.Error(), "loadtest profile")
 
-	_, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
+	_, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 }
@@ -200,9 +249,9 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	svc := loadTestService(nil)
 	svc.LoadTestMockConfig = nil
 
-	model, _, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
+	base, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, base.model)
 	require.NotEmpty(t, summary)
 	mockAPI.AssertExpectations(t)
 }
@@ -230,9 +279,9 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 		"realistic_fast":    0.0,
 		"realistic_slow":    0.0,
 	}
-	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
+	base, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, base.model)
 	require.NotEmpty(t, summary)
 	mockAPI.AssertExpectations(t)
 }
@@ -1148,6 +1197,104 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 			require.Equal(t, tt.expected, b.HasNativeWebSearchEnabled())
 		})
 	}
+}
+
+// Independent of file retrieval: OpenAI runs the sandbox but cannot serve its files.
+func TestHasNativeCodeExecutionEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name:     "anthropic with code_interpreter enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+			expected: true,
+		},
+		{
+			name:     "openai with code_interpreter enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
+			expected: true,
+		},
+		{
+			name:     "openai-compatible without responses api cannot deliver native tools",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible},
+			expected: false,
+		},
+		{
+			name:     "openai-compatible with responses api",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible, UseResponsesAPI: true},
+			expected: true,
+		},
+		{
+			// Gemini supports native tools, but not code_interpreter.
+			name:     "gemini does not support code_interpreter",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeGemini},
+			expected: false,
+		},
+		{
+			name:     "service without native tool support",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeCohere},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}},
+				tt.service,
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.expected, b.HasNativeCodeExecutionEnabled())
+		})
+	}
+}
+
+func TestHasNativeCodeExecutionEnabledRequiresBotOptIn(t *testing.T) {
+	b := NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
+		llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.False(t, b.HasNativeCodeExecutionEnabled())
+
+	b = NewBot(
+		llm.BotConfig{},
+		llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.False(t, b.HasNativeCodeExecutionEnabled())
+}
+
+func TestWithConfigPreservesDependencies(t *testing.T) {
+	mmBot := &model.Bot{UserId: "b1"}
+	service := llm.ServiceConfig{ID: "svc-1", Type: llm.ServiceTypeAnthropic}
+	services := &llm.ProviderServices{FileDownloader: stubFileDownloader{}}
+
+	original := NewBot(llm.BotConfig{Name: "agent", AutoEnableNewMCPTools: false}, service, mmBot, nil)
+	original.SetProviderServicesForTest(services)
+
+	derivedCfg := original.GetConfig()
+	derivedCfg.AutoEnableNewMCPTools = true
+	derived := original.WithConfig(derivedCfg)
+
+	require.True(t, derived.GetConfig().AutoEnableNewMCPTools)
+	require.Equal(t, "agent", derived.GetConfig().Name)
+	require.Equal(t, service, derived.GetService())
+	require.Equal(t, mmBot, derived.GetMMBot())
+	require.True(t, derived.ProviderServices().CanDownloadFiles())
+
+	require.False(t, original.GetConfig().AutoEnableNewMCPTools)
+}
+
+type stubFileDownloader struct{}
+
+func (stubFileDownloader) DownloadProviderFile(context.Context, llm.ProviderFileReference, int64) (llm.ProviderFile, error) {
+	return llm.ProviderFile{Name: "out.txt", ContentType: "text/plain", Content: []byte("x")}, nil
 }
 
 func TestPoweredByDescription(t *testing.T) {

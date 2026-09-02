@@ -38,7 +38,7 @@ func ValidateResourceMetadataMatchesServerBaseURL(serverBaseURL, metadataURL str
 		return fmt.Errorf("resource_metadata URL must not contain user info")
 	}
 
-	if originComparableKey(base) != originComparableKey(meta) {
+	if !sameOrigin(base, meta) {
 		return fmt.Errorf("resource_metadata origin does not match MCP server base URL origin")
 	}
 	return nil
@@ -66,4 +66,12 @@ func originComparableKey(u *url.URL) string {
 	}
 
 	return scheme + "://" + strings.ToLower(net.JoinHostPort(host, port))
+}
+
+// sameOrigin reports whether a and b share scheme, host, and port (with default-port normalization).
+func sameOrigin(a, b *url.URL) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return originComparableKey(a) == originComparableKey(b)
 }

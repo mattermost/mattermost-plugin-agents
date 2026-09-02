@@ -15,10 +15,13 @@ import {AgentDraft} from '../agent_config_view';
 type Props = {
     draft: AgentDraft;
     onChange: (updates: Partial<AgentDraft>) => void;
+
+    /** Soft-lock Access controls while service account auth is on for non-admins. */
+    serviceAccountFieldsLocked: boolean;
 }
 
 const AccessTab = (props: Props) => {
-    const {draft, onChange} = props;
+    const {draft, onChange, serviceAccountFieldsLocked} = props;
     const intl = useIntl();
 
     return (
@@ -31,6 +34,7 @@ const AccessTab = (props: Props) => {
                     onChangeLevel={(level: ChannelAccessLevel) => onChange({channelAccessLevel: level})}
                     channelIDs={draft.channelIds}
                     onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
+                    disabled={serviceAccountFieldsLocked}
                 />
                 <FormRow>
                     <span aria-hidden={true}/>
@@ -49,6 +53,7 @@ const AccessTab = (props: Props) => {
                     userIDs={draft.userIds}
                     teamIDs={draft.teamIds}
                     onChangeIDs={(userIds: string[], teamIds: string[]) => onChange({userIds, teamIds})}
+                    disabled={serviceAccountFieldsLocked}
                 />
                 <FormRow>
                     <span aria-hidden={true}/>
@@ -72,6 +77,7 @@ const AccessTab = (props: Props) => {
                                 userIds: string[],
                                 _teamIds: string[], // eslint-disable-line @typescript-eslint/no-unused-vars -- SelectUser passes (userIds, teamIds)
                             ) => onChange({adminUserIds: userIds})}
+                            disabled={serviceAccountFieldsLocked}
                         />
                         <HelpTextInline>
                             <FormattedMessage defaultMessage='These users can edit and delete this agent. The agent creator is always an admin.'/>

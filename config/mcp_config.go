@@ -3,6 +3,11 @@
 
 package config
 
+import (
+	"net/textproto"
+	"strings"
+)
+
 const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
@@ -48,13 +53,18 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	Name         string            `json:"name"`
-	Enabled      bool              `json:"enabled"`
-	BaseURL      string            `json:"baseURL"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	ClientID     string            `json:"clientID,omitempty"`
-	ClientSecret string            `json:"clientSecret,omitempty"`
-	ToolConfigs  []MCPToolConfig   `json:"tool_configs,omitempty"`
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	BaseURL string            `json:"baseURL"`
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
+	// sent in place of per-user OAuth on service-account-mode connections.
+	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`
+
+	ClientID     string          `json:"clientID,omitempty"`
+	ClientSecret string          `json:"clientSecret,omitempty"`
+	ToolConfigs  []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.
@@ -99,6 +109,48 @@ func (s *MCPServerConfig) GetToolPolicy(toolName string) (string, bool) {
 func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	policy, enabled := s.GetToolPolicy(toolName)
 	return IsToolPolicyAutoRunInDM(policy) && enabled
+}
+
+// EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
+// non-blank name and value, trimmed of surrounding whitespace and keyed by their
+// canonical MIME form; blank or padded System Console rows would make Go's HTTP
+// transport reject the whole request. Because http.Header canonicalizes names on
+// the wire, collisions are case-insensitive: entries whose canonical names collide
+// are ambiguous, so all of them are dropped instead of letting map iteration order
+// pick the winner.
+func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
+	if s == nil {
+		return nil
+	}
+
+	counts := make(map[string]int, len(s.ServiceAccountHeaders))
+	for name, value := range s.ServiceAccountHeaders {
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+		if canonicalName == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		counts[canonicalName]++
+	}
+
+	var headers map[string]string
+	for name, value := range s.ServiceAccountHeaders {
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+		trimmedValue := strings.TrimSpace(value)
+		if canonicalName == "" || trimmedValue == "" || counts[canonicalName] > 1 {
+			continue
+		}
+		if headers == nil {
+			headers = make(map[string]string, len(counts))
+		}
+		headers[canonicalName] = trimmedValue
+	}
+	return headers
+}
+
+// HasServiceAccountAuth reports whether this server has at least one usable
+// service account header. Enabled is intentionally ignored.
+func (s *MCPServerConfig) HasServiceAccountAuth() bool {
+	return len(s.EffectiveServiceAccountHeaders()) > 0
 }
 
 // PluginServerConfig describes an MCP server registered by another plugin.
