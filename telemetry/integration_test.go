@@ -86,9 +86,7 @@ func (f *fakeLLM) ChatCompletion(ctx context.Context, request llm.CompletionRequ
 	)
 
 	stream := make(chan llm.TextStreamEvent)
-	f.wg.Add(1)
-	go func() {
-		defer f.wg.Done()
+	f.wg.Go(func() {
 		defer close(stream)
 		defer span.End()
 
@@ -102,7 +100,7 @@ func (f *fakeLLM) ChatCompletion(ctx context.Context, request llm.CompletionRequ
 		)
 		stream <- llm.TextStreamEvent{Type: llm.EventTypeUsage, Value: usage}
 		stream <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
-	}()
+	})
 
 	return &llm.TextStreamResult{Stream: stream}, nil
 }
@@ -132,9 +130,7 @@ func (f *fakeLLMError) ChatCompletion(ctx context.Context, request llm.Completio
 	)
 
 	stream := make(chan llm.TextStreamEvent)
-	f.wg.Add(1)
-	go func() {
-		defer f.wg.Done()
+	f.wg.Go(func() {
 		defer close(stream)
 		defer span.End()
 
@@ -142,7 +138,7 @@ func (f *fakeLLMError) ChatCompletion(ctx context.Context, request llm.Completio
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		stream <- llm.TextStreamEvent{Type: llm.EventTypeError, Value: err}
-	}()
+	})
 
 	return &llm.TextStreamResult{Stream: stream}, nil
 }

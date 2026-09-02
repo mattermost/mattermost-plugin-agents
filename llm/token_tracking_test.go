@@ -157,7 +157,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				OperationSubType: SubTypeStreaming,
 			},
 			opts: []LanguageModelOption{
-				WithModel("override-model"),
+				func(cfg *LanguageModelConfig) { cfg.Model = "override-model" },
 			},
 			stream: makeStream(
 				TextStreamEvent{Type: EventTypeText, Value: "hello"},

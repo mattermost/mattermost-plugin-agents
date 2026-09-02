@@ -31,7 +31,6 @@ func TestSupportsNativeTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.serviceType, func(t *testing.T) {
-			assert.Equal(t, tt.want, supportsNativeTools(tt.serviceType))
 			assert.Equal(t, tt.want, SupportsNativeTools(tt.serviceType))
 		})
 	}

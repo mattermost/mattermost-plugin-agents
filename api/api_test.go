@@ -655,7 +655,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 
 	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
 	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}

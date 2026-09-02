@@ -32,13 +32,13 @@ type fixedPluginAPI struct {
 	userByID    map[string]*model.User
 }
 
-func (f *fixedPluginAPI) LogDebug(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogDebug(string, ...any) {}
 
-func (f *fixedPluginAPI) LogInfo(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogInfo(string, ...any) {}
 
-func (f *fixedPluginAPI) LogWarn(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogWarn(string, ...any) {}
 
-func (f *fixedPluginAPI) LogError(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogError(string, ...any) {}
 
 func (f *fixedPluginAPI) KVGet(key string) ([]byte, *model.AppError) {
 	if f.kvGet != nil {

@@ -67,25 +67,3 @@ func TestToolUseBlocksPersistsPolicyFields(t *testing.T) {
 		})
 	}
 }
-
-// TestPostToBlocksPersistsPolicyFields asserts the generic Post->blocks
-// converter carries the same tool identity/metadata. It intentionally omits
-// user_interaction: PostToBlocks converts completed posts, where the pending
-// interaction kind is not meaningful (it is set by the approval-path writers).
-func TestPostToBlocksPersistsPolicyFields(t *testing.T) {
-	post := llm.Post{Role: llm.PostRoleBot, ToolUse: []llm.ToolCall{parityToolCall()}}
-	blocks := PostToBlocks(post, true)
-	require.GreaterOrEqual(t, len(blocks), 1)
-	require.Equal(t, BlockTypeToolUse, blocks[0].Type)
-
-	m := toolUseBlockJSONMap(t, blocks[0])
-	for _, field := range persistedToolUseFields {
-		if field == "user_interaction" {
-			continue
-		}
-		t.Run(field, func(t *testing.T) {
-			require.Contains(t, m, field, "PostToBlocks dropped the field")
-			require.NotEmpty(t, m[field], "PostToBlocks emitted an empty field")
-		})
-	}
-}

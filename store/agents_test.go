@@ -446,14 +446,14 @@ func TestAgentConcurrentCreates(t *testing.T) {
 	const count = 10
 	errCh := make(chan error, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		go func(idx int) {
 			a := testAgent("creator-1", fmt.Sprintf("agent-%d", idx), fmt.Sprintf("Agent %d", idx))
 			errCh <- s.CreateAgent(a)
 		}(i)
 	}
 
-	for i := 0; i < count; i++ {
+	for range count {
 		require.NoError(t, <-errCh)
 	}
 

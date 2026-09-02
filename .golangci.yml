@@ -38,7 +38,13 @@ linters:
       - linters:
           - bodyclose
           - scopelint
+          - gosec
         path: _test\.go
+      # Local dev tooling: operator-supplied paths/URLs/log values are by design.
+      - linters:
+          - gosec
+        path: ^build/
+        text: "G70[346]"
       - linters:
           - revive
         text: unused-parameter

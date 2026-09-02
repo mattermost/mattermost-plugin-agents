@@ -26,7 +26,7 @@ import (
 func setupTestLogger(mockAPI *plugintest.API) {
 	for _, method := range []string{"LogDebug", "LogError", "LogWarn", "LogInfo"} {
 		for arity := 1; arity <= 16; arity++ {
-			args := make([]interface{}, arity)
+			args := make([]any, arity)
 			for i := range args {
 				args[i] = mock.Anything
 			}
@@ -51,7 +51,7 @@ func newFakePluginMCPServerWithPrefix(t *testing.T, prefix string, toolCount int
 	type echoOut struct {
 		Echo string `json:"echo"`
 	}
-	for i := 0; i < toolCount; i++ {
+	for i := range toolCount {
 		name := fmt.Sprintf("%s_%d", prefix, i)
 		gomcp.AddTool(srv, &gomcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gomcp.CallToolRequest, in echoIn) (*gomcp.CallToolResult, echoOut, error) {
 			return nil, echoOut{Echo: in.Message}, nil

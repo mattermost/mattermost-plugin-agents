@@ -258,67 +258,6 @@ func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
 	})
 }
 
-// PostToBlocks converts an llm.Post into a slice of content blocks.
-// This is used when writing turns to the database from stream events or the current llm.Post model.
-// The shared parameter controls whether tool blocks get shared=true or shared=false.
-func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
-	var blocks []ContentBlock
-
-	if len(post.AssistantSegments) > 0 {
-		blocks = append(blocks, SequenceBlocks(post.AssistantSegments, post.ServerTools)...)
-	} else {
-		// Callers without arrival-order data use the historical fixed order.
-		if post.Reasoning != "" {
-			blocks = append(blocks, ContentBlock{
-				Type:      BlockTypeThinking,
-				Text:      post.Reasoning,
-				Signature: post.ReasoningSignature,
-			})
-		}
-		for i := range post.ServerTools {
-			activity := post.ServerTools[i].Clone()
-			blocks = append(blocks, ContentBlock{
-				Type:       BlockTypeServerToolUse,
-				ServerTool: &activity,
-			})
-		}
-		if post.Message != "" {
-			blocks = append(blocks, ContentBlock{
-				Type: BlockTypeText,
-				Text: post.Message,
-			})
-		}
-	}
-
-	// For each ToolUse: a tool_use block, optionally followed by a tool_result block.
-	for _, tc := range post.ToolUse {
-		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			MCPBareName:  tc.MCPBareName,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
-			Title:        tc.Title,
-			Description:  tc.Description,
-		})
-
-		if tc.Result != "" {
-			blocks = append(blocks, ContentBlock{
-				Type:      BlockTypeToolResult,
-				ToolUseID: tc.ID,
-				Content:   tc.Result,
-				Status:    StatusToString(tc.Status),
-				Shared:    BoolPtr(shared),
-			})
-		}
-	}
-
-	return blocks
-}
-
 // RoleFromString converts a turn role string to an llm.PostRole.
 func RoleFromString(role string) llm.PostRole {
 	switch role {
@@ -332,20 +271,6 @@ func RoleFromString(role string) llm.PostRole {
 		return llm.PostRoleSystem
 	default:
 		return llm.PostRoleUser
-	}
-}
-
-// RoleToString converts an llm.PostRole to a turn role string.
-func RoleToString(role llm.PostRole) string {
-	switch role {
-	case llm.PostRoleUser:
-		return "user"
-	case llm.PostRoleBot:
-		return "assistant"
-	case llm.PostRoleSystem:
-		return "system"
-	default:
-		return "user"
 	}
 }
 

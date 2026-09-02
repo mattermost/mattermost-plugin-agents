@@ -399,7 +399,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 
 				require.Len(t, result.Bots, 5)
 
-				for i := 0; i < 4; i++ {
+				for i := range 4 {
 					assert.Equal(t, openAIService.ID, result.Bots[i].ServiceID,
 						"Bot %d (%s) should reference OpenAI service", i, result.Bots[i].Name)
 					assert.Nil(t, result.Bots[i].Service, "Embedded service should be cleared for bot %d", i)

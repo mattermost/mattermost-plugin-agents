@@ -567,7 +567,7 @@ func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
 }
 
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
+func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
@@ -611,16 +611,12 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 		}
 	}
 
-	return bots, nil
+	return bots
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(userID)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
+	bots := a.getAIBotsForUser(userID)
 
 	// Check if search is enabled
 	searchEnabled := a.searchService.Enabled()

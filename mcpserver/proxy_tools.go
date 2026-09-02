@@ -16,9 +16,6 @@ import (
 	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// mmUserIDHeader propagates the calling Mattermost user ID through PluginHTTP.
-const mmUserIDHeader = "X-Mattermost-UserID"
-
 // boundedRoundTripper bounds how long Agents waits on PluginHTTP, but it cannot
 // cancel the underlying PluginHTTP execution once started.
 type boundedRoundTripper struct {
@@ -55,32 +52,10 @@ func (b *boundedRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 	}
 }
 
-// headerInjector sets fixed headers on every outbound request.
-type headerInjector struct {
-	base    http.RoundTripper
-	headers map[string]string
-}
-
-func (h *headerInjector) RoundTrip(req *http.Request) (*http.Response, error) {
-	r := req.Clone(req.Context())
-	for k, v := range h.headers {
-		r.Header.Set(k, v)
-	}
-	return h.base.RoundTrip(r)
-}
-
 func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) *http.Client {
-	transport := http.RoundTripper(&boundedRoundTripper{
+	client := mcppkg.PluginServerHTTPClient(&boundedRoundTripper{
 		base: mcppkg.NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI),
-	})
-	if callerUserID != "" {
-		transport = &headerInjector{
-			base:    transport,
-			headers: map[string]string{mmUserIDHeader: callerUserID},
-		}
-	}
-
-	client := &http.Client{Transport: transport}
+	}, callerUserID)
 	if deadline, ok := ctx.Deadline(); ok {
 		client.Timeout = time.Until(deadline)
 	}
@@ -88,14 +63,8 @@ func newProxyHTTPClient(ctx context.Context, cfg mcppkg.PluginServerConfig, sour
 }
 
 func connectProxySession(ctx context.Context, cfg mcppkg.PluginServerConfig, sourcePluginAPI mmapi.Client, callerUserID string) (*gosdkmcp.ClientSession, error) {
-	client := mcppkg.NewSDKClient(
-		&gosdkmcp.Implementation{Name: "mattermost-agents-plugin-aggregator", Version: "1.0"},
-		&gosdkmcp.ClientOptions{},
-	)
-	return client.Connect(ctx, &gosdkmcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: newProxyHTTPClient(ctx, cfg, sourcePluginAPI, callerUserID),
-	}, nil)
+	return mcppkg.ConnectPluginServer(ctx, "mattermost-agents-plugin-aggregator", cfg.Path,
+		newProxyHTTPClient(ctx, cfg, sourcePluginAPI, callerUserID))
 }
 
 // BuildProxyTools proxies a source plugin's MCP tools into the external server.
@@ -114,18 +83,15 @@ func BuildProxyTools(
 	}
 	defer func() { _ = listSession.Close() }()
 
-	result, err := listSession.ListTools(ctx, &gosdkmcp.ListToolsParams{})
+	remoteTools, err := mcppkg.ListSessionTools(ctx, listSession)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
 	}
-	if result == nil {
-		return nil, nil, fmt.Errorf("plugin MCP server %s returned nil ListTools result", cfg.PluginID)
-	}
 
-	tools := make([]*gosdkmcp.Tool, 0, len(result.Tools))
-	handlers := make([]gosdkmcp.ToolHandler, 0, len(result.Tools))
+	tools := make([]*gosdkmcp.Tool, 0, len(remoteTools))
+	handlers := make([]gosdkmcp.ToolHandler, 0, len(remoteTools))
 
-	for _, remote := range result.Tools {
+	for _, remote := range remoteTools {
 		t := &gosdkmcp.Tool{
 			Name:        remote.Name,
 			Description: remote.Description,

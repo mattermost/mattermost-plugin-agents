@@ -35,7 +35,7 @@ func TestBlocksToPost(t *testing.T) {
 		{
 			name: "tool_use blocks to ToolUse",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: new(true)},
 			},
 			role: "assistant",
 			expected: llm.Post{
@@ -178,8 +178,8 @@ func TestBlocksToPost(t *testing.T) {
 
 func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	blocks := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "t-shared", Name: "search", Input: json.RawMessage(`{"q":"public"}`), Status: StatusSuccess, Shared: new(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-shared", Content: "PUBLIC", Status: StatusSuccess, Shared: new(true)},
 		{
 			Type:        BlockTypeToolUse,
 			ID:          "t-private",
@@ -187,9 +187,9 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 			Input:       json.RawMessage(`{"channel":"secret-dm"}`),
 			MCPBareName: "read_dm",
 			Status:      StatusSuccess,
-			Shared:      BoolPtr(false),
+			Shared:      new(false),
 		},
-		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "t-private", Content: "SECRET", Status: StatusSuccess, Shared: new(false)},
 		{Type: BlockTypeToolUse, ID: "t-nilshared", Name: "foo", Input: json.RawMessage(`{"token":"xyz"}`), Status: StatusSuccess},
 		{Type: BlockTypeToolResult, ToolUseID: "t-nilshared", Content: "ALSO SECRET", Status: StatusSuccess},
 	}
@@ -238,37 +238,6 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 }
 
-func TestPostToBlocksPreservesToolIdentityMetadata(t *testing.T) {
-	post := llm.Post{
-		Role: llm.PostRoleBot,
-		ToolUse: []llm.ToolCall{{
-			ID:           "tc1",
-			Name:         "jira__get_issue",
-			Description:  "Get a Jira issue",
-			Title:        "Get Issue",
-			ServerOrigin: "https://jira.example.com",
-			Arguments:    json.RawMessage(`{"key":"MM-1"}`),
-			MCPBareName:  "get_issue",
-			Status:       llm.ToolCallStatusPending,
-		}},
-	}
-
-	blocks := PostToBlocks(post, false)
-
-	require.Len(t, blocks, 1)
-	assert.Equal(t, BlockTypeToolUse, blocks[0].Type)
-	assert.Equal(t, "jira__get_issue", blocks[0].Name)
-	assert.Equal(t, "https://jira.example.com", blocks[0].ServerOrigin)
-	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
-	assert.Equal(t, "Get Issue", blocks[0].Title)
-	assert.Equal(t, "Get a Jira issue", blocks[0].Description)
-
-	data, err := json.Marshal(blocks[0])
-	require.NoError(t, err)
-	assert.NotContains(t, string(data), "input_schema")
-	assert.NotContains(t, string(data), "\"schema\"")
-}
-
 func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	// Persisted block omits the bare name on purpose: rehydration must derive
 	// it from the namespaced catalog entry, not echo a value the test pre-set.
@@ -279,7 +248,7 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 		ServerOrigin: "https://jira.example.com",
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
 		Status:       StatusPending,
-		Shared:       BoolPtr(true),
+		Shared:       new(true),
 	}}
 	toolStore := llm.NewToolStore()
 	schema := json.RawMessage(`{"type":"object","properties":{"key":{"type":"string"}}}`)
@@ -301,104 +270,6 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	assert.Equal(t, "get_issue", toolCall.MCPBareName)
 	assert.Equal(t, "Get a Jira issue", toolCall.Description)
 	assert.Equal(t, "Get Issue", toolCall.Title)
-}
-
-func TestPostToBlocks(t *testing.T) {
-	tests := []struct {
-		name     string
-		post     llm.Post
-		shared   bool
-		expected []ContentBlock
-	}{
-		{
-			name:     "message only",
-			post:     llm.Post{Role: llm.PostRoleUser, Message: "Hello"},
-			shared:   true,
-			expected: []ContentBlock{{Type: BlockTypeText, Text: "Hello"}},
-		},
-		{
-			name:   "reasoning produces thinking block",
-			post:   llm.Post{Role: llm.PostRoleBot, Reasoning: "thinking...", ReasoningSignature: "sig"},
-			shared: true,
-			expected: []ContentBlock{
-				{Type: BlockTypeThinking, Text: "thinking...", Signature: "sig"},
-			},
-		},
-		{
-			name: "tool use produces tool_use blocks",
-			post: llm.Post{
-				Role: llm.PostRoleBot,
-				ToolUse: []llm.ToolCall{
-					{ID: "tc1", Name: "search", Arguments: json.RawMessage(`{"q":"test"}`), Status: llm.ToolCallStatusSuccess, ServerOrigin: "https://mcp.example.com"},
-				},
-			},
-			shared: false,
-			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", ServerOrigin: "https://mcp.example.com", Input: json.RawMessage(`{"q":"test"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
-			},
-		},
-		{
-			name: "resolved tool use produces both tool_use and tool_result",
-			post: llm.Post{
-				Role: llm.PostRoleBot,
-				ToolUse: []llm.ToolCall{
-					{ID: "tc1", Name: "search", Arguments: json.RawMessage(`{}`), Result: "found it", Status: llm.ToolCallStatusSuccess},
-				},
-			},
-			shared: true,
-			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "found it", Status: StatusSuccess, Shared: BoolPtr(true)},
-			},
-		},
-		{
-			name: "full assistant post with reasoning text and tools",
-			post: llm.Post{
-				Role:               llm.PostRoleBot,
-				Message:            "Here is the answer",
-				Reasoning:          "Let me think",
-				ReasoningSignature: "sig",
-				ToolUse: []llm.ToolCall{
-					{ID: "tc1", Name: "tool", Arguments: json.RawMessage(`{}`), Status: llm.ToolCallStatusPending},
-				},
-			},
-			shared: false,
-			expected: []ContentBlock{
-				{Type: BlockTypeThinking, Text: "Let me think", Signature: "sig"},
-				{Type: BlockTypeText, Text: "Here is the answer"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(false)},
-			},
-		},
-		{
-			name:     "empty post produces no blocks",
-			post:     llm.Post{Role: llm.PostRoleUser},
-			shared:   true,
-			expected: nil,
-		},
-		{
-			name: "multiple tool calls with results interleaved",
-			post: llm.Post{
-				Role: llm.PostRoleBot,
-				ToolUse: []llm.ToolCall{
-					{ID: "tc1", Name: "tool1", Arguments: json.RawMessage(`{}`), Result: "r1", Status: llm.ToolCallStatusSuccess},
-					{ID: "tc2", Name: "tool2", Arguments: json.RawMessage(`{}`), Status: llm.ToolCallStatusPending},
-				},
-			},
-			shared: true,
-			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool1", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "r1", Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(true)},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := PostToBlocks(tt.post, tt.shared)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 func TestRoleMapping(t *testing.T) {
@@ -447,99 +318,6 @@ func TestStatusFromStringDefault(t *testing.T) {
 
 func TestStatusToStringDefault(t *testing.T) {
 	assert.Equal(t, StatusPending, StatusToString(llm.ToolCallStatus(999)))
-}
-
-func TestRoleToString(t *testing.T) {
-	tests := []struct {
-		role     llm.PostRole
-		expected string
-	}{
-		{llm.PostRoleUser, "user"},
-		{llm.PostRoleBot, "assistant"},
-		{llm.PostRoleSystem, "system"},
-		{llm.PostRole(999), "user"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.expected, func(t *testing.T) {
-			assert.Equal(t, tt.expected, RoleToString(tt.role))
-		})
-	}
-}
-
-func TestPostToBlocksToPostRoundTrip(t *testing.T) {
-	tests := []struct {
-		name   string
-		post   llm.Post
-		shared bool
-	}{
-		{
-			name:   "message only",
-			post:   llm.Post{Role: llm.PostRoleBot, Message: "Hello world"},
-			shared: true,
-		},
-		{
-			name: "reasoning and message",
-			post: llm.Post{
-				Role:               llm.PostRoleBot,
-				Message:            "The answer is 42",
-				Reasoning:          "Let me think about this",
-				ReasoningSignature: "sig_abc",
-			},
-			shared: true,
-		},
-		{
-			name: "tool use with result",
-			post: llm.Post{
-				Role:    llm.PostRoleBot,
-				Message: "Here are the results",
-				ToolUse: []llm.ToolCall{
-					{
-						ID:           "tc1",
-						Name:         "search",
-						ServerOrigin: "https://mcp.example.com",
-						Arguments:    json.RawMessage(`{"q":"test"}`),
-						Result:       "found it",
-						Status:       llm.ToolCallStatusSuccess,
-					},
-				},
-			},
-			shared: false,
-		},
-		{
-			name: "multiple tools mixed resolved and unresolved",
-			post: llm.Post{
-				Role: llm.PostRoleBot,
-				ToolUse: []llm.ToolCall{
-					{ID: "tc1", Name: "tool1", Arguments: json.RawMessage(`{}`), Result: "r1", Status: llm.ToolCallStatusSuccess},
-					{ID: "tc2", Name: "tool2", Arguments: json.RawMessage(`{"x":1}`), Status: llm.ToolCallStatusPending},
-				},
-			},
-			shared: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			blocks := PostToBlocks(tt.post, tt.shared)
-			role := RoleToString(tt.post.Role)
-			roundTripped := BlocksToPost(blocks, role, PostConversionOptions{})
-
-			assert.Equal(t, tt.post.Role, roundTripped.Role)
-			assert.Equal(t, tt.post.Message, roundTripped.Message)
-			assert.Equal(t, tt.post.Reasoning, roundTripped.Reasoning)
-			assert.Equal(t, tt.post.ReasoningSignature, roundTripped.ReasoningSignature)
-			assert.Equal(t, len(tt.post.ToolUse), len(roundTripped.ToolUse))
-			for i := range tt.post.ToolUse {
-				assert.Equal(t, tt.post.ToolUse[i].ID, roundTripped.ToolUse[i].ID)
-				assert.Equal(t, tt.post.ToolUse[i].Name, roundTripped.ToolUse[i].Name)
-				assert.Equal(t, tt.post.ToolUse[i].ServerOrigin, roundTripped.ToolUse[i].ServerOrigin)
-				assert.JSONEq(t, string(tt.post.ToolUse[i].Arguments), string(roundTripped.ToolUse[i].Arguments))
-				assert.Equal(t, tt.post.ToolUse[i].Result, roundTripped.ToolUse[i].Result)
-				assert.Equal(t, tt.post.ToolUse[i].Status, roundTripped.ToolUse[i].Status)
-			}
-		})
-	}
 }
 
 // fakeReadCloser wraps a strings.Reader as io.ReadCloser so the mock GetFile
@@ -854,7 +632,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			blocks: []ContentBlock{
 				{Type: BlockTypeText, Text: "hello"},
 				{Type: BlockTypeThinking, Text: "reason", Signature: "sig"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{}`), Status: StatusSuccess, Shared: new(true)},
 			},
 			assert: func(t *testing.T, _ *mmapimocks.MockClient, post llm.Post) {
 				assert.Equal(t, "hello", post.Message)

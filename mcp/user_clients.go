@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -122,8 +123,7 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 			}
 
 			// Check if this is an OAuth authentication error
-			var oauthErr *OAuthNeededError
-			if errors.As(err, &oauthErr) {
+			if oauthErr, ok := errors.AsType[*OAuthNeededError](err); ok {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
 					ServerName:   serverConfig.Name,
 					ServerOrigin: serverConfig.BaseURL,
@@ -366,9 +366,7 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, l
 	if llmContext.Tools != nil {
 		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
 			metadata = make(map[string]any, len(tool.CallMetadata)+1)
-			for k, v := range tool.CallMetadata {
-				metadata[k] = v
-			}
+			maps.Copy(metadata, tool.CallMetadata)
 		}
 	}
 

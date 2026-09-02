@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -199,9 +200,9 @@ func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}
@@ -428,7 +429,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		channels: map[string]*model.Channel{
 			channelID: channel,
 		},
-		kv:              make(map[string]interface{}),
+		kv:              make(map[string]any),
 		allowCreatePost: true,
 	}
 
@@ -808,7 +809,7 @@ func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 		dmMakeTextStream("I cannot use that tool"),
 	)
 
-	llmCtx := &llm.Context{Tools: llm.NewNoTools()}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	post := &model.Post{
 		Id:        "post1",
 		UserId:    env.userID,

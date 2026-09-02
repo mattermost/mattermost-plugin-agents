@@ -62,8 +62,9 @@ func marshalBlocks(blocks []ContentBlock) (json.RawMessage, error) {
 	return json.Marshal(blocks)
 }
 
-// unmarshalBlocks deserializes JSON content from store.Turn.Content.
-func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
+// UnmarshalBlocks deserializes JSON content from store.Turn.Content.
+// Empty content yields nil blocks with no error.
+func UnmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
@@ -163,7 +164,7 @@ func toolUseBlocks(
 			Input:           tc.Arguments,
 			MCPBareName:     tc.MCPBareName,
 			Status:          StatusToString(tc.Status),
-			Shared:          BoolPtr(shared),
+			Shared:          new(shared),
 			UserInteraction: tc.UserInteraction,
 			Title:           tc.Title,
 			Description:     tc.Description,
@@ -190,8 +191,8 @@ func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlo
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    BoolPtr(shared),
-			DecidedAt: Int64Ptr(now),
+			Shared:    new(shared),
+			DecidedAt: new(now),
 		}
 	}
 	return blocks

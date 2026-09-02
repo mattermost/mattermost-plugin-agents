@@ -4,10 +4,11 @@
 package api
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -151,8 +152,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 			continue
 		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			serverConfig,
@@ -175,8 +175,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 			ToolConfigs: toolConfigs,
 		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			embeddedConfig,
@@ -200,8 +199,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 			ToolConfigs: cfg.ToolConfigs,
 		}
 
-		servers = append(servers, buildUserMCPServerInfo(
-			a,
+		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
 			pluginConfig,
@@ -214,8 +212,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 	return UserMCPToolsResponse{Servers: servers}
 }
 
-func buildUserMCPServerInfo(
-	api *API,
+func (a *API) buildUserMCPServerInfo(
 	userID string,
 	oauthManager *mcp.OAuthManager,
 	serverConfig *mcp.ServerConfig,
@@ -235,8 +232,8 @@ func buildUserMCPServerInfo(
 		})
 	}
 
-	sort.Slice(toolInfos, func(i, j int) bool {
-		return toolInfos[i].Name < toolInfos[j].Name
+	slices.SortFunc(toolInfos, func(x, y UserMCPToolInfo) int {
+		return cmp.Compare(x.Name, y.Name)
 	})
 
 	kind := mcp.ServerKind(serverConfig.BaseURL)
@@ -264,9 +261,7 @@ func buildUserMCPServerInfo(
 		hasStoredToken, err = oauthManager.HasStoredToken(userID, serverConfig.Name)
 		if err != nil {
 			hasStoredToken = false
-			if api != nil {
-				api.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
-			}
+			a.pluginAPI.Log.Debug("Failed to check MCP OAuth token presence", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
 		}
 	}
 
@@ -276,9 +271,7 @@ func buildUserMCPServerInfo(
 		authNeededState, err = oauthManager.LoadAuthNeededState(userID, serverConfig.Name)
 		if err != nil {
 			authNeededState = nil
-			if api != nil {
-				api.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
-			}
+			a.pluginAPI.Log.Debug("Failed to load MCP OAuth-needed state", "userID", userID, "serverName", serverConfig.Name, "serverOrigin", serverConfig.BaseURL, "error", err)
 		}
 	}
 	hasPersistedAuthNeeded := authNeededState != nil && authNeededState.AuthURL != ""
@@ -340,8 +333,7 @@ func (a *API) handlePutUserPreferences(c *gin.Context) {
 
 	var prefs mcp.UserToolProviderPreferences
 	if err := c.ShouldBindJSON(&prefs); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
@@ -421,7 +413,7 @@ func (a *API) publishMCPDisconnected(userID, serverName string) {
 		return
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"status":     "disconnected",
 		"serverName": serverName,
 	}

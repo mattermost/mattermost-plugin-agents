@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -151,7 +152,7 @@ func TestDirectMessageConversations(t *testing.T) {
 			mmBot := &model.Bot{
 				UserId: "testbotid",
 			}
-			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
+			llmInstance := llmtest.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
 			_ = bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 

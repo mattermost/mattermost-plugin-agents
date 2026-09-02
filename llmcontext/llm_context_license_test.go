@@ -35,7 +35,7 @@ func newLicenseTestBuilder(t *testing.T, licensed bool, toolProvider ToolProvide
 		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
 	}
 	for i := 1; i <= 10; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}

@@ -233,11 +233,11 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
 	allOpts := append([]llm.ContextOption{}, opts...)
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(stdcontext.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(stdcontext.Background(), bot))
 	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
 }
 
-func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
+func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -259,7 +259,7 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		newTestBot(),
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), newTestBot()),
+		builder.WithLLMContextTools(stdcontext.Background(), newTestBot()),
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
@@ -296,7 +296,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	require.Empty(t, context.Tools.GetTools())
 }
 
-func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
+func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -337,7 +337,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		bot,
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), bot),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
 	require.Empty(t, context.Tools.GetTools())

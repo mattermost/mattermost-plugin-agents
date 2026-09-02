@@ -110,12 +110,6 @@ type WebSearchContext struct {
 	Count           int             `json:"count"`
 }
 
-// BoolPtr returns a pointer to the given bool value.
-func BoolPtr(b bool) *bool { return &b }
-
-// Int64Ptr returns a pointer to the given int64 value.
-func Int64Ptr(v int64) *int64 { return &v }
-
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have Input and
 // MCPBareName cleared; tool result blocks with shared != true have Content

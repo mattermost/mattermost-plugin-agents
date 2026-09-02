@@ -493,7 +493,7 @@ func TestWithBoundParamsPreservesServerOrigin(t *testing.T) {
 		},
 	}
 
-	bound := original.WithBoundParams(map[string]interface{}{"key": "value"})
+	bound := original.WithBoundParams(map[string]any{"key": "value"})
 
 	assert.Equal(t, original.ServerOrigin, bound.ServerOrigin)
 	assert.Equal(t, original.Name, bound.Name)
@@ -949,7 +949,7 @@ func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	_, ok := nilStore.GetUnloadedMCPToolInfo("jira__get_issue")
 	assert.False(t, ok)
 
-	store := NewNoTools()
+	store := NewToolStore()
 	store.SetUnloadedMCPTools([]Tool{
 		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 		{Name: "", Description: "ignored"},
@@ -1012,7 +1012,7 @@ func TestToolStoreLoadMCPTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := NewNoTools()
+			store := NewToolStore()
 			store.SetUnloadedMCPTools(tt.unloaded)
 
 			loaded := store.LoadMCPTools(tt.loadNames)
@@ -1032,7 +1032,7 @@ func TestToolStoreLoadMCPTools(t *testing.T) {
 }
 
 func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue", Description: "Get a Jira issue"}})
 
 	loaded := store.LoadMCPTools([]string{"jira__get_issue"})
@@ -1044,7 +1044,7 @@ func TestToolStoreLoadMCPToolsNilsEmptiedMap(t *testing.T) {
 }
 
 func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.AddTools([]Tool{{Name: "builtin"}})
 	store.SetUnloadedMCPTools([]Tool{
 		{Name: "jira__get_issue", Description: "Get a Jira issue", ServerOrigin: "https://jira.example.com"},
@@ -1060,7 +1060,7 @@ func TestRemoveToolsByServerOriginPrunesUnloadedMCPTools(t *testing.T) {
 
 func TestEnrichToolCall(t *testing.T) {
 	newStore := func() *ToolStore {
-		store := NewNoTools()
+		store := NewToolStore()
 		store.AddTools([]Tool{
 			{Name: "jira__create_issue", Description: "Create a Jira issue", Title: "Create Issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 			{Name: "builtin_tool", Description: "A builtin tool", Schema: map[string]any{"type": "string"}},
@@ -1165,7 +1165,7 @@ func TestEnrichToolCall(t *testing.T) {
 }
 
 func TestEnrichToolCallNilSafe(t *testing.T) {
-	store := NewNoTools()
+	store := NewToolStore()
 	store.AddTools([]Tool{{Name: "builtin_tool", Description: "A builtin tool"}})
 
 	// nil tool call is a no-op.

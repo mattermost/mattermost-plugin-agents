@@ -25,7 +25,7 @@ import (
 // so single-build refactors can assert there is no second pipeline pass per
 // message.
 type countingMCPToolProvider struct {
-	calls   int32
+	calls   atomic.Int32
 	tools   []llm.Tool
 	saTools []llm.Tool
 
@@ -42,12 +42,12 @@ func (p *countingMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogReq
 		p.mu.Unlock()
 		return append([]llm.Tool(nil), p.saTools...), nil
 	}
-	atomic.AddInt32(&p.calls, 1)
+	p.calls.Add(1)
 	return append([]llm.Tool(nil), p.tools...), nil
 }
 
 func (p *countingMCPToolProvider) Calls() int {
-	return int(atomic.LoadInt32(&p.calls))
+	return int(p.calls.Load())
 }
 
 func (p *countingMCPToolProvider) SAIdentities() []string {

@@ -135,9 +135,7 @@ func (s *Indexer) runIndexPass(
 
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for b := range workCh {
 				if err := s.safeStoreBatch(ctx, search, b.posts, jobStatus.RetentionFloor); err != nil {
 					b.result <- err
@@ -149,7 +147,7 @@ func (s *Indexer) runIndexPass(
 				}
 				b.result <- nil
 			}
-		}()
+		})
 	}
 
 	// Committer: consume batches in fetch order, advancing the watermark one

@@ -245,20 +245,17 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 	b.tokenUsageSinks.SetFileLogger(tokenLogger)
 }
 
-func (b *MMBots) EnsureBots() error {
-	if b.config == nil {
-		return nil
-	}
-
-	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
-	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
-	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
+// snapshotForEnsure reconciles the token usage sinks, re-reads the bot and
+// service configuration, and reports whether EnsureBots can skip the rebuild
+// because nothing changed since the last successful ensure. Called twice per
+// EnsureBots — once optimistically and once after acquiring the cluster mutex
+// (deliberate double-checked locking).
+func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBotUsernames map[string]struct{}, serviceCfgs map[string]llm.ServiceConfig, unchanged bool, err error) {
 	b.reconcileTokenUsageSinks()
 
-	var activeDBBotUsernames map[string]struct{}
-	currentBotCfgs, _, currentServiceCfgs, err := b.snapshotBotsAndServices()
+	botCfgs, activeDBBotUsernames, serviceCfgs, err = b.snapshotBotsAndServices()
 	if err != nil {
-		return err
+		return nil, nil, nil, false, err
 	}
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
@@ -267,7 +264,23 @@ func (b *MMBots) EnsureBots() error {
 	forceRefresh := b.forceRefresh
 	b.botsLock.RUnlock()
 
-	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	unchanged = botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, botCfgs) && serviceConfigsEqual(lastServiceCfgs, serviceCfgs)
+	return botCfgs, activeDBBotUsernames, serviceCfgs, unchanged, nil
+}
+
+func (b *MMBots) EnsureBots() error {
+	if b.config == nil {
+		return nil
+	}
+
+	// Optimistic check: if bot and service configuration hasn't changed since last ensure,
+	// skip the expensive cluster mutex acquisition. This prevents HA timeout issues
+	// when multiple nodes all try to acquire the mutex simultaneously on config changes.
+	_, _, _, unchanged, err := b.snapshotForEnsure()
+	if err != nil {
+		return err
+	}
+	if unchanged {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping - bot/service configuration unchanged")
 		return nil
 	}
@@ -280,20 +293,11 @@ func (b *MMBots) EnsureBots() error {
 	defer mtx.Unlock()
 
 	// Re-check after acquiring lock - another node may have already handled this
-	b.reconcileTokenUsageSinks()
-
-	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, err = b.snapshotBotsAndServices()
+	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
 	if err != nil {
 		return err
 	}
-	b.botsLock.RLock()
-	botsAlreadyInitialized = len(b.bots) > 0
-	lastBotCfgs = b.lastEnsuredBotCfgs
-	lastServiceCfgs = b.lastEnsuredServiceCfgs
-	forceRefresh = b.forceRefresh
-	b.botsLock.RUnlock()
-
-	if botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, currentBotCfgs) && serviceConfigsEqual(lastServiceCfgs, currentServiceCfgs) {
+	if unchanged {
 		b.pluginAPI.Log.Debug("EnsureBots: skipping after lock - bot/service configuration unchanged")
 		return nil
 	}
@@ -507,7 +511,7 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 // TODO: This really doesn't belong here. Figure out where to put this.
 func (b *MMBots) GetTranscribe() Transcriber {
 	// Get the configured transcript generator bot
-	bot := b.getTrasncriberBot()
+	bot := b.getTranscriberBot()
 	if bot == nil {
 		b.pluginAPI.Log.Error("No transcript generator bot found")
 		return nil
@@ -549,39 +553,29 @@ func (b *MMBots) GetTranscribe() Transcriber {
 	return transcriber
 }
 
-func (b *MMBots) getTrasncriberBot() *Bot {
+// findBot returns the first bot matching pred, or nil.
+func (b *MMBots) findBot(pred func(*Bot) bool) *Bot {
 	b.botsLock.RLock()
 	defer b.botsLock.RUnlock()
-
 	for _, bot := range b.bots {
-		if bot.cfg.Name == b.config.GetTranscriptGenerator() {
+		if pred(bot) {
 			return bot
 		}
 	}
-
 	return nil
 }
 
-func (b *MMBots) GetBotConfig(botUsername string) (llm.BotConfig, error) {
-	bot := b.GetBotByUsername(botUsername)
-	if bot == nil {
-		return llm.BotConfig{}, fmt.Errorf("bot not found")
-	}
-
-	return bot.cfg, nil
+func (b *MMBots) getTranscriberBot() *Bot {
+	return b.findBot(func(bot *Bot) bool {
+		return bot.cfg.Name == b.config.GetTranscriptGenerator()
+	})
 }
 
 // GetBotByUsername retrieves the bot associated with the given bot username
 func (b *MMBots) GetBotByUsername(botUsername string) *Bot {
-	b.botsLock.RLock()
-	defer b.botsLock.RUnlock()
-	for _, bot := range b.bots {
-		if bot.cfg.Name == botUsername {
-			return bot
-		}
-	}
-
-	return nil
+	return b.findBot(func(bot *Bot) bool {
+		return bot.cfg.Name == botUsername
+	})
 }
 
 // GetBotByUsernameOrFirst retrieves the bot associated with the given bot username or the first bot if not found
@@ -602,15 +596,9 @@ func (b *MMBots) GetBotByUsernameOrFirst(botUsername string) *Bot {
 
 // GetBotByID retrieves the bot associated with the given bot ID
 func (b *MMBots) GetBotByID(botID string) *Bot {
-	b.botsLock.RLock()
-	defer b.botsLock.RUnlock()
-	for _, bot := range b.bots {
-		if bot.mmBot.UserId == botID {
-			return bot
-		}
-	}
-
-	return nil
+	return b.findBot(func(bot *Bot) bool {
+		return bot.mmBot.UserId == botID
+	})
 }
 
 // GetBotConfigByID returns the bot's EnableVision and MaxFileSize. ok is
@@ -626,42 +614,21 @@ func (b *MMBots) GetBotConfigByID(botID string) (bool, int64, bool) {
 
 // GetBotForDMChannel returns the bot for the given DM channel.
 func (b *MMBots) GetBotForDMChannel(channel *model.Channel) *Bot {
-	b.botsLock.RLock()
-	defer b.botsLock.RUnlock()
-
-	for _, bot := range b.bots {
-		if mmapi.IsDMWith(bot.mmBot.UserId, channel) {
-			return bot
-		}
-	}
-	return nil
+	return b.findBot(func(bot *Bot) bool {
+		return mmapi.IsDMWith(bot.mmBot.UserId, channel)
+	})
 }
 
 // IsAnyBot returns true if the given user is an AI bot.
 func (b *MMBots) IsAnyBot(userID string) bool {
-	b.botsLock.RLock()
-	defer b.botsLock.RUnlock()
-	for _, bot := range b.bots {
-		if bot.mmBot.UserId == userID {
-			return true
-		}
-	}
-
-	return false
+	return b.GetBotByID(userID) != nil
 }
 
 // GetBotMentioned returns the bot mentioned in the text, if any.
 func (b *MMBots) GetBotMentioned(text string) *Bot {
-	b.botsLock.RLock()
-	defer b.botsLock.RUnlock()
-
-	for _, bot := range b.bots {
-		if userIsMentionedMarkdown(text, bot.mmBot.Username) {
-			return bot
-		}
-	}
-
-	return nil
+	return b.findBot(func(bot *Bot) bool {
+		return userIsMentionedMarkdown(text, bot.mmBot.Username)
+	})
 }
 
 // GetAllBots returns all bots

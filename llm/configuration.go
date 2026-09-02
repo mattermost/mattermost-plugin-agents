@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -329,7 +331,8 @@ func IsValidService(service ServiceConfig) bool {
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
 	case ServiceTypeLoadTestMock:
-		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
+		_, err := profile.Parse(service.LoadTestMockConfig)
+		return err == nil
 	default:
 		return false
 	}

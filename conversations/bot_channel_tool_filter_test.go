@@ -155,7 +155,7 @@ func buildChannelFollowUpStrictContext(t *testing.T, builder *llmcontext.Builder
 
 	allOpts := append([]llm.ContextOption{}, opts...)
 	bot := channelFollowUpTestBot()
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(context.Background(), bot))
 
 	return builder.BuildLLMContextUserRequest(
 		bot,

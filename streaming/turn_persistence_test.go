@@ -258,7 +258,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 	t.Run("sequence number increments from existing turns", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		// Pre-populate 3 existing turns.
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			pid := fmt.Sprintf("old-post-%d", i)
 			ts.turns = append(ts.turns, &store.Turn{
 				ID:             fmt.Sprintf("old-turn-%d", i),
@@ -916,7 +916,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		annotations := []llm.Annotation{
 			{Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1},
 		}
-		annotationEvent := map[string]interface{}{
+		annotationEvent := map[string]any{
 			"annotations":       annotations,
 			"cleanedMessage":    "Cleaned text",
 			"originalMessage":   "Cleaned !!CITE1!!text",
@@ -976,7 +976,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		const original = "Before !!CITE1!! after !!CITE2!!"
 		firstMarker := strings.Index(original, "!!CITE1!!")
 		secondMarker := strings.Index(original, "!!CITE2!!")
-		annotationEvent := map[string]interface{}{
+		annotationEvent := map[string]any{
 			"annotations": []llm.Annotation{{
 				Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1,
 			}},

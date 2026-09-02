@@ -452,9 +452,9 @@ func TestDownloadProviderFile(t *testing.T) {
 }
 
 func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
-	var primaryRequests int32
+	var primaryRequests atomic.Int32
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt32(&primaryRequests, 1)
+		primaryRequests.Add(1)
 		http.Error(w, "wrong provider route", http.StatusUnauthorized)
 	}))
 	defer primary.Close()
@@ -499,7 +499,7 @@ func TestDownloadProviderFileUsesCapturedFallbackRoute(t *testing.T) {
 	assert.Equal(t, "fallback.txt", file.Name)
 	assert.Equal(t, []byte("fallback"), file.Content)
 	assert.Equal(t, "fallback-key", fallbackAPIKey)
-	assert.Zero(t, atomic.LoadInt32(&primaryRequests), "primary credentials must not be used for a fallback-owned file")
+	assert.Zero(t, primaryRequests.Load(), "primary credentials must not be used for a fallback-owned file")
 }
 
 // "incomplete" (e.g. OpenAI code_interpreter_call cut off by max tokens) must
@@ -511,10 +511,10 @@ func TestMapServerToolStatus(t *testing.T) {
 		want   string
 	}{
 		{"nil defaults to in progress", nil, llm.ServerToolStatusInProgress},
-		{"in_progress stays in progress", Ptr("in_progress"), llm.ServerToolStatusInProgress},
-		{"completed maps to success", Ptr("completed"), llm.ServerToolStatusSuccess},
-		{"failed maps to error", Ptr("failed"), llm.ServerToolStatusError},
-		{"incomplete is terminal error", Ptr("incomplete"), llm.ServerToolStatusError},
+		{"in_progress stays in progress", new("in_progress"), llm.ServerToolStatusInProgress},
+		{"completed maps to success", new("completed"), llm.ServerToolStatusSuccess},
+		{"failed maps to error", new("failed"), llm.ServerToolStatusError},
+		{"incomplete is terminal error", new("incomplete"), llm.ServerToolStatusError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

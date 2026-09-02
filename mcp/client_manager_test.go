@@ -45,7 +45,7 @@ type recordKVSetWithExpiryClient struct {
 	setErr error
 }
 
-func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
 	c.key = key
 	c.value = value
 	c.ttl = ttl
@@ -821,7 +821,7 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	var stop atomic.Bool
 
-	for i := 0; i < writers; i++ {
+	for i := range writers {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -838,15 +838,13 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < readers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range readers {
+		wg.Go(func() {
 			for iter := 0; iter < iterations && !stop.Load(); iter++ {
 				_ = m.ListPluginServers()
 				_ = m.snapshotEnabledPluginServers()
 			}
-		}()
+		})
 	}
 
 	done := make(chan struct{})
@@ -1146,9 +1144,7 @@ func TestClientManagerGetClientExistingClientConcurrent(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range iterations {
 				got, errs := manager.getClient(context.Background(), clientKey{userID: "user-1"})
@@ -1157,7 +1153,7 @@ func TestClientManagerGetClientExistingClientConcurrent(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	close(start)

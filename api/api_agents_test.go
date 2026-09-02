@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -99,7 +100,7 @@ func mockUnlicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, nil)
 }
 
-func doRequest(api *API, method, path string, body interface{}, userID string) *httptest.ResponseRecorder {
+func doRequest(api *API, method, path string, body any, userID string) *httptest.ResponseRecorder {
 	var reqBody io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -126,9 +127,7 @@ func createAgentBody(overrides map[string]any) map[string]any {
 		"autoEnableNewMCPTools": true,
 		"mcpDynamicToolLoading": true,
 	}
-	for k, v := range overrides {
-		body[k] = v
-	}
+	maps.Copy(body, overrides)
 	return body
 }
 
@@ -161,9 +160,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"structuredOutputEnabled": cfg.StructuredOutputEnabled,
 		"maxToolTurns":            cfg.MaxToolTurns,
 	}
-	for k, v := range overrides {
-		body[k] = v
-	}
+	maps.Copy(body, overrides)
 	return body
 }
 
@@ -919,9 +916,7 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 				"displayName":           "Updated",
 				"useServiceAccountAuth": tc.requestValue,
 			}
-			for k, v := range tc.extraOverrides {
-				overrides[k] = v
-			}
+			maps.Copy(overrides, tc.extraOverrides)
 			body := updateAgentBodyFromStored(stored, overrides)
 			if tc.omitField {
 				delete(body, "useServiceAccountAuth")
@@ -1681,22 +1676,24 @@ func TestAgentSaveErrorsAreActionable(t *testing.T) {
 
 func TestCreateAgentRequestJSONRoundTrip(t *testing.T) {
 	req := CreateAgentRequest{
-		DisplayName:           "My Agent",
-		Username:              "my-agent",
-		ServiceID:             "svc-1",
-		CustomInstructions:    "Be brief",
-		ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
-		ChannelIDs:            []string{"c1", "c2"},
-		UserAccessLevel:       int(llm.UserAccessLevelBlock),
-		UserIDs:               []string{"u1"},
-		TeamIDs:               []string{"t1"},
-		AdminUserIDs:          []string{"admin-1"},
-		EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
-		MCPDynamicToolLoading: false,
-		Model:                 "gpt-4",
-		EnableVision:          true,
-		ReasoningEffort:       "high",
-		ThinkingBudget:        4096,
+		AgentRequestFields: AgentRequestFields{
+			DisplayName:           "My Agent",
+			ServiceID:             "svc-1",
+			CustomInstructions:    "Be brief",
+			ChannelAccessLevel:    int(llm.ChannelAccessLevelAllow),
+			ChannelIDs:            []string{"c1", "c2"},
+			UserAccessLevel:       int(llm.UserAccessLevelBlock),
+			UserIDs:               []string{"u1"},
+			TeamIDs:               []string{"t1"},
+			AdminUserIDs:          []string{"admin-1"},
+			EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: "https://x", ToolName: "t"}},
+			MCPDynamicToolLoading: false,
+			Model:                 "gpt-4",
+			EnableVision:          true,
+			ReasoningEffort:       "high",
+			ThinkingBudget:        4096,
+		},
+		Username: "my-agent",
 	}
 	raw, err := json.Marshal(req)
 	require.NoError(t, err)
