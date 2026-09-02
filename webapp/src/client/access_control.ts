@@ -6,7 +6,7 @@
 
 import {ClientError} from '@mattermost/client';
 
-import {ABACStatus, AccessControlPolicy, AccessControlPropertyField, AccessControlTestResult, CELExpressionError, PolicyResourceType, VisualExpression} from '@/types/access_control';
+import {ABACStatus, AccessControlPolicy, AccessControlPropertyField, AccessControlTestResult, AccessControlVisualAST, CELExpressionError, PolicyResourceType} from '@/types/access_control';
 import {agentRoute, baseRoute, Client4, readAgentErrorMessage} from '@/client';
 import manifest from '@/manifest';
 
@@ -188,7 +188,7 @@ export async function getAccessControlFields(after: string, limit: number, agent
     });
 }
 
-export async function getAccessControlVisualAST(resourceType: PolicyResourceType, expression: string, agentId?: string): Promise<VisualExpression> {
+export async function getAccessControlVisualAST(resourceType: PolicyResourceType, expression: string, agentId?: string): Promise<AccessControlVisualAST> {
     const url = celRouteURL('visual_ast', agentId);
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
