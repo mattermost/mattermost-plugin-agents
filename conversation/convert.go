@@ -100,14 +100,16 @@ func BlocksToPost(
 				arguments = unsharedToolUseArgumentsRedaction
 			}
 			toolCall := llm.ToolCall{
-				ID:           block.ID,
-				Name:         block.Name,
-				ServerOrigin: block.ServerOrigin,
-				Arguments:    arguments,
-				MCPBareName:  block.MCPBareName,
-				Status:       StatusFromString(block.Status),
-				Title:        block.Title,
-				Description:  block.Description,
+				ID:               block.ID,
+				Name:             block.Name,
+				ServerOrigin:     block.ServerOrigin,
+				Arguments:        arguments,
+				MCPBareName:      block.MCPBareName,
+				Status:           StatusFromString(block.Status),
+				Title:            block.Title,
+				Description:      block.Description,
+				UserInteraction:  block.UserInteraction,
+				WouldAutoExecute: block.WouldAutoExecute,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""
@@ -293,16 +295,18 @@ func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
 	// For each ToolUse: a tool_use block, optionally followed by a tool_result block.
 	for _, tc := range post.ToolUse {
 		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			MCPBareName:  tc.MCPBareName,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
-			Title:        tc.Title,
-			Description:  tc.Description,
+			Type:             BlockTypeToolUse,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Input:            tc.Arguments,
+			MCPBareName:      tc.MCPBareName,
+			Status:           StatusToString(tc.Status),
+			Shared:           BoolPtr(shared),
+			Title:            tc.Title,
+			Description:      tc.Description,
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
 		})
 
 		if tc.Result != "" {

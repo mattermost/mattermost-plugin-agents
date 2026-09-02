@@ -181,6 +181,145 @@ func TestEnsureToolIterationLimitUserMessage(t *testing.T) {
 	}
 }
 
+func TestEnsureToolRejectionUserMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		posts    []Post
+		expected []Post
+	}{
+		{
+			name: "appends a user post when none exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message already exists",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello"},
+				{Role: PostRoleUser, Message: ToolRejectionUserMessage},
+			},
+		},
+		{
+			name: "returns posts unchanged when user message is embedded",
+			posts: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolRejectionUserMessage},
+			},
+			expected: []Post{
+				{Role: PostRoleUser, Message: "hello\n\n" + ToolRejectionUserMessage},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := EnsureToolRejectionUserMessage(tt.posts)
+			assert.Equal(t, tt.expected, result)
+			assert.Equal(t, tt.expected, EnsureToolRejectionUserMessage(result),
+				"calling Ensure twice must not duplicate the guidance")
+		})
+	}
+}
+
+func TestHasRejectedToolCall(t *testing.T) {
+	humanReject := ToolCall{ID: "r1", Name: "search", Status: ToolCallStatusRejected}
+	skip := ToolCall{ID: "q1", Name: "AskUserQuestion", Status: ToolCallStatusRejected, UserInteraction: UserInteractionSelect}
+	policyDenied := ToolCall{ID: "a1", Name: "jira__get_issue", Status: ToolCallStatusRejected, WouldAutoExecute: true}
+	success := ToolCall{ID: "s1", Name: "search", Status: ToolCallStatusSuccess}
+	execError := ToolCall{ID: "e1", Name: "search", Status: ToolCallStatusError}
+
+	tests := []struct {
+		name     string
+		posts    []Post
+		expected bool
+	}{
+		{
+			name:     "empty posts",
+			posts:    nil,
+			expected: false,
+		},
+		{
+			name:     "success only",
+			posts:    []Post{{Role: PostRoleBot, ToolUse: []ToolCall{success}}},
+			expected: false,
+		},
+		{
+			name:     "execution error only",
+			posts:    []Post{{Role: PostRoleBot, ToolUse: []ToolCall{execError}}},
+			expected: false,
+		},
+		{
+			name:     "interaction skip only",
+			posts:    []Post{{Role: PostRoleBot, ToolUse: []ToolCall{skip}}},
+			expected: false,
+		},
+		{
+			name:     "policy-denied auto-exec is not a human rejection",
+			posts:    []Post{{Role: PostRoleBot, ToolUse: []ToolCall{policyDenied}}},
+			expected: false,
+		},
+		{
+			name:     "human rejection",
+			posts:    []Post{{Role: PostRoleBot, ToolUse: []ToolCall{humanReject}}},
+			expected: true,
+		},
+		{
+			name: "latest mixed success and human rejection",
+			posts: []Post{{
+				Role:    PostRoleBot,
+				ToolUse: []ToolCall{success, humanReject},
+			}},
+			expected: true,
+		},
+		{
+			name: "latest mixed success and interaction skip",
+			posts: []Post{{
+				Role:    PostRoleBot,
+				ToolUse: []ToolCall{success, skip},
+			}},
+			expected: false,
+		},
+		{
+			name: "older human rejection then later success",
+			posts: []Post{
+				{Role: PostRoleBot, ToolUse: []ToolCall{humanReject}},
+				{Role: PostRoleBot, ToolUse: []ToolCall{success}},
+			},
+			expected: false,
+		},
+		{
+			name: "older human rejection then later execution error",
+			posts: []Post{
+				{Role: PostRoleBot, ToolUse: []ToolCall{humanReject}},
+				{Role: PostRoleBot, ToolUse: []ToolCall{execError}},
+			},
+			expected: false,
+		},
+		{
+			name: "trailing user post does not hide the latest tool-bearing rejection",
+			posts: []Post{
+				{Role: PostRoleBot, ToolUse: []ToolCall{humanReject}},
+				{Role: PostRoleUser, Message: "thanks"},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, HasRejectedToolCall(tt.posts))
+		})
+	}
+}
+
 func TestCountTrailingFailedToolCallsIgnoresFailedMetaTools(t *testing.T) {
 	posts := []Post{{
 		Role: PostRoleBot,

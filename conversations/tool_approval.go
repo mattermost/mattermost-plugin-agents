@@ -61,6 +61,14 @@ var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool 
 // entirely on unlicensed servers.
 var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
 
+// Canned tool_result content for non-executing resolutions. These are shown
+// to the LLM (and, when terminal, in channels); they must not include tool
+// arguments or blame the user for an administrative policy/license change.
+const (
+	toolCallRejectedByUserResult = "Tool call rejected by user"
+	toolCallPolicyDeniedResult   = "Tool call was not executed because it is no longer permitted by policy or license"
+)
+
 // isRemoteMCPLicensed reports whether the server license covers remote MCP
 // servers. A nil license checker fails closed.
 func (c *Conversations) isRemoteMCPLicensed() bool {
@@ -183,7 +191,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
 	autoExecutedNow := make(map[string]bool)
-	executedAny := false
+	// resolvedAny is true when this click resolved at least one pending
+	// tool_use (executed, skipped, auto-run, or rejected). It is the
+	// follow-up gate, not a record of side-effecting execution.
+	resolvedAny := false
 	acceptedToolNames := []string{}
 	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
@@ -203,7 +214,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = conversation.BoolPtr(true)
-			executedAny = true
+			resolvedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -213,7 +224,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
-			executedAny = true
+			resolvedAny = true
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -236,10 +247,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// Skipped question: record the decline as the result and stream a
 			// follow-up so the model can proceed without the answer, per the
 			// tool contract. Shared because the decline is user-authored, not
-			// private tool output.
+			// private tool output. UserInteraction stays on the block so the
+			// follow-up can distinguish this from a regular tool rejection.
 			block.Status = conversation.StatusRejected
 			block.Shared = conversation.BoolPtr(true)
-			executedAny = true
+			resolvedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -255,7 +267,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// any auto-run round.
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
-			executedAny = true
+			resolvedAny = true
 			block.Shared = conversation.BoolPtr(true)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
@@ -274,13 +286,30 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 					IsError:    false,
 				})
 			}
-		default:
+		case block.WouldAutoExecute:
+			// Fresh policy/license check failed. Keep StatusRejected and the
+			// WouldAutoExecute marker so HasRejectedToolCall does not treat
+			// this as a human rejection, but record an accurate result so
+			// the follow-up cannot blame the user for an admin change.
 			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
+			resolvedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "Tool call rejected by user",
+				Result:     toolCallPolicyDeniedResult,
+				IsError:    true,
+			})
+		default:
+			rejectedToolNames = append(rejectedToolNames, block.Name)
+			block.Status = conversation.StatusRejected
+			// Resume the LLM loop so the model can ask for clarification or
+			// take a different approach instead of silently ending.
+			resolvedAny = true
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     toolCallRejectedByUserResult,
 				IsError:    true,
 			})
 		}
@@ -323,7 +352,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		// Interaction results (answered or skipped) are user-authored, so they
 		// are terminal and shared with no separate share/keep-private step.
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
+		// Rejected results (user rejection or policy/license denial) share only
+		// the canned reason; tool_use arguments stay unshared so they are not
+		// paraphrased into a channel reply.
+		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
@@ -331,7 +364,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			Status:    status,
 			Shared:    conversation.BoolPtr(terminal),
 		}
-		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+		if terminal {
 			rb.DecidedAt = conversation.Int64Ptr(now)
 		} else {
 			needsShareDecision = true
@@ -353,15 +386,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	if !executedAny {
+	if !resolvedAny {
 		return nil
 	}
 
 	// In channels the follow-up is a channel-visible post that may paraphrase tool
 	// output, so it must not stream until the requester approves sharing in
-	// HandleToolResult. When no share decision remains (every executed result
-	// was a user-interaction answer), HandleToolResult will never fire, so
-	// stream the follow-up now.
+	// HandleToolResult. When no share decision remains (every result is
+	// rejected, a user-interaction answer, or otherwise terminal),
+	// HandleToolResult will never fire, so stream the follow-up now.
 	if !isDM && needsShareDecision {
 		return nil
 	}
@@ -579,7 +612,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Only stream a follow-up when there is something to follow up on:
 	// at least one executed tool_result exists on this post. Rejected-only
-	// posts produce no output worth streaming.
+	// posts already streamed their continuation from HandleToolCall (no
+	// share decision remains), so a second-stage click must not stream again.
 	if !clickedPostHasExecutedTool {
 		return nil
 	}
@@ -647,6 +681,9 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
+	}
+	if llm.HasRejectedToolCall(completionReq.Posts) {
+		completionReq.Posts = llm.EnsureToolRejectionUserMessage(completionReq.Posts)
 	}
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall

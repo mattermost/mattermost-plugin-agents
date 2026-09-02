@@ -58,7 +58,10 @@ func (p *toolLicenseBuiltinProvider) GetTools(*bots.Bot, *llm.Context) []llm.Too
 
 // toolLicenseTestBot returns a bot without dynamic MCP tool loading so every
 // provided tool is immediately resolvable in the visible tool store.
-func toolLicenseTestBot() *bots.Bot {
+func toolLicenseTestBot(lm llm.LanguageModel) *bots.Bot {
+	if lm == nil {
+		lm = &loadedStateLLM{}
+	}
 	return bots.NewBot(
 		llm.BotConfig{
 			ID:                    "bot-id",
@@ -70,7 +73,7 @@ func toolLicenseTestBot() *bots.Bot {
 		},
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
-		&loadedStateLLM{},
+		lm,
 	)
 }
 
@@ -108,26 +111,30 @@ func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
 	)
 }
 
-func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, licensed bool) *Conversations {
+func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, licensed bool) (*Conversations, *loadedStateLLM, *loadedStateStreamingService) {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := toolLicenseChecker(t, licensed)
 	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
-	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot()})
+	lm := &loadedStateLLM{}
+	streamingService := &loadedStateStreamingService{}
+	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot(lm)})
 
 	mmClient := mocks.NewMockClient(t)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
 	mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Maybe()
+	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 
 	return &Conversations{
-		mmClient:       mmClient,
-		contextBuilder: toolLicenseTestBuilder(t, licensed),
-		bots:           botsService,
-		licenseChecker: licenseChecker,
-		convService:    conversation.NewService(convStore, nil, nil, nil),
-	}
+		mmClient:         mmClient,
+		contextBuilder:   toolLicenseTestBuilder(t, licensed),
+		bots:             botsService,
+		licenseChecker:   licenseChecker,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: streamingService,
+	}, lm, streamingService
 }
 
 // TestHandleToolCallLicenseGate pins the license split for tool approvals:
@@ -136,14 +143,16 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 // MCP servers require one to execute. Rejections never require a license.
 func TestHandleToolCallLicenseGate(t *testing.T) {
 	tests := []struct {
-		name       string
-		toolName   string
-		origin     string
-		licensed   bool
-		accept     bool
-		wantErr    error
-		wantStatus string
-		wantResult string
+		name                  string
+		toolName              string
+		origin                string
+		licensed              bool
+		accept                bool
+		wantErr               error
+		wantStatus            string
+		wantResult            string
+		wantFollowUp          bool
+		wantRejectionGuidance bool
 	}{
 		{
 			name:       "embedded MCP tool executes without license",
@@ -181,13 +190,15 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 			wantResult: "mcp:jira__get_issue",
 		},
 		{
-			name:       "remote MCP tool rejection is allowed without license",
-			toolName:   "jira__get_issue",
-			origin:     toolLicenseRemoteOrigin,
-			licensed:   false,
-			accept:     false,
-			wantStatus: conversation.StatusRejected,
-			wantResult: "Tool call rejected by user",
+			name:                  "remote MCP tool rejection is allowed without license",
+			toolName:              "jira__get_issue",
+			origin:                toolLicenseRemoteOrigin,
+			licensed:              false,
+			accept:                false,
+			wantStatus:            conversation.StatusRejected,
+			wantResult:            toolCallRejectedByUserResult,
+			wantFollowUp:          true,
+			wantRejectionGuidance: true,
 		},
 	}
 
@@ -215,7 +226,7 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 				Sequence:       1,
 			}))
 
-			c := toolLicenseConversations(t, convStore, tc.licensed)
+			c, lm, streamingService := toolLicenseConversations(t, convStore, tc.licensed)
 
 			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
 			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
@@ -227,6 +238,7 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 			}
 
 			err = c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, acceptedIDs, nil)
+			streamingService.waitForStreaming()
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
@@ -240,6 +252,7 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 				var untouched []conversation.ContentBlock
 				require.NoError(t, json.Unmarshal(turns[0].Content, &untouched))
 				require.Equal(t, conversation.StatusPending, untouched[0].Status)
+				require.Empty(t, lm.requests)
 				return
 			}
 
@@ -254,6 +267,15 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 			require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
 			require.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 			require.Equal(t, tc.wantResult, resultBlocks[0].Content)
+
+			if tc.wantFollowUp {
+				require.Len(t, lm.requests, 1, "rejection continuation must start one follow-up")
+				if tc.wantRejectionGuidance {
+					requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
+				}
+			} else {
+				require.Empty(t, lm.requests)
+			}
 		})
 	}
 }
@@ -346,7 +368,7 @@ func TestHandleToolResultLicenseGate(t *testing.T) {
 				Sequence:       2,
 			}))
 
-			c := toolLicenseConversations(t, convStore, tc.licensed)
+			c, _, _ := toolLicenseConversations(t, convStore, tc.licensed)
 
 			resultPost := &model.Post{Id: resultPostID, UserId: "bot-id"}
 			resultPost.AddProp(streaming.ConversationIDProp, conv.ID)
