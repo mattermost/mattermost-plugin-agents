@@ -312,6 +312,16 @@ func hasToolFromOrigin(tools []llm.Tool, origin string) bool {
 	return false
 }
 
+func hasClientFromOrigin(clients *UserClients, origin string) bool {
+	origin = llm.NormalizeMCPServerOrigin(origin)
+	for _, entry := range clients.snapshotClients() {
+		if llm.NormalizeMCPServerOrigin(clientOrigin(entry.client, entry.serverID)) == origin {
+			return true
+		}
+	}
+	return false
+}
+
 // TestGetCatalogAccessDoesNotRedialFailedRemote proves an allowed remote
 // whose connect fails is not re-dialed on cache hits and its error is not
 // re-appended on every request.
@@ -404,12 +414,12 @@ func TestGetCatalogAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			assert.Nil(t, first.Errors)
 			cached := m.clients[req.remoteKey()]
 			require.NotNil(t, cached)
-			assert.False(t, cached.hasClient(remoteName))
+			assert.False(t, hasClientFromOrigin(cached, origin))
 
 			stillDenied := m.GetCatalogAccess(ctx, req)
 			assert.False(t, hasToolFromOrigin(stillDenied.Tools, origin))
 			assert.Nil(t, stillDenied.Errors)
-			assert.False(t, cached.hasClient(remoteName))
+			assert.False(t, hasClientFromOrigin(cached, origin))
 			assert.Same(t, cached, m.clients[req.remoteKey()])
 
 			checker.denied = map[string]bool{}
@@ -421,13 +431,13 @@ func TestGetCatalogAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			assert.Same(t, cached, pooled)
 			if tt.wantToolAfter {
 				assert.True(t, hasToolFromOrigin(allowed.Tools, origin))
-				assert.True(t, pooled.hasClient(remoteName))
+				assert.True(t, hasClientFromOrigin(pooled, origin))
 				assert.Nil(t, allowed.Errors)
 			}
 			if tt.wantErrorsAfter {
 				require.NotNil(t, allowed.Errors)
 				assert.Len(t, allowed.Errors.Errors, 1)
-				assert.False(t, pooled.hasClient(remoteName))
+				assert.False(t, hasClientFromOrigin(pooled, origin))
 			}
 
 			if !tt.thenDenyDropsTool {
@@ -437,7 +447,7 @@ func TestGetCatalogAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			checker.denied = map[string]bool{accessDeniedID: true}
 			deniedAgain := m.GetCatalogAccess(ctx, req)
 			assert.False(t, hasToolFromOrigin(deniedAgain.Tools, origin))
-			assert.True(t, pooled.hasClient(remoteName), "allow→deny filters tools without disconnecting")
+			assert.True(t, hasClientFromOrigin(pooled, origin), "allow→deny filters tools without disconnecting")
 			assert.Same(t, pooled, m.clients[req.remoteKey()])
 		})
 	}
