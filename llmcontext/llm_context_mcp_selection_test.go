@@ -26,7 +26,7 @@ type recordingMCPToolProvider struct {
 	calls     int
 }
 
-func (p *recordingMCPToolProvider) GetToolsForUser(_ stdcontext.Context, _ string, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+func (p *recordingMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	p.selection = selection
 

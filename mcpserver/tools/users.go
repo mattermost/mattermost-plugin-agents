@@ -76,16 +76,16 @@ const (
 // getUserTools returns the user profile read/update tools.
 func (p *MattermostToolProvider) getUserTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_me", Description: getMeDescription, Schema: NewJSONSchemaForAccessMode[GetMeArgs](string(p.accessMode)), Resolver: typed("get_me", p.toolGetMe)},
-		{Name: "get_user", Description: getUserDescription, Schema: NewJSONSchemaForAccessMode[GetUserArgs](string(p.accessMode)), Resolver: typed("get_user", p.toolGetUser)},
-		{Name: "get_user_by_username", Description: getUserByUsernameDescription, Schema: NewJSONSchemaForAccessMode[GetUserByUsernameArgs](string(p.accessMode)), Resolver: typed("get_user_by_username", p.toolGetUserByUsername)},
-		{Name: "get_user_by_email", Description: getUserByEmailDescription, Schema: NewJSONSchemaForAccessMode[GetUserByEmailArgs](string(p.accessMode)), Resolver: typed("get_user_by_email", p.toolGetUserByEmail)},
-		{Name: "get_users_by_ids", Description: getUsersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByIDsArgs](string(p.accessMode)), Resolver: typed("get_users_by_ids", p.toolGetUsersByIDs)},
-		{Name: "get_users_by_usernames", Description: getUsersByUsernamesDescription, Schema: NewJSONSchemaForAccessMode[GetUsersByUsernamesArgs](string(p.accessMode)), Resolver: typed("get_users_by_usernames", p.toolGetUsersByUsernames)},
-		{Name: "get_user_stats", Description: getUserStatsDescription, Schema: NewJSONSchemaForAccessMode[GetUserStatsArgs](string(p.accessMode)), Resolver: typed("get_user_stats", p.toolGetUserStats)},
-		{Name: "get_user_cpa_values", Description: getUserCPAValuesDescription, Schema: NewJSONSchemaForAccessMode[GetUserCPAValuesArgs](string(p.accessMode)), Resolver: typed("get_user_cpa_values", p.toolGetUserCPAValues)},
-		{Name: "list_cpa_fields", Description: listCPAFieldsDescription, Schema: NewJSONSchemaForAccessMode[ListCPAFieldsArgs](string(p.accessMode)), Resolver: typed("list_cpa_fields", p.toolListCPAFields)},
-		{Name: "update_user", Description: updateUserDescription, Schema: NewJSONSchemaForAccessMode[UpdateUserArgs](string(p.accessMode)), Resolver: typed("update_user", p.toolUpdateUser)},
+		mcpTool(p, "get_me", getMeDescription, p.toolGetMe),
+		mcpTool(p, "get_user", getUserDescription, p.toolGetUser),
+		mcpTool(p, "get_user_by_username", getUserByUsernameDescription, p.toolGetUserByUsername),
+		mcpTool(p, "get_user_by_email", getUserByEmailDescription, p.toolGetUserByEmail),
+		mcpTool(p, "get_users_by_ids", getUsersByIDsDescription, p.toolGetUsersByIDs),
+		mcpTool(p, "get_users_by_usernames", getUsersByUsernamesDescription, p.toolGetUsersByUsernames),
+		mcpTool(p, "get_user_stats", getUserStatsDescription, p.toolGetUserStats),
+		mcpTool(p, "get_user_cpa_values", getUserCPAValuesDescription, p.toolGetUserCPAValues),
+		mcpTool(p, "list_cpa_fields", listCPAFieldsDescription, p.toolListCPAFields),
+		mcpTool(p, "update_user", updateUserDescription, p.toolUpdateUser),
 	}
 }
 
@@ -137,13 +137,8 @@ func (p *MattermostToolProvider) toolGetUserByEmail(mcpContext *MCPToolContext, 
 
 // toolGetUsersByIDs implements the get_users_by_ids tool.
 func (p *MattermostToolProvider) toolGetUsersByIDs(mcpContext *MCPToolContext, args GetUsersByIDsArgs) (string, error) {
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 	users, _, err := mcpContext.Client.GetUsersByIds(mcpContext.Ctx, args.UserIDs)
 	if err != nil {
@@ -196,9 +191,9 @@ func (p *MattermostToolProvider) toolGetUserCPAValues(mcpContext *MCPToolContext
 	sort.Strings(fieldIDs)
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Custom Profile Attribute (CPA) values for user %s:\n", args.UserID))
+	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) values for user %s:\n", args.UserID)
 	for _, fieldID := range fieldIDs {
-		result.WriteString(fmt.Sprintf("%s: %s\n", fieldID, string(values[fieldID])))
+		fmt.Fprintf(&result, "%s: %s\n", fieldID, string(values[fieldID]))
 	}
 	return result.String(), nil
 }
@@ -213,7 +208,7 @@ func (p *MattermostToolProvider) toolListCPAFields(mcpContext *MCPToolContext, _
 		return "no custom profile attribute (CPA) fields defined", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Custom Profile Attribute (CPA) fields (%d):\n\n", len(fields)))
+	fmt.Fprintf(&result, "Custom Profile Attribute (CPA) fields (%d):\n\n", len(fields))
 	for i, field := range fields {
 		format.WriteCPAField(&result, format.CPAFieldEntry{
 			HeaderLabel: fmt.Sprintf("Field %d", i+1),
@@ -232,13 +227,9 @@ func (p *MattermostToolProvider) toolUpdateUser(mcpContext *MCPToolContext, args
 		return "", fmt.Errorf("provide at least one of nickname, first_name, last_name, position to update")
 	}
 
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	patch := &model.UserPatch{
@@ -275,12 +266,7 @@ type CreateUserArgs struct {
 // getDevUserTools returns development user-related tools for MCP
 func (p *MattermostToolProvider) getDevUserTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "create_user",
-			Description: "Create a new user account (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[CreateUserArgs](string(p.accessMode)),
-			Resolver:    typed("create_user", p.toolCreateUser),
-		},
+		mcpTool(p, "create_user", "Create a new user account (dev mode only)", p.toolCreateUser),
 	}
 }
 

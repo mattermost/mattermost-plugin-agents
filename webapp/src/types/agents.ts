@@ -62,6 +62,7 @@ export type UserAgent = {
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
+    useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -103,6 +104,9 @@ export type CreateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -133,6 +137,7 @@ export type UpdateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;

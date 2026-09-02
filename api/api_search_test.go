@@ -445,17 +445,17 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		requestBody    map[string]interface{}
+		requestBody    map[string]any
 		expectedStatus int
 	}{
 		{
 			name:           "empty object - missing query",
-			requestBody:    map[string]interface{}{},
+			requestBody:    map[string]any{},
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name: "missing query - only teamId and channelId",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"teamId":    "team123",
 				"channelId": "channel123",
 			},
@@ -463,7 +463,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "empty query string",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":     "",
 				"teamId":    "team123",
 				"channelId": "channel123",
@@ -472,7 +472,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "whitespace-only query",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":     "   ",
 				"teamId":    "team123",
 				"channelId": "channel123",
@@ -481,14 +481,14 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "valid query - missing optional fields is OK",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query": "test query",
 			},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "query with only maxResults (missing teamId, channelId is OK)",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":      "test query",
 				"maxResults": 10,
 			},

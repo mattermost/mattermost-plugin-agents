@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -35,6 +36,7 @@ type fakeConvStore struct {
 	conversations map[string]*store.Conversation
 	turns         map[string][]store.Turn // keyed by conversationID
 	allTurns      map[string]*store.Turn  // keyed by turn ID
+	lookupErr     error
 }
 
 func newFakeConvStore() *fakeConvStore {
@@ -75,6 +77,9 @@ func (s *fakeConvStore) GetConversation(id string) (*store.Conversation, error) 
 func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
 	for _, conv := range s.conversations {
 		if conv.RootPostID != nil && *conv.RootPostID == rootPostID &&
 			conv.BotID == botID && conv.UserID == userID && conv.DeleteAt == 0 {
@@ -195,9 +200,9 @@ func (s *fakeConvStore) DeleteResponseTurns(conversationID, postID string) error
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}
@@ -276,6 +281,7 @@ type dmTestLLM struct {
 	responses []*llm.TextStreamResult
 	callIdx   int
 	requests  []llm.CompletionRequest
+	onChat    func()
 }
 
 func newDMTestLLM(responses ...*llm.TextStreamResult) *dmTestLLM {
@@ -286,6 +292,9 @@ func (f *dmTestLLM) ChatCompletion(_ context.Context, request llm.CompletionRequ
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, request)
+	if f.onChat != nil {
+		f.onChat()
+	}
 	if f.callIdx >= len(f.responses) {
 		return nil, fmt.Errorf("no more responses configured")
 	}
@@ -361,6 +370,7 @@ type dmTestEnv struct {
 	mockAPI       *plugintest.API
 	mmClient      *fakeMMClient
 	mcpMgr        *testMCPClientManager
+	botService    *bots.MMBots
 	botID         string
 	userID        string
 	channelID     string
@@ -419,7 +429,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		channels: map[string]*model.Channel{
 			channelID: channel,
 		},
-		kv:              make(map[string]interface{}),
+		kv:              make(map[string]any),
 		allowCreatePost: true,
 	}
 
@@ -477,6 +487,7 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 		mockAPI:       mockAPI,
 		mmClient:      mmClient,
 		mcpMgr:        mcpMgr,
+		botService:    botsService,
 		botID:         botID,
 		userID:        userID,
 		channelID:     channelID,
@@ -487,12 +498,23 @@ func setupDMTestEnv(t *testing.T, llmResponses ...*llm.TextStreamResult) *dmTest
 
 // testMCPClientManager implements llmcontext.MCPClientManager for testing.
 type testMCPClientManager struct {
-	tools  []llm.Tool
-	errors *mcp.Errors
+	tools      []llm.Tool
+	errors     *mcp.Errors
+	onGetTools func()
 }
 
-func (m *testMCPClientManager) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
-	return m.tools, m.errors
+func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	if m.onGetTools != nil {
+		m.onGetTools()
+	}
+
+	tools := make([]llm.Tool, 0, len(m.tools))
+	for _, tool := range m.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools, m.errors
 }
 
 // --- Test: new DM creates conversation entity and returns stream ----------
@@ -794,7 +816,7 @@ func TestDMUnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 		dmMakeTextStream("I cannot use that tool"),
 	)
 
-	llmCtx := &llm.Context{Tools: llm.NewNoTools()}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 	post := &model.Post{
 		Id:        "post1",
 		UserId:    env.userID,

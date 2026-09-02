@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -37,11 +38,13 @@ type ToolInfo struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-// UserClients represents a per-user MCP client with multiple server connections
+// UserClients represents a pooled MCP client bag. kind determines which
+// servers it may connect: remotes-only or local-only (embedded + plugin).
 type UserClients struct {
 	clientsMu    sync.RWMutex
-	clients      map[string]*Client // serverID -> client (both remote and embedded)
+	clients      map[string]*Client // serverID -> client
 	userID       string
+	kind         clientKind
 	log          pluginapi.LogService
 	oauthManager *OAuthManager
 	httpClient   *http.Client
@@ -141,18 +144,102 @@ type connectPlan struct {
 type userClientSnapshot struct {
 	serverID string
 	client   *Client
+	owner    *UserClients
 }
 
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+func newClients(userID string, kind clientKind, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	return &UserClients{
 		log:          log,
 		clients:      make(map[string]*Client),
 		attempts:     make(map[string]*originAttempt),
 		userID:       userID,
+		kind:         kind,
 		oauthManager: oauthManager,
 		httpClient:   httpClient,
 		toolsCache:   toolsCache,
 	}
+}
+
+func newRemoteClients(userID string, kind clientKind, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	// Service accounts never use per-user OAuth.
+	if kind == clientKindSARemote {
+		oauthManager = nil
+	}
+	return newClients(userID, kind, log, oauthManager, httpClient, toolsCache)
+}
+
+func newLocalClients(userID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	return newClients(userID, clientKindLocal, log, nil, httpClient, toolsCache)
+}
+
+func (c *UserClients) serviceAccount() bool {
+	return c.kind == clientKindSARemote
+}
+
+func (c *UserClients) allowsRemote() bool {
+	return c.kind == clientKindUserRemote || c.kind == clientKindSARemote
+}
+
+func (c *UserClients) allowsLocal() bool {
+	return c.kind == clientKindLocal
+}
+
+// ConnectToRemoteServers connects an explicitly constructed remote bag. The
+// manager normally narrows this list by request eligibility before calling the
+// same task machinery.
+func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
+	if !c.allowsRemote() {
+		return &Errors{Errors: []error{fmt.Errorf("remote connect is only valid on remote client bags")}}
+	}
+
+	tasks := make([]connectTask, 0, len(servers))
+	for _, server := range servers {
+		if !server.Enabled || server.BaseURL == "" {
+			continue
+		}
+		if c.serviceAccount() && !server.HasServiceAccountAuth() {
+			continue
+		}
+		tasks = append(tasks, c.remoteConnectTask(ctx, server, RemoteConnectTimeout, forceRefresh))
+	}
+	return c.ensureConnections(ctx, tasks)
+}
+
+// ConnectToEmbeddedServerIfAvailable connects a local bag when the session has
+// changed. It delegates to the singleflight task path used by ClientManager.
+func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
+	if !c.allowsLocal() {
+		return fmt.Errorf("embedded connect is only valid on local client bags")
+	}
+	if !embeddedConfig.Enabled || embeddedClient == nil || !c.needsEmbeddedReconnect(sessionID) {
+		return nil
+	}
+
+	task := c.embeddedConnectTask(ctx, sessionID, embeddedClient)
+	task.silent = false
+	return firstConnectError(c.ensureConnections(ctx, []connectTask{task}))
+}
+
+// ConnectToPluginServer connects a local bag through PluginHTTP using the
+// invoking user's identity.
+func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
+	if !c.allowsLocal() {
+		return fmt.Errorf("plugin connect is only valid on local client bags")
+	}
+	return firstConnectError(c.ensureConnections(ctx, []connectTask{
+		c.pluginConnectTask(ctx, cfg, pluginConnectTimeout, sourcePluginAPI),
+	}))
+}
+
+func firstConnectError(mcpErrors *Errors) error {
+	if mcpErrors == nil {
+		return nil
+	}
+	var joined error
+	for _, authErr := range mcpErrors.ToolAuthErrors {
+		joined = errors.Join(joined, authErr.Error)
+	}
+	return errors.Join(joined, errors.Join(mcpErrors.Errors...))
 }
 
 // ensureConnections plans then executes tasks. Direct test callers use this
@@ -167,6 +254,10 @@ func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask
 // results in task order, so the returned errors do not depend on which server
 // answered first.
 func (c *UserClients) executeConnections(ctx context.Context, plans []connectPlan) *Errors {
+	return c.executeConnectionsWithSlots(ctx, plans, make(chan struct{}, maxConcurrentConnections))
+}
+
+func (c *UserClients) executeConnectionsWithSlots(ctx context.Context, plans []connectPlan, slots chan struct{}) *Errors {
 	if len(plans) == 0 {
 		return nil
 	}
@@ -178,7 +269,6 @@ func (c *UserClients) executeConnections(ctx context.Context, plans []connectPla
 		}
 	}
 
-	slots := make(chan struct{}, maxConcurrentConnections)
 	var wg sync.WaitGroup
 	for _, plan := range dialers {
 		slots <- struct{}{}
@@ -344,17 +434,40 @@ func cacheableContext(ctx context.Context) context.Context {
 // with a remembered "canceled" failure. budget bounds the sequence instead.
 func (c *UserClients) remoteConnectTask(ctx context.Context, serverConfig ServerConfig, budget time.Duration, forceRefresh bool) connectTask {
 	dialCtx := cacheableContext(ctx)
+	serviceAccount := c.serviceAccount()
 	return connectTask{
 		origin:     serverConfig.BaseURL,
 		serverID:   serverConfig.Name,
 		serverName: serverConfig.Name,
-		identity:   remoteOriginIdentity(serverConfig, false),
+		identity:   remoteOriginIdentityForMode(serverConfig, false, serviceAccount),
 		dial: func() (*Client, error) {
 			return c.dialAdmitted(dialCtx, func() (*Client, error) {
-				return newClientWithTimeout(dialCtx, budget, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
+				return newClientWithTimeout(dialCtx, budget, c.userID, serverConfig, clientParams{
+					log:            c.log,
+					oauthManager:   c.oauthManager,
+					httpClient:     c.httpClient,
+					toolsCache:     c.toolsCache,
+					forceRefresh:   forceRefresh,
+					serviceAccount: serviceAccount,
+				})
 			})
 		},
 	}
+}
+
+// remoteOriginIdentityForMode keeps user and service-account sessions sensitive
+// only to the credentials their auth mode actually sends.
+func remoteOriginIdentityForMode(server ServerConfig, conflicting, serviceAccount bool) originIdentity {
+	identity := remoteOriginIdentity(server, conflicting)
+	if !serviceAccount {
+		return identity
+	}
+
+	headers := remoteConnectionHeaders("", server, true)
+	delete(headers, MMUserIDHeader)
+	identity.credentials = credentialDigest("", "", headers)
+	identity.usable = identity.usable && server.HasServiceAccountAuth()
+	return identity
 }
 
 // embeddedConnectTask builds the task for the embedded Mattermost MCP server.
@@ -538,6 +651,7 @@ func (c *UserClients) snapshotClients() []userClientSnapshot {
 		snapshot = append(snapshot, userClientSnapshot{
 			serverID: serverID,
 			client:   c.clients[serverID],
+			owner:    c,
 		})
 	}
 	return snapshot
@@ -549,19 +663,30 @@ func (c *UserClients) Close() {
 	closeDetachedClients(c.log, c.detachAll())
 }
 
-// GetTools returns the tools available from the clients
-func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
-	clientSnapshot := c.snapshotClients()
-	if len(clientSnapshot) == 0 {
+// collectToolsFromSnapshots namespaces and de-dupes tools across bags exactly
+// once so a remote named "Mattermost" cannot collide with the embedded server.
+func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshots ...[]userClientSnapshot) []llm.Tool {
+	var merged []userClientSnapshot
+	for _, snapshot := range snapshots {
+		merged = append(merged, snapshot...)
+	}
+	if len(merged) == 0 {
 		return nil
 	}
+	// Secondary key keeps unsuffixed-slug assignment deterministic when bags
+	// contain equal server IDs.
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].serverID != merged[j].serverID {
+			return merged[i].serverID < merged[j].serverID
+		}
+		return merged[i].client.config.BaseURL < merged[j].client.config.BaseURL
+	})
 
 	var tools []llm.Tool
-	seenTools := make(map[string]string) // runtime toolName -> serverID for conflict detection
-	usedSlugs := make(map[string]string) // slug -> server origin for collision suffixing
+	seenTools := make(map[string]string)
+	usedSlugs := make(map[string]string)
 
-	// Iterate over a snapshot so callers do not hold clientsMu during network work.
-	for _, entry := range clientSnapshot {
+	for _, entry := range merged {
 		serverID := entry.serverID
 		client := entry.client
 		clientTools := client.Tools()
@@ -574,11 +699,9 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
-			// Namespacing should make cross-server duplicate bare names safe. A
-			// final collision means the slug de-dupe or upstream catalog is broken.
 			if existingServerID, exists := seenTools[runtimeToolName]; exists {
-				c.log.Warn("Namespaced MCP tool name conflict detected",
-					"userID", c.userID,
+				log.Warn("Namespaced MCP tool name conflict detected",
+					"userID", userID,
 					"tool", runtimeToolName,
 					"server1", existingServerID,
 					"server2", serverID)
@@ -586,17 +709,33 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 			}
 			seenTools[runtimeToolName] = serverID
 
+			resolver := entry.owner.createToolResolver(client, toolName)
+			// Title/Description are server-supplied; sanitize Unicode at this
+			// single capture point for embedded/plugin/external metadata.
+			// MCP display-name precedence: title > annotations.title.
+			title := sanitizeDisplayTitle(tool.Title)
+			if title == "" && tool.Annotations != nil {
+				title = sanitizeDisplayTitle(tool.Annotations.Title)
+			}
 			tools = append(tools, llm.Tool{
 				Name:         runtimeToolName,
-				Description:  tool.Description,
+				Description:  llm.SanitizeNonPrintableChars(tool.Description),
+				Title:        title,
 				Schema:       tool.InputSchema,
-				Resolver:     c.createToolResolver(client, toolName),
+				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
 			})
 		}
 	}
 
 	return tools
+}
+
+// sanitizeDisplayTitle sanitizes a server-supplied display title and treats
+// whitespace-only titles as absent so the webapp falls back to the prettified
+// tool name instead of rendering a blank header.
+func sanitizeDisplayTitle(title string) string {
+	return llm.SanitizeNonPrintableChars(strings.TrimSpace(title))
 }
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
@@ -618,9 +757,7 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, l
 	if llmContext.Tools != nil {
 		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
 			metadata = make(map[string]any, len(tool.CallMetadata)+1)
-			for k, v := range tool.CallMetadata {
-				metadata[k] = v
-			}
+			maps.Copy(metadata, tool.CallMetadata)
 		}
 	}
 
@@ -656,8 +793,8 @@ func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) 
 		return
 	}
 
-	var needed *OAuthNeededError
-	if !errors.As(oauthErr, &needed) {
+	needed, ok := errors.AsType[*OAuthNeededError](oauthErr)
+	if !ok {
 		return
 	}
 

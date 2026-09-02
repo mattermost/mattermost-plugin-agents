@@ -491,7 +491,7 @@ func TestClientManagerReInitRaceSafe(t *testing.T) {
 		manager.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.temp", Name: "Temp", Path: "/mcp", Enabled: true})
 		manager.UnregisterPluginServer("com.example.temp")
 	})
-	run(func() { _, _, _ = manager.RefreshToolsForUser(context.Background(), "alice", ToolSelection{}) })
+	run(func() { _, _, _ = manager.RefreshToolsForUser(context.Background(), "alice") })
 	run(func() { manager.InvalidateUserClients("bob") })
 
 	done := make(chan struct{})

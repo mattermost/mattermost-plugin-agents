@@ -663,7 +663,7 @@ func TestRefreshToolsForUserRediscoversEligibleServers(t *testing.T) {
 	require.Equal(t, map[string]int{healthy.BaseURL: 1}, toolOrigins(tools))
 	require.Equal(t, 1, harness.remoteSrv["healthy"].dialCount())
 
-	tools, mcpErrors, err := manager.RefreshToolsForUser(ctx, "alice", ToolSelection{})
+	tools, mcpErrors, err := manager.RefreshToolsForUser(ctx, "alice")
 	require.NoError(t, err)
 	require.Nil(t, mcpErrors)
 	require.Equal(t, map[string]int{healthy.BaseURL: 1}, toolOrigins(tools))
@@ -1029,14 +1029,18 @@ func cachedUserClient(manager *ClientManager, userID, serverID string) *Client {
 		return nil
 	}
 	manager.clientsMu.RLock()
-	userClients := manager.clients[userID]
-	manager.clientsMu.RUnlock()
-	if userClients == nil {
-		return nil
+	var bags []*UserClients
+	for key, userClients := range manager.clients {
+		if key.userID == userID {
+			bags = append(bags, userClients)
+		}
 	}
-	for _, entry := range userClients.snapshotClients() {
-		if entry.serverID == serverID {
-			return entry.client
+	manager.clientsMu.RUnlock()
+	for _, userClients := range bags {
+		for _, entry := range userClients.snapshotClients() {
+			if entry.serverID == serverID {
+				return entry.client
+			}
 		}
 	}
 	return nil

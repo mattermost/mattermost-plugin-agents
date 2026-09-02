@@ -62,7 +62,7 @@ func TestBuildCompletionRequestComposition(t *testing.T) {
 		{Type: BlockTypeText, Text: "let me check"},
 		{
 			Type: BlockTypeToolUse, ID: "tc1", Name: "get_weather",
-			Input: json.RawMessage(`{"city":"NYC"}`), Status: StatusSuccess, Shared: BoolPtr(true),
+			Input: json.RawMessage(`{"city":"NYC"}`), Status: StatusSuccess, Shared: new(true),
 		},
 	}
 	assistantContent, err := json.Marshal(assistantBlocks)
@@ -73,7 +73,7 @@ func TestBuildCompletionRequestComposition(t *testing.T) {
 	}))
 
 	resultBlocks := []ContentBlock{
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "72F, sunny", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "72F, sunny", Status: StatusSuccess, Shared: new(true)},
 	}
 	resultContent, err := json.Marshal(resultBlocks)
 	require.NoError(t, err)

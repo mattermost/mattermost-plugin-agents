@@ -32,13 +32,13 @@ type fixedPluginAPI struct {
 	userByID    map[string]*model.User
 }
 
-func (f *fixedPluginAPI) LogDebug(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogDebug(string, ...any) {}
 
-func (f *fixedPluginAPI) LogInfo(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogInfo(string, ...any) {}
 
-func (f *fixedPluginAPI) LogWarn(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogWarn(string, ...any) {}
 
-func (f *fixedPluginAPI) LogError(string, ...interface{}) {}
+func (f *fixedPluginAPI) LogError(string, ...any) {}
 
 func (f *fixedPluginAPI) KVGet(key string) ([]byte, *model.AppError) {
 	if f.kvGet != nil {
@@ -251,9 +251,13 @@ func newTestPluginAPIWithSession(sessionID string) *pluginapi.Client {
 }
 
 func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Client {
+	return newTestPluginAPIForEmbeddedUser(&model.User{Id: userID, Roles: "system_user"}, sessionID)
+}
+
+func newTestPluginAPIForEmbeddedUser(user *model.User, sessionID string) *pluginapi.Client {
 	fakeAPI := &fixedPluginAPI{
 		kvGet: func(key string) ([]byte, *model.AppError) {
-			if key == buildEmbeddedSessionKey(userID) {
+			if key == buildEmbeddedSessionKey(user.Id) {
 				return []byte(sessionID), nil
 			}
 			return nil, nil
@@ -261,16 +265,13 @@ func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Cli
 		sessionByID: map[string]*model.Session{
 			sessionID: {
 				Id:        sessionID,
-				UserId:    userID,
+				UserId:    user.Id,
 				Token:     "test-token",
 				ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
 			},
 		},
 		userByID: map[string]*model.User{
-			userID: {
-				Id:    userID,
-				Roles: "system_user",
-			},
+			user.Id: user,
 		},
 	}
 	return pluginapi.NewClient(fakeAPI, nil)
@@ -494,6 +495,32 @@ func TestNewClientDiscoversPaginatedRemoteTools(t *testing.T) {
 	}
 }
 
+func TestNewClientDoesNotOpenStandaloneSSE(t *testing.T) {
+	var getCalls atomic.Int32
+	server := newTestMCPServer(0, "tool_1")
+	streamableHandler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		return server
+	}, nil)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			getCalls.Add(1)
+		}
+		streamableHandler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	client, err := NewClient(context.Background(), "user-id", ServerConfig{
+		Name:    "remote",
+		BaseURL: httpServer.URL,
+		Enabled: true,
+	}, newTestLogService(), newTestOAuthManager(), httpServer.Client(), newTestToolsCache(), false)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	require.Contains(t, client.Tools(), "tool_1")
+	require.Zero(t, getCalls.Load())
+}
+
 func TestRemoteReconnectRefreshesToolCatalog(t *testing.T) {
 	server := newTestMCPServer(0, "tool_1")
 	httpServer := startStreamableMCPServer(t, server)
@@ -577,6 +604,67 @@ func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, client)
 	require.Nil(t, cache.GetTools("paged"))
+}
+
+func TestRemoteConnectionHeaders(t *testing.T) {
+	adminHeaders := map[string]string{"X-Admin": "admin-value"}
+	saHeaders := map[string]string{"Authorization": "Bearer service-account-pat"}
+
+	testCases := []struct {
+		name            string
+		userID          string
+		serverConfig    ServerConfig
+		serviceAccount  bool
+		expectedHeaders map[string]string
+	}{
+		{
+			name:            "user mode ignores service account headers",
+			userID:          "user-1",
+			serverConfig:    ServerConfig{Name: "srv", Headers: adminHeaders, ServiceAccountHeaders: saHeaders},
+			expectedHeaders: map[string]string{MMUserIDHeader: "user-1", "X-Admin": "admin-value"},
+		},
+		{
+			name:   "service account headers layer on top of the bot ID and admin headers",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:                  "srv",
+				Headers:               map[string]string{"X-Admin": "admin-value", "Authorization": "Bearer admin"},
+				ServiceAccountHeaders: saHeaders,
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+		{
+			// A blank header name or value must never reach the wire: net/http rejects the whole request.
+			name:   "service account mode keeps valid headers alongside blank ones",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:    "srv",
+				Headers: adminHeaders,
+				ServiceAccountHeaders: map[string]string{
+					"":              "",
+					"X-Token":       "",
+					"Authorization": "Bearer service-account-pat",
+				},
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expectedHeaders, remoteConnectionHeaders(tc.userID, tc.serverConfig, tc.serviceAccount))
+		})
+	}
 }
 
 func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {

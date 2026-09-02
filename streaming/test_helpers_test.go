@@ -11,19 +11,19 @@ import (
 
 type publishedEvent struct {
 	event     string
-	payload   map[string]interface{}
+	payload   map[string]any
 	broadcast *model.WebsocketBroadcast
 }
 
 type fakeStreamingClient struct {
 	channels     map[string]*model.Channel
-	kv           map[string]interface{}
+	kv           map[string]any
 	updatedPosts []*model.Post
 	events       []publishedEvent
 	warnings     []string
 }
 
-func (c *fakeStreamingClient) PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast) {
+func (c *fakeStreamingClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
 	c.events = append(c.events, publishedEvent{
 		event:     event,
 		payload:   payload,
@@ -65,18 +65,18 @@ func (c *fakeStreamingClient) GetConfig() *model.Config {
 	}
 }
 
-func (c *fakeStreamingClient) KVSet(key string, value interface{}) error {
+func (c *fakeStreamingClient) KVSet(key string, value any) error {
 	if c.kv == nil {
-		c.kv = make(map[string]interface{})
+		c.kv = make(map[string]any)
 	}
 	c.kv[key] = value
 	return nil
 }
 
-func (c *fakeStreamingClient) LogError(_ string, _ ...interface{}) {}
+func (c *fakeStreamingClient) LogError(_ string, _ ...any) {}
 
-func (c *fakeStreamingClient) LogWarn(msg string, _ ...interface{}) {
+func (c *fakeStreamingClient) LogWarn(msg string, _ ...any) {
 	c.warnings = append(c.warnings, msg)
 }
 
-func (c *fakeStreamingClient) LogDebug(_ string, _ ...interface{}) {}
+func (c *fakeStreamingClient) LogDebug(_ string, _ ...any) {}

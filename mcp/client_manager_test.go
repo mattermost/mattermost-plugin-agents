@@ -45,7 +45,7 @@ type recordKVSetWithExpiryClient struct {
 	setErr error
 }
 
-func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+func (c *recordKVSetWithExpiryClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
 	c.key = key
 	c.value = value
 	c.ttl = ttl
@@ -620,7 +620,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "no errors expected on happy path")
 	require.Len(t, tools, 2, "expected 2 tools from plugin server")
 	for _, tool := range tools {
@@ -650,7 +650,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "no errors expected when plugin is simply disabled")
 	require.Empty(t, tools, "disabled plugin must contribute zero tools")
 
@@ -700,7 +700,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 				Enabled:  true,
 			})
 
-			tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+			tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 			require.NotNil(t, mcpErrors, "plugin connection failure must be surfaced")
 			require.NotEmpty(t, mcpErrors.Errors, "plugin connection failure must populate generic MCP errors")
 			require.Empty(t, mcpErrors.ToolAuthErrors, "plugin HTTP failures should not be treated as OAuth errors")
@@ -748,14 +748,14 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 		Enabled:  true,
 	})
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Empty(t, tools)
 	require.NotNil(t, mcpErrors)
 	require.NotEmpty(t, mcpErrors.Errors)
 
 	failing.Store(false)
 
-	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+	tools, mcpErrors = m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
 	require.Len(t, tools, 1)
 }
@@ -792,7 +792,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.b", Name: "B", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice", ToolSelection{})
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 3, "expected 2 tools from A + 1 tool from B")
 
@@ -821,7 +821,7 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	var wg sync.WaitGroup
 	var stop atomic.Bool
 
-	for i := 0; i < writers; i++ {
+	for i := range writers {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
@@ -838,15 +838,13 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 		}(i)
 	}
 
-	for i := 0; i < readers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range readers {
+		wg.Go(func() {
 			for iter := 0; iter < iterations && !stop.Load(); iter++ {
 				_ = m.ListPluginServers()
 				_ = m.snapshotEnabledPluginServers()
 			}
-		}()
+		})
 	}
 
 	done := make(chan struct{})
@@ -1002,56 +1000,56 @@ func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
 
 func TestClientManagerInvalidateUserClients(t *testing.T) {
 	now := time.Now()
+	user1Remote := clientKey{userID: "user-1", kind: clientKindUserRemote}
+	user1SA := clientKey{userID: "user-1", kind: clientKindSARemote}
+	user1Local := clientKey{userID: "user-1", kind: clientKindLocal}
+	user2Remote := clientKey{userID: "user-2", kind: clientKindUserRemote}
+	user2SA := clientKey{userID: "user-2", kind: clientKindSARemote}
+	user2Local := clientKey{userID: "user-2", kind: clientKindLocal}
+	allKeys := []clientKey{user1Remote, user1SA, user1Local, user2Remote, user2SA, user2Local}
+
 	testCases := []struct {
-		name                 string
-		userID               string
-		expectedClientKeys   []string
-		expectedActivityKeys []string
+		name         string
+		userID       string
+		expectedKeys []clientKey
 	}{
 		{
-			name:                 "removes existing user",
-			userID:               "user-1",
-			expectedClientKeys:   []string{"user-2"},
-			expectedActivityKeys: []string{"user-2"},
+			name:         "removes remotes and local bags for the user",
+			userID:       "user-1",
+			expectedKeys: []clientKey{user2Remote, user2SA, user2Local},
 		},
 		{
-			name:                 "ignores missing user",
-			userID:               "missing-user",
-			expectedClientKeys:   []string{"user-1", "user-2"},
-			expectedActivityKeys: []string{"user-1", "user-2"},
+			name:         "ignores missing user",
+			userID:       "missing-user",
+			expectedKeys: allKeys,
 		},
 		{
-			name:                 "ignores empty user",
-			userID:               "",
-			expectedClientKeys:   []string{"user-1", "user-2"},
-			expectedActivityKeys: []string{"user-1", "user-2"},
+			name:         "ignores empty user",
+			userID:       "",
+			expectedKeys: allKeys,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := &ClientManager{
-				clients: map[string]*UserClients{
-					"user-1": {clients: map[string]*Client{}},
-					"user-2": {clients: map[string]*Client{}},
-				},
-				activity: map[string]time.Time{
-					"user-1": now,
-					"user-2": now.Add(time.Minute),
-				},
+				clients:  map[clientKey]*UserClients{},
+				activity: map[clientKey]time.Time{},
+			}
+			for i, key := range allKeys {
+				manager.clients[key] = &UserClients{clients: map[string]*Client{}}
+				manager.activity[key] = now.Add(time.Duration(i) * time.Minute)
 			}
 
 			manager.InvalidateUserClients(tc.userID)
 
-			require.Len(t, manager.clients, len(tc.expectedClientKeys))
-			for _, key := range tc.expectedClientKeys {
+			require.Len(t, manager.clients, len(tc.expectedKeys))
+			require.Len(t, manager.activity, len(tc.expectedKeys))
+			for _, key := range tc.expectedKeys {
 				require.Contains(t, manager.clients, key)
-			}
-			require.Len(t, manager.activity, len(tc.expectedActivityKeys))
-			for _, key := range tc.expectedActivityKeys {
 				require.Contains(t, manager.activity, key)
 			}
-			require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+			require.Equal(t, now.Add(3*time.Minute), manager.activity[user2Remote])
 		})
 	}
 }
@@ -1062,8 +1060,15 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 	cachedTools := map[string]*gomcp.Tool{
 		"tool": {Name: "tool"},
 	}
-	require.NoError(t, cache.SetTools("shared-server", "shared-server", "https://shared.example.com", cachedTools, time.Now()))
-	require.NoError(t, cache.SetTools("oauth-server", "oauth-server", "https://oauth.example.com", cachedTools, time.Now()))
+	saHeaders := map[string]string{"X-Service-Account-Token": "pat"}
+	for _, serverID := range []string{
+		"shared-server",
+		"oauth-server",
+		serviceAccountToolsCacheID("sa-server"),
+		serviceAccountToolsCacheID("sa-oauth-server"),
+	} {
+		require.NoError(t, cache.SetTools(serverID, serverID, "https://"+serverID+".example.com", cachedTools, time.Now()))
+	}
 
 	manager := &ClientManager{
 		config: Config{
@@ -1071,6 +1076,8 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 				{Name: "shared-server", BaseURL: "https://shared.example.com", Enabled: true},
 				{Name: "disabled-server", BaseURL: "https://disabled.example.com", Enabled: false},
 				{Name: "oauth-server", BaseURL: "https://oauth.example.com", Enabled: true, ClientID: "client-id"},
+				{Name: "sa-server", BaseURL: "https://sa.example.com", Enabled: true, ServiceAccountHeaders: saHeaders},
+				{Name: "sa-oauth-server", BaseURL: "https://sa-oauth.example.com", Enabled: true, ClientID: "client-id", ServiceAccountHeaders: saHeaders},
 			},
 		},
 		toolsCache: cache,
@@ -1080,6 +1087,9 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 
 	require.Empty(t, cache.GetTools("shared-server"))
 	require.NotEmpty(t, cache.GetTools("oauth-server"))
+	require.Empty(t, cache.GetTools(serviceAccountToolsCacheID("sa-server")))
+	require.Empty(t, cache.GetTools(serviceAccountToolsCacheID("sa-oauth-server")),
+		"service account entries are invalidated even when static OAuth credentials are configured")
 }
 
 func TestClientManagerGetOrCreateUserClientsSetsInitialActivity(t *testing.T) {
@@ -1089,23 +1099,24 @@ func TestClientManagerGetOrCreateUserClientsSetsInitialActivity(t *testing.T) {
 	manager := &ClientManager{
 		config:   Config{},
 		log:      client.Log,
-		clients:  make(map[string]*UserClients),
-		activity: make(map[string]time.Time),
+		clients:  make(map[clientKey]*UserClients),
+		activity: make(map[clientKey]time.Time),
 	}
 
 	before := time.Now()
-	userClients := manager.getOrCreateUserClients("user-1")
+	key := clientKey{userID: "user-1", kind: clientKindUserRemote}
+	userClients := manager.getOrCreateClient(key)
 	after := time.Now()
 
 	require.NotNil(t, userClients)
-	require.Contains(t, manager.clients, "user-1")
+	require.Contains(t, manager.clients, key)
 
-	lastActivity, ok := manager.activity["user-1"]
+	lastActivity, ok := manager.activity[key]
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 	require.False(t, lastActivity.After(after))
 
-	require.Same(t, userClients, manager.getOrCreateUserClients("user-1"),
+	require.Same(t, userClients, manager.getOrCreateClient(key),
 		"a second lookup must reuse the registered instance so concurrent cold requests share one session per server")
 }
 
@@ -1118,15 +1129,15 @@ func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
 	require.NoError(t, cacheCtx.Err())
 }
 
-func TestClientManagerGetOrCreateUserClientsExistingClientConcurrent(t *testing.T) {
+func TestClientManagerGetOrCreateClientExistingClientConcurrent(t *testing.T) {
 	before := time.Now()
 	userClients := &UserClients{clients: map[string]*Client{}}
 	manager := &ClientManager{
-		clients: map[string]*UserClients{
-			"user-1": userClients,
+		clients: map[clientKey]*UserClients{
+			{userID: "user-1"}: userClients,
 		},
-		activity: map[string]time.Time{
-			"user-1": before.Add(-time.Minute),
+		activity: map[clientKey]time.Time{
+			{userID: "user-1"}: before.Add(-time.Minute),
 		},
 	}
 
@@ -1136,23 +1147,21 @@ func TestClientManagerGetOrCreateUserClientsExistingClientConcurrent(t *testing.
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for range goroutines {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			for range iterations {
-				if got := manager.getOrCreateUserClients("user-1"); got != userClients {
-					t.Errorf("getOrCreateUserClients returned unexpected result: got=%p", got)
+				if got := manager.getOrCreateClient(clientKey{userID: "user-1"}); got != userClients {
+					t.Errorf("getOrCreateClient returned unexpected result: got=%p", got)
 					return
 				}
 			}
-		}()
+		})
 	}
 
 	close(start)
 	wg.Wait()
 
-	lastActivity, ok := manager.activity["user-1"]
+	lastActivity, ok := manager.activity[clientKey{userID: "user-1"}]
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 }
@@ -1172,11 +1181,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 			manager: func() *ClientManager {
 				storeClient := &recordKVSetWithExpiryClient{}
 				manager := &ClientManager{
-					clients: map[string]*UserClients{
-						"user-1": {clients: map[string]*Client{}},
+					clients: map[clientKey]*UserClients{
+						{userID: "user-1"}: {clients: map[string]*Client{}},
 					},
-					activity: map[string]time.Time{
-						"user-1": time.Now(),
+					activity: map[clientKey]time.Time{
+						{userID: "user-1"}: time.Now(),
 					},
 				}
 				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
@@ -1194,11 +1203,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 					setErr: model.NewAppError("test", "oauth_needed_store_failed", nil, "persist failed", http.StatusInternalServerError),
 				}
 				manager := &ClientManager{
-					clients: map[string]*UserClients{
-						"user-1": {clients: map[string]*Client{}},
+					clients: map[clientKey]*UserClients{
+						{userID: "user-1"}: {clients: map[string]*Client{}},
 					},
-					activity: map[string]time.Time{
-						"user-1": time.Now(),
+					activity: map[clientKey]time.Time{
+						{userID: "user-1"}: time.Now(),
 					},
 				}
 				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
@@ -1213,11 +1222,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 		{
 			name: "still invalidates without oauth manager",
 			manager: &ClientManager{
-				clients: map[string]*UserClients{
-					"user-1": {clients: map[string]*Client{}},
+				clients: map[clientKey]*UserClients{
+					{userID: "user-1"}: {clients: map[string]*Client{}},
 				},
-				activity: map[string]time.Time{
-					"user-1": time.Now(),
+				activity: map[clientKey]time.Time{
+					{userID: "user-1"}: time.Now(),
 				},
 			},
 		},

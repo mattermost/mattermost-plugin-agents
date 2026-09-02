@@ -6,6 +6,7 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -34,10 +35,15 @@ func (p *staticToolProvider) GetTools(*bots.Bot, *llm.Context) []llm.Tool {
 }
 
 type countingMCPToolProvider struct {
-	calls int
+	calls   int
+	saCalls int
 }
 
-func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		p.saCalls++
+		return nil, nil
+	}
 	p.calls++
 	return []llm.Tool{
 		{
@@ -48,14 +54,54 @@ func (p *countingMCPToolProvider) GetToolsForUser(stdcontext.Context, string, mc
 	}, nil
 }
 
+// staticMCPToolProvider serves a fixed catalog per auth mode and records the identity each mode was asked for.
 type staticMCPToolProvider struct {
 	tools     []llm.Tool
+	saTools   []llm.Tool
 	errors    *mcp.Errors
 	overrides map[string]mcp.ToolRetrievalOverride
+
+	userCalls []string
+	saCalls   []saCatalogCall
 }
 
-func (p *staticMCPToolProvider) GetToolsForUser(stdcontext.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
-	return p.tools, p.errors
+type saCatalogCall struct {
+	remoteOwnerID  string
+	invokingUserID string
+}
+
+func (p *staticMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	// Mirror mcp.ClientManager.GetTools: invalid requests fail closed.
+	if req.RemoteOwnerID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogRemoteOwnerRequired}}
+	}
+	if req.InvokingUserID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogInvokerRequired}}
+	}
+
+	tools := p.tools
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, saCatalogCall{
+			remoteOwnerID:  req.RemoteOwnerID,
+			invokingUserID: req.InvokingUserID,
+		})
+		tools = p.saTools
+	} else {
+		p.userCalls = append(p.userCalls, req.InvokingUserID)
+	}
+
+	tools = slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return !selection.Allows(tool.ServerOrigin)
+	})
+	if p.errors == nil {
+		return tools, nil
+	}
+
+	errors := &mcp.Errors{Errors: slices.Clone(p.errors.Errors)}
+	errors.ToolAuthErrors = slices.DeleteFunc(slices.Clone(p.errors.ToolAuthErrors), func(authErr llm.ToolAuthError) bool {
+		return !selection.Allows(authErr.ServerOrigin)
+	})
+	return tools, errors
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
@@ -87,10 +133,14 @@ func newTestBot() *bots.Bot {
 }
 
 func newTestBotWithConfig(cfg llm.BotConfig) *bots.Bot {
+	return newTestBotWithMMBot(cfg, &model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"})
+}
+
+func newTestBotWithMMBot(cfg llm.BotConfig, mmBot *model.Bot) *bots.Bot {
 	return bots.NewBot(
 		cfg,
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
-		&model.Bot{UserId: "bot-id", Username: "matty", DisplayName: "Matty"},
+		mmBot,
 		nil,
 	)
 }
@@ -202,11 +252,11 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
 	allOpts := append([]llm.ContextOption{}, opts...)
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(stdcontext.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(stdcontext.Background(), bot))
 	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
 }
 
-func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
+func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -228,10 +278,11 @@ func TestWithLLMContextDefaultToolsCallsMCPProvider(t *testing.T) {
 		newTestBot(),
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), newTestBot()),
+		builder.WithLLMContextTools(stdcontext.Background(), newTestBot()),
 	)
 
 	require.Equal(t, 1, mcpProvider.calls)
+	require.Equal(t, 0, mcpProvider.saCalls, "a normal agent must never use the service account catalog")
 	require.Len(t, context.Tools.GetTools(), 1)
 }
 
@@ -264,7 +315,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	require.Empty(t, context.Tools.GetTools())
 }
 
-func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
+func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -305,7 +356,7 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 		bot,
 		user,
 		channel,
-		builder.WithLLMContextDefaultTools(stdcontext.Background(), bot),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
 	require.Empty(t, context.Tools.GetTools())
@@ -313,6 +364,78 @@ func TestWithLLMContextDefaultToolsRetainsAuthErrorsForWildcardAllowlist(t *test
 	require.Len(t, authErrors, 1)
 	assert.Equal(t, "https://mcp.atlassian.com", authErrors[0].ServerOrigin)
 	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
+}
+
+// A service account agent's catalog is built for the bot (SA remotes) plus the requesting user (embedded/plugin).
+func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
+	const serviceAccountBotUserID = "bot-user-id"
+	const requestingUserID = "user-id"
+
+	provider := &staticMCPToolProvider{
+		tools:   []llm.Tool{testMCPTool("jira__get_issue", "https://jira.example.com", "user OAuth Jira")},
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
+	}
+	builder := newLicenseTestBuilder(t, true,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithMMBot(
+		llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		},
+		&model.Bot{UserId: serviceAccountBotUserID, Username: "matty", DisplayName: "Matty"},
+	)
+
+	context := builder.BuildLLMContextUserRequest(
+		bot,
+		&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
+		testChannel(),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+
+	require.Equal(t, []saCatalogCall{{
+		remoteOwnerID:  serviceAccountBotUserID,
+		invokingUserID: requestingUserID,
+	}}, provider.saCalls)
+	require.Empty(t, provider.userCalls, "the requesting user's per-user remotes catalog must not be consulted")
+	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
+	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
+}
+
+func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
+	provider := &staticMCPToolProvider{
+		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", "https://jira.example.com", "service account Jira")},
+	}
+	builder := newLicenseTestBuilder(t, true,
+		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+		provider,
+	)
+	bot := newTestBotWithMMBot(
+		llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		},
+		&model.Bot{UserId: "", Username: "matty", DisplayName: "Matty"},
+	)
+
+	context := builder.BuildLLMContextUserRequest(
+		bot,
+		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
+		testChannel(),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+
+	// The catalog build fails closed downstream; no MCP tools reach the store.
+	require.Empty(t, provider.userCalls)
+	require.ElementsMatch(t, []string{"builtin"}, toolNames(context.Tools))
+	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
 }
 
 func TestSanitizeUserProfileField(t *testing.T) {

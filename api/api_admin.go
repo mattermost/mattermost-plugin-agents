@@ -56,7 +56,7 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -116,8 +116,8 @@ func (a *API) handleCancelJob(c *gin.Context) {
 			})
 			return
 		}
-		switch err.Error() {
-		case "not running":
+		switch {
+		case errors.Is(err, indexer.ErrNotRunning):
 			audit.AddParam(auditRec(c), "job_status", "not_running")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
@@ -151,12 +151,12 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case err.Error() == "no previous index found, run a full reindex first":
+		case errors.Is(err, indexer.ErrNoPreviousIndex):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:
@@ -182,7 +182,7 @@ func (a *API) handleRebuildVectorIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
@@ -206,7 +206,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
 	if err != nil {
-		if err.Error() == "search functionality is not configured" {
+		if errors.Is(err, indexer.ErrNotConfigured) {
 			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 			return
 		}
@@ -447,12 +447,26 @@ func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error
 	info.Error = new(err.Error())
 }
 
+// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
+func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
+	tools := make([]MCPToolInfo, 0, len(toolInfos))
+	for _, toolInfo := range toolInfos {
+		tools = append(tools, MCPToolInfo{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+			InputSchema: toolInfo.InputSchema,
+		})
+	}
+	return tools
+}
+
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
 func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
 	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
 	if err != nil {
 		return nil, err
 	}
+
 	return toMCPToolInfos(toolInfos), nil
 }
 
@@ -464,6 +478,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 	if err != nil {
 		return nil, err
 	}
+
 	return toMCPToolInfos(toolInfos), nil
 }
 
@@ -508,18 +523,6 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 	}
 
 	return toMCPToolInfos(toolInfos), nil
-}
-
-func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-	return tools
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

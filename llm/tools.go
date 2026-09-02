@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"unicode"
@@ -32,6 +33,12 @@ type Tool struct {
 	Description string
 	Schema      any
 	Resolver    ToolResolver
+
+	// Title is an optional human-readable display name resolved from MCP
+	// metadata (title > annotations.title) and Unicode-sanitized at capture
+	// (mcp.UserClients.GetTools). Empty for built-in tools and MCP tools that
+	// do not declare one.
+	Title string
 
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
@@ -67,7 +74,7 @@ type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgu
 // Bound parameters are:
 // - Removed from the schema (LLM cannot see or manipulate them)
 // - Automatically injected when the resolver is called
-func (t Tool) WithBoundParams(params map[string]interface{}) Tool {
+func (t Tool) WithBoundParams(params map[string]any) Tool {
 	cloned := t
 	cloned.Schema = removeSchemaProperties(t.Schema, params)
 	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
@@ -85,15 +92,13 @@ func (t Tool) WithCallMetadata(meta map[string]any) Tool {
 		return cloned
 	}
 	cloned.CallMetadata = make(map[string]any, len(meta))
-	for k, v := range meta {
-		cloned.CallMetadata[k] = v
-	}
+	maps.Copy(cloned.CallMetadata, meta)
 	return cloned
 }
 
 // removeSchemaProperties removes the specified properties from a JSON schema.
 // It returns a modified copy of the schema, leaving the original unchanged.
-func removeSchemaProperties(schema any, params map[string]interface{}) any {
+func removeSchemaProperties(schema any, params map[string]any) any {
 	if schema == nil || len(params) == 0 {
 		return schema
 	}
@@ -132,7 +137,7 @@ func removeSchemaProperties(schema any, params map[string]interface{}) any {
 }
 
 // wrapResolverWithBoundParams creates a wrapped resolver that injects bound parameters
-func wrapResolverWithBoundParams(original ToolResolver, params map[string]interface{}) ToolResolver {
+func wrapResolverWithBoundParams(original ToolResolver, params map[string]any) ToolResolver {
 	if original == nil || len(params) == 0 {
 		return original
 	}
@@ -151,13 +156,13 @@ func wrapResolverWithBoundParams(original ToolResolver, params map[string]interf
 }
 
 // injectBoundParams injects bound parameter values into the args struct or map
-func injectBoundParams(args any, params map[string]interface{}) error {
+func injectBoundParams(args any, params map[string]any) error {
 	if len(params) == 0 {
 		return nil
 	}
 
 	val := reflect.ValueOf(args)
-	if val.Kind() != reflect.Ptr || val.IsNil() {
+	if val.Kind() != reflect.Pointer || val.IsNil() {
 		return fmt.Errorf("args must be a non-nil pointer, got %T", args)
 	}
 
@@ -245,16 +250,46 @@ const (
 	ToolCallStatusAutoApproved
 )
 
+// IsResolvedToolCallBatch reports whether a ToolCalls event represents the
+// post-execution "resolved" broadcast (every call has a terminal status
+// assigned by toolrunner after execution) rather than the pre-execution
+// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
+// auto-run tools as AutoApproved (not Success) and errored ones as Error;
+// user-approved tools are later tagged Success by the approval flow. Anything
+// else — most commonly Pending, but also Rejected — indicates the batch has
+// not been executed. Streaming persistence and the annotation decorator both
+// reset per-round state at this boundary, so they must share this predicate.
+func IsResolvedToolCallBatch(toolCalls []ToolCall) bool {
+	if len(toolCalls) == 0 {
+		return false
+	}
+	for _, tc := range toolCalls {
+		switch tc.Status {
+		case ToolCallStatusSuccess,
+			ToolCallStatusError,
+			ToolCallStatusAutoApproved:
+			// terminal status after execution
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // ToolCall represents a tool call. An empty result indicates that the tool has not yet been resolved.
 type ToolCall struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
 	Description string          `json:"description"`
 	Arguments   json.RawMessage `json:"arguments"`
-	Schema      any             `json:"schema,omitempty"`
 	Result      string          `json:"result"`
 	Status      ToolCallStatus  `json:"status"`
 	MCPBareName string          `json:"mcp_bare_name,omitempty"`
+
+	// Title is the resolved display name for MCP tools that declare one
+	// (title > annotations.title, resolved at capture). When empty the webapp
+	// prettifies the bare name. Visible to non-requesters like Name.
+	Title string `json:"title,omitempty"`
 
 	// UserInteraction mirrors Tool.UserInteraction so the webapp can render
 	// the matching interaction UI (e.g. a question card) for pending calls.
@@ -369,13 +404,6 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 	return schema
 }
 
-func NewNoTools() *ToolStore {
-	return &ToolStore{
-		tools:      make(map[string]Tool),
-		authErrors: []ToolAuthError{},
-	}
-}
-
 func NewToolStore() *ToolStore {
 	return &ToolStore{
 		tools:      make(map[string]Tool),
@@ -443,9 +471,11 @@ type EnrichToolCallOptions struct {
 	BareNameFallback bool
 }
 
-// EnrichToolCall fills a tool call's Description, Schema, ServerOrigin, and
+// EnrichToolCall fills a tool call's Description, Title, ServerOrigin, and
 // MCPBareName from the resolved store entry. MCPBareName is only set for MCP
-// tools (those with a server origin); builtins are left untouched.
+// tools (those with a server origin); builtins are left untouched. Title and
+// Description follow the same overwrite semantics: rehydration trusts the store
+// (OverwriteDescription), approval preserves any value already present.
 func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) {
 	if tc == nil || store == nil {
 		return
@@ -461,7 +491,9 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 	if opts.OverwriteDescription || tc.Description == "" {
 		tc.Description = tool.Description
 	}
-	tc.Schema = tool.Schema
+	if opts.OverwriteDescription || tc.Title == "" {
+		tc.Title = tool.Title
+	}
 	tc.UserInteraction = tool.UserInteraction
 	if tc.ServerOrigin == "" {
 		tc.ServerOrigin = lookup.ServerOrigin

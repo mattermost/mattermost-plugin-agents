@@ -25,6 +25,22 @@ const pluginRegistrationsKVKey = "mcp_plugin_registrations_v1"
 
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
+// clientKind is the structural role of a pooled bag. Remote bags cannot
+// share sessions across user and service-account authentication modes.
+type clientKind int
+
+const (
+	clientKindUserRemote clientKind = iota
+	clientKindSARemote
+	clientKindLocal
+)
+
+// clientKey identifies one pooled client bag.
+type clientKey struct {
+	userID string
+	kind   clientKind
+}
+
 // ClientManager manages MCP clients for multiple users.
 //
 // Nested locks are always taken in the order lifecycleMu -> clientsMu ->
@@ -41,8 +57,8 @@ type ClientManager struct {
 	log            pluginapi.LogService
 	pluginAPI      *pluginapi.Client
 	clientsMu      sync.RWMutex
-	clients        map[string]*UserClients // userID to UserClients
-	activity       map[string]time.Time    // userID to last activity time
+	clients        map[clientKey]*UserClients
+	activity       map[clientKey]time.Time
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -105,12 +121,12 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 			m.clientsMu.Lock()
 			now := time.Now()
 			idle := make([]*UserClients, 0)
-			for userID, client := range m.clients {
-				if now.Sub(m.activity[userID]) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", userID)
+			for key, client := range m.clients {
+				if now.Sub(m.activity[key]) > m.clientTimeout {
+					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "kind", key.kind)
 					idle = append(idle, client)
-					delete(m.clients, userID)
-					delete(m.activity, userID)
+					delete(m.clients, key)
+					delete(m.activity, key)
 				}
 			}
 			m.clientsMu.Unlock()
@@ -150,10 +166,10 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
 
 	if m.clients == nil {
-		m.clients = make(map[string]*UserClients)
+		m.clients = make(map[clientKey]*UserClients)
 	}
 	if m.activity == nil {
-		m.activity = make(map[string]time.Time)
+		m.activity = make(map[clientKey]time.Time)
 	}
 
 	if m.closeChan == nil {
@@ -165,9 +181,9 @@ func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) 
 
 	m.syncPluginServersFromConfig(config)
 
-	valid := m.liveOriginIdentities(config, newEmbedded)
 	var discarded []*Client
 	for _, userClients := range m.snapshotUserClients() {
+		valid := m.liveOriginIdentities(config, newEmbedded, userClients.serviceAccount())
 		discarded = append(discarded, userClients.detachInvalidIdentities(valid)...)
 	}
 	m.lifecycleMu.Unlock()
@@ -193,8 +209,8 @@ func (m *ClientManager) Close() {
 	ticker := m.cleanupTicker
 	clients := m.clients
 	m.closeChan = nil
-	m.clients = make(map[string]*UserClients)
-	m.activity = make(map[string]time.Time)
+	m.clients = make(map[clientKey]*UserClients)
+	m.activity = make(map[clientKey]time.Time)
 	m.clientsMu.Unlock()
 
 	if closeChan != nil {
@@ -215,7 +231,7 @@ func (m *ClientManager) Close() {
 // registering an empty one when this is the user's first request. Registration
 // happens before any dialing so concurrent cold requests share one instance and
 // therefore one session per server.
-func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
+func (m *ClientManager) getOrCreateClient(key clientKey) *UserClients {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
@@ -224,21 +240,30 @@ func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
 	}
 
 	if m.clients == nil {
-		m.clients = make(map[string]*UserClients)
+		m.clients = make(map[clientKey]*UserClients)
 	}
 	if m.activity == nil {
-		m.activity = make(map[string]time.Time)
+		m.activity = make(map[clientKey]time.Time)
 	}
 
-	userClients, exists := m.clients[userID]
+	userClients, exists := m.clients[key]
 	if !exists {
-		userClients = NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+		switch key.kind {
+		case clientKindLocal:
+			userClients = newLocalClients(key.userID, m.log, m.httpClient, m.toolsCache)
+		default:
+			userClients = newRemoteClients(key.userID, key.kind, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+		}
 		userClients.admission = m.admission
-		m.clients[userID] = userClients
+		m.clients[key] = userClients
 	}
-	m.activity[userID] = time.Now()
+	m.activity[key] = time.Now()
 
 	return userClients
+}
+
+func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
+	return m.getOrCreateClient(clientKey{userID: userID, kind: clientKindUserRemote})
 }
 
 // eligibleServers is the per-request view of which MCP servers a user's tool
@@ -262,7 +287,7 @@ func (m *ClientManager) snapshotRuntime() (Config, *EmbeddedServerClient) {
 	return m.config, m.embeddedClient
 }
 
-func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *EmbeddedServerClient, plugins []PluginServerConfig, selection ToolSelection) eligibleServers {
+func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *EmbeddedServerClient, plugins []PluginServerConfig, selection ToolSelection, serviceAccount bool) eligibleServers {
 	resolved := eligibleServers{origins: make(map[string]bool)}
 
 	// A duplicated name or endpoint makes every member of the group ambiguous:
@@ -280,6 +305,10 @@ func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *Embed
 			continue
 		case conflicting[i]:
 			m.log.Warn("Skipping MCP server with a duplicate name or URL; fix the MCP configuration to enable it",
+				"serverID", server.Name, "serverOrigin", server.BaseURL)
+			continue
+		case serviceAccount && !server.HasServiceAccountAuth():
+			m.log.Debug("Skipping MCP server without service account headers in service account mode",
 				"serverID", server.Name, "serverOrigin", server.BaseURL)
 			continue
 		case !selection.Allows(server.BaseURL):
@@ -335,21 +364,32 @@ func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *User
 	return tasks
 }
 
-// GetToolsForUser returns the MCP tools a user may use for this operation, as
-// narrowed by selection (see ToolSelection).
+// GetTools returns the MCP tools available to a user or service-account agent,
+// narrowed by the request's selection before any server is contacted.
 //
 // Eligible servers this user has not connected yet are dialed now, in one
 // concurrent batch, so a cold request costs roughly the slowest server rather
 // than the sum of all of them. Servers outside the selection are never
 // contacted and never contribute tools, even if an earlier request cached a
 // session for one.
-func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors) {
-	return m.getToolsForUser(ctx, userID, selection, false)
+func (m *ClientManager) GetTools(ctx context.Context, req CatalogRequest) ([]llm.Tool, *Errors) {
+	return m.getTools(ctx, req, ToolSelection{}, false)
 }
 
-func (m *ClientManager) getToolsForUser(ctx context.Context, userID string, selection ToolSelection, forceRefresh bool) ([]llm.Tool, *Errors) {
-	userClients := m.getOrCreateUserClients(userID)
-	if userClients == nil {
+// GetToolsWithSelection is GetTools with request-scoped server eligibility.
+// Callers that enforce licensing or agent-specific origin selection must use
+// this entry point so excluded servers are never contacted.
+func (m *ClientManager) GetToolsWithSelection(ctx context.Context, req CatalogRequest, selection ToolSelection) ([]llm.Tool, *Errors) {
+	return m.getTools(ctx, req, selection, false)
+}
+
+func (m *ClientManager) getTools(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) ([]llm.Tool, *Errors) {
+	if err := req.validate(); err != nil {
+		return nil, &Errors{Errors: []error{err}}
+	}
+
+	remoteClients := m.getOrCreateClient(req.remoteKey())
+	if remoteClients == nil {
 		return nil, nil
 	}
 
@@ -361,24 +401,77 @@ func (m *ClientManager) getToolsForUser(ctx context.Context, userID string, sele
 	cfg := m.config
 	embeddedClient := m.embeddedClient
 	plugins := m.snapshotEnabledPluginServers()
-	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection)
+	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection, req.ServiceAccount)
+
+	var localClients *UserClients
+	if servers.embedded || len(servers.plugins) > 0 {
+		localClients = m.getOrCreateClient(clientKey{userID: req.InvokingUserID, kind: clientKindLocal})
+	}
+
 	var sessionID string
 	var sessionErr error
 	if servers.embedded {
 		// Mattermost session lookup, not an MCP dial. Kept inside the
 		// lifecycle read lock so task construction stays atomic with plan.
-		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(userID)
+		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(req.InvokingUserID)
 	}
-	tasks := m.buildConnectTasks(ctx, userClients, servers, embeddedClient, forceRefresh, sessionID, sessionErr)
-	plans, discarded := userClients.planConnections(tasks)
+
+	remoteOnly := servers
+	remoteOnly.plugins = nil
+	remoteOnly.embedded = false
+	remotePlans, discarded := remoteClients.planConnections(
+		m.buildConnectTasks(ctx, remoteClients, remoteOnly, embeddedClient, forceRefresh, "", nil),
+	)
+
+	var localPlans []connectPlan
+	if localClients != nil {
+		localOnly := servers
+		localOnly.remote = nil
+		var localDiscarded []*Client
+		localPlans, localDiscarded = localClients.planConnections(
+			m.buildConnectTasks(ctx, localClients, localOnly, embeddedClient, false, sessionID, sessionErr),
+		)
+		discarded = append(discarded, localDiscarded...)
+	}
 	m.lifecycleMu.RUnlock()
 
 	closeDetachedClients(m.log, discarded)
-	mcpErrors := userClients.executeConnections(ctx, plans)
 
-	rawTools := userClients.GetTools(ctx)
+	slots := make(chan struct{}, maxConcurrentConnections)
+	var remoteErrors, localErrors *Errors
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		remoteErrors = remoteClients.executeConnectionsWithSlots(ctx, remotePlans, slots)
+	})
+	if localClients != nil {
+		wg.Go(func() {
+			localErrors = localClients.executeConnectionsWithSlots(ctx, localPlans, slots)
+		})
+	}
+	wg.Wait()
+
+	var localSnapshot []userClientSnapshot
+	if localClients != nil {
+		localSnapshot = localClients.snapshotClients()
+	}
+	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
 	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, servers.plugins)
-	return retainToolsFromOrigins(filtered, servers.origins), mcpErrors
+	return retainToolsFromOrigins(filtered, servers.origins), joinMCPErrors(remoteErrors, localErrors)
+}
+
+func joinMCPErrors(groups ...*Errors) *Errors {
+	var joined *Errors
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		if joined == nil {
+			joined = &Errors{}
+		}
+		joined.ToolAuthErrors = append(joined.ToolAuthErrors, group.ToolAuthErrors...)
+		joined.Errors = append(joined.Errors, group.Errors...)
+	}
+	return joined
 }
 
 // retainToolsFromOrigins drops tools whose server is not part of this
@@ -400,7 +493,7 @@ func retainToolsFromOrigins(tools []llm.Tool, origins map[string]bool) []llm.Too
 
 // RefreshToolsForUser drops the cached user client and shared server tool
 // lists, then rediscovers every eligible server from scratch.
-func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string, selection ToolSelection) ([]llm.Tool, *Errors, error) {
+func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
 	if userID == "" {
 		return nil, nil, errors.New("userID is required")
 	}
@@ -410,7 +503,8 @@ func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string, 
 	}
 	m.InvalidateUserClients(userID)
 
-	tools, mcpErrors := m.getToolsForUser(ctx, userID, selection, true)
+	req := UserCatalogRequest(userID)
+	tools, mcpErrors := m.getTools(ctx, req, ToolSelection{}, true)
 	return tools, mcpErrors, nil
 }
 
@@ -421,12 +515,22 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 
 	cfg, _ := m.snapshotRuntime()
 	var refreshErr error
+	invalidate := func(cacheID string) {
+		if err := m.toolsCache.InvalidateServer(cacheID); err != nil {
+			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", cacheID, err))
+		}
+	}
+
 	for _, serverConfig := range cfg.Servers {
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" || !shouldUseSharedToolsCache(serverConfig) {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
-		if err := m.toolsCache.InvalidateServer(serverConfig.Name); err != nil {
-			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", serverConfig.Name, err))
+		if sharedToolsCacheAllowedForServer(serverConfig) {
+			invalidate(serverConfig.Name)
+		}
+		// Service-account entries are always shared-cached, even for static-OAuth servers.
+		if serverConfig.HasServiceAccountAuth() {
+			invalidate(serviceAccountToolsCacheID(serverConfig.Name))
 		}
 	}
 	return refreshErr
@@ -493,19 +597,25 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	return enabled
 }
 
-// InvalidateUserClients closes and removes cached MCP clients for a user.
+// InvalidateUserClients closes and removes cached MCP clients for a user, in both auth modes.
 func (m *ClientManager) InvalidateUserClients(userID string) {
 	if userID == "" {
 		return
 	}
 
 	m.clientsMu.Lock()
-	uc := m.clients[userID]
-	delete(m.clients, userID)
-	delete(m.activity, userID)
+	var discarded []*UserClients
+	for _, kind := range []clientKind{clientKindUserRemote, clientKindSARemote, clientKindLocal} {
+		key := clientKey{userID: userID, kind: kind}
+		if uc := m.clients[key]; uc != nil {
+			discarded = append(discarded, uc)
+			delete(m.clients, key)
+		}
+		delete(m.activity, key)
+	}
 	m.clientsMu.Unlock()
 
-	if uc != nil {
+	for _, uc := range discarded {
 		uc.Close()
 	}
 }
@@ -592,8 +702,18 @@ func (m *ClientManager) GetConfig() Config {
 
 // liveOriginIdentities is the connection-identity map ReInit uses to decide
 // which cached sessions remain valid. Tool policies are not part of identity.
-func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *EmbeddedServerClient) map[string]originIdentity {
+func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *EmbeddedServerClient, serviceAccount bool) map[string]originIdentity {
 	identities := remoteOriginIdentities(cfg)
+	if serviceAccount {
+		for _, server := range cfg.Servers {
+			if !server.HasServiceAccountAuth() {
+				delete(identities, server.BaseURL)
+				continue
+			}
+			base := identities[server.BaseURL]
+			identities[server.BaseURL] = remoteOriginIdentityForMode(server, !base.usable, true)
+		}
+	}
 
 	var embeddedServer EmbeddedMCPServer
 	if embeddedClient != nil {

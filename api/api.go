@@ -65,8 +65,8 @@ type MCPClientManager interface {
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
-	GetToolsForUser(ctx context.Context, userID string, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors)
-	RefreshToolsForUser(ctx context.Context, userID string, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors, error)
+	GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
+	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
@@ -544,7 +544,10 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
-	IsDefault             bool                   `json:"isDefault,omitempty"`
+	// UseServiceAccountAuth is the effective mode, not the raw agent flag: it is
+	// false when the server is not licensed for remote MCP.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
+	IsDefault             bool `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -553,8 +556,18 @@ type AIBotsResponse struct {
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 }
 
+// usesServiceAccountAuth reports the effective service account mode for a bot:
+// on an unlicensed server a service account agent runs in per-user mode, and the
+// webapp keys its per-user MCP UI off this value.
+func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
+	if a.contextBuilder == nil {
+		return bot.GetConfig().UseServiceAccountAuth
+	}
+	return a.contextBuilder.UsesServiceAccountCatalog(bot)
+}
+
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
+func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
@@ -589,6 +602,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
 			IsDefault:             isDefault,
 		})
 		if isDefault {
@@ -597,16 +611,12 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 		}
 	}
 
-	return bots, nil
+	return bots
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(userID)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
+	bots := a.getAIBotsForUser(userID)
 
 	// Check if search is enabled
 	searchEnabled := a.searchService.Enabled()

@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
@@ -46,7 +47,7 @@ func (m *mockToolProvider) GetTools(bot *bots.Bot, _ *llm.Context) []llm.Tool {
 
 type mockMCPClientManager struct{}
 
-func (m *mockMCPClientManager) GetToolsForUser(context.Context, string, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsWithSelection(context.Context, mcp.CatalogRequest, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 
@@ -146,7 +147,7 @@ func TestConversationMentionHandling(t *testing.T) {
 			mmBot := &model.Bot{
 				UserId: "botid",
 			}
-			llmInstance := llm.NewLanguageModelTestLogWrapper(t.T, t.LLM)
+			llmInstance := llmtest.NewLanguageModelTestLogWrapper(t.T, t.LLM)
 
 			_ = bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance)
 

@@ -47,7 +47,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 
 	t.Run("CreateUserTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username":   "devtestuser",
 				"email":      "devtest@example.com",
 				"password":   "devpassword123",
@@ -61,7 +61,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 
 		t.Run("MissingRequiredFields", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username": "incompleteuser",
 				// missing email and password
 			}
@@ -73,7 +73,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 
 	t.Run("CreateTeamTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"name":         "dev-test-team",
 				"display_name": "Dev Test Team",
 				"type":         "O",
@@ -86,7 +86,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 
 		t.Run("InvalidTeamType", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"name":         "invalid-team",
 				"display_name": "Invalid Team",
 				"type":         "X", // Invalid type
@@ -99,7 +99,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 
 	t.Run("AddTeamMemberTool", func(t *testing.T) {
 		// add_team_member is now a production tool; it is still callable in dev mode.
-		userArgs := map[string]interface{}{
+		userArgs := map[string]any{
 			"username": "teamuser",
 			"email":    "teamuser@example.com",
 			"password": "password123",
@@ -110,7 +110,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
 			// Extract user ID from result (simplified - in real implementation would parse JSON)
 			// For now, just test the API call structure
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id": testData.User.Id, // Use existing test user
 				"team_id": testData.Team.Id,
 			}
@@ -122,7 +122,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id": "invalid-user-id",
 				"team_id": testData.Team.Id,
 			}
@@ -134,7 +134,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 
 	t.Run("CreatePostAsUserTool", func(t *testing.T) {
 		// Create a test user with known credentials first
-		userArgs := map[string]interface{}{
+		userArgs := map[string]any{
 			"username": "postuser",
 			"email":    "postuser@example.com",
 			"password": "postpassword123",
@@ -143,7 +143,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		require.NoError(t, err, "User creation should succeed for post test")
 
 		// Add user to team (now a production tool)
-		addTeamArgs := map[string]interface{}{
+		addTeamArgs := map[string]any{
 			"user_id": testData.User.Id, // Using existing user for simplicity
 			"team_id": testData.Team.Id,
 		}
@@ -153,7 +153,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		testhelpers.AddUserToChannel(t, client, testData.Channel.Id, testData.User.Id)
 
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username":   "postuser",
 				"password":   "postpassword123",
 				"channel_id": testData.Channel.Id,
@@ -167,7 +167,7 @@ func TestDevToolsWithDevModeEnabled(t *testing.T) {
 		})
 
 		t.Run("InvalidCredentials", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username":   "postuser",
 				"password":   "wrongpassword",
 				"channel_id": testData.Channel.Id,
@@ -196,7 +196,7 @@ func TestDevToolsSecurityGating(t *testing.T) {
 
 	for _, toolName := range devTools {
 		t.Run("DevTool_"+toolName+"_BlockedInProductionMode", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"test": "value", // Generic args since they should be blocked anyway
 			}
 
@@ -211,7 +211,7 @@ func TestDevToolsSecurityGating(t *testing.T) {
 }
 
 // executeDevToolWithMCP creates a test MCP client session connected to the server and calls the dev tool
-func executeDevToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+func executeDevToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
 	require.NotNil(t, suite.mcpServer, "MCP server must be created before creating client sessions")
 	return testhelpers.ExecuteMCPTool(t, suite.mcpServer.GetMCPServer(), toolName, args)
 }

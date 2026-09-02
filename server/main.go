@@ -37,7 +37,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -274,7 +273,6 @@ func (p *Plugin) OnActivate() error {
 	// Skip constructor CREATE while a deferred reindex owns the ANN index.
 	embeddingsSearch, err := search.InitEmbeddingsSearch(
 		dbClient.DB,
-		llmUpstreamHTTPClient,
 		p.configuration.EmbeddingSearchConfig(),
 		licenseChecker,
 		indexer.DeferredIndexRebuildActive(mmClient),
@@ -299,7 +297,7 @@ func (p *Plugin) OnActivate() error {
 			ModelName:          cfg.GetModelName(),
 			HNSWM:              cfg.GetHNSWM(),
 			VectorElementType:  cfg.GetVectorElementType(),
-			IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+			IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 		}).Compatible
 	})
 
@@ -337,7 +335,6 @@ func (p *Plugin) OnActivate() error {
 	p.configuration.RegisterUpdateListener(func() {
 		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
 			dbClient.DB,
-			llmUpstreamHTTPClient,
 			p.configuration.EmbeddingSearchConfig(),
 			licenseChecker,
 			indexer.DeferredIndexRebuildActive(mmClient),
@@ -589,6 +586,8 @@ func (p *Plugin) applyTelemetryConfig() {
 }
 
 func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
+	p.conversationsService.MessageHasBeenPosted(c, post)
+
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
@@ -601,8 +600,6 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 			}
 		}
 	}
-
-	p.conversationsService.MessageHasBeenPosted(c, post)
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
