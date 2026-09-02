@@ -916,14 +916,17 @@ func (m *ClientManager) snapshotUserClients() []*UserClients {
 	return users
 }
 
-// ListPluginServers returns a stable snapshot without holding the registry lock
-// during caller work.
+// ListPluginServers returns a stable snapshot of live-registered plugin MCP
+// servers without holding the registry lock during caller work.
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
 
 	out := make([]PluginServerConfig, 0, len(m.pluginServers))
 	for _, cfg := range m.pluginServers {
+		if !m.pluginRegistered[cfg.PluginID] {
+			continue
+		}
 		out = append(out, cfg)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1042,29 +1045,23 @@ func ApplyPersistedPluginServerFields(live, persisted PluginServerConfig) Plugin
 }
 
 // syncPluginServersFromConfig merges persisted admin-owned plugin-server fields
-// onto live registrations and hydrates config-only rows without marking them
-// registered. Runtime snapshots exclude those orphan rows.
+// onto live-registered entries only. Config-only orphan rows keep their
+// identity/policy in config but never become runtime registry members —
+// hydratePluginRegistrations (KV) and RegisterPluginServer own membership.
 // Callers must not hold pluginServersMu.
 func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
 
-	if m.pluginServers == nil {
-		m.pluginServers = make(map[string]PluginServerConfig)
-	}
-	if m.pluginRegistered == nil {
-		m.pluginRegistered = make(map[string]bool)
-	}
-
 	for _, persisted := range cfg.PluginServers {
 		if persisted.PluginID == "" {
 			continue
 		}
-		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
-			m.pluginServers[persisted.PluginID] = ApplyPersistedPluginServerFields(existing, persisted)
-		} else {
-			m.pluginServers[persisted.PluginID] = persisted
+		existing, ok := m.pluginServers[persisted.PluginID]
+		if !ok || !m.pluginRegistered[persisted.PluginID] {
+			continue
 		}
+		m.pluginServers[persisted.PluginID] = ApplyPersistedPluginServerFields(existing, persisted)
 	}
 }
 

@@ -480,11 +480,9 @@ func TestClientManager_ConfigOnlyPluginServersAreNotRuntimeMembers(t *testing.T)
 	)
 	t.Cleanup(m.Close)
 
-	require.Len(t, m.ListPluginServers(), 1, "config-only rows remain visible to registry management")
-	got, ok := m.GetPluginServer("com.example.orphan")
-	require.True(t, ok)
-	require.Equal(t, orphanID, got.ID)
-	require.False(t, m.IsPluginRegistered("com.example.orphan"))
+	require.Empty(t, m.ListPluginServers(), "config-only rows must not appear in the live registry")
+	_, ok := m.GetPluginServer("com.example.orphan")
+	require.False(t, ok)
 	require.Empty(t, m.snapshotEnabledPluginServers())
 	require.Equal(t, orphanID, m.GetConfig().PluginServers[0].ID, "identity must survive in config")
 }
@@ -583,7 +581,7 @@ func TestApplyPersistedPluginServerFields(t *testing.T) {
 	}
 }
 
-func TestClientManager_ReInitHydratesConfigOnlyEntriesWithoutRegistering(t *testing.T) {
+func TestClientManager_ReInitDoesNotInsertConfigOnlyEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
@@ -608,11 +606,9 @@ func TestClientManager_ReInitHydratesConfigOnlyEntriesWithoutRegistering(t *test
 
 	m.ReInit(cfg, nil)
 
-	require.Len(t, m.ListPluginServers(), 1)
-	got, ok := m.GetPluginServer("com.example.mcp")
-	require.True(t, ok)
-	require.Equal(t, orphanID, got.ID)
-	require.False(t, m.IsPluginRegistered("com.example.mcp"))
+	require.Empty(t, m.ListPluginServers())
+	_, ok := m.GetPluginServer("com.example.mcp")
+	require.False(t, ok, "ReInit must not fabricate registry entries from config")
 	require.Equal(t, orphanID, m.GetConfig().PluginServers[0].ID)
 }
 
@@ -644,8 +640,7 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	}
 	m.ReInit(cfg, nil)
 
-	require.Len(t, m.ListPluginServers(), 2, "config-only rows remain available for management")
-	require.False(t, m.IsPluginRegistered("com.example.other"))
+	require.Len(t, m.ListPluginServers(), 1, "config-only other must not join the registry")
 	stillLive, ok := m.GetPluginServer("com.example.live")
 	require.True(t, ok, "runtime registration must survive ReInit")
 	require.Equal(t, live, stillLive)
