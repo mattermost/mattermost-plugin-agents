@@ -94,7 +94,6 @@ type ClientManager struct {
 
 // NewClientManager creates a new MCP client manager. embeddedServer may be nil.
 // sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
-// accessChecker filters external servers per user; nil disables filtering.
 func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client, accessCheckers ...ServerAccessChecker) *ClientManager {
 	var accessChecker ServerAccessChecker
 	if len(accessCheckers) > 0 {
@@ -806,8 +805,7 @@ func (m *ClientManager) pluginIdentityLocked(pluginID string) originIdentity {
 	return pluginOriginIdentity(m.pluginServers[pluginID])
 }
 
-// MCPServerIDByOrigin snapshots the stable-ID mapping for the manager's current
-// config. See config.MCPConfig.ServerIDByOrigin.
+// MCPServerIDByOrigin is config.MCPConfig.ServerIDByOrigin over the current config.
 func (m *ClientManager) MCPServerIDByOrigin() map[string]string {
 	cfg, _ := m.snapshotRuntime()
 	return cfg.ServerIDByOrigin()

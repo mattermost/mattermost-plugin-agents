@@ -12,13 +12,9 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
 
-// runABACIDMigrations runs the one-time ABAC identity migrations: legacy UUID
-// service IDs are rewritten to model.NewId() values, and MCP servers (external,
-// embedded, and plugin-registered) get stable IDs assigned. All run in a
-// single idempotent store transaction, guarded by one cluster mutex. Returns
-// whether the migration wrote to the DB. Callers must load config from the
-// store afterwards — Migrated=false means another node already wrote, not that
-// this process's memory is current.
+// runABACIDMigrations runs store.MigrateABACIDs under a cluster mutex. Callers must
+// reload config from the store afterwards — Migrated=false means another node
+// already wrote, not that this process's memory is current.
 func runABACIDMigrations(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store) (bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_abac_id_migration")
 	if err != nil {
