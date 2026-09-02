@@ -66,14 +66,19 @@ type LLM struct {
 	useResponsesAPI bool
 
 	// fallbacks is attached to every outgoing request so Bifrost retries with
-	// alternative providers when the primary fails. fallbackServiceIDs is
-	// parallel and used to prefix-filter the chain per requesting user.
-	fallbacks          []schemas.Fallback
-	fallbackServiceIDs []string
+	// alternative providers when the primary fails.
+	fallbacks []fallbackHop
 
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
+}
+
+// fallbackHop pairs a Bifrost fallback with the durable service ID it came
+// from, so the chain can be prefix-filtered per requesting user.
+type fallbackHop struct {
+	fallback  schemas.Fallback
+	serviceID string
 }
 
 // ProviderSettings holds the connection and credential fields needed to reach
@@ -169,8 +174,7 @@ func New(cfg Config) (*LLM, error) {
 		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
 	}
 
-	var fallbacks []schemas.Fallback
-	var fallbackServiceIDs []string
+	var fallbacks []fallbackHop
 	for _, fb := range cfg.Fallbacks {
 		if fb.APIKey != "" {
 			redactKeys = append(redactKeys, fb.APIKey)
@@ -204,11 +208,13 @@ func New(cfg Config) (*LLM, error) {
 		if supportsProviderFileDownloadProvider(fb.Provider) {
 			providerFileDownloadRoutes[name] = true
 		}
-		fallbacks = append(fallbacks, schemas.Fallback{
-			Provider: name,
-			Model:    fb.DefaultModel,
+		fallbacks = append(fallbacks, fallbackHop{
+			fallback: schemas.Fallback{
+				Provider: name,
+				Model:    fb.DefaultModel,
+			},
+			serviceID: fb.ID,
 		})
-		fallbackServiceIDs = append(fallbackServiceIDs, fb.ID)
 	}
 
 	client, err := newBifrostClient(account, redactKeys...)
@@ -236,7 +242,6 @@ func New(cfg Config) (*LLM, error) {
 		thinkingBudget:             cfg.ThinkingBudget,
 		useResponsesAPI:            cfg.UseResponsesAPI,
 		fallbacks:                  fallbacks,
-		fallbackServiceIDs:         fallbackServiceIDs,
 		providerFileDownloadRoutes: providerFileDownloadRoutes,
 	}, nil
 }
@@ -567,7 +572,7 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 // primary and every fallback are Anthropic; a mixed chain would 400 the
 // fallback request.
 func (b *LLM) promptCachingEnabled() bool {
-	return b.promptCachingEnabledFor(b.fallbacks)
+	return b.promptCachingEnabledFor(b.requestFallbacks(llm.CompletionRequest{}))
 }
 
 func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
@@ -587,27 +592,17 @@ func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
 // RestrictFallbacks truncates at the first hop whose service ID is not in
 // AllowedFallbackServiceIDs so a denied hop is never skipped over.
 func (b *LLM) requestFallbacks(request llm.CompletionRequest) []schemas.Fallback {
-	if !request.RestrictFallbacks {
-		return b.fallbacks
-	}
-
 	allowed := make(map[string]struct{}, len(request.AllowedFallbackServiceIDs))
 	for _, id := range request.AllowedFallbackServiceIDs {
-		if id != "" {
-			allowed[id] = struct{}{}
-		}
+		allowed[id] = struct{}{}
 	}
 
 	var out []schemas.Fallback
-	for i, fallback := range b.fallbacks {
-		var id string
-		if i < len(b.fallbackServiceIDs) {
-			id = b.fallbackServiceIDs[i]
-		}
-		if _, ok := allowed[id]; !ok {
+	for _, hop := range b.fallbacks {
+		if _, ok := allowed[hop.serviceID]; request.RestrictFallbacks && !ok {
 			break
 		}
-		out = append(out, fallback)
+		out = append(out, hop.fallback)
 	}
 	return out
 }

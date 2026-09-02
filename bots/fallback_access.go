@@ -6,25 +6,21 @@ package bots
 import (
 	"context"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// AllowedFallbackServiceIDs returns the prefix of primaryServiceID's fallback
+// allowedFallbackServiceIDs returns the prefix of primaryServiceID's fallback
 // chain the user may use. Walks hops in order and stops at the first deny or
 // evaluation error (later hops are not skipped). The primary is not included.
 // A resolve error fails closed: callers must not attach the configured chain.
-func AllowedFallbackServiceIDs(ctx context.Context, checker *accesscontrol.Checker, userID, primaryServiceID string, getServiceByID func(id string) (llm.ServiceConfig, bool)) ([]string, error) {
-	if getServiceByID == nil {
-		return nil, nil
-	}
-	chain, err := llm.ResolveFallbackChain(primaryServiceID, getServiceByID)
+func (m *MMBots) allowedFallbackServiceIDs(ctx context.Context, userID, primaryServiceID string) ([]string, error) {
+	chain, err := llm.ResolveFallbackChain(primaryServiceID, m.config.GetServiceByID)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	for _, svc := range chain {
-		if err := checker.CanUseService(ctx, userID, svc.ID); err != nil {
+		if err := m.accessChecker.CanUseService(ctx, userID, svc.ID); err != nil {
 			break
 		}
 		ids = append(ids, svc.ID)
@@ -52,7 +48,7 @@ func (w *fallbackAccessLLM) apply(ctx context.Context, request *llm.CompletionRe
 	if request.Context == nil || request.Context.RequestingUser == nil || request.Context.RequestingUser.Id == "" {
 		return
 	}
-	ids, err := AllowedFallbackServiceIDs(ctx, w.bots.accessChecker, request.Context.RequestingUser.Id, w.primaryServiceID, w.bots.serviceByID())
+	ids, err := w.bots.allowedFallbackServiceIDs(ctx, request.Context.RequestingUser.Id, w.primaryServiceID)
 	request.RestrictFallbacks = true
 	if err != nil {
 		if w.bots.pluginAPI != nil {

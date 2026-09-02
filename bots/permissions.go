@@ -117,17 +117,10 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 	return fmt.Errorf("unknown user assistance level")
 }
 
-func (m *MMBots) serviceByID() func(id string) (llm.ServiceConfig, bool) {
-	if m.config == nil {
-		return nil
-	}
-	return m.config.GetServiceByID
-}
-
 // CheckUsageRestrictionsForUserConfig is the composite per-request user gate:
 // ABAC agent decision (legacy UserAccessLevel as legacyCheck), then ABAC
 // service for cfg.ServiceID. Denied fallback hops are dropped per request
-// rather than hiding the agent; see AllowedFallbackServiceIDs.
+// rather than hiding the agent; see allowedFallbackServiceIDs.
 func (m *MMBots) CheckUsageRestrictionsForUserConfig(ctx context.Context, cfg llm.BotConfig, requestingUserID string) error {
 	legacy := func() error { return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID) }
 	if err := m.accessChecker.CanUseAgent(ctx, requestingUserID, &cfg, legacy); err != nil {

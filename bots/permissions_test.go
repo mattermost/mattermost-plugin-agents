@@ -726,12 +726,12 @@ func TestAllowedFallbackServiceIDs(t *testing.T) {
 	primaryID := model.NewId()
 	fallbackID := model.NewId()
 	fallback2ID := model.NewId()
+	fallback3ID := model.NewId()
 
 	tests := []struct {
 		name     string
 		perID    map[string]*model.AccessDecision
 		services []llm.ServiceConfig
-		nilGet   bool
 		want     []string
 		wantErr  bool
 	}{
@@ -773,8 +773,18 @@ func TestAllowedFallbackServiceIDs(t *testing.T) {
 			want: []string{fallbackID, fallback2ID},
 		},
 		{
-			name:   "nil getServiceByID drops fallbacks",
-			nilGet: true,
+			name: "middle hop denied truncates rather than skips",
+			perID: map[string]*model.AccessDecision{
+				fallback2ID: abacDeny(),
+				fallback3ID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, fallback3ID),
+				openAIService(fallback3ID, ""),
+			},
+			want: []string{fallbackID},
 		},
 		{
 			name: "cycle fails closed",
@@ -792,11 +802,7 @@ func TestAllowedFallbackServiceIDs(t *testing.T) {
 			defer e.Cleanup(t)
 			e.bots.config = &mockConfig{services: tc.services}
 
-			var get func(id string) (llm.ServiceConfig, bool)
-			if !tc.nilGet {
-				get = e.bots.serviceByID()
-			}
-			got, err := AllowedFallbackServiceIDs(context.Background(), e.bots.accessChecker, userID, primaryID, get)
+			got, err := e.bots.allowedFallbackServiceIDs(context.Background(), userID, primaryID)
 			if tc.wantErr {
 				require.Error(t, err)
 				require.Nil(t, got)
