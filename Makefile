@@ -300,7 +300,8 @@ ifneq ($(HAS_SERVER),)
 	@echo Running golangci-lint
 	$(GO) vet ./...
 	$(GOBIN)/golangci-lint run ./...
-	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
+	# npm dependencies can contain Go packages; do not lint third-party sources.
+	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 $$($(GO) list ./... | awk '!/\/node_modules\//')
 	$(MAKE) loadtest-controller-lint
 endif
 
