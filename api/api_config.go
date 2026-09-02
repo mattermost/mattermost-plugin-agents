@@ -71,6 +71,14 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	cfg = normalizeAdminConfig(cfg)
 
+	// Duplicate MCP server names or endpoints are rejected here rather than at
+	// activation: names key the per-user client map, the shared tools cache,
+	// and stored OAuth grants, so colliding entries silently shadow each other.
+	if err := cfg.MCP.Validate(); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid MCP configuration: %w", err))
+		return
+	}
+
 	// Audit which top-level config sections change — never their values,
 	// since services/webSearch/mcp carry credentials. Best effort: a failed
 	// read of the prior config must not block the save, so the record then

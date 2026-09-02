@@ -4,6 +4,7 @@
 package llmcontext
 
 import (
+	stdcontext "context"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -52,8 +53,37 @@ func newLicenseTestBuilder(t *testing.T, licensed bool, toolProvider ToolProvide
 	)
 }
 
-func licenseTestMCPProvider() *staticMCPToolProvider {
-	return &staticMCPToolProvider{tools: []llm.Tool{
+// selectionHonoringMCPProvider mimics the real client manager's contract:
+// servers outside the selection are never contacted, so their tools and auth
+// errors never appear in the result. The license gate is enforced solely
+// through that selection, which is what these tests pin end to end.
+type selectionHonoringMCPProvider struct {
+	tools  []llm.Tool
+	errors *mcp.Errors
+}
+
+func (p *selectionHonoringMCPProvider) GetToolsWithSelection(_ stdcontext.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	var tools []llm.Tool
+	for _, tool := range p.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+
+	if p.errors == nil {
+		return tools, nil
+	}
+	mcpErrors := &mcp.Errors{Errors: p.errors.Errors}
+	for _, authErr := range p.errors.ToolAuthErrors {
+		if selection.Allows(authErr.ServerOrigin) {
+			mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, authErr)
+		}
+	}
+	return tools, mcpErrors
+}
+
+func licenseTestMCPProvider() *selectionHonoringMCPProvider {
+	return &selectionHonoringMCPProvider{tools: []llm.Tool{
 		testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
 		testMCPTool("jira__get_issue", licenseTestRemoteOrigin, "fetch Jira issue details"),
 	}}

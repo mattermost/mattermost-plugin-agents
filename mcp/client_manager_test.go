@@ -173,11 +173,11 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
 	cfgB := PluginServerConfig{PluginID: "b", Name: "B", Path: "/mcp", Enabled: false}
 
-	m.RegisterPluginServer(cfgA)
 	m.RegisterPluginServer(cfgB)
+	m.RegisterPluginServer(cfgA)
 
 	list := m.ListPluginServers()
-	require.Len(t, list, 2)
+	require.Equal(t, []PluginServerConfig{cfgA, cfgB}, list)
 
 	cfgA2 := PluginServerConfig{PluginID: "a", Name: "A prime", Path: "/mcp", Enabled: true}
 	m.RegisterPluginServer(cfgA2)
@@ -620,7 +620,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "no errors expected on happy path")
 	require.Len(t, tools, 2, "expected 2 tools from plugin server")
 	for _, tool := range tools {
@@ -650,7 +650,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	}
 	m.RegisterPluginServer(cfg)
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "no errors expected when plugin is simply disabled")
 	require.Empty(t, tools, "disabled plugin must contribute zero tools")
 
@@ -700,7 +700,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 				Enabled:  true,
 			})
 
-			tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+			tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 			require.NotNil(t, mcpErrors, "plugin connection failure must be surfaced")
 			require.NotEmpty(t, mcpErrors.Errors, "plugin connection failure must populate generic MCP errors")
 			require.Empty(t, mcpErrors.ToolAuthErrors, "plugin HTTP failures should not be treated as OAuth errors")
@@ -748,14 +748,14 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 		Enabled:  true,
 	})
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Empty(t, tools)
 	require.NotNil(t, mcpErrors)
 	require.NotEmpty(t, mcpErrors.Errors)
 
 	failing.Store(false)
 
-	tools, mcpErrors = m.GetToolsForUser(context.Background(), "alice")
+	tools, mcpErrors = m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors, "successful plugin reconnect must not return the prior transient error")
 	require.Len(t, tools, 1)
 }
@@ -792,7 +792,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.b", Name: "B", Path: "/mcp", Enabled: true})
 
-	tools, mcpErrors := m.GetToolsForUser(context.Background(), "alice")
+	tools, mcpErrors := m.GetTools(context.Background(), UserCatalogRequest("alice"))
 	require.Nil(t, mcpErrors)
 	require.Len(t, tools, 3, "expected 2 tools from A + 1 tool from B")
 
@@ -1092,9 +1092,9 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 		"service account entries are invalidated even when static OAuth credentials are configured")
 }
 
-func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {
+func TestClientManagerGetOrCreateUserClientsSetsInitialActivity(t *testing.T) {
 	mockAPI := &plugintest.API{}
-	mockAPI.On("LogDebug", "No remote MCP servers provided for user", "userID", "user-1").Return().Maybe()
+	setupTestLogger(mockAPI)
 	client := pluginapi.NewClient(mockAPI, nil)
 	manager := &ClientManager{
 		config:   Config{},
@@ -1104,17 +1104,20 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), clientKey{userID: "user-1"}, false)
+	key := clientKey{userID: "user-1", kind: clientKindUserRemote}
+	userClients := manager.getOrCreateClient(key)
 	after := time.Now()
 
 	require.NotNil(t, userClients)
-	require.Nil(t, mcpErrors)
-	require.Contains(t, manager.clients, clientKey{userID: "user-1"})
+	require.Contains(t, manager.clients, key)
 
-	lastActivity, ok := manager.activity[clientKey{userID: "user-1"}]
+	lastActivity, ok := manager.activity[key]
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 	require.False(t, lastActivity.After(after))
+
+	require.Same(t, userClients, manager.getOrCreateClient(key),
+		"a second lookup must reuse the registered instance so concurrent cold requests share one session per server")
 }
 
 func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
@@ -1126,7 +1129,7 @@ func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
 	require.NoError(t, cacheCtx.Err())
 }
 
-func TestClientManagerGetClientExistingClientConcurrent(t *testing.T) {
+func TestClientManagerGetOrCreateClientExistingClientConcurrent(t *testing.T) {
 	before := time.Now()
 	userClients := &UserClients{clients: map[string]*Client{}}
 	manager := &ClientManager{
@@ -1147,9 +1150,8 @@ func TestClientManagerGetClientExistingClientConcurrent(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			for range iterations {
-				got, errs := manager.getClient(context.Background(), clientKey{userID: "user-1"})
-				if got != userClients || errs != nil {
-					t.Errorf("getClient returned unexpected result: got=%p errs=%v", got, errs)
+				if got := manager.getOrCreateClient(clientKey{userID: "user-1"}); got != userClients {
+					t.Errorf("getOrCreateClient returned unexpected result: got=%p", got)
 					return
 				}
 			}

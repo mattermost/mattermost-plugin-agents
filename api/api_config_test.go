@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -317,6 +318,72 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
 				assert.Equal(t, 0, notifier.callCount, "cluster notify should not be called on bad request")
+			},
+		},
+		{
+			// Server names key the per-user client map, the shared tools cache,
+			// and stored OAuth grants, so a duplicate silently shadows a server.
+			name: "rejects duplicate MCP server names",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Jira", BaseURL: "https://a.example.com/mcp", Enabled: true},
+						{Name: "Jira", BaseURL: "https://b.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "duplicate MCP servers must be rejected before persistence")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "rejects canonically equivalent MCP server URLs",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://MCP.Example.com:443/mcp/", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "accepts distinct MCP servers on the same host",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://mcp.example.com/alpha", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/beta?tenant=b", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Len(t, store.cfg.MCP.Servers, 2)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 1, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
 			},
 		},
 	}

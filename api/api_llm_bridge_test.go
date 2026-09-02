@@ -1719,7 +1719,7 @@ type fakeBridgeMCPToolProvider struct {
 	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if req.ServiceAccount {
 		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
 		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)

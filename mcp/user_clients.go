@@ -22,6 +22,15 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
+const (
+	maxConcurrentConnections = 32
+	// embeddedConnectTimeout bounds one in-memory embedded MCP handshake.
+	embeddedConnectTimeout = 10 * time.Second
+	// pluginConnectTimeout bounds one plugin MCP handshake and initial tools
+	// listing. PluginHTTP has no transport-level timeout of its own.
+	pluginConnectTimeout = 30 * time.Second
+)
+
 // ToolInfo represents a tool's metadata for discovery purposes
 type ToolInfo struct {
 	Name        string `json:"name"`
@@ -40,11 +49,96 @@ type UserClients struct {
 	oauthManager *OAuthManager
 	httpClient   *http.Client
 	toolsCache   *ToolsCache
-	// initialRemoteConnectErrors holds OAuth / connect failures from the first
-	// ConnectToRemoteServers. It must be re-returned on every lookup while this
-	// bag is cached; otherwise callers only see those errors once and lose
-	// stable auth-required state on subsequent requests.
-	initialRemoteConnectErrors *Errors
+	// attempts records one connect attempt per server origin. It is what makes
+	// this cache incremental: a newly eligible origin is dialed on the request
+	// that first needs it, an origin already dialed is not dialed again, and a
+	// remembered failure keeps being reported so callers do not lose stable
+	// auth-required state on later requests.
+	attempts map[string]*originAttempt
+	// closed marks the client as torn down so a dial that finishes after
+	// Close does not resurrect a session nobody will ever close.
+	closed bool
+
+	// admission is the manager-wide network-connection gate. Nil in tests that
+	// construct a UserClients directly, which then skip the aggregate cap.
+	admission *connectionAdmission
+}
+
+// originAttempt is one user's connect attempt against a single MCP server
+// origin. done is closed once the attempt finishes, at which point err is
+// safe to read; concurrent callers wait on it instead of dialing the same
+// server twice for the same user.
+type originAttempt struct {
+	done chan struct{}
+	err  error
+	// identity is the connection identity used when this attempt was created.
+	// ReInit compares it to the new config so a still-valid session is kept.
+	identity originIdentity
+}
+
+func (a *originAttempt) finished() bool {
+	select {
+	case <-a.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// wait blocks until the attempt finishes and returns its outcome. A caller
+// whose request is canceled while waiting gets the cancellation error instead;
+// the attempt itself keeps running because its result warms a shared cache.
+func (a *originAttempt) wait(ctx context.Context) error {
+	// An already-finished attempt reports its own outcome even to a canceled
+	// caller, so a remembered failure is reported the same way every time.
+	if a.finished() {
+		return a.err
+	}
+
+	select {
+	case <-a.done:
+		return a.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// connectTask is one pending MCP connection attempt. dial does the network
+// work and must not touch shared state: the batch commits the returned clients
+// after every dial has finished, so worker completion order cannot decide
+// which session ends up cached.
+type connectTask struct {
+	// origin identifies the server for eligibility and singleflight purposes.
+	origin string
+	// serverID keys the resulting client in the clients map.
+	serverID string
+	// serverName labels errors surfaced to callers.
+	serverName string
+	// retryable re-dials on a later request instead of remembering a failure
+	// until the user client is invalidated.
+	retryable bool
+	// silent keeps failures out of the returned Errors. The embedded server
+	// degrades to "no embedded tools" rather than surfacing a user-visible
+	// error.
+	silent bool
+	// replaces commits over an already-connected client for this origin.
+	replaces bool
+	// identity is the connection identity recorded on the attempt so ReInit
+	// can tell a still-valid session from a stale one.
+	identity originIdentity
+	dial     func() (*Client, error)
+}
+
+// connectPlan is a connectTask bound to the attempt that will produce (or has
+// already produced) its outcome.
+type connectPlan struct {
+	task    connectTask
+	attempt *originAttempt
+	// dialing reports whether this caller owns the attempt. When false the
+	// attempt belongs to an earlier or concurrent caller and is only waited on.
+	dialing bool
+	client  *Client
+	err     error
 }
 
 type userClientSnapshot struct {
@@ -57,6 +151,7 @@ func newClients(userID string, kind clientKind, log pluginapi.LogService, oauthM
 	return &UserClients{
 		log:          log,
 		clients:      make(map[string]*Client),
+		attempts:     make(map[string]*originAttempt),
 		userID:       userID,
 		kind:         kind,
 		oauthManager: oauthManager,
@@ -77,6 +172,10 @@ func newLocalClients(userID string, log pluginapi.LogService, httpClient *http.C
 	return newClients(userID, clientKindLocal, log, nil, httpClient, toolsCache)
 }
 
+func (c *UserClients) serviceAccount() bool {
+	return c.kind == clientKindSARemote
+}
+
 func (c *UserClients) allowsRemote() bool {
 	return c.kind == clientKindUserRemote || c.kind == clientKindSARemote
 }
@@ -85,139 +184,453 @@ func (c *UserClients) allowsLocal() bool {
 	return c.kind == clientKindLocal
 }
 
-func (c *UserClients) serviceAccount() bool {
-	return c.kind == clientKindSARemote
-}
-
-// ConnectToRemoteServers initializes connections to remote MCP servers.
+// ConnectToRemoteServers connects an explicitly constructed remote bag. The
+// manager normally narrows this list by request eligibility before calling the
+// same task machinery.
 func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
 	if !c.allowsRemote() {
 		return &Errors{Errors: []error{fmt.Errorf("remote connect is only valid on remote client bags")}}
 	}
-	if len(servers) == 0 {
-		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
-		return nil
+
+	tasks := make([]connectTask, 0, len(servers))
+	for _, server := range servers {
+		if !server.Enabled || server.BaseURL == "" {
+			continue
+		}
+		if c.serviceAccount() && !server.HasServiceAccountAuth() {
+			continue
+		}
+		tasks = append(tasks, c.remoteConnectTask(ctx, server, RemoteConnectTimeout, forceRefresh))
 	}
-
-	var mcpErrors *Errors
-
-	// Connect to remote servers
-	for _, serverConfig := range servers {
-		if serverConfig.BaseURL == "" {
-			c.log.Warn("Skipping MCP server with empty BaseURL", "serverID", serverConfig.Name)
-			continue
-		}
-
-		// Fail closed: no service account credential means the server is excluded,
-		// never a fallback to user OAuth.
-		if c.serviceAccount() && !serverConfig.HasServiceAccountAuth() {
-			c.log.Debug("Skipping MCP server without service account headers in service account mode",
-				"userID", c.userID, "serverID", serverConfig.Name)
-			continue
-		}
-
-		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig, forceRefresh); err != nil {
-			// Initialize errors struct if needed
-			if mcpErrors == nil {
-				mcpErrors = &Errors{}
-			}
-
-			// Check if this is an OAuth authentication error
-			if oauthErr, ok := errors.AsType[*OAuthNeededError](err); ok {
-				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
-					ServerName:   serverConfig.Name,
-					ServerOrigin: serverConfig.BaseURL,
-					AuthURL:      oauthErr.AuthURL(),
-					Error:        err,
-				})
-			} else {
-				c.log.Error("Failed to connect to MCP server", "userID", c.userID, "serverID", serverConfig.Name, "error", err)
-				mcpErrors.Errors = append(mcpErrors.Errors, err)
-			}
-			continue
-		}
-	}
-
-	return mcpErrors
+	return c.ensureConnections(ctx, tasks)
 }
 
-// ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
+// ConnectToEmbeddedServerIfAvailable connects a local bag when the session has
+// changed. It delegates to the singleflight task path used by ClientManager.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
 	if !c.allowsLocal() {
 		return fmt.Errorf("embedded connect is only valid on local client bags")
 	}
-	if !embeddedConfig.Enabled || embeddedClient == nil {
+	if !embeddedConfig.Enabled || embeddedClient == nil || !c.needsEmbeddedReconnect(sessionID) {
 		return nil
 	}
 
-	if sessionID == "" {
-		return nil
-	}
-
-	c.clientsMu.RLock()
-	existingClient := c.clients[EmbeddedClientKey]
-	c.clientsMu.RUnlock()
-	if existingClient != nil && existingClient.sessionID == sessionID {
-		return nil
-	}
-
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	serverClient, err := embeddedClient.CreateClient(ctxWithTimeout, c.userID, sessionID)
-	if err != nil {
-		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
-		return fmt.Errorf("failed to connect to embedded server: %w", err)
-	}
-
-	c.clientsMu.Lock()
-	existingClient = c.clients[EmbeddedClientKey]
-	if existingClient != nil && existingClient.sessionID == sessionID {
-		c.clientsMu.Unlock()
-		if err := serverClient.Close(); err != nil {
-			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
-		}
-		return nil
-	}
-	c.clients[EmbeddedClientKey] = serverClient
-	c.clientsMu.Unlock()
-
-	if existingClient != nil {
-		if err := existingClient.Close(); err != nil {
-			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", EmbeddedClientKey, "error", err)
-		}
-		c.log.Debug("Reconnected to embedded MCP server with refreshed session", "userID", c.userID)
-	} else {
-		c.log.Debug("Successfully connected to embedded MCP server", "userID", c.userID)
-	}
-
-	return nil
+	task := c.embeddedConnectTask(ctx, sessionID, embeddedClient)
+	task.silent = false
+	return firstConnectError(c.ensureConnections(ctx, []connectTask{task}))
 }
 
-// connectToServer establishes a connection to a single server
-func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig, forceRefresh bool) error {
-	serverClient, err := newClient(ctx, c.userID, serverConfig, clientParams{
-		log:            c.log,
-		oauthManager:   c.oauthManager,
-		httpClient:     c.httpClient,
-		toolsCache:     c.toolsCache,
-		forceRefresh:   forceRefresh,
-		serviceAccount: c.serviceAccount(),
-	})
-	if err != nil {
-		return err
+// ConnectToPluginServer connects a local bag through PluginHTTP using the
+// invoking user's identity.
+func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
+	if !c.allowsLocal() {
+		return fmt.Errorf("plugin connect is only valid on local client bags")
 	}
+	return firstConnectError(c.ensureConnections(ctx, []connectTask{
+		c.pluginConnectTask(ctx, cfg, pluginConnectTimeout, sourcePluginAPI),
+	}))
+}
+
+func firstConnectError(mcpErrors *Errors) error {
+	if mcpErrors == nil {
+		return nil
+	}
+	var joined error
+	for _, authErr := range mcpErrors.ToolAuthErrors {
+		joined = errors.Join(joined, authErr.Error)
+	}
+	return errors.Join(joined, errors.Join(mcpErrors.Errors...))
+}
+
+// ensureConnections plans then executes tasks. Direct test callers use this
+// wrapper; ClientManager plans under lifecycleMu and executes after unlock.
+func (c *UserClients) ensureConnections(ctx context.Context, tasks []connectTask) *Errors {
+	plans, discarded := c.planConnections(tasks)
+	closeDetachedClients(c.log, discarded)
+	return c.executeConnections(ctx, plans)
+}
+
+// executeConnections dials every planned origin concurrently and merges
+// results in task order, so the returned errors do not depend on which server
+// answered first.
+func (c *UserClients) executeConnections(ctx context.Context, plans []connectPlan) *Errors {
+	return c.executeConnectionsWithSlots(ctx, plans, make(chan struct{}, maxConcurrentConnections))
+}
+
+func (c *UserClients) executeConnectionsWithSlots(ctx context.Context, plans []connectPlan, slots chan struct{}) *Errors {
+	if len(plans) == 0 {
+		return nil
+	}
+
+	dialers := make([]*connectPlan, 0, len(plans))
+	for i := range plans {
+		if plans[i].dialing {
+			dialers = append(dialers, &plans[i])
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, plan := range dialers {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			plan.client, plan.err = plan.task.dial()
+		})
+	}
+	wg.Wait()
+
+	c.commitDials(dialers)
+
+	var mcpErrors *Errors
+	for i := range plans {
+		if !plans[i].dialing {
+			// An origin another caller is already dialing resolves to that
+			// caller's result, so a user ends up with one session per server.
+			plans[i].err = plans[i].attempt.wait(ctx)
+		}
+		mcpErrors = c.recordConnectFailure(mcpErrors, plans[i])
+	}
+	return mcpErrors
+}
+
+// planConnections decides, for each task, whether this caller dials the origin,
+// waits on an in-flight attempt, or reuses a remembered outcome. An existing
+// attempt whose identity does not match the task is detached so a later commit
+// cannot resurrect the old session. Callers must close the returned clients
+// after releasing any manager lifecycle lock.
+func (c *UserClients) planConnections(tasks []connectTask) ([]connectPlan, []*Client) {
 	c.clientsMu.Lock()
 	defer c.clientsMu.Unlock()
-	c.clients[serverID] = serverClient
-	return nil
+
+	if c.closed {
+		return nil, nil
+	}
+
+	if c.attempts == nil {
+		c.attempts = make(map[string]*originAttempt, len(tasks))
+	}
+
+	var discarded []*Client
+	plans := make([]connectPlan, 0, len(tasks))
+	for _, task := range tasks {
+		existing := c.attempts[task.origin]
+		if existing != nil && existing.identity != task.identity {
+			// The cached outcome describes a server this task no longer
+			// describes, so it cannot answer for it.
+			discarded = append(discarded, c.detachOriginsLocked(task.origin)...)
+			existing = nil
+		}
+
+		if existing != nil {
+			switch {
+			case !existing.finished():
+				plans = append(plans, connectPlan{task: task, attempt: existing})
+				continue
+			case existing.err == nil && !task.replaces:
+				continue
+			case existing.err != nil && !task.retryable:
+				plans = append(plans, connectPlan{task: task, attempt: existing})
+				continue
+			}
+		}
+
+		attempt := &originAttempt{done: make(chan struct{}), identity: task.identity}
+		c.attempts[task.origin] = attempt
+		plans = append(plans, connectPlan{task: task, attempt: attempt, dialing: true})
+	}
+
+	return plans, discarded
 }
 
-func (c *UserClients) hasClient(serverID string) bool {
+// commitDials publishes every dial outcome under one lock so a waiter cannot
+// observe a finished attempt before its session is reachable.
+func (c *UserClients) commitDials(dialers []*connectPlan) {
+	if len(dialers) == 0 {
+		return
+	}
+
+	var discarded []*Client
+
+	c.clientsMu.Lock()
+	for _, plan := range dialers {
+		// A stale attempt lost its origin to an identity change or a teardown
+		// while it was dialing, so its session must never become reachable.
+		stale := c.attempts[plan.task.origin] != plan.attempt
+		gateFailure := errors.Is(plan.err, errAdmissionUnavailable)
+
+		if gateFailure && !stale {
+			// A local gate failure is not an upstream failure. Drop the attempt
+			// so a later request retries instead of remembering it.
+			delete(c.attempts, plan.task.origin)
+		}
+
+		switch {
+		case plan.client == nil:
+		case plan.err != nil || stale || gateFailure || c.closed:
+			discarded = append(discarded, plan.client)
+		default:
+			if previous := c.clients[plan.task.serverID]; previous != nil {
+				discarded = append(discarded, previous)
+			}
+			c.clients[plan.task.serverID] = plan.client
+		}
+
+		plan.attempt.err = plan.err
+		close(plan.attempt.done)
+	}
+	c.clientsMu.Unlock()
+
+	closeDetachedClients(c.log, discarded)
+}
+
+func (c *UserClients) recordConnectFailure(mcpErrors *Errors, plan connectPlan) *Errors {
+	if plan.err == nil {
+		return mcpErrors
+	}
+
+	if plan.task.silent {
+		c.log.Debug("MCP server unavailable for user",
+			"userID", c.userID, "serverID", plan.task.serverID, "error", plan.err)
+		return mcpErrors
+	}
+
+	if mcpErrors == nil {
+		mcpErrors = &Errors{}
+	}
+
+	if oauthErr, ok := errors.AsType[*OAuthNeededError](plan.err); ok {
+		mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
+			ServerName:   plan.task.serverName,
+			ServerOrigin: plan.task.origin,
+			AuthURL:      oauthErr.AuthURL(),
+			Error:        plan.err,
+		})
+		return mcpErrors
+	}
+
+	// Only the caller that performed the dial logs it; a remembered failure is
+	// replayed on every later request and would otherwise flood the log.
+	if plan.dialing {
+		c.log.Error("Failed to connect to MCP server",
+			"userID", c.userID, "serverID", plan.task.serverID, "serverOrigin", plan.task.origin, "error", plan.err)
+	}
+	mcpErrors.Errors = append(mcpErrors.Errors, plan.err)
+	return mcpErrors
+}
+
+// cacheableContext strips cancellation from a request context so work that
+// outlives the request, and is reused by later ones, is not tied to it.
+func cacheableContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
+// remoteConnectTask builds the task for one admin-configured remote MCP server.
+// The resulting session warms a cache shared by later requests, so neither the
+// wait for a connection permit nor the dial itself may inherit this request's
+// cancellation: a closed popover would otherwise leave every later request
+// with a remembered "canceled" failure. budget bounds the sequence instead.
+func (c *UserClients) remoteConnectTask(ctx context.Context, serverConfig ServerConfig, budget time.Duration, forceRefresh bool) connectTask {
+	dialCtx := cacheableContext(ctx)
+	serviceAccount := c.serviceAccount()
+	return connectTask{
+		origin:     serverConfig.BaseURL,
+		serverID:   serverConfig.Name,
+		serverName: serverConfig.Name,
+		identity:   remoteOriginIdentityForMode(serverConfig, false, serviceAccount),
+		dial: func() (*Client, error) {
+			return c.dialAdmitted(dialCtx, func() (*Client, error) {
+				return newClientWithTimeout(dialCtx, budget, c.userID, serverConfig, clientParams{
+					log:            c.log,
+					oauthManager:   c.oauthManager,
+					httpClient:     c.httpClient,
+					toolsCache:     c.toolsCache,
+					forceRefresh:   forceRefresh,
+					serviceAccount: serviceAccount,
+				})
+			})
+		},
+	}
+}
+
+// remoteOriginIdentityForMode keeps user and service-account sessions sensitive
+// only to the credentials their auth mode actually sends.
+func remoteOriginIdentityForMode(server ServerConfig, conflicting, serviceAccount bool) originIdentity {
+	identity := remoteOriginIdentity(server, conflicting)
+	if !serviceAccount {
+		return identity
+	}
+
+	headers := remoteConnectionHeaders("", server, true)
+	delete(headers, MMUserIDHeader)
+	identity.credentials = credentialDigest("", "", headers)
+	identity.usable = identity.usable && server.HasServiceAccountAuth()
+	return identity
+}
+
+// embeddedConnectTask builds the task for the embedded Mattermost MCP server.
+// It replaces any cached session because the caller only schedules it when the
+// user's embedded session ID changed.
+func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient) connectTask {
+	var server EmbeddedMCPServer
+	if embeddedClient != nil {
+		server = embeddedClient.server
+	}
+	return connectTask{
+		origin:     EmbeddedClientKey,
+		serverID:   EmbeddedClientKey,
+		serverName: EmbeddedServerName,
+		retryable:  true,
+		silent:     true,
+		replaces:   true,
+		identity:   embeddedOriginIdentity(server, true),
+		dial: func() (*Client, error) {
+			dialCtx, cancel := context.WithTimeout(ctx, embeddedConnectTimeout)
+			defer cancel()
+
+			client, err := embeddedClient.CreateClient(dialCtx, c.userID, sessionID)
+			if err != nil {
+				return nil, fmt.Errorf("failed to connect to embedded server: %w", err)
+			}
+			return client, nil
+		},
+	}
+}
+
+// pluginConnectTask builds the task for a plugin-registered MCP server.
+// Failures stay retryable: a source plugin that is briefly unreachable must
+// come back on the next request without waiting for cache invalidation.
+func (c *UserClients) pluginConnectTask(ctx context.Context, cfg PluginServerConfig, budget time.Duration, sourcePluginAPI mmapi.Client) connectTask {
+	origin := pluginServerOriginKey(cfg.PluginID)
+	return connectTask{
+		origin:     origin,
+		serverID:   origin,
+		serverName: cfg.Name,
+		retryable:  true,
+		identity:   pluginOriginIdentity(cfg),
+		dial: func() (*Client, error) {
+			return c.dialAdmitted(ctx, func() (*Client, error) {
+				return connectWithDeadline(ctx, budget, "plugin MCP server "+cfg.PluginID,
+					func(connectCtx context.Context) (*Client, error) {
+						return NewPluginClient(connectCtx, c.userID, cfg, sourcePluginAPI, c.log)
+					})
+			})
+		},
+	}
+}
+
+// dialAdmitted runs a network dial while holding one node connection permit.
+// Waiting for the permit happens before dial, so queue time is not charged
+// against the server's own connect budget, and the permit is released as soon
+// as the dial returns.
+func (c *UserClients) dialAdmitted(ctx context.Context, dial func() (*Client, error)) (*Client, error) {
+	if err := c.admission.acquire(ctx); err != nil {
+		return nil, err
+	}
+	defer c.admission.release()
+	return dial()
+}
+
+// detachInvalidIdentities drops attempts and clients whose identity is no
+// longer live. The returned clients must be closed after any manager
+// lifecycle lock is released. A raw BaseURL spelling change is treated as a
+// new origin even when both spellings canonicalize to the same endpoint.
+func (c *UserClients) detachInvalidIdentities(valid map[string]originIdentity) []*Client {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if c.closed {
+		return nil
+	}
+
+	var stale []string
+	for origin, attempt := range c.attempts {
+		if valid[origin] != attempt.identity {
+			stale = append(stale, origin)
+		}
+	}
+	// A cached session whose attempt has already been forgotten has no
+	// identity left to vouch for it.
+	for serverID, client := range c.clients {
+		origin := clientOrigin(client, serverID)
+		if attempt, ok := c.attempts[origin]; !ok || valid[origin] != attempt.identity {
+			stale = append(stale, origin)
+		}
+	}
+	return c.detachOriginsLocked(stale...)
+}
+
+// detachOrigins removes attempts and clients for the given origins. Callers
+// close the returned clients after releasing manager lifecycle/plugin locks.
+func (c *UserClients) detachOrigins(origins ...string) []*Client {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+	if c.closed {
+		return nil
+	}
+	return c.detachOriginsLocked(origins...)
+}
+
+func (c *UserClients) detachOriginsLocked(origins ...string) []*Client {
+	var discarded []*Client
+	for _, origin := range origins {
+		delete(c.attempts, origin)
+		for serverID, client := range c.clients {
+			if clientOrigin(client, serverID) == origin {
+				delete(c.clients, serverID)
+				discarded = append(discarded, client)
+			}
+		}
+	}
+	return discarded
+}
+
+func (c *UserClients) detachAll() []*Client {
+	c.clientsMu.Lock()
+	defer c.clientsMu.Unlock()
+
+	discarded := make([]*Client, 0, len(c.clients))
+	for _, client := range c.clients {
+		discarded = append(discarded, client)
+	}
+	c.clients = make(map[string]*Client)
+	c.attempts = make(map[string]*originAttempt)
+	c.closed = true
+	return discarded
+}
+
+// closeDetachedClients closes sessions that have already been removed from
+// every cache. Callers detach under a lock and close after releasing it.
+func closeDetachedClients(log pluginapi.LogService, detached []*Client) {
+	for _, client := range detached {
+		if client == nil {
+			continue
+		}
+		if err := client.Close(); err != nil {
+			log.Error("Failed to close detached MCP client", "serverID", client.config.Name, "error", err)
+		}
+	}
+}
+
+func clientOrigin(client *Client, serverID string) string {
+	if client != nil && client.config.BaseURL != "" {
+		return client.config.BaseURL
+	}
+	return serverID
+}
+
+// needsEmbeddedReconnect reports whether the user's embedded session differs
+// from the one backing the cached embedded client.
+func (c *UserClients) needsEmbeddedReconnect(sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+
 	c.clientsMu.RLock()
 	defer c.clientsMu.RUnlock()
-	_, exists := c.clients[serverID]
-	return exists
+	existing := c.clients[EmbeddedClientKey]
+	return existing == nil || existing.sessionID != sessionID
 }
 
 func (c *UserClients) snapshotClients() []userClientSnapshot {
@@ -244,32 +657,10 @@ func (c *UserClients) snapshotClients() []userClientSnapshot {
 	return snapshot
 }
 
-func (c *UserClients) InitialRemoteConnectErrors() *Errors {
-	c.clientsMu.RLock()
-	defer c.clientsMu.RUnlock()
-	return c.initialRemoteConnectErrors
-}
-
-func (c *UserClients) setInitialRemoteConnectErrors(mcpErrors *Errors) {
-	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-	c.initialRemoteConnectErrors = mcpErrors
-}
-
-// Close closes all server connections for a user client
+// Close marks the user client torn down and closes detached sessions after
+// releasing the user-client lock.
 func (c *UserClients) Close() {
-	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-
-	// Close all MCP server clients (both remote and embedded)
-	for serverID, client := range c.clients {
-		if err := client.Close(); err != nil {
-			c.log.Error("Failed to close MCP client", "userID", c.userID, "serverID", serverID, "error", err)
-		}
-	}
-
-	// Clear clients
-	c.clients = make(map[string]*Client)
+	closeDetachedClients(c.log, c.detachAll())
 }
 
 // collectToolsFromSnapshots namespaces and de-dupes tools across bags exactly
@@ -402,8 +793,8 @@ func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) 
 		return
 	}
 
-	var needed *OAuthNeededError
-	if !errors.As(oauthErr, &needed) {
+	needed, ok := errors.AsType[*OAuthNeededError](oauthErr)
+	if !ok {
 		return
 	}
 
@@ -519,33 +910,4 @@ func shortSlugHash(value string) string {
 // tools. Must match the key used by filterToolsByConfig.
 func pluginServerOriginKey(pluginID string) string {
 	return "plugin://" + pluginID
-}
-
-// ConnectToPluginServer establishes a cached MCP session with a source plugin
-// over PluginHTTP, injecting X-Mattermost-UserID. Plugin servers use
-// inter-plugin auth, not user OAuth.
-func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
-	if !c.allowsLocal() {
-		return fmt.Errorf("plugin connect is only valid on local client bags")
-	}
-	originKey := pluginServerOriginKey(cfg.PluginID)
-	if c.hasClient(originKey) {
-		return nil
-	}
-
-	client, err := NewPluginClient(ctx, c.userID, cfg, sourcePluginAPI, c.log)
-	if err != nil {
-		return err
-	}
-
-	c.clientsMu.Lock()
-	defer c.clientsMu.Unlock()
-	if _, exists := c.clients[originKey]; exists {
-		_ = client.Close()
-		return nil
-	}
-
-	c.clients[originKey] = client
-	c.log.Debug("Connected to plugin MCP server", "userID", c.userID, "pluginID", cfg.PluginID, "toolCount", len(client.Tools()))
-	return nil
 }

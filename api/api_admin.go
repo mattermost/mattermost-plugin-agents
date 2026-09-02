@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -290,7 +291,24 @@ type MCPToolsResponse struct {
 	Servers []MCPServerInfo `json:"servers"`
 }
 
-// handleGetMCPTools discovers and returns tools from all configured MCP servers
+const maxConcurrentMCPDiscoveries = 32
+
+// mcpDiscoveryRow is one row of the admin MCP tools response together with the
+// probe that fills in its tools. discover is nil for rows rendered without
+// contacting the server: disabled plugin servers, and servers excluded by a
+// duplicate-name or duplicate-URL conflict.
+type mcpDiscoveryRow struct {
+	info     MCPServerInfo
+	discover func() ([]MCPToolInfo, error)
+	// tools and err hold discover's outcome.
+	tools []MCPToolInfo
+	err   error
+}
+
+// handleGetMCPTools discovers and returns tools from all configured MCP servers.
+// Every server is probed concurrently, so the response arrives in roughly the
+// time of the slowest server rather than the sum of all of them; rows keep their
+// configured order regardless of which server answers first.
 func (a *API) handleGetMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -299,65 +317,88 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		return
 	}
 
+	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID)
+
+	slots := make(chan struct{}, maxConcurrentMCPDiscoveries)
+	var wg sync.WaitGroup
+	for i := range rows {
+		if rows[i].discover == nil {
+			continue
+		}
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			rows[i].tools, rows[i].err = rows[i].discover()
+		})
+	}
+	wg.Wait()
+
+	response := MCPToolsResponse{Servers: make([]MCPServerInfo, 0, len(rows))}
+	for _, row := range rows {
+		info := row.info
+		if row.discover != nil {
+			applyMCPDiscoveryResult(&info, row.tools, row.err)
+		}
+		response.Servers = append(response.Servers, info)
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// buildMCPDiscoveryRows snapshots every server the admin UI should render, in
+// response order, before any network work starts.
+func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDiscoveryRow {
 	mcpConfig := a.config.MCP()
+	rows := make([]mcpDiscoveryRow, 0, len(mcpConfig.Servers)+1)
 
-	response := MCPToolsResponse{
-		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
+	if embeddedServer := a.mcpClientManager.GetEmbeddedServer(); embeddedServer != nil {
+		embeddedConfig := mcpConfig.EmbeddedServer
+		rows = append(rows, mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:       mcp.EmbeddedServerName,
+				URL:        mcp.EmbeddedClientKey,
+				Tools:      []MCPToolInfo{},
+				ServerType: "embedded",
+				// Embedded MCP is always available after PR #617, even if older
+				// configs still have the legacy toggle stored as false.
+				Enabled: true,
+			},
+			discover: func() ([]MCPToolInfo, error) {
+				return a.discoverEmbeddedServerTools(ctx, userID, embeddedConfig, embeddedServer)
+			},
+		})
 	}
 
-	embeddedServer := a.mcpClientManager.GetEmbeddedServer()
-	if embeddedServer != nil {
-		serverInfo := MCPServerInfo{
-			Name:       mcp.EmbeddedServerName,
-			URL:        mcp.EmbeddedClientKey,
-			Tools:      []MCPToolInfo{},
-			Error:      nil,
-			ServerType: "embedded",
-			Enabled:    true,
-		}
-
-		// Embedded MCP is always available after PR #617, even if older configs still
-		// have the legacy toggle stored as false.
-		tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
-		if err != nil {
-			errMsg := err.Error()
-			serverInfo.Error = &errMsg
-		} else {
-			serverInfo.Tools = tools
-		}
-
-		response.Servers = append(response.Servers, serverInfo)
+	// Conflicting entries are excluded from the runtime because they share a
+	// client-map key or tools-cache entry; report the conflict here so an admin
+	// can see why the server is not working.
+	conflictMessages := make(map[int]string)
+	for _, conflict := range mcpConfig.ServerConflicts() {
+		conflictMessages[conflict.Index] = conflict.Error()
 	}
 
-	// Discover tools from each configured remote server
-	for _, serverConfig := range mcpConfig.Servers {
+	for i, serverConfig := range mcpConfig.Servers {
 		if !serverConfig.Enabled {
 			continue
 		}
-		serverInfo := MCPServerInfo{
-			Name:       serverConfig.Name,
-			URL:        serverConfig.BaseURL,
-			Tools:      []MCPToolInfo{},
-			Error:      nil,
-			ServerType: "remote",
-			Enabled:    serverConfig.Enabled,
-		}
 
-		// Try to connect to the server and discover tools
-		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
-		if err != nil {
-			if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
-				serverInfo.NeedsOAuth = true
-				serverInfo.OAuthURL = oauthErr.AuthURL()
-			} else {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			}
+		row := mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:       serverConfig.Name,
+				URL:        serverConfig.BaseURL,
+				Tools:      []MCPToolInfo{},
+				ServerType: "remote",
+				Enabled:    serverConfig.Enabled,
+			},
+		}
+		if message, conflicting := conflictMessages[i]; conflicting {
+			row.info.Error = &message
 		} else {
-			serverInfo.Tools = tools
+			row.discover = func() ([]MCPToolInfo, error) {
+				return a.discoverRemoteServerTools(ctx, userID, serverConfig)
+			}
 		}
-
-		response.Servers = append(response.Servers, serverInfo)
+		rows = append(rows, row)
 	}
 
 	// Render disabled plugin entries (with an empty tool list) so the admin UI
@@ -369,30 +410,41 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
 			continue
 		}
-		serverInfo := MCPServerInfo{
-			Name:        cfg.Name,
-			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
-			Tools:       []MCPToolInfo{},
-			Error:       nil,
-			ServerType:  "plugin",
-			Enabled:     cfg.Enabled,
-			ToolConfigs: cfg.ToolConfigs,
-		}
 
+		row := mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:        cfg.Name,
+				URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+				Tools:       []MCPToolInfo{},
+				ServerType:  "plugin",
+				Enabled:     cfg.Enabled,
+				ToolConfigs: cfg.ToolConfigs,
+			},
+		}
 		if cfg.Enabled {
-			tools, err := a.discoverPluginServerTools(c.Request.Context(), userID, cfg)
-			if err != nil {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			} else {
-				serverInfo.Tools = tools
+			row.discover = func() ([]MCPToolInfo, error) {
+				return a.discoverPluginServerTools(ctx, userID, cfg)
 			}
 		}
-
-		response.Servers = append(response.Servers, serverInfo)
+		rows = append(rows, row)
 	}
 
-	c.JSON(http.StatusOK, response)
+	return rows
+}
+
+func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error) {
+	if err == nil {
+		info.Tools = tools
+		return
+	}
+
+	if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
+		info.NeedsOAuth = true
+		info.OAuthURL = oauthErr.AuthURL()
+		return
+	}
+
+	info.Error = new(err.Error())
 }
 
 // toMCPToolInfos converts discovered mcp tool metadata to the API response shape.

@@ -503,11 +503,18 @@ type testMCPClientManager struct {
 	onGetTools func()
 }
 
-func (m *testMCPClientManager) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if m.onGetTools != nil {
 		m.onGetTools()
 	}
-	return m.tools, m.errors
+
+	tools := make([]llm.Tool, 0, len(m.tools))
+	for _, tool := range m.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools, m.errors
 }
 
 // --- Test: new DM creates conversation entity and returns stream ----------

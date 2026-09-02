@@ -39,7 +39,7 @@ type noToolsTestMCPProvider struct {
 	tools []llm.Tool
 }
 
-func (p *noToolsTestMCPProvider) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *noToolsTestMCPProvider) GetToolsWithSelection(context.Context, mcp.CatalogRequest, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	p.calls++
 	return p.tools, nil
 }

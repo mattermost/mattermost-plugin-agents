@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,16 +35,20 @@ type countingMCPToolProvider struct {
 	saInvokers   []string
 }
 
-func (p *countingMCPToolProvider) GetTools(_ context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if req.ServiceAccount {
 		p.mu.Lock()
 		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID)
 		p.saInvokers = append(p.saInvokers, req.InvokingUserID)
 		p.mu.Unlock()
-		return append([]llm.Tool(nil), p.saTools...), nil
+		return slices.DeleteFunc(slices.Clone(p.saTools), func(tool llm.Tool) bool {
+			return !selection.Allows(tool.ServerOrigin)
+		}), nil
 	}
 	p.calls.Add(1)
-	return append([]llm.Tool(nil), p.tools...), nil
+	return slices.DeleteFunc(slices.Clone(p.tools), func(tool llm.Tool) bool {
+		return !selection.Allows(tool.ServerOrigin)
+	}), nil
 }
 
 func (p *countingMCPToolProvider) Calls() int {

@@ -6,6 +6,7 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -38,7 +39,7 @@ type countingMCPToolProvider struct {
 	saCalls int
 }
 
-func (p *countingMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *countingMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	if req.ServiceAccount {
 		p.saCalls++
 		return nil, nil
@@ -69,20 +70,38 @@ type saCatalogCall struct {
 	invokingUserID string
 }
 
-func (p *staticMCPToolProvider) GetTools(_ stdcontext.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (p *staticMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	// Mirror mcp.ClientManager.GetTools: invalid requests fail closed.
-	if req.RemoteOwnerID == "" || req.InvokingUserID == "" {
+	if req.RemoteOwnerID == "" {
 		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogRemoteOwnerRequired}}
 	}
+	if req.InvokingUserID == "" {
+		return nil, &mcp.Errors{Errors: []error{mcp.ErrCatalogInvokerRequired}}
+	}
+
+	tools := p.tools
 	if req.ServiceAccount {
 		p.saCalls = append(p.saCalls, saCatalogCall{
 			remoteOwnerID:  req.RemoteOwnerID,
 			invokingUserID: req.InvokingUserID,
 		})
-		return p.saTools, nil
+		tools = p.saTools
+	} else {
+		p.userCalls = append(p.userCalls, req.InvokingUserID)
 	}
-	p.userCalls = append(p.userCalls, req.InvokingUserID)
-	return p.tools, p.errors
+
+	tools = slices.DeleteFunc(slices.Clone(tools), func(tool llm.Tool) bool {
+		return !selection.Allows(tool.ServerOrigin)
+	})
+	if p.errors == nil {
+		return tools, nil
+	}
+
+	errors := &mcp.Errors{Errors: slices.Clone(p.errors.Errors)}
+	errors.ToolAuthErrors = slices.DeleteFunc(slices.Clone(p.errors.ToolAuthErrors), func(authErr llm.ToolAuthError) bool {
+		return !selection.Allows(authErr.ServerOrigin)
+	})
+	return tools, errors
 }
 
 func (p *staticMCPToolProvider) GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride {
