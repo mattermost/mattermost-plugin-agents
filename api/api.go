@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -634,6 +635,11 @@ type FetchModelsRequest struct {
 	APIURL      string `json:"apiURL"`
 	OrgID       string `json:"orgID"`
 
+	// ServiceID names an already saved service whose credentials are read from
+	// the stored configuration. A service the admin is still entering has no
+	// stored counterpart and supplies its credentials in this request instead.
+	ServiceID string `json:"serviceID"`
+
 	// Region applies to providers that require it for model listing (Vertex AI).
 	Region string `json:"region"`
 
@@ -641,6 +647,34 @@ type FetchModelsRequest struct {
 	VertexProjectID       string `json:"vertexProjectID"`
 	VertexProjectNumber   string `json:"vertexProjectNumber"`
 	VertexAuthCredentials string `json:"vertexAuthCredentials"`
+}
+
+// sameUpstreamEndpoint reports whether two provider API URLs address the same
+// endpoint. An empty URL means the provider's own fixed address.
+func sameUpstreamEndpoint(a, b string) bool {
+	normalize := func(u string) string {
+		return strings.TrimRight(strings.TrimSpace(u), "/")
+	}
+	return normalize(a) == normalize(b)
+}
+
+// storedServiceByID returns the saved service with the given ID, or nil when the
+// configuration holds no such service.
+func (a *API) storedServiceByID(id string) (*llm.ServiceConfig, error) {
+	cfg, err := a.configStore.GetConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get config: %w", err)
+	}
+	if cfg == nil {
+		return nil, nil
+	}
+
+	service, ok := cfg.GetServiceByID(id)
+	if !ok {
+		return nil, nil
+	}
+
+	return &service, nil
 }
 
 func (a *API) handleFetchModels(c *gin.Context) {
@@ -652,6 +686,31 @@ func (a *API) handleFetchModels(c *gin.Context) {
 
 	if req.ServiceType == "" {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("serviceType is required"))
+		return
+	}
+
+	if req.ServiceID != "" {
+		stored, err := a.storedServiceByID(req.ServiceID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, err)
+			return
+		}
+		// A saved service's credentials belong to the endpoint it is saved with,
+		// so they are only read for a request addressing that same endpoint. A
+		// request addressing anywhere else carries its own credentials or none.
+		if stored != nil && sameUpstreamEndpoint(req.APIURL, stored.APIURL) {
+			if req.APIKey == "" || config.IsSecretPlaceholder(req.APIKey) {
+				req.APIKey = stored.APIKey
+			}
+			if req.VertexAuthCredentials == "" || config.IsSecretPlaceholder(req.VertexAuthCredentials) {
+				req.VertexAuthCredentials = stored.VertexAuthCredentials
+			}
+		}
+	}
+
+	// A mask is not a credential: reject it rather than sending it to a provider.
+	if config.IsSecretPlaceholder(req.APIKey) || config.IsSecretPlaceholder(req.VertexAuthCredentials) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("credentials must be supplied as a value or referenced with the serviceID of a saved service"))
 		return
 	}
 

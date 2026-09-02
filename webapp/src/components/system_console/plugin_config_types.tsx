@@ -7,6 +7,11 @@ import {MCPConfig} from './mcp_servers';
 import {LLMService} from './service';
 import {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
 
+// Mirror the server's credential mask (config.SecretPlaceholder in config/secrets.go).
+// A credential that is already stored arrives as this value and is sent back
+// unchanged unless the admin edits it.
+export const SECRET_PLACEHOLDER = '********************************';
+
 // services/bots: server sends nil Go slices as JSON null.
 export type PluginConfig = {
     services: LLMService[] | null,

@@ -1,8 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import React, {useState} from 'react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -48,9 +48,14 @@ import {IntlProvider} from 'react-intl';
 import {useIsBasicsLicensed} from '@/license';
 
 import MCPServers, {MCPConfig, MCPServerConfig} from './mcp_servers';
+import {SECRET_PLACEHOLDER} from './plugin_config_types';
 /* eslint-enable import/first, import/order */
 
 const mockUseIsBasicsLicensed = useIsBasicsLicensed as jest.Mock;
+const {getMCPTools: mockGetMCPTools, getVettedToolSeed: mockGetVettedToolSeed} = jest.requireMock('../../client') as {
+    getMCPTools: jest.Mock;
+    getVettedToolSeed: jest.Mock;
+};
 
 function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
     return {
@@ -68,6 +73,23 @@ function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerCo
         baseURL: 'https://mcp.example.com',
         headers: {},
         ...overrides,
+    };
+}
+
+const STORED_URL = 'https://mcp.example.com/jira';
+const MOVED_URL = 'https://mcp.other.example.com/jira';
+const CLEARED_NOTE = /Saved credentials do not carry over/;
+
+// A server as GET /admin/config returns it: every stored credential arrives masked.
+function makeServerWithStoredCredentials(): MCPServerConfig {
+    return {
+        name: 'Jira',
+        enabled: true,
+        baseURL: STORED_URL,
+        headers: {Authorization: SECRET_PLACEHOLDER},
+        serviceAccountHeaders: {Authorization: SECRET_PLACEHOLDER},
+        clientID: 'client-id',
+        clientSecret: SECRET_PLACEHOLDER,
     };
 }
 
@@ -131,6 +153,186 @@ describe('MCPServers license gating', () => {
     });
 });
 
+// The admin console holds the edited config, so the fields have to be driven
+// through real state to observe what a sequence of edits leaves behind.
+function renderEditableServers(mcpConfig: MCPConfig) {
+    let latest = mcpConfig;
+
+    const Harness = () => {
+        const [config, setConfig] = useState(mcpConfig);
+        return (
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={config}
+                    onChange={(next) => {
+                        latest = next;
+                        setConfig(next);
+                    }}
+                />
+            </IntlProvider>
+        );
+    };
+
+    return {
+        ...render(<Harness/>),
+        server: () => (latest.servers ?? [])[0],
+    };
+}
+
+const urlField = () => screen.getByPlaceholderText('https://mcp.example.com');
+
+const typeURL = (value: string) => fireEvent.change(urlField(), {target: {value}});
+
+const leaveURLField = async () => {
+    await act(async () => {
+        fireEvent.blur(urlField());
+    });
+};
+
+const renameServer = (from: string, to: string) => {
+    fireEvent.click(screen.getByText(from));
+    const nameField = screen.getByPlaceholderText('Server name');
+    fireEvent.change(nameField, {target: {value: to}});
+    fireEvent.blur(nameField);
+};
+
+const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
+
+describe('MCPServers credentials when the server URL changes', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+
+        // The tools prefetch is unrelated to the fields under test; keep it
+        // pending so it cannot settle in the middle of an edit sequence.
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
+    });
+
+    const cases: {
+        name: string;
+        edit: () => Promise<void>;
+        clientSecret: string;
+        headerValue: string;
+        serviceAccountHeaderValue: string;
+    }[] = [
+        {
+            name: 'moving the server to another URL empties the untouched credential fields',
+            edit: async () => {
+                typeURL(MOVED_URL);
+                await leaveURLField();
+            },
+            clientSecret: '',
+            headerValue: '',
+            serviceAccountHeaderValue: '',
+        },
+        {
+            name: 'a client secret entered before the move is kept',
+            edit: async () => {
+                fireEvent.change(screen.getByPlaceholderText('Client Secret'), {target: {value: 'entered-secret'}});
+                typeURL(MOVED_URL);
+                await leaveURLField();
+            },
+            clientSecret: 'entered-secret',
+            headerValue: '',
+            serviceAccountHeaderValue: '',
+        },
+        {
+            name: 'a header value entered before the move is kept',
+            edit: async () => {
+                fireEvent.change(screen.getByPlaceholderText('Value'), {target: {value: 'entered-header'}});
+                typeURL(MOVED_URL);
+                await leaveURLField();
+            },
+            clientSecret: '',
+            headerValue: 'entered-header',
+            serviceAccountHeaderValue: '',
+        },
+        {
+            name: 'a service account header entered before the move is kept',
+            edit: async () => {
+                fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'entered-sa-header'}});
+                typeURL(MOVED_URL);
+                await leaveURLField();
+            },
+            clientSecret: '',
+            headerValue: '',
+            serviceAccountHeaderValue: 'entered-sa-header',
+        },
+        {
+            name: 'editing another field and leaving the URL alone keeps the credential fields',
+            edit: async () => {
+                renameServer('Jira', 'Jira Cloud');
+                await leaveURLField();
+            },
+            clientSecret: SECRET_PLACEHOLDER,
+            headerValue: SECRET_PLACEHOLDER,
+            serviceAccountHeaderValue: SECRET_PLACEHOLDER,
+        },
+        {
+            name: 'putting the original URL back before leaving the field keeps the credential fields',
+            edit: async () => {
+                typeURL(MOVED_URL);
+                typeURL(STORED_URL);
+                await leaveURLField();
+            },
+            clientSecret: SECRET_PLACEHOLDER,
+            headerValue: SECRET_PLACEHOLDER,
+            serviceAccountHeaderValue: SECRET_PLACEHOLDER,
+        },
+    ];
+
+    test.each(cases)('$name', async ({edit, clientSecret, headerValue, serviceAccountHeaderValue}) => {
+        const {server} = renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
+
+        await edit();
+
+        expect(server().clientSecret).toBe(clientSecret);
+        expect(server().headers.Authorization).toBe(headerValue);
+        expect(server().serviceAccountHeaders?.Authorization).toBe(serviceAccountHeaderValue);
+    });
+
+    test('mid-edit keystrokes leave the credential fields alone', async () => {
+        const {server} = renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
+
+        typeURL('https://mcp.other');
+
+        expect(server().clientSecret).toBe(SECRET_PLACEHOLDER);
+        expect(server().headers.Authorization).toBe(SECRET_PLACEHOLDER);
+        expect(server().serviceAccountHeaders?.Authorization).toBe(SECRET_PLACEHOLDER);
+    });
+
+    test('the URL field explains why the credential fields emptied', async () => {
+        renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
+
+        expect(screen.queryByText(CLEARED_NOTE)).toBeNull();
+
+        typeURL(MOVED_URL);
+        await leaveURLField();
+
+        expect(screen.getByText(CLEARED_NOTE)).not.toBeNull();
+    });
+
+    test('a credential typed while the tool seed is in flight is kept', async () => {
+        let resolveSeed: (value: unknown[]) => void = () => { /* assigned when the mock Promise is created */ };
+        mockGetVettedToolSeed.mockReturnValue(new Promise((resolve) => {
+            resolveSeed = resolve;
+        }));
+
+        const {server} = renderEditableServers(makeMCPConfig([makeServerWithStoredCredentials()]));
+
+        typeURL(MOVED_URL);
+        await leaveURLField();
+        fireEvent.change(screen.getByPlaceholderText('Client Secret'), {target: {value: 'typed-while-seeding'}});
+
+        await act(async () => {
+            resolveSeed([]);
+        });
+
+        expect(server().clientSecret).toBe('typed-while-seeding');
+        expect(server().baseURL).toBe(MOVED_URL);
+    });
+});
+
 describe('MCPServers service account headers', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -139,7 +341,6 @@ describe('MCPServers service account headers', () => {
 
     // Rows render in DOM order: base Headers first, then Service Account headers.
     const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
-    const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
 
     async function renderOneServer(server: MCPServerConfig) {
         const rendered = renderServers(makeMCPConfig([server]));

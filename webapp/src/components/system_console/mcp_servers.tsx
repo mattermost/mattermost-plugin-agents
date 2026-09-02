@@ -22,6 +22,8 @@ import EnterpriseChip from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 
+import {SECRET_PLACEHOLDER} from './plugin_config_types';
+
 export type MCPToolConfig = {
     name: string;
     policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
@@ -79,6 +81,29 @@ const defaultServerConfig: MCPServerConfig = {
     clientSecret: '',
 };
 
+const headerMapHasMask = (headers: {[key: string]: string} | undefined): boolean =>
+    Object.values(headers || {}).some((value) => value === SECRET_PLACEHOLDER);
+
+const withoutMaskedHeaderValues = (headers: {[key: string]: string} | undefined): {[key: string]: string} =>
+    Object.fromEntries(
+        Object.entries(headers || {}).map(([key, value]) => [key, value === SECRET_PLACEHOLDER ? '' : value]),
+    );
+
+const hasMaskedCredential = (server: MCPServerConfig): boolean =>
+    server.clientSecret === SECRET_PLACEHOLDER ||
+    headerMapHasMask(server.headers) ||
+    headerMapHasMask(server.serviceAccountHeaders);
+
+// The server keeps a stored credential with the base URL it was saved against,
+// so a mask the admin never replaced means nothing once the URL points
+// somewhere else.
+const withoutMaskedCredentials = (server: MCPServerConfig): MCPServerConfig => ({
+    ...server,
+    headers: withoutMaskedHeaderValues(server.headers),
+    serviceAccountHeaders: withoutMaskedHeaderValues(server.serviceAccountHeaders),
+    clientSecret: server.clientSecret === SECRET_PLACEHOLDER ? '' : server.clientSecret,
+});
+
 // Renaming a key deletes the old entry; blank rows are legal (the backend ignores them).
 const HeaderMapEditor = ({
     headers,
@@ -129,6 +154,7 @@ const HeaderMapEditor = ({
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
+                            type='password'
                             placeholder={headerValuePlaceholder}
                             value={value}
                             onChange={(e) => updateHeader(key, key, e.target.value)}
@@ -166,6 +192,7 @@ const MCPServer = ({
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
+    const [credentialsCleared, setCredentialsCleared] = useState(false);
 
     // Ensure server config has all required properties
     const config = {
@@ -182,6 +209,14 @@ const MCPServer = ({
     // Last base URL we applied vetted seeding for (authoritative list from GET /admin/mcp/vetted-tool-seed).
     const lastSeededBaseURLRef = useRef<string | null>(serverConfig.baseURL?.trim() ?? null);
 
+    // Base URL the credentials currently in the fields belong to.
+    const credentialBaseURLRef = useRef<string>(serverConfig.baseURL?.trim() ?? '');
+
+    // handleURLBlur awaits getVettedToolSeed; keep the latest props so a late
+    // response cannot overwrite edits made while that request was in flight.
+    const latestConfigRef = useRef<MCPServerConfig>(config);
+    latestConfigRef.current = config;
+
     const updateServerURL = (baseURL: string) => {
         onChange(serverIndex, {
             ...config,
@@ -189,15 +224,33 @@ const MCPServer = ({
         });
     };
 
-    // Re-seed or clear tool_configs only on blur, so mid-edit keystrokes don't wipe customizations
+    // Re-seed or clear tool_configs, and empty credentials the admin left masked,
+    // only on blur, so mid-edit keystrokes don't wipe customizations
     const handleURLBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+        const baseURL = e.currentTarget.value;
+        const trimmed = baseURL.trim();
+        const pointsElsewhere = trimmed !== credentialBaseURLRef.current;
+        credentialBaseURLRef.current = trimmed;
+
+        let current: MCPServerConfig = config;
+        if (pointsElsewhere && hasMaskedCredential(config)) {
+            current = withoutMaskedCredentials(config);
+            setCredentialsCleared(true);
+            onChange(serverIndex, {
+                ...current,
+                baseURL,
+            });
+        }
+        latestConfigRef.current = {
+            ...current,
+            baseURL,
+        };
+
         (async () => {
-            const baseURL = e.currentTarget.value;
-            const trimmed = baseURL.trim();
             if (trimmed === lastSeededBaseURLRef.current) {
                 return;
             }
-            let toolConfigs = config.tool_configs;
+            let toolConfigs = current.tool_configs;
             try {
                 const seeded = await getVettedToolSeed(baseURL);
                 if (seeded.length > 0) {
@@ -208,10 +261,13 @@ const MCPServer = ({
             } catch {
                 return;
             }
+            const latest = latestConfigRef.current;
+            if (latest.baseURL.trim() !== trimmed) {
+                return;
+            }
             lastSeededBaseURLRef.current = trimmed;
             onChange(serverIndex, {
-                ...config,
-                baseURL,
+                ...latest,
                 tool_configs: toolConfigs,
             });
         })().catch(() => null);
@@ -254,6 +310,19 @@ const MCPServer = ({
         }
     };
 
+    const baseURLHelpText = intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'});
+    let urlHelpText: React.ReactNode = baseURLHelpText;
+    if (credentialsCleared) {
+        urlHelpText = (
+            <>
+                {baseURLHelpText}
+                <CredentialsClearedNote>
+                    {intl.formatMessage({defaultMessage: 'Saved credentials do not carry over to a different URL. Re-enter them before saving.'})}
+                </CredentialsClearedNote>
+            </>
+        );
+    }
+
     return (
         <ServerContainer>
             <ServerHeader>
@@ -292,7 +361,7 @@ const MCPServer = ({
                 value={config.baseURL}
                 onChange={(e) => updateServerURL(e.target.value)}
                 onBlur={handleURLBlur}
-                helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
+                helptext={urlHelpText}
             />
 
             <HeadersSection>
@@ -705,6 +774,11 @@ const DeleteButton = styled.button`
     &:hover {
         background: rgba(var(--error-text-color-rgb), 0.08);
     }
+`;
+
+const CredentialsClearedNote = styled.div`
+    margin-top: 4px;
+    color: var(--error-text);
 `;
 
 const HeadersSection = styled.div`

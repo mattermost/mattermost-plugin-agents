@@ -7,7 +7,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
-import {PluginConfig} from '@/components/system_console/plugin_config_types';
+import {PluginConfig, SECRET_PLACEHOLDER} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
@@ -734,7 +734,16 @@ export type FetchModelsOptions = {
     vertexProjectID?: string;
     vertexProjectNumber?: string;
     vertexAuthCredentials?: string;
+
+    // serviceID lets the server read the credentials of a saved service instead
+    // of receiving them here. A service that has not been saved yet has no
+    // stored counterpart and its credentials are sent inline.
+    serviceID?: string;
 }
+
+// A masked value is not a credential, so it is dropped from the request: the
+// server resolves it from the saved service named by serviceID.
+const credentialValue = (value: string) => (value === SECRET_PLACEHOLDER ? '' : value);
 
 export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}) {
     const url = `${baseRoute()}/admin/models/fetch`;
@@ -742,13 +751,14 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
         method: 'POST',
         body: JSON.stringify({
             serviceType,
-            apiKey,
+            serviceID: options.serviceID || '',
+            apiKey: credentialValue(apiKey),
             apiURL,
             orgID,
             region: options.region || '',
             vertexProjectID: options.vertexProjectID || '',
             vertexProjectNumber: options.vertexProjectNumber || '',
-            vertexAuthCredentials: options.vertexAuthCredentials || '',
+            vertexAuthCredentials: credentialValue(options.vertexAuthCredentials || ''),
         }),
     }));
 
