@@ -47,7 +47,7 @@ func (m *mockToolProvider) GetTools(bot *bots.Bot, _ *llm.Context) []llm.Tool {
 
 type mockMCPClientManager struct{}
 
-func (m *mockMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	return []llm.Tool{}, nil
 }
 

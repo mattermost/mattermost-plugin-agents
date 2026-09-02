@@ -8,7 +8,6 @@ import {ToolCallStatus} from '../tool_types';
 import {
     statusStringToEnum,
     extractToolCallsForPost,
-    extractReasoningFromTurn,
     extractAnnotationsFromTurn,
     deriveApprovalStageForPost,
     hasAutoApprovedToolsForPost,
@@ -391,37 +390,6 @@ describe('extractToolCallsForPost', () => {
         expect(result[0].id).toBe('tc_here');
     });
 });
-describe('extractReasoningFromTurn', () => {
-    test('returns empty strings when no thinking blocks', () => {
-        const turn = makeTurn({content: [{type: 'text', text: 'hello'}]});
-        expect(extractReasoningFromTurn(turn)).toEqual({summary: '', signature: ''});
-    });
-
-    test('extracts reasoning and signature from thinking block', () => {
-        const turn = makeTurn({
-            content: [
-                {type: 'thinking', text: 'Let me think...', signature: 'sig123'},
-            ],
-        });
-        expect(extractReasoningFromTurn(turn)).toEqual({
-            summary: 'Let me think...',
-            signature: 'sig123',
-        });
-    });
-
-    test('concatenates multiple thinking blocks', () => {
-        const turn = makeTurn({
-            content: [
-                {type: 'thinking', text: 'Part 1', signature: 'sig1'},
-                {type: 'thinking', text: 'Part 2', signature: 'sig2'},
-            ],
-        });
-        const result = extractReasoningFromTurn(turn);
-        expect(result.summary).toBe('Part 1\nPart 2');
-        expect(result.signature).toBe('sig2'); // last block's signature
-    });
-});
-
 describe('extractAnnotationsFromTurn', () => {
     test('returns empty array when no annotations or citations', () => {
         const turn = makeTurn({content: [{type: 'text', text: 'hello'}]});

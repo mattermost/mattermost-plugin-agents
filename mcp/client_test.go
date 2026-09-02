@@ -251,9 +251,13 @@ func newTestPluginAPIWithSession(sessionID string) *pluginapi.Client {
 }
 
 func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Client {
+	return newTestPluginAPIForEmbeddedUser(&model.User{Id: userID, Roles: "system_user"}, sessionID)
+}
+
+func newTestPluginAPIForEmbeddedUser(user *model.User, sessionID string) *pluginapi.Client {
 	fakeAPI := &fixedPluginAPI{
 		kvGet: func(key string) ([]byte, *model.AppError) {
-			if key == buildEmbeddedSessionKey(userID) {
+			if key == buildEmbeddedSessionKey(user.Id) {
 				return []byte(sessionID), nil
 			}
 			return nil, nil
@@ -261,16 +265,13 @@ func newTestPluginAPIForEmbeddedManager(userID, sessionID string) *pluginapi.Cli
 		sessionByID: map[string]*model.Session{
 			sessionID: {
 				Id:        sessionID,
-				UserId:    userID,
+				UserId:    user.Id,
 				Token:     "test-token",
 				ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
 			},
 		},
 		userByID: map[string]*model.User{
-			userID: {
-				Id:    userID,
-				Roles: "system_user",
-			},
+			user.Id: user,
 		},
 	}
 	return pluginapi.NewClient(fakeAPI, nil)
@@ -603,6 +604,67 @@ func TestNewClientDoesNotCachePartialPaginationOnError(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, client)
 	require.Nil(t, cache.GetTools("paged"))
+}
+
+func TestRemoteConnectionHeaders(t *testing.T) {
+	adminHeaders := map[string]string{"X-Admin": "admin-value"}
+	saHeaders := map[string]string{"Authorization": "Bearer service-account-pat"}
+
+	testCases := []struct {
+		name            string
+		userID          string
+		serverConfig    ServerConfig
+		serviceAccount  bool
+		expectedHeaders map[string]string
+	}{
+		{
+			name:            "user mode ignores service account headers",
+			userID:          "user-1",
+			serverConfig:    ServerConfig{Name: "srv", Headers: adminHeaders, ServiceAccountHeaders: saHeaders},
+			expectedHeaders: map[string]string{MMUserIDHeader: "user-1", "X-Admin": "admin-value"},
+		},
+		{
+			name:   "service account headers layer on top of the bot ID and admin headers",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:                  "srv",
+				Headers:               map[string]string{"X-Admin": "admin-value", "Authorization": "Bearer admin"},
+				ServiceAccountHeaders: saHeaders,
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+		{
+			// A blank header name or value must never reach the wire: net/http rejects the whole request.
+			name:   "service account mode keeps valid headers alongside blank ones",
+			userID: "bot-1",
+			serverConfig: ServerConfig{
+				Name:    "srv",
+				Headers: adminHeaders,
+				ServiceAccountHeaders: map[string]string{
+					"":              "",
+					"X-Token":       "",
+					"Authorization": "Bearer service-account-pat",
+				},
+			},
+			serviceAccount: true,
+			expectedHeaders: map[string]string{
+				MMUserIDHeader:  "bot-1",
+				"X-Admin":       "admin-value",
+				"Authorization": "Bearer service-account-pat",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.expectedHeaders, remoteConnectionHeaders(tc.userID, tc.serverConfig, tc.serviceAccount))
+		})
+	}
 }
 
 func TestNewClientErrorsOnEmptyRemoteToolCatalog(t *testing.T) {

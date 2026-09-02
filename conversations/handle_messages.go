@@ -128,7 +128,8 @@ func (c *Conversations) buildConversationContextWithTools(
 	isDMOrGroup := channel != nil && (channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup)
 
 	opts := make([]llm.ContextOption, 0, len(extraOpts)+4)
-	if isDMOrGroup && prefsLogMessage != "" && user != nil {
+	// Service account agents use one shared catalog; per-user MCP server preferences don't apply.
+	if isDMOrGroup && prefsLogMessage != "" && user != nil && !c.contextBuilder.UsesServiceAccountCatalog(bot) {
 		opts = append(opts, c.userMCPPreferenceContextOptions(user.Id, prefsLogMessage)...)
 	}
 	opts = append(opts, extraOpts...)
@@ -392,7 +393,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
-	stream = c.decorateStreamWithCreatedFiles(stream, responsePost, nil, llmContext)
+	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)
@@ -480,7 +481,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		return fmt.Errorf("unable to process DM request: %w", err)
 	}
 
-	stream := c.decorateStreamWithCreatedFiles(dmStream.Stream, responsePost, nil, llmContext)
+	stream := c.decorateStreamWithCreatedFiles(ctx, bot, dmStream.Stream, responsePost, nil, llmContext, llmContext)
 
 	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)

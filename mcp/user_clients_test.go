@@ -269,7 +269,7 @@ func TestConnectToPluginServer_HappyPath(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 
 	cfg := PluginServerConfig{
 		PluginID: "com.mattermost.plugin-mcp-demo",
@@ -297,7 +297,7 @@ func TestConnectToPluginServer_Idempotent(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 
 	cfg := PluginServerConfig{PluginID: "com.example.test", Name: "Test", Path: "/mcp", Enabled: true}
 
@@ -311,7 +311,7 @@ func TestConnectToPluginServer_NilAPI(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 	err := uc.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "x", Path: "/mcp"}, nil)
 	require.Error(t, err)
 }
@@ -323,7 +323,7 @@ func TestConnectToEmbeddedServerIfAvailable_Idempotent(t *testing.T) {
 
 	pluginAPI := newTestPluginAPIForEmbeddedManager("alice", "session-id")
 	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: runCtx, server: server}, pluginAPI.Log, pluginAPI)
-	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
+	uc := newLocalClients("alice", pluginAPI.Log, nil, nil)
 	cfg := EmbeddedServerConfig{Enabled: true}
 
 	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "session-id", embeddedClient, cfg))
@@ -352,7 +352,7 @@ func TestConnectToEmbeddedServerIfAvailable_ReconnectsWhenSessionChanges(t *test
 	}
 	pluginAPI := pluginapi.NewClient(fakeAPI, nil)
 	embeddedClient := NewEmbeddedServerClient(&sessionEchoEmbeddedMCPServer{ctx: runCtx}, pluginAPI.Log, pluginAPI)
-	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
+	uc := newLocalClients("alice", pluginAPI.Log, nil, nil)
 	cfg := EmbeddedServerConfig{Enabled: true}
 
 	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "old-session", embeddedClient, cfg))

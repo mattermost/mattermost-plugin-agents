@@ -340,21 +340,23 @@ func TestParentChildSpanHierarchy(t *testing.T) {
 	httpStub := spanByName(spans, "HTTP POST /post/:postid/react")
 	llmStub := spanByName(spans, "llm chat completion")
 
-	if httpStub == nil {
+	// The assertions live in the default branch so both pointers are provably
+	// non-nil where they are dereferenced.
+	switch {
+	case httpStub == nil:
 		t.Fatal("HTTP span not found")
-	}
-	if llmStub == nil {
+	case llmStub == nil:
 		t.Fatal("LLM span not found")
-	}
+	default:
+		// Verify same trace
+		if httpStub.SpanContext.TraceID() != llmStub.SpanContext.TraceID() {
+			t.Error("HTTP and LLM spans should share the same trace ID")
+		}
 
-	// Verify same trace
-	if httpStub.SpanContext.TraceID() != llmStub.SpanContext.TraceID() {
-		t.Error("HTTP and LLM spans should share the same trace ID")
-	}
-
-	// Verify parent-child relationship
-	if llmStub.Parent.SpanID() != httpStub.SpanContext.SpanID() {
-		t.Error("LLM span should be a child of HTTP span")
+		// Verify parent-child relationship
+		if llmStub.Parent.SpanID() != httpStub.SpanContext.SpanID() {
+			t.Error("LLM span should be a child of HTTP span")
+		}
 	}
 }
 

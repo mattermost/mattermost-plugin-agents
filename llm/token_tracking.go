@@ -127,6 +127,8 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 
 type tokenUsageDimensions struct {
 	userID           string
+	actingUserID     string
+	toolAuthMode     string
 	teamID           string
 	channelID        string
 	channelType      string
@@ -175,6 +177,8 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		// Temporary compatibility alias for existing dashboards/queries.
 		"bot_username", dimensions.botUsername,
 		"agent_user_id", dimensions.botUserID,
+		"acting_user_id", dimensions.actingUserID,
+		"tool_auth_mode", dimensions.toolAuthMode,
 		"model", dimensions.model,
 		"service_type", dimensions.serviceType,
 		"operation", dimensions.operation,
@@ -204,6 +208,8 @@ func tokenUsageKeyValuePairsToMlogFields(keyValuePairs []any) []mlog.Field {
 func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername, optionModel string) tokenUsageDimensions {
 	dimensions := tokenUsageDimensions{
 		userID:           TokenUsageUnknown,
+		actingUserID:     TokenUsageUnknown,
+		toolAuthMode:     ToolAuthModeUser,
 		teamID:           TokenUsageUnknown,
 		channelID:        TokenUsageUnknown,
 		channelType:      TokenUsageUnknown,
@@ -228,6 +234,17 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 	if request.Context != nil {
 		if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
 			dimensions.userID = request.Context.RequestingUser.Id
+		}
+
+		// The acting identity is the requesting user in user mode, the agent's
+		// bot user in service-account mode.
+		dimensions.actingUserID = dimensions.userID
+		if request.Context.ToolAuthMode == ToolAuthModeServiceAccount {
+			dimensions.toolAuthMode = ToolAuthModeServiceAccount
+			dimensions.actingUserID = TokenUsageUnknown
+			if request.Context.BotUserID != "" {
+				dimensions.actingUserID = request.Context.BotUserID
+			}
 		}
 
 		if request.Context.Team != nil && request.Context.Team.Id != "" {

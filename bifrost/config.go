@@ -61,6 +61,26 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 	}
 }
 
+// SupportsProviderFileDownload is independent of sandbox execution: OpenAI can
+// run code_interpreter, but its container files use an endpoint Bifrost does
+// not surface yet. Anthropic's GET /v1/files/{id}/content is supported.
+func SupportsProviderFileDownload(serviceType string) bool {
+	provider, err := MapServiceTypeToProvider(serviceType)
+	if err != nil {
+		return false
+	}
+	return supportsProviderFileDownloadProvider(provider)
+}
+
+func supportsProviderFileDownloadProvider(provider schemas.ModelProvider) bool {
+	switch provider {
+	case schemas.Anthropic:
+		return true
+	default:
+		return false
+	}
+}
+
 // SupportedNativeToolsForServiceType returns the native (provider-executed)
 // tool ids the given service type supports through Bifrost — the single source
 // of truth for request-time filtering, mirrored by the webapp's

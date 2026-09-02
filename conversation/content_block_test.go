@@ -319,8 +319,6 @@ func TestFilterForNonRequester(t *testing.T) {
 			},
 		},
 		{
-			// Server tools run provider-side with no approval flow; their
-			// activity shares the post text's visibility and is never redacted.
 			name: "leaves server_tool_use untouched",
 			blocks: []ContentBlock{
 				{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{
@@ -370,19 +368,18 @@ func TestFilterForNonRequester(t *testing.T) {
 	}
 }
 
-// TestSanitizeForDisplayServerTool verifies server-tool activity strings are
-// escaped against Unicode bidi/spoofing attacks (web content and sandbox
-// output are attacker-influenced) and that the original blocks are not mutated.
 func TestSanitizeForDisplayServerTool(t *testing.T) {
 	bidi := "safe\u202Eevil"
 	blocks := []ContentBlock{{
 		Type: BlockTypeServerToolUse,
 		ServerTool: &llm.ServerToolUse{
-			ID:      "srv1",
-			Tool:    llm.NativeToolCodeInterpreter,
-			Status:  llm.ServerToolStatusSuccess,
-			Command: bidi,
-			Output:  bidi,
+			ID:            "srv1",
+			Tool:          llm.NativeToolCodeInterpreter,
+			Status:        llm.ServerToolStatusSuccess,
+			Command:       bidi,
+			Output:        bidi,
+			FileIDs:       []string{bidi},
+			ProviderRoute: "anthropic::fallback",
 		},
 	}}
 
@@ -393,8 +390,12 @@ func TestSanitizeForDisplayServerTool(t *testing.T) {
 	assert.NotContains(t, result[0].ServerTool.Command, "\u202E")
 	assert.NotContains(t, result[0].ServerTool.Output, "\u202E")
 	assert.Contains(t, result[0].ServerTool.Command, "safe")
+	assert.NotContains(t, result[0].ServerTool.FileIDs[0], "\u202E")
+	assert.Empty(t, result[0].ServerTool.ProviderRoute, "provider routing is runtime-only")
 	assert.Equal(t, bidi, blocks[0].ServerTool.Command, "original block must not be mutated")
 	assert.Equal(t, bidi, blocks[0].ServerTool.Output, "original block must not be mutated")
+	assert.Equal(t, bidi, blocks[0].ServerTool.FileIDs[0], "original file ids must not share display backing storage")
+	assert.Equal(t, "anthropic::fallback", blocks[0].ServerTool.ProviderRoute)
 }
 
 func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {

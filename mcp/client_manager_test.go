@@ -1000,56 +1000,56 @@ func TestClientManagerGetToolRetrievalOverridesDisabledServer(t *testing.T) {
 
 func TestClientManagerInvalidateUserClients(t *testing.T) {
 	now := time.Now()
+	user1Remote := clientKey{userID: "user-1", kind: clientKindUserRemote}
+	user1SA := clientKey{userID: "user-1", kind: clientKindSARemote}
+	user1Local := clientKey{userID: "user-1", kind: clientKindLocal}
+	user2Remote := clientKey{userID: "user-2", kind: clientKindUserRemote}
+	user2SA := clientKey{userID: "user-2", kind: clientKindSARemote}
+	user2Local := clientKey{userID: "user-2", kind: clientKindLocal}
+	allKeys := []clientKey{user1Remote, user1SA, user1Local, user2Remote, user2SA, user2Local}
+
 	testCases := []struct {
-		name                 string
-		userID               string
-		expectedClientKeys   []string
-		expectedActivityKeys []string
+		name         string
+		userID       string
+		expectedKeys []clientKey
 	}{
 		{
-			name:                 "removes existing user",
-			userID:               "user-1",
-			expectedClientKeys:   []string{"user-2"},
-			expectedActivityKeys: []string{"user-2"},
+			name:         "removes remotes and local bags for the user",
+			userID:       "user-1",
+			expectedKeys: []clientKey{user2Remote, user2SA, user2Local},
 		},
 		{
-			name:                 "ignores missing user",
-			userID:               "missing-user",
-			expectedClientKeys:   []string{"user-1", "user-2"},
-			expectedActivityKeys: []string{"user-1", "user-2"},
+			name:         "ignores missing user",
+			userID:       "missing-user",
+			expectedKeys: allKeys,
 		},
 		{
-			name:                 "ignores empty user",
-			userID:               "",
-			expectedClientKeys:   []string{"user-1", "user-2"},
-			expectedActivityKeys: []string{"user-1", "user-2"},
+			name:         "ignores empty user",
+			userID:       "",
+			expectedKeys: allKeys,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := &ClientManager{
-				clients: map[string]*UserClients{
-					"user-1": {clients: map[string]*Client{}},
-					"user-2": {clients: map[string]*Client{}},
-				},
-				activity: map[string]time.Time{
-					"user-1": now,
-					"user-2": now.Add(time.Minute),
-				},
+				clients:  map[clientKey]*UserClients{},
+				activity: map[clientKey]time.Time{},
+			}
+			for i, key := range allKeys {
+				manager.clients[key] = &UserClients{clients: map[string]*Client{}}
+				manager.activity[key] = now.Add(time.Duration(i) * time.Minute)
 			}
 
 			manager.InvalidateUserClients(tc.userID)
 
-			require.Len(t, manager.clients, len(tc.expectedClientKeys))
-			for _, key := range tc.expectedClientKeys {
+			require.Len(t, manager.clients, len(tc.expectedKeys))
+			require.Len(t, manager.activity, len(tc.expectedKeys))
+			for _, key := range tc.expectedKeys {
 				require.Contains(t, manager.clients, key)
-			}
-			require.Len(t, manager.activity, len(tc.expectedActivityKeys))
-			for _, key := range tc.expectedActivityKeys {
 				require.Contains(t, manager.activity, key)
 			}
-			require.Equal(t, now.Add(time.Minute), manager.activity["user-2"])
+			require.Equal(t, now.Add(3*time.Minute), manager.activity[user2Remote])
 		})
 	}
 }
@@ -1060,8 +1060,15 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 	cachedTools := map[string]*gomcp.Tool{
 		"tool": {Name: "tool"},
 	}
-	require.NoError(t, cache.SetTools("shared-server", "shared-server", "https://shared.example.com", cachedTools, time.Now()))
-	require.NoError(t, cache.SetTools("oauth-server", "oauth-server", "https://oauth.example.com", cachedTools, time.Now()))
+	saHeaders := map[string]string{"X-Service-Account-Token": "pat"}
+	for _, serverID := range []string{
+		"shared-server",
+		"oauth-server",
+		serviceAccountToolsCacheID("sa-server"),
+		serviceAccountToolsCacheID("sa-oauth-server"),
+	} {
+		require.NoError(t, cache.SetTools(serverID, serverID, "https://"+serverID+".example.com", cachedTools, time.Now()))
+	}
 
 	manager := &ClientManager{
 		config: Config{
@@ -1069,6 +1076,8 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 				{Name: "shared-server", BaseURL: "https://shared.example.com", Enabled: true},
 				{Name: "disabled-server", BaseURL: "https://disabled.example.com", Enabled: false},
 				{Name: "oauth-server", BaseURL: "https://oauth.example.com", Enabled: true, ClientID: "client-id"},
+				{Name: "sa-server", BaseURL: "https://sa.example.com", Enabled: true, ServiceAccountHeaders: saHeaders},
+				{Name: "sa-oauth-server", BaseURL: "https://sa-oauth.example.com", Enabled: true, ClientID: "client-id", ServiceAccountHeaders: saHeaders},
 			},
 		},
 		toolsCache: cache,
@@ -1078,6 +1087,9 @@ func TestClientManagerInvalidateSharedToolsCacheForRefresh(t *testing.T) {
 
 	require.Empty(t, cache.GetTools("shared-server"))
 	require.NotEmpty(t, cache.GetTools("oauth-server"))
+	require.Empty(t, cache.GetTools(serviceAccountToolsCacheID("sa-server")))
+	require.Empty(t, cache.GetTools(serviceAccountToolsCacheID("sa-oauth-server")),
+		"service account entries are invalidated even when static OAuth credentials are configured")
 }
 
 func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) {
@@ -1087,19 +1099,19 @@ func TestClientManagerCreateAndStoreUserClientSetsInitialActivity(t *testing.T) 
 	manager := &ClientManager{
 		config:   Config{},
 		log:      client.Log,
-		clients:  make(map[string]*UserClients),
-		activity: make(map[string]time.Time),
+		clients:  make(map[clientKey]*UserClients),
+		activity: make(map[clientKey]time.Time),
 	}
 
 	before := time.Now()
-	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false)
+	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), clientKey{userID: "user-1"}, false)
 	after := time.Now()
 
 	require.NotNil(t, userClients)
 	require.Nil(t, mcpErrors)
-	require.Contains(t, manager.clients, "user-1")
+	require.Contains(t, manager.clients, clientKey{userID: "user-1"})
 
-	lastActivity, ok := manager.activity["user-1"]
+	lastActivity, ok := manager.activity[clientKey{userID: "user-1"}]
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 	require.False(t, lastActivity.After(after))
@@ -1114,15 +1126,15 @@ func TestCacheableContextIgnoresParentCancellation(t *testing.T) {
 	require.NoError(t, cacheCtx.Err())
 }
 
-func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
+func TestClientManagerGetClientExistingClientConcurrent(t *testing.T) {
 	before := time.Now()
 	userClients := &UserClients{clients: map[string]*Client{}}
 	manager := &ClientManager{
-		clients: map[string]*UserClients{
-			"user-1": userClients,
+		clients: map[clientKey]*UserClients{
+			{userID: "user-1"}: userClients,
 		},
-		activity: map[string]time.Time{
-			"user-1": before.Add(-time.Minute),
+		activity: map[clientKey]time.Time{
+			{userID: "user-1"}: before.Add(-time.Minute),
 		},
 	}
 
@@ -1135,9 +1147,9 @@ func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 		wg.Go(func() {
 			<-start
 			for range iterations {
-				got, errs := manager.getClientForUser(context.Background(), "user-1")
+				got, errs := manager.getClient(context.Background(), clientKey{userID: "user-1"})
 				if got != userClients || errs != nil {
-					t.Errorf("getClientForUser returned unexpected result: got=%p errs=%v", got, errs)
+					t.Errorf("getClient returned unexpected result: got=%p errs=%v", got, errs)
 					return
 				}
 			}
@@ -1147,7 +1159,7 @@ func TestClientManagerGetClientForUserExistingClientConcurrent(t *testing.T) {
 	close(start)
 	wg.Wait()
 
-	lastActivity, ok := manager.activity["user-1"]
+	lastActivity, ok := manager.activity[clientKey{userID: "user-1"}]
 	require.True(t, ok)
 	require.False(t, lastActivity.Before(before))
 }
@@ -1167,11 +1179,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 			manager: func() *ClientManager {
 				storeClient := &recordKVSetWithExpiryClient{}
 				manager := &ClientManager{
-					clients: map[string]*UserClients{
-						"user-1": {clients: map[string]*Client{}},
+					clients: map[clientKey]*UserClients{
+						{userID: "user-1"}: {clients: map[string]*Client{}},
 					},
-					activity: map[string]time.Time{
-						"user-1": time.Now(),
+					activity: map[clientKey]time.Time{
+						{userID: "user-1"}: time.Now(),
 					},
 				}
 				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
@@ -1189,11 +1201,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 					setErr: model.NewAppError("test", "oauth_needed_store_failed", nil, "persist failed", http.StatusInternalServerError),
 				}
 				manager := &ClientManager{
-					clients: map[string]*UserClients{
-						"user-1": {clients: map[string]*Client{}},
+					clients: map[clientKey]*UserClients{
+						{userID: "user-1"}: {clients: map[string]*Client{}},
 					},
-					activity: map[string]time.Time{
-						"user-1": time.Now(),
+					activity: map[clientKey]time.Time{
+						{userID: "user-1"}: time.Now(),
 					},
 				}
 				manager.oauthManager = NewOAuthManager(storeClient, "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback", nil, nil)
@@ -1208,11 +1220,11 @@ func TestClientManagerMarkOAuthNeededInvalidatesUserClient(t *testing.T) {
 		{
 			name: "still invalidates without oauth manager",
 			manager: &ClientManager{
-				clients: map[string]*UserClients{
-					"user-1": {clients: map[string]*Client{}},
+				clients: map[clientKey]*UserClients{
+					{userID: "user-1"}: {clients: map[string]*Client{}},
 				},
-				activity: map[string]time.Time{
-					"user-1": time.Now(),
+				activity: map[clientKey]time.Time{
+					{userID: "user-1"}: time.Now(),
 				},
 			},
 		},

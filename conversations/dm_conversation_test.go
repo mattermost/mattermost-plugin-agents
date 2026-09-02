@@ -503,7 +503,7 @@ type testMCPClientManager struct {
 	onGetTools func()
 }
 
-func (m *testMCPClientManager) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (m *testMCPClientManager) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	if m.onGetTools != nil {
 		m.onGetTools()
 	}

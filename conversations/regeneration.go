@@ -295,5 +295,5 @@ func (c *Conversations) regenerateViaConversation(
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(runResult.Stream, post, nil, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, bot, runResult.Stream, post, nil, llmContext, llmContext), nil
 }

@@ -68,11 +68,30 @@ func BlocksToPost(
 		switch block.Type {
 		case BlockTypeText:
 			textParts = append(textParts, block.Text)
+			if block.Text != "" {
+				post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+					Kind: llm.TurnSegmentText,
+					Text: block.Text,
+				})
+			}
 
 		case BlockTypeThinking:
-			// Last thinking block wins
+			// Last thinking block wins. Persisted thinking is cleared by the
+			// request builder because signed provider blocks cannot be rebuilt
+			// safely from normalized storage.
 			post.Reasoning = block.Text
 			post.ReasoningSignature = block.Signature
+
+		case BlockTypeServerToolUse:
+			if block.ServerTool == nil || block.ServerTool.ID == "" {
+				continue
+			}
+			activity := block.ServerTool.Clone()
+			post.ServerTools = append(post.ServerTools, activity)
+			post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+				Kind:         llm.TurnSegmentServerTool,
+				ServerToolID: activity.ID,
+			})
 
 		case BlockTypeToolUse:
 			arguments := block.Input
@@ -224,6 +243,9 @@ func BlocksToPost(
 	}
 	if len(descriptors) > 0 {
 		post.Message += "\nAttached files (call the read_file tool with the File ID to read their contents):\n" + strings.Join(descriptors, "\n\n")
+	}
+	if len(post.ServerTools) == 0 {
+		post.AssistantSegments = nil
 	}
 
 	return post

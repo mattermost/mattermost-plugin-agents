@@ -52,49 +52,90 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			// Handle tool calls in assistant messages
-			if len(post.ToolUse) > 0 {
-				if post.Message != "" {
-					messages = append(messages, schemas.ResponsesMessage{
-						Role: new(schemas.ResponsesInputMessageRoleAssistant),
-						Content: &schemas.ResponsesMessageContent{
-							ContentStr: new(post.Message),
-						},
-					})
-				}
-				for _, tc := range post.ToolUse {
-					funcCallMsg := schemas.ResponsesMessage{
-						Type: new(schemas.ResponsesMessageTypeFunctionCall),
-						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID:    new(tc.ID),
-							Name:      new(tc.Name),
-							Arguments: new(string(tc.Arguments)),
-						},
-					}
-					messages = append(messages, funcCallMsg)
-
-					funcOutputMsg := schemas.ResponsesMessage{
-						Type: new(schemas.ResponsesMessageTypeFunctionCallOutput),
-						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID: new(tc.ID),
-							Output: &schemas.ResponsesToolMessageOutputStruct{
-								ResponsesToolCallOutputStr: new(tc.Result),
-							},
-						},
-					}
-					messages = append(messages, funcOutputMsg)
-				}
-			} else if post.Message != "" {
-				messages = append(messages, schemas.ResponsesMessage{
-					Role: new(schemas.ResponsesInputMessageRoleAssistant),
-					Content: &schemas.ResponsesMessageContent{
-						ContentStr: new(post.Message),
+			messages = append(messages, assistantReplayMessages(post)...)
+			for _, tc := range post.ToolUse {
+				funcCallMsg := schemas.ResponsesMessage{
+					Type: new(schemas.ResponsesMessageTypeFunctionCall),
+					ResponsesToolMessage: &schemas.ResponsesToolMessage{
+						CallID:    new(tc.ID),
+						Name:      new(tc.Name),
+						Arguments: new(string(tc.Arguments)),
 					},
-				})
+				}
+				messages = append(messages, funcCallMsg)
+
+				funcOutputMsg := schemas.ResponsesMessage{
+					Type: new(schemas.ResponsesMessageTypeFunctionCallOutput),
+					ResponsesToolMessage: &schemas.ResponsesToolMessage{
+						CallID: new(tc.ID),
+						Output: &schemas.ResponsesToolMessageOutputStruct{
+							ResponsesToolCallOutputStr: new(tc.Result),
+						},
+					},
+				}
+				messages = append(messages, funcOutputMsg)
 			}
 		}
 	}
 
+	return messages
+}
+
+// assistantReplayMessages renders a persisted assistant post as Responses API
+// input messages. With arrival-order segments, text and server tool activity
+// interleave as they happened; otherwise the activity record precedes the text.
+func assistantReplayMessages(post llm.Post) []schemas.ResponsesMessage {
+	newTextMessage := func(text string) schemas.ResponsesMessage {
+		return schemas.ResponsesMessage{
+			Role: new(schemas.ResponsesInputMessageRoleAssistant),
+			Content: &schemas.ResponsesMessageContent{
+				ContentStr: new(text),
+			},
+		}
+	}
+
+	if len(post.AssistantSegments) == 0 {
+		messages := make([]schemas.ResponsesMessage, 0, 2)
+		if record := serverToolActivityRecord(post.ServerTools); record != "" {
+			messages = append(messages, newTextMessage(record))
+		}
+		if post.Message != "" {
+			messages = append(messages, newTextMessage(post.Message))
+		}
+		return messages
+	}
+
+	serverToolsByID := make(map[string]llm.ServerToolUse, len(post.ServerTools))
+	for i := range post.ServerTools {
+		serverToolsByID[post.ServerTools[i].ID] = post.ServerTools[i]
+	}
+
+	messages := make([]schemas.ResponsesMessage, 0, len(post.AssistantSegments))
+	headerEmitted := false
+	for _, segment := range post.AssistantSegments {
+		switch segment.Kind {
+		case llm.TurnSegmentText:
+			if segment.Text != "" {
+				messages = append(messages, newTextMessage(segment.Text))
+			}
+		case llm.TurnSegmentServerTool:
+			use, ok := serverToolsByID[segment.ServerToolID]
+			if !ok {
+				continue
+			}
+			line := serverToolActivityLine(&use)
+			if line == "" {
+				continue
+			}
+			// The header describes the whole turn, so it prefixes only the
+			// first activity record instead of repeating per segment.
+			if !headerEmitted {
+				headerEmitted = true
+				line = serverToolReplayHeader + "\n" + line
+			}
+			messages = append(messages, newTextMessage(line))
+		}
+	}
 	return messages
 }
 
@@ -281,6 +322,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
+	b.applyCompletionBetaHeaders(bifrostCtx)
 
 	// Convert to Bifrost Responses API request
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
@@ -326,6 +368,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// web fetch / code execution). Every state change re-emits the cumulative
 	// snapshot so receivers can replace prior state.
 	serverTools := newServerToolTracker()
+	providerRoute := b.provider
 	emitServerTools := func() {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeServerToolUse,
@@ -362,6 +405,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		// Process Responses API stream response
 		if chunk.BifrostResponsesStreamResponse != nil {
 			resp := chunk.BifrostResponsesStreamResponse
+			if routed := resp.ExtraFields.RoutingInfo.Provider; routed != "" {
+				providerRoute = routed
+			} else if resp.Response != nil && resp.Response.ExtraFields.RoutingInfo.Provider != "" {
+				providerRoute = resp.Response.ExtraFields.RoutingInfo.Provider
+			}
 
 			switch resp.Type {
 			case schemas.ResponsesStreamResponseTypeOutputTextDelta:
@@ -509,7 +557,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
 				// Server tool started (web_search_call / web_fetch_call /
 				// code_interpreter_call) — track and surface the activity.
-				if serverTools.observeItem(resp.Item) {
+				if serverTools.observeItem(resp.Item, providerRoute) {
 					emitServerTools()
 				}
 				// New output item added - register function calls so their
@@ -543,7 +591,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Server tool finished — fold the final payload (query,
 				// resolved URL/title, stdout/stderr, error) into the activity.
-				if serverTools.observeItem(resp.Item) {
+				if serverTools.observeItem(resp.Item, providerRoute) {
 					emitServerTools()
 				}
 				// Output item completed - finalize function call if any

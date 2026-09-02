@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -100,11 +99,13 @@ type ToolTurn struct {
 	// AssistantReasoning holds the reasoning data from the assistant response.
 	AssistantReasoning llm.ReasoningData
 
-	// AssistantServerTools holds the provider-executed (server) tool activity
-	// observed during the assistant response — the final cumulative snapshot
-	// from EventTypeServerToolUse. Without it, a round that mixed server tools
-	// with client tool calls would lose the activity when persisted.
+	// AssistantServerTools is the final cumulative snapshot. Without it, a
+	// round that mixed server tools with client tool calls would lose activity.
 	AssistantServerTools []llm.ServerToolUse
+
+	// AssistantSegments is arrival order. Without it, narration between two
+	// sandbox runs collapses above both of them.
+	AssistantSegments []llm.TurnSegment
 
 	// ToolResults holds the executed tool results, one per tool call.
 	// Includes both successful and errored results.
@@ -207,7 +208,7 @@ func (r *ToolRunner) runLoop(
 		}
 
 		// Consume the stream, forwarding non-tool-call events in real-time.
-		resp := drainStream(stream, output)
+		resp := drainStream(stream, output, request.Context)
 
 		if resp.err != nil {
 			r.deliverToolTurns(result, onToolTurns)
@@ -235,7 +236,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resolvedToolCalls, toolResults, resp.usage)
+			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -286,7 +287,7 @@ func (r *ToolRunner) runLoop(
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resolvedToolCalls, toolResults, resp.usage)
+		appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -314,16 +315,20 @@ type assistantResponse struct {
 	reasoningData llm.ReasoningData
 	toolCalls     []llm.ToolCall
 	serverTools   []llm.ServerToolUse
-	usage         llm.TokenUsage
-	err           error
+	// segments is the arrival order of text, reasoning, and server tool
+	// activity. Without it, narration between two sandbox runs collapses
+	// above both of them.
+	segments []llm.TurnSegment
+	usage    llm.TokenUsage
+	err      error
 }
 
 // drainStream consumes one LLM response stream, forwarding non-tool-call
 // events to output in real-time while buffering tool calls and accumulating
-// the round's text, reasoning, and usage.
-func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent) assistantResponse {
-	var text strings.Builder
-	var reasoning strings.Builder
+// the round's text, reasoning, server tool activity, and usage. Sandbox files
+// reported by server tools are registered on llmCtx as they arrive.
+func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent, llmCtx *llm.Context) assistantResponse {
+	var sequence llm.TurnSequence
 	var resp assistantResponse
 
 	for event := range stream.Stream {
@@ -337,23 +342,36 @@ func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent
 			// keep the latest so a tool round persists it (see ToolTurn).
 			if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 				resp.serverTools = uses
+				sequence.RecordServerTools(uses)
+				// Register files before presentation sanitation; downloads need exact ids and fallback routes.
+				for _, use := range uses {
+					refs := make([]llm.ProviderFileReference, 0, len(use.FileIDs))
+					for _, id := range use.FileIDs {
+						refs = append(refs, llm.ProviderFileReference{
+							ID:            id,
+							ProviderRoute: use.ProviderRoute,
+						})
+					}
+					llmCtx.AddSandboxFiles(refs...)
+				}
 			}
 			output <- event
 		case llm.EventTypeEnd:
 			// Don't forward yet — handle after consuming the full stream.
 		case llm.EventTypeText:
 			if t, ok := event.Value.(string); ok {
-				text.WriteString(t)
+				sequence.AppendText(t)
 			}
 			output <- event
 		case llm.EventTypeReasoning:
 			if t, ok := event.Value.(string); ok {
-				reasoning.WriteString(t)
+				sequence.AppendReasoning(t)
 			}
 			output <- event
 		case llm.EventTypeReasoningEnd:
 			if data, ok := event.Value.(llm.ReasoningData); ok {
 				resp.reasoningData = data
+				sequence.FinishReasoning(data)
 			}
 			output <- event
 		case llm.EventTypeUsage:
@@ -372,7 +390,8 @@ func drainStream(stream *llm.TextStreamResult, output chan<- llm.TextStreamEvent
 		}
 	}
 
-	resp.text = text.String()
+	resp.text = sequence.Text()
+	resp.segments = sequence.Segments()
 	return resp
 }
 
@@ -540,6 +559,7 @@ func appendToolTurnAndPost(
 	text string,
 	reasoningData llm.ReasoningData,
 	serverTools []llm.ServerToolUse,
+	segments []llm.TurnSegment,
 	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
@@ -549,6 +569,7 @@ func appendToolTurnAndPost(
 		AssistantToolCalls:   resolvedToolCalls,
 		AssistantReasoning:   reasoningData,
 		AssistantServerTools: serverTools,
+		AssistantSegments:    segments,
 		ToolResults:          toolResults,
 		TokensIn:             usage.InputTokens,
 		TokensOut:            usage.OutputTokens,
@@ -561,6 +582,8 @@ func appendToolTurnAndPost(
 		ToolUse:            resolvedToolCalls,
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
+		ServerTools:        serverTools,
+		AssistantSegments:  segments,
 	})
 }
 

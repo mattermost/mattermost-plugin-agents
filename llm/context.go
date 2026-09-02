@@ -5,6 +5,7 @@ package llm
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -43,6 +44,10 @@ type Context struct {
 	BotModel           string
 	BotServiceType     string
 	CustomInstructions string
+
+	// ToolAuthMode records the identity mode the tool catalog was built with
+	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
+	ToolAuthMode string
 
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
@@ -83,6 +88,11 @@ type ToolCatalogContext struct {
 	// file-creating response tools (CreateFile) may be cataloged. Only
 	// conversation entry points that stream a response post set this.
 	ResponseFilesSupported bool
+
+	// SandboxFilesAttached is true when this turn's sandbox output will be
+	// attached automatically. The model cannot see provider file ids, so the
+	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
+	SandboxFilesAttached bool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for
@@ -104,6 +114,11 @@ type ToolRuntimeContext struct {
 	// CreatedFiles collects files created by tools during this turn for
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
+
+	// SandboxFiles are provider files observed this request, in order, with
+	// the route that produced them. Populated only from server-tool activity,
+	// never from model input.
+	SandboxFiles []ProviderFileReference
 
 	// ResponseAttachmentBudget caps how many files response tools may create
 	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
@@ -219,6 +234,40 @@ func (c *Context) AddCreatedFile(f CreatedFile) {
 		return
 	}
 	c.ToolRuntime.CreatedFiles = append(c.ToolRuntime.CreatedFiles, f)
+}
+
+// AddSandboxFiles records observed sandbox files in arrival order. Empty
+// references and repeated route/id pairs are skipped because snapshots are cumulative.
+func (c *Context) AddSandboxFiles(refs ...ProviderFileReference) {
+	if c == nil {
+		return
+	}
+	c.ToolRuntime.AddSandboxFiles(refs...)
+}
+
+func (t *ToolRuntimeContext) AddSandboxFiles(refs ...ProviderFileReference) {
+	if t == nil {
+		return
+	}
+	for _, ref := range refs {
+		if ref.ID == "" || slices.ContainsFunc(t.SandboxFiles, func(existing ProviderFileReference) bool {
+			return existing.ID == ref.ID && existing.ProviderRoute == ref.ProviderRoute
+		}) {
+			continue
+		}
+		t.SandboxFiles = append(t.SandboxFiles, ref)
+	}
+}
+
+// ConsumeSandboxFiles returns observed files and clears them so a stream that
+// ends twice cannot attach the same provider file again.
+func (c *Context) ConsumeSandboxFiles() []ProviderFileReference {
+	if c == nil {
+		return nil
+	}
+	refs := c.ToolRuntime.SandboxFiles
+	c.ToolRuntime.SandboxFiles = nil
+	return refs
 }
 
 // CreatedFilesList returns the files created by tools during this turn.

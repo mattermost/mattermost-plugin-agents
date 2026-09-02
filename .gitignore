@@ -53,3 +53,4 @@ opencode.json
 
 # Locally built binaries
 cmd/evalviewer/evalviewer
+.pat

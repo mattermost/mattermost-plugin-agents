@@ -65,7 +65,7 @@ type MCPClientManager interface {
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
-	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
+	GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
 	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
 	GetConfig() mcp.Config
 
@@ -544,13 +544,26 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
-	IsDefault             bool                   `json:"isDefault,omitempty"`
+	// UseServiceAccountAuth is the effective mode, not the raw agent flag: it is
+	// false when the server is not licensed for remote MCP.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
+	IsDefault             bool `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+}
+
+// usesServiceAccountAuth reports the effective service account mode for a bot:
+// on an unlicensed server a service account agent runs in per-user mode, and the
+// webapp keys its per-user MCP UI off this value.
+func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
+	if a.contextBuilder == nil {
+		return bot.GetConfig().UseServiceAccountAuth
+	}
+	return a.contextBuilder.UsesServiceAccountCatalog(bot)
 }
 
 // getAIBotsForUser returns all AI bots available to a user
@@ -589,6 +602,7 @@ func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
 			IsDefault:             isDefault,
 		})
 		if isDefault {

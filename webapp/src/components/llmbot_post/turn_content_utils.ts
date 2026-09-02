@@ -146,21 +146,6 @@ export function extractToolCallsForPost(
     return toolUseBlocks.map((block) => toolUseBlockToToolCall(block, resultMap));
 }
 
-/** Extract reasoning summary text and signature from thinking content blocks. */
-export function extractReasoningFromTurn(turn: Turn): {summary: string; signature: string} {
-    const thinkingBlocks = turn.content.filter(
-        (b: ContentBlock) => b.type === BlockTypeThinking,
-    );
-    if (thinkingBlocks.length === 0) {
-        return {summary: '', signature: ''};
-    }
-
-    // Concatenate all thinking blocks (typically there is only one).
-    const summary = thinkingBlocks.map((b) => b.text ?? '').join('\n');
-    const signature = thinkingBlocks[thinkingBlocks.length - 1]?.signature ?? '';
-    return {summary, signature};
-}
-
 /** Extract Annotation[] from annotation blocks and citations on text blocks. */
 export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
     const annotations: Annotation[] = [];
@@ -190,7 +175,6 @@ export function extractAnnotationsFromTurn(turn: Turn): Annotation[] {
             }
         }
 
-        // Text block with inline citations
         if (block.type === BlockTypeText && block.citations) {
             for (let i = 0; i < block.citations.length; i++) {
                 const c = block.citations[i];
@@ -238,8 +222,6 @@ export function hasAutoApprovedToolsForPost(
     );
 }
 
-// One assistant turn in a response. The post renders these as a vertical
-// sequence: text → tools → text → tools → final text.
 export interface Round {
     id: string;
     text: string;
@@ -247,21 +229,8 @@ export interface Round {
     reasoning: {summary: string; signature: string};
     annotations: Annotation[];
 
-    // Provider-executed (server) tool activity for the round: web searches,
-    // page fetches, sandbox code runs. Rendered before the text since the
-    // activity precedes the final answer.
+    // Rendered before text: RoundView shows activity above the answer.
     serverTools: ServerToolUse[];
-}
-
-/** Extract ServerToolUse[] from server_tool_use content blocks. */
-export function extractServerToolsFromTurn(turn: Turn): ServerToolUse[] {
-    const serverTools: ServerToolUse[] = [];
-    for (const block of turn.content) {
-        if (block.type === BlockTypeServerToolUse && block.server_tool) {
-            serverTools.push(block.server_tool);
-        }
-    }
-    return serverTools;
 }
 
 /**
@@ -303,6 +272,138 @@ export function computeRenderedRounds(params: {
     return out;
 }
 
+/** Round draft plus textStart, used to rebase citation indices onto this round's slice. */
+interface RoundDraft {
+    reasoning: {summary: string; signature: string};
+    serverTools: ServerToolUse[];
+    text: string;
+    textStart: number;
+}
+
+function emptyDraft(textStart: number): RoundDraft {
+    return {reasoning: {summary: '', signature: ''}, serverTools: [], text: '', textStart};
+}
+
+function draftIsEmpty(draft: RoundDraft): boolean {
+    return draft.text === '' && draft.serverTools.length === 0 && draft.reasoning.summary === '';
+}
+
+/**
+ * Split one assistant turn into rounds. RoundView renders
+ * `reasoning → activity → text`, so a block whose slot is already filled
+ * starts a new round. Client tool_use blocks stay on the last round:
+ * toolrunner already persists each of those as its own turn.
+ */
+function splitTurnIntoRounds(
+    turn: Turn,
+    resultMap: Map<string, ContentBlock>,
+): Round[] {
+    const drafts: RoundDraft[] = [];
+    let draft = emptyDraft(0);
+    let textConsumed = 0;
+
+    const startNewDraft = () => {
+        drafts.push(draft);
+        draft = emptyDraft(textConsumed);
+    };
+
+    for (const block of turn.content) {
+        switch (block.type) {
+        case BlockTypeThinking: {
+            const text = block.text ?? '';
+            if (text === '') {
+                break;
+            }
+            if (draft.text !== '' || draft.serverTools.length > 0) {
+                startNewDraft();
+            }
+            draft.reasoning.summary = draft.reasoning.summary === '' ? text : `${draft.reasoning.summary}\n${text}`;
+            draft.reasoning.signature = block.signature ?? draft.reasoning.signature;
+            break;
+        }
+        case BlockTypeServerToolUse: {
+            if (!block.server_tool) {
+                break;
+            }
+
+            if (draft.text !== '') {
+                startNewDraft();
+            }
+            draft.serverTools.push(block.server_tool);
+            break;
+        }
+        case BlockTypeText: {
+            const text = block.text ?? '';
+            draft.text += text;
+            textConsumed += text.length;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    drafts.push(draft);
+
+    const toolCalls = turn.content.
+        filter((b) => b.type === BlockTypeToolUse).
+        map((block) => toolUseBlockToToolCall(block, resultMap));
+
+    const kept = drafts.filter((d) => !draftIsEmpty(d));
+    if (kept.length === 0) {
+        // Keep a tool-only round or the approval UI disappears.
+        if (toolCalls.length === 0) {
+            return [];
+        }
+        kept.push(emptyDraft(0));
+    }
+
+    const annotationsByDraft = distributeAnnotations(kept, extractAnnotationsFromTurn(turn));
+
+    return kept.map((d, i) => ({
+
+        id: i === 0 ? turn.id : `${turn.id}-${i}`,
+        text: d.text,
+        toolCalls: i === kept.length - 1 ? toolCalls : [],
+        reasoning: d.reasoning,
+        annotations: annotationsByDraft[i],
+        serverTools: d.serverTools,
+    }));
+}
+
+/** Assign annotations to the round whose text they point into, rebasing indices. Server offsets are against the whole message. */
+function distributeAnnotations(drafts: RoundDraft[], annotations: Annotation[]): Annotation[][] {
+    const out: Annotation[][] = drafts.map(() => []);
+    if (annotations.length === 0) {
+        return out;
+    }
+
+    const textBearing = drafts.
+        map((draft, index) => ({draft, index})).
+        filter(({draft}) => draft.text !== '');
+    if (textBearing.length === 0) {
+        return out;
+    }
+
+    if (textBearing.length === 1) {
+        out[textBearing[0].index] = annotations;
+        return out;
+    }
+
+    for (const annotation of annotations) {
+        const target = textBearing.find(({draft}) =>
+            annotation.end_index >= draft.textStart &&
+            annotation.end_index <= draft.textStart + draft.text.length,
+        ) ?? textBearing[textBearing.length - 1];
+
+        out[target.index].push({
+            ...annotation,
+            start_index: Math.max(annotation.start_index - target.draft.textStart, 0),
+            end_index: Math.max(annotation.end_index - target.draft.textStart, 0),
+        });
+    }
+    return out;
+}
+
 export function buildRoundsFromTurns(
     conversation: ConversationResponse,
     postId: string,
@@ -318,21 +419,7 @@ export function buildRoundsFromTurns(
         if (turn.role !== 'assistant') {
             continue;
         }
-        const text = turn.content.
-            filter((b) => b.type === BlockTypeText).
-            map((b) => b.text ?? '').
-            join('');
-        const toolCalls = turn.content.
-            filter((b) => b.type === BlockTypeToolUse).
-            map((block) => toolUseBlockToToolCall(block, resultMap));
-        rounds.push({
-            id: turn.id,
-            text,
-            toolCalls,
-            reasoning: extractReasoningFromTurn(turn),
-            annotations: extractAnnotationsFromTurn(turn),
-            serverTools: extractServerToolsFromTurn(turn),
-        });
+        rounds.push(...splitTurnIntoRounds(turn, resultMap));
     }
     return rounds;
 }
