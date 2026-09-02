@@ -20,7 +20,7 @@ import (
 
 type fakeWebSocketEvent struct {
 	event     string
-	payload   map[string]interface{}
+	payload   map[string]any
 	broadcast *model.WebsocketBroadcast
 }
 

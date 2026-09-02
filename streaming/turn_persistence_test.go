@@ -976,7 +976,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		const original = "Before !!CITE1!! after !!CITE2!!"
 		firstMarker := strings.Index(original, "!!CITE1!!")
 		secondMarker := strings.Index(original, "!!CITE2!!")
-		annotationEvent := map[string]interface{}{
+		annotationEvent := map[string]any{
 			"annotations": []llm.Annotation{{
 				Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1,
 			}},

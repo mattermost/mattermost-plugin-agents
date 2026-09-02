@@ -916,9 +916,7 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 				"displayName":           "Updated",
 				"useServiceAccountAuth": tc.requestValue,
 			}
-			for k, v := range tc.extraOverrides {
-				overrides[k] = v
-			}
+			maps.Copy(overrides, tc.extraOverrides)
 			body := updateAgentBodyFromStored(stored, overrides)
 			if tc.omitField {
 				delete(body, "useServiceAccountAuth")

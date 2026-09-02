@@ -108,11 +108,10 @@ func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
 // managerEditableBotConfigFields (and cleared in clearManagerEditableFields);
 // every other field is sensitive by default.
 func TestServiceAccountSensitiveFieldsAreExhaustive(t *testing.T) {
-	typ := reflect.TypeOf(llm.BotConfig{})
+	typ := reflect.TypeFor[llm.BotConfig]()
 	require.Greater(t, typ.NumField(), 0)
 
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+	for field := range typ.Fields() {
 		t.Run(field.Name, func(t *testing.T) {
 			stored := baseSAOnBotConfig()
 			proposed := stored
