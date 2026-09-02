@@ -168,8 +168,6 @@ type mockMCPClientManager struct {
 	// Plugin discovery runs concurrently, so its bookkeeping is guarded.
 	discoverMu                   sync.Mutex
 	discoverPluginToolsCallCount int
-
-	httpClient *http.Client
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
