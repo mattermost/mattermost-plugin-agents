@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,11 +24,13 @@ import (
 type stubServerAccessChecker struct {
 	denied map[string]bool
 	calls  []string              // serverIDs, in call order
+	users  []string              // userIDs, in call order
 	hook   func(serverID string) // optional; runs after each recorded call
 }
 
-func (s *stubServerAccessChecker) CanUseMCPServer(_ context.Context, _, serverID string) error {
+func (s *stubServerAccessChecker) CanUseMCPServer(_ context.Context, userID, serverID string) error {
 	s.calls = append(s.calls, serverID)
+	s.users = append(s.users, userID)
 	if s.hook != nil {
 		s.hook(serverID)
 	}
@@ -90,7 +91,7 @@ func newAccessTestManager(t *testing.T, checker ServerAccessChecker) *ClientMana
 	return m
 }
 
-func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
+func TestDeniedMCPServerOriginsAndToolFiltering(t *testing.T) {
 	tools := []llm.Tool{
 		{Name: "allowed_tool", ServerOrigin: accessAllowedOrigin},
 		{Name: "denied_tool_a", ServerOrigin: accessDeniedOrigin},
@@ -159,15 +160,17 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 			}
 			m := newAccessTestManager(t, checker)
 
-			denied := m.deniedExternalOrigins(context.Background(), "userid", m.ListPluginServers())
+			plugins := m.snapshotEnabledPluginServers()
+			denied := m.deniedMCPServerOrigins(context.Background(), "userid", m.config, m.embeddedClient, plugins)
 			if tt.wantDenied == nil {
 				assert.Empty(t, denied)
 			} else {
 				assert.Equal(t, tt.wantDenied, denied)
 			}
 
+			servers := m.resolveEligibleServers(m.config, m.embeddedClient, plugins, ToolSelection{}, denied, false)
 			var names []string
-			for _, tool := range dropToolsFromDeniedOrigins(tools, denied) {
+			for _, tool := range retainToolsFromOrigins(tools, servers.origins) {
 				names = append(names, tool.Name)
 			}
 			assert.Equal(t, tt.wantNames, names)
@@ -179,7 +182,7 @@ func TestDeniedExternalOriginsAndToolFiltering(t *testing.T) {
 	}
 }
 
-func TestDeniedExternalOriginsSkipsConfigOnlyPluginServers(t *testing.T) {
+func TestDeniedMCPServerOriginsSkipsConfigOnlyPluginServers(t *testing.T) {
 	checker := &stubServerAccessChecker{denied: map[string]bool{accessPluginSrvID: true}}
 	m := newAccessTestManager(t, checker)
 
@@ -189,7 +192,8 @@ func TestDeniedExternalOriginsSkipsConfigOnlyPluginServers(t *testing.T) {
 		ID: orphanID, PluginID: "com.example.orphan", Name: "Orphan", Enabled: true,
 	})
 
-	denied := m.deniedExternalOrigins(context.Background(), "userid", m.ListPluginServers())
+	plugins := m.snapshotEnabledPluginServers()
+	denied := m.deniedMCPServerOrigins(context.Background(), "userid", m.config, m.embeddedClient, plugins)
 	assert.Equal(t, map[string]bool{accessPluginOrigin: true}, denied)
 	assert.NotContains(t, checker.calls, orphanID, "config-only orphans must not be PDP-evaluated")
 	assert.Contains(t, checker.calls, accessPluginSrvID)
@@ -197,23 +201,21 @@ func TestDeniedExternalOriginsSkipsConfigOnlyPluginServers(t *testing.T) {
 
 // Mid-request registration must not enter the request-scoped snapshot used for
 // ABAC, connect, filter, and response rendering.
-func TestBuildUserToolsAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
+func TestGetCatalogAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
 	const (
 		latePluginID = "com.example.late"
 		lateServerID = "llllllllllllllllllllllllll"
 		lateOrigin   = "plugin://" + latePluginID
 	)
 
-	checker := &stubServerAccessChecker{}
+	checker := &stubServerAccessChecker{denied: map[string]bool{accessPluginSrvID: true}}
 	m := newAccessTestManager(t, checker)
-	m.clients = make(map[string]*UserClients)
-	m.activity = make(map[string]time.Time)
-	// Avoid remote/embedded connect side effects; plugin stays gated by ID.
+	m.clients = make(map[clientKey]*UserClients)
+	m.activity = make(map[clientKey]time.Time)
+	// Avoid remote/embedded connect side effects; policy denies the plugin
+	// before connection planning.
 	m.config.Servers = nil
 	m.embeddedClient = nil
-	ps := m.pluginServers[accessPluginID]
-	ps.Enabled = false
-	m.pluginServers[accessPluginID] = ps
 
 	checker.hook = func(serverID string) {
 		if serverID != accessPluginSrvID {
@@ -228,11 +230,12 @@ func TestBuildUserToolsAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
 		m.pluginServersMu.Unlock()
 	}
 
-	access := m.GetUserToolsAccess(context.Background(), "userid")
+	access := m.GetCatalogAccess(context.Background(), UserCatalogRequest("userid"))
 
 	require.Len(t, access.PluginServers, 1)
 	assert.Equal(t, accessPluginID, access.PluginServers[0].PluginID)
 	assert.NotContains(t, checker.calls, lateServerID, "late registration must not be PDP-evaluated")
+	assert.True(t, access.DeniedOrigins[accessPluginOrigin])
 	assert.False(t, access.DeniedOrigins[lateOrigin])
 	for _, tool := range access.Tools {
 		assert.NotEqual(t, lateOrigin, tool.ServerOrigin)
@@ -242,122 +245,44 @@ func TestBuildUserToolsAccessPinsPluginSnapshotAcrossABAC(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestRefreshUserToolsAccessEvaluatesABACOnce(t *testing.T) {
-	checker := &stubServerAccessChecker{}
+func TestRefreshCatalogAccessEvaluatesABACOnce(t *testing.T) {
+	checker := &stubServerAccessChecker{denied: map[string]bool{accessPluginSrvID: true}}
 	m := newAccessTestManager(t, checker)
-	m.clients = make(map[string]*UserClients)
-	m.activity = make(map[string]time.Time)
-	// Avoid remote/embedded/plugin connect side effects; plugin stays gated by ID.
+	m.clients = make(map[clientKey]*UserClients)
+	m.activity = make(map[clientKey]time.Time)
+	// Avoid remote/embedded connect side effects; policy denies the plugin
+	// before connection planning.
 	m.config.Servers = nil
 	m.embeddedClient = nil
-	ps := m.pluginServers[accessPluginID]
-	ps.Enabled = false
-	m.pluginServers[accessPluginID] = ps
 
-	_, err := m.RefreshUserToolsAccess(context.Background(), "userid")
+	access, err := m.RefreshCatalogAccess(context.Background(), UserCatalogRequest("userid"))
 	require.NoError(t, err)
 
+	assert.True(t, access.DeniedOrigins[accessPluginOrigin])
 	assert.Equal(t, []string{accessPluginSrvID}, checker.calls,
 		"refresh must evaluate ABAC once per gated server, not twice")
 }
 
-// A denied OAuth server with zero tools must not surface its ToolAuthError
-// (silent omission); auth errors from allowed servers and origin-less generic
-// errors survive.
-func TestFilterErrorsByDeniedOrigins(t *testing.T) {
-	deniedAuthErr := llm.ToolAuthError{
-		ServerName:   "Denied",
-		ServerOrigin: accessDeniedOrigin,
-		AuthURL:      "https://denied.example.com/oauth",
-		Error:        errors.New("oauth needed"),
-	}
-	allowedAuthErr := llm.ToolAuthError{
-		ServerName:   "Allowed",
-		ServerOrigin: accessAllowedOrigin,
-		AuthURL:      "https://allowed.example.com/oauth",
-		Error:        errors.New("oauth needed"),
-	}
-	genericErr := errors.New("connection refused")
-
-	denied := map[string]bool{accessDeniedOrigin: true}
-
-	tests := []struct {
-		name          string
-		in            *Errors
-		denied        map[string]bool
-		wantNil       bool
-		wantAuthNames []string
-		wantGeneric   int
-	}{
-		{
-			name:    "oauth-only denied server leaves no artifacts",
-			in:      &Errors{ToolAuthErrors: []llm.ToolAuthError{deniedAuthErr}},
-			denied:  denied,
-			wantNil: true,
-		},
-		{
-			name:          "allowed auth errors and generic errors survive",
-			in:            &Errors{ToolAuthErrors: []llm.ToolAuthError{deniedAuthErr, allowedAuthErr}, Errors: []error{genericErr}},
-			denied:        denied,
-			wantAuthNames: []string{"Allowed"},
-			wantGeneric:   1,
-		},
-		{
-			name:          "no denied origins passes through",
-			in:            &Errors{ToolAuthErrors: []llm.ToolAuthError{deniedAuthErr}},
-			denied:        nil,
-			wantAuthNames: []string{"Denied"},
-		},
-		{
-			name:    "nil errors stay nil",
-			in:      nil,
-			denied:  denied,
-			wantNil: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := filterErrorsByDeniedOrigins(tt.in, tt.denied)
-			if tt.wantNil {
-				assert.Nil(t, got)
-				return
-			}
-			require.NotNil(t, got)
-			var names []string
-			for _, authErr := range got.ToolAuthErrors {
-				names = append(names, authErr.ServerName)
-			}
-			assert.Equal(t, tt.wantAuthNames, names)
-			assert.Len(t, got.Errors, tt.wantGeneric)
-		})
-	}
-}
-
-// TestCreateAndStoreUserClientSkipsDeniedServers proves denied servers are
+// TestGetCatalogAccessSkipsDeniedServers proves denied servers are
 // never connected to: the denied origin is unreachable, so connecting to it
 // would produce a generic connect error — none may appear.
-func TestCreateAndStoreUserClientSkipsDeniedServers(t *testing.T) {
-	mockAPI := &plugintest.API{}
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything).Maybe()
-	client := pluginapi.NewClient(mockAPI, nil)
+func TestGetCatalogAccessSkipsDeniedServers(t *testing.T) {
+	var requests atomic.Int32
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(httpServer.Close)
 
-	manager := &ClientManager{
-		config: Config{
-			Servers: []ServerConfig{
-				// Unreachable on purpose: any connect attempt errors immediately.
-				{ID: accessDeniedID, Name: "Denied", Enabled: true, BaseURL: "http://127.0.0.1:1"},
-			},
-		},
-		log:      client.Log,
-		clients:  make(map[string]*UserClients),
-		activity: make(map[string]time.Time),
-	}
+	checker := &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}}
+	manager := newRemoteAccessTestManager(t, []ServerConfig{{
+		ID: accessDeniedID, Name: "Denied", Enabled: true, BaseURL: httpServer.URL,
+	}}, checker, httpServer.Client())
 
-	userClients, mcpErrors := manager.createAndStoreUserClient(context.Background(), "user-1", false, map[string]bool{"http://127.0.0.1:1": true})
-	require.NotNil(t, userClients)
-	assert.Nil(t, mcpErrors, "a denied server must never be connected to, so it can produce no error artifacts")
+	access := manager.GetCatalogAccess(context.Background(), UserCatalogRequest("user-1"))
+	assert.True(t, access.DeniedOrigins[httpServer.URL])
+	assert.Nil(t, access.Errors, "a denied server must never be connected to, so it can produce no error artifacts")
+	assert.Zero(t, requests.Load())
 }
 
 func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker ServerAccessChecker, httpClient *http.Client) *ClientManager {
@@ -371,8 +296,8 @@ func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker Se
 	return &ClientManager{
 		log:           client.Log,
 		config:        Config{Servers: servers},
-		clients:       make(map[string]*UserClients),
-		activity:      make(map[string]time.Time),
+		clients:       make(map[clientKey]*UserClients),
+		activity:      make(map[clientKey]time.Time),
 		httpClient:    httpClient,
 		accessChecker: checker,
 	}
@@ -387,12 +312,13 @@ func hasToolFromOrigin(tools []llm.Tool, origin string) bool {
 	return false
 }
 
-// TestGetUserToolsAccessDoesNotRedialFailedRemote proves an allowed remote
+// TestGetCatalogAccessDoesNotRedialFailedRemote proves an allowed remote
 // whose connect fails is not re-dialed on cache hits and its error is not
 // re-appended on every request.
-func TestGetUserToolsAccessDoesNotRedialFailedRemote(t *testing.T) {
+func TestGetCatalogAccessDoesNotRedialFailedRemote(t *testing.T) {
 	ctx := context.Background()
 	const userID = "user-1"
+	req := UserCatalogRequest(userID)
 
 	var requests atomic.Int32
 	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -406,33 +332,33 @@ func TestGetUserToolsAccessDoesNotRedialFailedRemote(t *testing.T) {
 		ID: accessAllowedID, Name: "Down", Enabled: true, BaseURL: httpServer.URL,
 	}}, checker, httpServer.Client())
 	t.Cleanup(func() {
-		if uc := m.clients[userID]; uc != nil {
+		if uc := m.clients[req.remoteKey()]; uc != nil {
 			uc.Close()
 		}
 	})
 
-	first := m.GetUserToolsAccess(ctx, userID)
+	first := m.GetCatalogAccess(ctx, req)
 	require.NotNil(t, first.Errors)
 	require.Len(t, first.Errors.Errors, 1)
-	cached := m.clients[userID]
+	cached := m.clients[req.remoteKey()]
 	require.NotNil(t, cached)
 	dialsAfterFirst := requests.Load()
 	require.Positive(t, dialsAfterFirst)
 
 	for i := 0; i < 3; i++ {
-		again := m.GetUserToolsAccess(ctx, userID)
+		again := m.GetCatalogAccess(ctx, req)
 		require.NotNil(t, again.Errors)
 		assert.Len(t, again.Errors.Errors, 1, "connect error must not accumulate across cache hits")
-		assert.Len(t, cached.InitialRemoteConnectErrors().Errors, 1)
-		assert.Same(t, cached, m.clients[userID])
+		assert.Same(t, cached, m.clients[req.remoteKey()])
 		assert.Equal(t, dialsAfterFirst, requests.Load(), "cache hit must not re-dial a failed remote")
 	}
 }
 
-func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
+func TestGetCatalogAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 	ctx := context.Background()
 	const userID = "user-1"
 	const remoteName = "RemoteA"
+	req := UserCatalogRequest(userID)
 
 	tests := []struct {
 		name              string
@@ -468,40 +394,40 @@ func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 				ID: accessDeniedID, Name: remoteName, Enabled: true, BaseURL: origin,
 			}}, checker, httpClient)
 			t.Cleanup(func() {
-				if uc := m.clients[userID]; uc != nil {
+				if uc := m.clients[req.remoteKey()]; uc != nil {
 					uc.Close()
 				}
 			})
 
-			first := m.GetUserToolsAccess(ctx, userID)
+			first := m.GetCatalogAccess(ctx, req)
 			assert.False(t, hasToolFromOrigin(first.Tools, origin))
 			assert.Nil(t, first.Errors)
-			cached := m.clients[userID]
+			cached := m.clients[req.remoteKey()]
 			require.NotNil(t, cached)
 			assert.False(t, cached.hasClient(remoteName))
 
-			stillDenied := m.GetUserToolsAccess(ctx, userID)
+			stillDenied := m.GetCatalogAccess(ctx, req)
 			assert.False(t, hasToolFromOrigin(stillDenied.Tools, origin))
 			assert.Nil(t, stillDenied.Errors)
 			assert.False(t, cached.hasClient(remoteName))
-			assert.Same(t, cached, m.clients[userID])
+			assert.Same(t, cached, m.clients[req.remoteKey()])
 
 			checker.denied = map[string]bool{}
 
-			// deny→allow rebuilds the user client without an explicit refresh.
-			allowed := m.GetUserToolsAccess(ctx, userID)
-			rebuilt := m.clients[userID]
-			require.NotNil(t, rebuilt)
-			assert.NotSame(t, cached, rebuilt)
+			// deny→allow incrementally connects the existing remote pool.
+			allowed := m.GetCatalogAccess(ctx, req)
+			pooled := m.clients[req.remoteKey()]
+			require.NotNil(t, pooled)
+			assert.Same(t, cached, pooled)
 			if tt.wantToolAfter {
 				assert.True(t, hasToolFromOrigin(allowed.Tools, origin))
-				assert.True(t, rebuilt.hasClient(remoteName))
+				assert.True(t, pooled.hasClient(remoteName))
 				assert.Nil(t, allowed.Errors)
 			}
 			if tt.wantErrorsAfter {
 				require.NotNil(t, allowed.Errors)
 				assert.Len(t, allowed.Errors.Errors, 1)
-				assert.False(t, rebuilt.hasClient(remoteName))
+				assert.False(t, pooled.hasClient(remoteName))
 			}
 
 			if !tt.thenDenyDropsTool {
@@ -509,10 +435,43 @@ func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			}
 
 			checker.denied = map[string]bool{accessDeniedID: true}
-			deniedAgain := m.GetUserToolsAccess(ctx, userID)
+			deniedAgain := m.GetCatalogAccess(ctx, req)
 			assert.False(t, hasToolFromOrigin(deniedAgain.Tools, origin))
-			assert.True(t, rebuilt.hasClient(remoteName), "allow→deny filters tools without disconnecting")
-			assert.Same(t, rebuilt, m.clients[userID])
+			assert.True(t, pooled.hasClient(remoteName), "allow→deny filters tools without disconnecting")
+			assert.Same(t, pooled, m.clients[req.remoteKey()])
 		})
 	}
+}
+
+func TestGetCatalogAccessServiceAccountUsesInvokerAndRemoteOwnerPool(t *testing.T) {
+	ctx := context.Background()
+	httpServer := startStreamableMCPServer(t, newTestMCPServer(0, "remote_tool"))
+	checker := &stubServerAccessChecker{}
+	m := newRemoteAccessTestManager(t, []ServerConfig{{
+		ID:                    accessAllowedID,
+		Name:                  "Remote",
+		Enabled:               true,
+		BaseURL:               httpServer.URL,
+		ServiceAccountHeaders: testServiceAccountHeaders(),
+	}}, checker, httpServer.Client())
+
+	firstReq := ServiceAccountCatalogRequest("bot-1", "user-a")
+	first := m.GetCatalogAccess(ctx, firstReq)
+	require.Nil(t, first.Errors)
+	require.True(t, hasToolFromOrigin(first.Tools, httpServer.URL))
+	pooled := m.clients[firstReq.remoteKey()]
+	require.NotNil(t, pooled)
+	t.Cleanup(pooled.Close)
+
+	secondReq := ServiceAccountCatalogRequest("bot-1", "user-b")
+	second := m.GetCatalogAccess(ctx, secondReq)
+	require.Nil(t, second.Errors)
+	require.True(t, hasToolFromOrigin(second.Tools, httpServer.URL))
+
+	assert.Equal(t, []string{"user-a", "user-b"}, checker.users,
+		"policy enforcement must use the invoking human in service-account mode")
+	assert.Same(t, pooled, m.clients[secondReq.remoteKey()],
+		"service-account remotes must remain pooled by the bot owner")
+	assert.Nil(t, m.clients[clientKey{userID: "user-a", kind: clientKindSARemote}])
+	assert.Nil(t, m.clients[clientKey{userID: "user-b", kind: clientKindSARemote}])
 }

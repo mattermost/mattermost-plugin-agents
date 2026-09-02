@@ -156,7 +156,7 @@ type mockMCPClientManager struct {
 	adminPatchCalls []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
-	// accessPluginServers, when non-nil, is returned on UserToolsAccess instead
+	// accessPluginServers, when non-nil, is returned on CatalogAccess instead
 	// of ListPluginServers — used to assert response rendering ignores a live
 	// re-sample of the registry.
 	accessPluginServers []mcp.PluginServerConfig
@@ -233,21 +233,52 @@ func (m *mockMCPClientManager) GetToolsWithSelection(ctx context.Context, _ mcp.
 	return m.tools, m.mcpErrors
 }
 
-func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) catalogAccess(req mcp.CatalogRequest) mcp.CatalogAccess {
+	pluginSnapshot := m.accessPluginServers
+	if pluginSnapshot == nil {
+		pluginSnapshot = m.ListPluginServers()
+	}
+	access := mcp.CatalogAccess{
+		Tools:         m.tools,
+		Errors:        m.mcpErrors,
+		DeniedOrigins: m.deniedOrigins,
+		PluginServers: pluginSnapshot,
+	}
+	if req.ServiceAccount {
+		access.Tools = m.serviceAccountTools
+		access.Errors = m.serviceAccountErrors
+	}
+	return access
+}
+
+func (m *mockMCPClientManager) GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess {
 	if req.ServiceAccount {
 		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID)
 		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID)
 		m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
-		return m.serviceAccountTools, m.serviceAccountErrors
+		return m.catalogAccess(req)
 	}
 	m.getContexts = append(m.getContexts, ctx)
-	return m.tools, m.mcpErrors
+	return m.catalogAccess(req)
+}
+
+func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	access := m.GetCatalogAccess(ctx, req)
+	return access.Tools, access.Errors
+}
+
+func (m *mockMCPClientManager) RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error) {
+	m.refreshCalls = append(m.refreshCalls, req.RemoteOwnerID)
+	m.refreshContexts = append(m.refreshContexts, ctx)
+	if m.refreshErr != nil {
+		return mcp.CatalogAccess{}, m.refreshErr
+	}
+	return m.catalogAccess(req), nil
 }
 
 func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
-	m.refreshCalls = append(m.refreshCalls, userID)
-	m.refreshContexts = append(m.refreshContexts, ctx)
-	return m.tools, m.mcpErrors, m.refreshErr
+	access, err := m.RefreshCatalogAccess(ctx, mcp.UserCatalogRequest(userID))
+	return access.Tools, access.Errors, err
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {

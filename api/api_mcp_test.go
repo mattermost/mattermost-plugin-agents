@@ -163,6 +163,42 @@ func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
 	require.Equal(t, "refreshed_tool", response.Servers[0].Tools[0].Name)
 }
 
+func TestHandleRefreshUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	snapshot := mcp.PluginServerConfig{
+		PluginID: "com.example.snapshot",
+		Name:     "Snapshot Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	liveOnly := mcp.PluginServerConfig{
+		PluginID: "com.example.live-only",
+		Name:     "Live-Only Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	mcpMock := &mockMCPClientManager{
+		pluginServers:       []mcp.PluginServerConfig{snapshot, liveOnly},
+		accessPluginServers: []mcp.PluginServerConfig{snapshot},
+		tools: []llm.Tool{{
+			Name:         "snapshot_tool",
+			ServerOrigin: "plugin://" + snapshot.PluginID,
+		}},
+	}
+	e.api.mcpClientManager = mcpMock
+
+	response := refreshUserMCPToolsResponse(t, e.api, nil)
+
+	require.Equal(t, []string{testUserID}, mcpMock.refreshCalls)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, snapshot.Name, response.Servers[0].Name)
+}
+
 func TestHandleRefreshUserMCPToolsPassesRequestContext(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -585,7 +621,7 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	}
 }
 
-// Response rows must come from UserToolsAccess.PluginServers, not a live
+// Response rows must come from CatalogAccess.PluginServers, not a live
 // ListPluginServers re-sample that can drift mid-request.
 func TestHandleGetUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)

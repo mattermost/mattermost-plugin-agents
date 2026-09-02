@@ -388,30 +388,44 @@ func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *User
 // contacted and never contribute tools, even if an earlier request cached a
 // session for one.
 func (m *ClientManager) GetTools(ctx context.Context, req CatalogRequest) ([]llm.Tool, *Errors) {
-	return m.getTools(ctx, req, ToolSelection{}, false)
+	access := m.GetCatalogAccess(ctx, req)
+	return access.Tools, access.Errors
 }
 
 // GetToolsWithSelection is GetTools with request-scoped server eligibility.
 // Callers that enforce licensing or agent-specific origin selection must use
 // this entry point so excluded servers are never contacted.
 func (m *ClientManager) GetToolsWithSelection(ctx context.Context, req CatalogRequest, selection ToolSelection) ([]llm.Tool, *Errors) {
-	return m.getTools(ctx, req, selection, false)
+	access := m.GetCatalogAccessWithSelection(ctx, req, selection)
+	return access.Tools, access.Errors
 }
 
-func (m *ClientManager) getTools(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) ([]llm.Tool, *Errors) {
+// GetCatalogAccess returns the catalog and the policy/plugin snapshots used to
+// build it in one atomic result.
+func (m *ClientManager) GetCatalogAccess(ctx context.Context, req CatalogRequest) CatalogAccess {
+	return m.getCatalogAccess(ctx, req, ToolSelection{}, false)
+}
+
+// GetCatalogAccessWithSelection is GetCatalogAccess with request-scoped server
+// eligibility.
+func (m *ClientManager) GetCatalogAccessWithSelection(ctx context.Context, req CatalogRequest, selection ToolSelection) CatalogAccess {
+	return m.getCatalogAccess(ctx, req, selection, false)
+}
+
+func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) CatalogAccess {
 	if err := req.validate(); err != nil {
-		return nil, &Errors{Errors: []error{err}}
+		return CatalogAccess{Errors: &Errors{Errors: []error{err}}}
 	}
 
 	remoteClients := m.getOrCreateClient(req.remoteKey())
 	if remoteClients == nil {
-		return nil, nil
+		return CatalogAccess{}
 	}
 
 	m.lifecycleMu.RLock()
 	if m.closed {
 		m.lifecycleMu.RUnlock()
-		return nil, nil
+		return CatalogAccess{}
 	}
 	cfg := m.config
 	embeddedClient := m.embeddedClient
@@ -473,8 +487,13 @@ func (m *ClientManager) getTools(ctx context.Context, req CatalogRequest, select
 		localSnapshot = localClients.snapshotClients()
 	}
 	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
-	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, servers.plugins)
-	return retainToolsFromOrigins(filtered, servers.origins), joinMCPErrors(remoteErrors, localErrors)
+	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, plugins)
+	return CatalogAccess{
+		Tools:         retainToolsFromOrigins(filtered, servers.origins),
+		Errors:        joinMCPErrors(remoteErrors, localErrors),
+		DeniedOrigins: deniedOrigins,
+		PluginServers: plugins,
+	}
 }
 
 // deniedMCPServerOrigins evaluates each configured stable identity once before
@@ -549,18 +568,26 @@ func retainToolsFromOrigins(tools []llm.Tool, origins map[string]bool) []llm.Too
 // RefreshToolsForUser drops the cached user client and shared server tool
 // lists, then rediscovers every eligible server from scratch.
 func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
-	if userID == "" {
-		return nil, nil, errors.New("userID is required")
+	access, err := m.RefreshCatalogAccess(ctx, UserCatalogRequest(userID))
+	if err != nil {
+		return nil, nil, err
 	}
+	return access.Tools, access.Errors, nil
+}
 
+// RefreshCatalogAccess drops the request's cached client bags and shared
+// server tool lists, then returns the refreshed atomic catalog result.
+func (m *ClientManager) RefreshCatalogAccess(ctx context.Context, req CatalogRequest) (CatalogAccess, error) {
+	if err := req.validate(); err != nil {
+		return CatalogAccess{}, err
+	}
 	if refreshErr := m.invalidateSharedToolsCacheForRefresh(); refreshErr != nil {
-		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
+		m.log.Warn("Failed to invalidate shared MCP tools cache during catalog refresh; bypassing cache for rediscovery",
+			"remoteOwnerID", req.RemoteOwnerID, "invokingUserID", req.InvokingUserID, "error", refreshErr)
 	}
-	m.InvalidateUserClients(userID)
+	m.invalidateCatalogClients(req)
 
-	req := UserCatalogRequest(userID)
-	tools, mcpErrors := m.getTools(ctx, req, ToolSelection{}, true)
-	return tools, mcpErrors, nil
+	return m.getCatalogAccess(ctx, req, ToolSelection{}, true), nil
 }
 
 func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
@@ -658,6 +685,33 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 		return enabled[i].PluginID < enabled[j].PluginID
 	})
 	return enabled
+}
+
+// invalidateCatalogClients removes only the remote pool and invoking-user
+// local pool used by req. In service-account mode this preserves the bot-owned
+// remote pool's separation from the human invoker's local connections.
+func (m *ClientManager) invalidateCatalogClients(req CatalogRequest) {
+	keys := []clientKey{
+		req.remoteKey(),
+		{userID: req.InvokingUserID, kind: clientKindLocal},
+	}
+
+	m.clientsMu.Lock()
+	discarded := make([]*UserClients, 0, len(keys))
+	seen := make(map[*UserClients]bool, len(keys))
+	for _, key := range keys {
+		if userClients := m.clients[key]; userClients != nil && !seen[userClients] {
+			discarded = append(discarded, userClients)
+			seen[userClients] = true
+		}
+		delete(m.clients, key)
+		delete(m.activity, key)
+	}
+	m.clientsMu.Unlock()
+
+	for _, userClients := range discarded {
+		userClients.Close()
+	}
 }
 
 // InvalidateUserClients closes and removes cached MCP clients for a user, in both auth modes.
