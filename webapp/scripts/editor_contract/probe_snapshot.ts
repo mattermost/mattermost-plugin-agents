@@ -4,8 +4,8 @@
 // CI-facing half of the editor-contract drift tripwire: the same
 // assignability assertions as probe.ts, but against the committed snapshot
 // (src/types/host_editor_contract.snapshot.d.ts) so the contract is enforced
-// without a host checkout. See probe.ts for the rationale behind the two
-// deliberate wire-shape exceptions (userAttributes and searchUsers results).
+// without a host checkout. See probe.ts for the rationale behind the
+// userAttributes wire-shape exception and the split searchUsers checks.
 
 /* eslint-disable @typescript-eslint/no-unused-vars, no-undef */
 
@@ -17,8 +17,10 @@ declare function expectAssignable<T>(value: T): void;
 
 // --- TableEditor ---
 
-// Everything except the wire-payload exceptions must be assignable to the
+// Everything except the userAttributes exception must be assignable to the
 // host contract (the plugin renders the host component with these props).
+// searchUsers is carved out only so its parameters and result can be
+// checked separately (and in both directions) below.
 expectAssignable<Omit<HostTableEditorProps, 'userAttributes' | 'actions'>>(
     {} as Omit<MirrorTableEditorProps, 'userAttributes' | 'actions'>,
 );
@@ -59,8 +61,8 @@ expectAssignable<Parameters<CELHostSearchUsers>>({} as Parameters<CELMirrorSearc
 expectAssignable<Parameters<CELMirrorSearchUsers>>({} as Parameters<CELHostSearchUsers>);
 
 // Actual callback return envelopes (not just the standalone result aliases):
-// Promise/ActionResult wrapper drift trips here. The strict users payload
-// stays a wire exception, checked separately below.
+// Promise/ActionResult wrapper drift trips here. The users payload is
+// checked separately below so a failure names the moving part.
 type MirrorSearchUsersResult = Awaited<ReturnType<MirrorSearchUsers>>;
 type HostSearchUsersResult = Awaited<ReturnType<HostSearchUsers>>;
 type CELMirrorSearchUsersResult = Awaited<ReturnType<CELMirrorSearchUsers>>;
@@ -77,7 +79,7 @@ expectAssignable<Omit<NonNullable<CELHostSearchUsersResult['data']>, 'users'>>(
 );
 expectAssignable<Array<object>>({} as NonNullable<CELHostSearchUsersResult['data']>['users']);
 
-// Result envelope matches modulo the users element type (wire exception).
+// Result envelope and users element type, checked apart from each other.
 expectAssignable<Omit<HostAccessControlTestResult, 'users'>>(
     {} as Omit<MirrorAccessControlTestResult, 'users'>,
 );

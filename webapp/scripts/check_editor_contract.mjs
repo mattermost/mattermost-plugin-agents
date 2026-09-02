@@ -11,8 +11,18 @@
 //    still what the host source generates.
 //
 // Pass --update-snapshot (npm run update-editor-contract-snapshot) to
-// regenerate the snapshot. Host checkout lookup: $MM_WEBAPP_PATH, then the
-// sibling checkouts ../mattermost-wsw/webapp and ../mattermost/webapp.
+// regenerate the snapshot.
+//
+// Host checkout lookup:
+// - $MM_WEBAPP_PATH, when set, is STRICT: it must contain the marker file and
+//   have node_modules installed, otherwise the script exits 1. Sibling
+//   detection is never attempted when it is set (CI relies on this being
+//   fatal). A relative MM_WEBAPP_PATH resolves against the current working
+//   directory (webapp/ when run via npm), so an absolute path is recommended.
+// - Otherwise the sibling checkouts ../mattermost-wsw/webapp and
+//   ../mattermost/webapp are tried best-effort: a sibling without
+//   node_modules is skipped with a WARNING, and if no usable sibling exists
+//   the live-host layer is skipped with exit 0.
 
 /* eslint-disable no-console, no-process-env, no-process-exit */
 
@@ -22,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-import {generateSnapshot, parseCompilerOptions} from './editor_contract/generate_snapshot.mjs';
+import {generateSnapshot, parseCompilerOptions, stripProvenance} from './editor_contract/generate_snapshot.mjs';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const webappDir = path.resolve(scriptDir, '..');
@@ -68,21 +78,45 @@ const marker = path.join(
     'editors', 'table_editor', 'table_editor.tsx',
 );
 
-function findHostWebapp() {
-    const candidates = [];
-    if (process.env.MM_WEBAPP_PATH) {
-        candidates.push(path.resolve(process.env.MM_WEBAPP_PATH));
-    }
-    candidates.push(path.resolve(repoRoot, '..', 'mattermost-wsw', 'webapp'));
-    candidates.push(path.resolve(repoRoot, '..', 'mattermost', 'webapp'));
+function hasMarker(candidate) {
+    return fs.existsSync(path.join(candidate, marker));
+}
 
-    for (const candidate of candidates) {
-        if (!fs.existsSync(path.join(candidate, marker))) {
+function hasNodeModules(candidate) {
+    return fs.existsSync(path.join(candidate, 'node_modules'));
+}
+
+// findHostWebapp returns the host webapp directory to probe, or null when no
+// usable host is available. An explicit MM_WEBAPP_PATH is strict: any problem
+// with it is fatal and sibling auto-detection is never attempted.
+function findHostWebapp() {
+    if (process.env.MM_WEBAPP_PATH) {
+        const explicit = path.resolve(process.env.MM_WEBAPP_PATH);
+        if (!hasMarker(explicit)) {
+            console.error(`check-editor-contract: MM_WEBAPP_PATH=${explicit} is not a mattermost webapp checkout.`);
+            console.error(`Expected to find ${path.join(explicit, marker)}`);
+            process.exit(1);
+        }
+        if (!hasNodeModules(explicit)) {
+            console.error(`check-editor-contract: MM_WEBAPP_PATH=${explicit} is a mattermost webapp checkout but its node_modules are not installed.`);
+            console.error(`Install them first: cd ${explicit} && npm ci`);
+            process.exit(1);
+        }
+        return explicit;
+    }
+
+    const siblings = [
+        path.resolve(repoRoot, '..', 'mattermost-wsw', 'webapp'),
+        path.resolve(repoRoot, '..', 'mattermost', 'webapp'),
+    ];
+    for (const candidate of siblings) {
+        if (!hasMarker(candidate)) {
             continue;
         }
-        if (!fs.existsSync(path.join(candidate, 'node_modules'))) {
-            console.log(`check-editor-contract: found ${candidate} but its node_modules are not installed; skipping the live-host checks.`);
-            return null;
+        if (!hasNodeModules(candidate)) {
+            console.warn(`check-editor-contract: WARNING: found mattermost webapp checkout ${candidate} but its node_modules are not installed; SKIPPING the live-host checks.`);
+            console.warn(`To enable them: cd ${candidate} && npm ci (or set MM_WEBAPP_PATH to a checkout with node_modules installed).`);
+            continue;
         }
         return candidate;
     }
@@ -153,10 +187,11 @@ if (fs.existsSync(snapshotPath) && !updateSnapshot) {
 const host = findHostWebapp();
 if (!host) {
     if (updateSnapshot) {
-        console.error('check-editor-contract: --update-snapshot needs a mattermost webapp checkout (set MM_WEBAPP_PATH to point at one).');
+        console.error('check-editor-contract: --update-snapshot needs a mattermost webapp checkout with node_modules installed, but none was found.');
+        console.error('Provide one by setting MM_WEBAPP_PATH, or by cloning mattermost as a sibling of this repo (../mattermost/webapp or ../mattermost-wsw/webapp) and running npm ci in it.');
         process.exit(1);
     }
-    console.log('check-editor-contract: no mattermost webapp checkout found (set MM_WEBAPP_PATH to point at one); skipping the live-host checks.');
+    console.log('check-editor-contract: no usable mattermost webapp checkout found (set MM_WEBAPP_PATH, or clone one as ../mattermost/webapp or ../mattermost-wsw/webapp with node_modules installed); skipping the live-host checks.');
     process.exit(0);
 }
 
@@ -182,7 +217,10 @@ if (live.probeDiagnostics.length > 0) {
 console.log('check-editor-contract: live probe OK — mirrors match the host checkout.');
 
 // Snapshot freshness: the committed snapshot must match what the live host
-// source generates, otherwise CI is enforcing a stale contract.
+// source generates, otherwise CI is enforcing a stale contract. The
+// "Generated from mattermost commit" header line is provenance only and is
+// ignored, so a host checkout at a different commit with identical exported
+// types is still fresh.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'editor-contract-gen-'));
 const genTsconfigPath = path.join(tmpDir, 'tsconfig.json');
 fs.writeFileSync(genTsconfigPath, JSON.stringify(tsconfig, null, 4));
@@ -193,14 +231,22 @@ try {
     fs.rmSync(tmpDir, {recursive: true, force: true});
 }
 
+const committed = fs.existsSync(snapshotPath) ? fs.readFileSync(snapshotPath, 'utf8').replace(/\r\n/g, '\n') : null;
+const typesUnchanged = committed !== null && stripProvenance(committed) === stripProvenance(generated);
+
 if (updateSnapshot) {
+    // Only rewrite when the exported types actually changed; a host checkout at
+    // a different commit must not churn the provenance header on its own.
+    if (typesUnchanged) {
+        console.log(`check-editor-contract: ${path.relative(process.cwd(), snapshotPath)} already up to date (types unchanged); leaving existing provenance.`);
+        process.exit(0);
+    }
     fs.writeFileSync(snapshotPath, generated);
     console.log(`check-editor-contract: wrote ${path.relative(process.cwd(), snapshotPath)} — review and commit it.`);
     process.exit(0);
 }
 
-const committed = fs.readFileSync(snapshotPath, 'utf8').replace(/\r\n/g, '\n');
-if (committed !== generated) {
+if (!typesUnchanged) {
     console.error('check-editor-contract: FAILED — the committed host contract snapshot no longer matches the host checkout.');
     console.error('The host editor types moved; regenerate and commit the snapshot: npm run update-editor-contract-snapshot');
     process.exit(1);

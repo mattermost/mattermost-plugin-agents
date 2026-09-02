@@ -26,8 +26,10 @@ export type TableEditorActions = {
     getVisualAST: (expr: string) => Promise<ActionResult<AccessControlVisualAST>>;
 
     // Overrides the redux thunk backing the built-in TestResultsModal so the
-    // request routes through the plugin's proxy.
-    searchUsers?: (expression: string, term: string, after: string, limit: number) => Promise<ActionResult<AccessControlTestResult>>;
+    // request routes through the plugin's proxy. channelId is only meaningful
+    // for the host's channel-scoped policies; the plugin's test endpoint has
+    // no channel scope, so its implementation ignores it.
+    searchUsers?: (expression: string, term: string, after: string, limit: number, channelId?: string) => Promise<ActionResult<AccessControlTestResult>>;
 };
 
 // Mirrors the subset of TableEditorProps this plugin passes. The host types
@@ -58,7 +60,10 @@ export type CELEditorActions = {
     // Overrides Client4.checkAccessControlExpression; receives only the
     // expression — resource scoping is the supplier's concern.
     checkExpression?: (expression: string) => Promise<CELExpressionError[]>;
-    searchUsers?: (expression: string, term: string, after: string, limit: number) => Promise<ActionResult<AccessControlTestResult>>;
+
+    // channelId is accepted for parity with the host signature and ignored
+    // by the plugin's implementation (see TableEditorActions.searchUsers).
+    searchUsers?: (expression: string, term: string, after: string, limit: number, channelId?: string) => Promise<ActionResult<AccessControlTestResult>>;
 };
 
 // Mirrors the subset of CELEditorProps this plugin passes.

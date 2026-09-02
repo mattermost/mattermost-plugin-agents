@@ -16,6 +16,8 @@
  *   - webapp/platform/types/src/access_control.ts
  *   - webapp/platform/types/src/properties_user.ts
  *
+ * Generated from mattermost commit cfab036615ea572067701083eb64c170a77099e9
+ *
  * Regenerate against a mattermost webapp checkout (and re-verify) with:
  *   MM_WEBAPP_PATH=/path/to/mattermost/webapp npm run update-editor-contract-snapshot
  * (MM_WEBAPP_PATH is optional when the checkout is a sibling of this repo.)
@@ -87,7 +89,7 @@ export type HostTableEditorProps = {
                     data?: any;
                     error?: any;
                 }>;
-        searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number) => Promise<{
+        searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number, channelId?: undefined | string) => Promise<{
                     data?: undefined | ({
                         users: Array<{
                                 id: string;
@@ -181,10 +183,13 @@ export type HostCELEditorProps = {
     teamId?: undefined | string;
     disabled?: undefined | false | true;
     userAttributes: Array<{
-            attribute: string;
+            attribute?: undefined | null | string;
             values: Array<string>;
             objectType?: undefined | string;
             isNative?: undefined | false | true;
+        }>;
+    resourceAttributes?: undefined | Array<{
+            attribute: string;
         }>;
     onTestClick?: undefined | (() => void);
     testButtonLabel?: React.ReactNode;
@@ -195,7 +200,7 @@ export type HostCELEditorProps = {
                         line: number;
                         column: number;
                     }>>);
-        searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number) => Promise<{
+        searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number, channelId?: undefined | string) => Promise<{
                     data?: undefined | ({
                         users: Array<{
                                 id: string;
@@ -273,7 +278,7 @@ export type HostCELEditorActions = {
                     line: number;
                     column: number;
                 }>>);
-    searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number) => Promise<{
+    searchUsers?: undefined | ((expression: string, term: string, after: string, limit: number, channelId?: undefined | string) => Promise<{
                 data?: undefined | ({
                     users: Array<{
                             id: string;
