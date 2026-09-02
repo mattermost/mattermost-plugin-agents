@@ -563,7 +563,7 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	return false
 }
 
-// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// promptCachingEnabledFor reports whether to request Anthropic automatic prompt
 // caching (top-level cache_control). Anthropic caches nothing unless asked,
 // so without this every turn re-bills the full system prompt, tool schemas,
 // and history at the base input rate. OpenAI-family and Gemini cache prompt
@@ -571,10 +571,6 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 // unstripped to non-Anthropic providers, so it is only attached when the
 // primary and every fallback are Anthropic; a mixed chain would 400 the
 // fallback request.
-func (b *LLM) promptCachingEnabled() bool {
-	return b.promptCachingEnabledFor(b.requestFallbacks(llm.CompletionRequest{}))
-}
-
 func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
 	if b.provider != schemas.Anthropic {
 		return false
