@@ -33,6 +33,7 @@ export type MCPToolConfig = BaseMCPToolConfig;
 export type MCPEmbeddedServerConfig = BaseMCPEmbeddedServerConfig;
 
 export type MCPServerConfig = BaseMCPServerConfig & {
+
     // Optional: the backend tag has omitempty, so pre-feature servers omit the key entirely.
     serviceAccountHeaders?: {[key: string]: string};
 };

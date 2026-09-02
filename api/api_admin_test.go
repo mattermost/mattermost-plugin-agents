@@ -672,6 +672,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 		expectToolConfigsAfter []mcp.ToolConfig
 		expectRebuildCalls     int
 		orphanPluginIDs        map[string]bool
+		expectStateUnchanged   bool
 	}{
 		{
 			name:     "happy path: flips Enabled true->false",
@@ -733,17 +734,18 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			expectRebuildCalls: 1,
 		},
 		{
-			name:     "admin update keeps config-only orphan unregistered",
+			name:     "admin update rejects config-only orphan",
 			pluginID: "com.mattermost.demo",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			orphanPluginIDs:    map[string]bool{"com.mattermost.demo": true},
-			body:               `{"enabled": false}`,
-			hasAdminPerm:       true,
-			expectStatus:       http.StatusOK,
-			expectPatchCalls:   1,
-			expectEnabledAfter: false,
+			orphanPluginIDs:      map[string]bool{"com.mattermost.demo": true},
+			body:                 `{"enabled": false}`,
+			hasAdminPerm:         true,
+			expectStatus:         http.StatusNotFound,
+			expectPatchCalls:     0,
+			expectRebuildCalls:   0,
+			expectStateUnchanged: true,
 		},
 		{
 			name:         "404 when pluginID not registered",
@@ -843,6 +845,11 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
 			mgr.orphanPluginIDs = tt.orphanPluginIDs
+			pluginServersBefore := append([]mcp.PluginServerConfig(nil), mgr.pluginServers...)
+			orphanPluginIDsBefore := make(map[string]bool, len(mgr.orphanPluginIDs))
+			for pluginID, orphaned := range mgr.orphanPluginIDs {
+				orphanPluginIDsBefore[pluginID] = orphaned
+			}
 
 			// Seed a baseline persisted config so the handler can clone it
 			// instead of treating the store's nil as a 500.
@@ -872,11 +879,16 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 				if tt.expectToolConfigsAfter != nil {
 					require.Equal(t, tt.expectToolConfigsAfter, mgr.adminPatchCalls[0].ToolConfigs, "ToolConfigs assertion")
 				}
-				if tt.orphanPluginIDs[tt.pluginID] {
-					require.True(t, mgr.orphanPluginIDs[tt.pluginID], "admin update must not mark a config-only orphan as registered")
-				}
 			}
 			require.Equal(t, tt.expectRebuildCalls, spy.callCount)
+			if tt.expectStateUnchanged {
+				require.Equal(t, pluginServersBefore, mgr.pluginServers)
+				require.Equal(t, orphanPluginIDsBefore, mgr.orphanPluginIDs)
+				require.Empty(t, mgr.unregisterCalls)
+				require.Equal(t, &config.Config{}, stores.configStore.cfg)
+				require.Zero(t, stores.configUpdater.callCount)
+				require.Zero(t, stores.clusterNotifier.callCount)
+			}
 		})
 	}
 }
