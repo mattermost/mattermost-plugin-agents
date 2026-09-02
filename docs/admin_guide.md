@@ -326,9 +326,7 @@ Notes on deferred reindex:
 
 Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
 
-Configure who can access AI features by setting team-level, channel-level, and user-level permissions for each agent.
-
-Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Turning auto-reply off never requires a license, so an existing setting stays clearable after a license downgrade. The channel settings tab UI requires Mattermost v11.10 or later, while the plugin's minimum server version remains 11.9.0 — on v11.9 the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
+Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Turning auto-reply off never requires a license, so an existing setting stays clearable after a license downgrade. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
 ### Attribute-based access control (ABAC)
 
@@ -336,20 +334,20 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Prerequisites:**
 
-- A Mattermost server (v11.10.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On older servers the plugin still runs without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
+- A Mattermost server (v11.11.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
 - User attributes (custom profile attributes) configured on the server, since policies are written against them.
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
 
-- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
+- **Agents** — set the agent's user access to **Attribute-based (access policy)** in the agent's Access tab, then author the policy there. In this mode, the agent's allow/block user and team lists are ignored; the policy is the only user-access gate. Anyone who can manage the agent — its creator, its agent admins, and users with the manage-others'-agents permission — can author the policy with the simplified (table) editor; system admins additionally get the advanced (CEL) editor.
 - **LLM services** — authored by system admins in **System Console > Plugins > Agents** on the service panel. System admins get the simplified (table) editor and the advanced (CEL) editor, the same as on the agent Access tab; Advanced is used for expressions the table can't display. A service policy restricts every agent backed by that service, on top of any per-agent restrictions. It also drives list/picker visibility for non–system-admins (see [Visibility (services and agents)](#visibility-services-and-agents)).
 - **MCP servers** — authored by system admins on the MCP **Configuration** tab (same Simple and Advanced editors as agents; Advanced is used for expressions the table can't display). Policies apply to remote servers, the built-in (embedded) Mattermost MCP server, and plugin-registered MCP servers. Users denied by an MCP server policy silently lose that server's tools; there is no notification in chat, the tools simply don't appear. Denying the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users.
 
 **Allow and deny semantics.** For each request the plugin evaluates the applicable policies and applies these rules:
 
-- No policy exists for a resource → the legacy checks apply unchanged (user/team lists for agents in the legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
+- When ABAC is available and no policy exists for a resource → legacy checks apply unchanged (user/team lists for agents in legacy access modes; nothing for services/MCP servers), while agents in attribute-based mode allow every user. Installing or upgrading the plugin changes nothing until you author a policy.
 - A policy exists → the policy decides: matching users are allowed, non-matching users are denied.
-- The ABAC engine is unavailable (for example, the license lapsed) → the server still resolves whether a policy exists per resource. Resources **with** a policy **fail closed**: users are denied rather than falling back to unrestricted access. Resources with **no** policy behave as if ABAC were never involved — including attribute-based agents, which **fail open** by design (they ignore user/team lists and have no other gate without a policy).
+- The ABAC engine is unavailable (for example, the license lapsed or PDP evaluation fails) → evaluation fails closed: users are denied access to attribute-based agents and resources with policies, rather than falling back to unrestricted access. In legacy access modes without an active policy, legacy user/team lists continue to apply.
 
 #### Visibility (services and agents)
 
@@ -646,7 +644,7 @@ Remote and external MCP servers require a license (see [license requirements](#l
 
 Agent MCP access is filtered by admin tool policy, MCP server access policies (when configured), the agent's MCP allowlist or **Automatically enable all MCP tools** setting, user-disabled provider preferences, and any context restrictions for the current request. For agents using [service account authentication](#service-account-authentication), user-disabled provider preferences don't apply.
 
-The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connect or disconnect action.
+The **Tools** tab refreshes automatically after the current user connects or disconnects an OAuth-backed MCP server. Because MCP OAuth connections are per-user, this live refresh applies only to the user who completed the connection or disconnection action.
 
 You can't disable MCP entirely from the System Console. To limit access, disable individual tools or change their policy in the **Tools** tab.
 

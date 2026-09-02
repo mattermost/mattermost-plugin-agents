@@ -20,6 +20,10 @@ type Props = {
     /** Soft-lock Access controls while service account auth is on for non-admins. */
     serviceAccountFieldsLocked: boolean;
 
+    // Baseline saved access level, used to detect switching away from
+    // attribute-based access before save.
+    baselineUserAccessLevel: UserAccessLevel;
+
     // Stable agent ID; undefined while creating (policy authoring needs a
     // saved agent).
     agentId?: string;
@@ -28,10 +32,14 @@ type Props = {
 }
 
 const AccessTab = (props: Props) => {
-    const {draft, onChange, serviceAccountFieldsLocked, agentId, abacSupported, isSystemAdmin} = props;
+    const {draft, onChange, serviceAccountFieldsLocked, baselineUserAccessLevel, agentId, abacSupported, isSystemAdmin} = props;
     const intl = useIntl();
 
     const attributeBasedSelected = draft.userAccessLevel === UserAccessLevel.AttributeBased;
+    const switchingAwayFromAttributeBased =
+        Boolean(agentId) &&
+        baselineUserAccessLevel === UserAccessLevel.AttributeBased &&
+        draft.userAccessLevel !== UserAccessLevel.AttributeBased;
 
     const policyEditor = agentId && abacSupported ? (
         <PolicyEditor
@@ -103,8 +111,14 @@ const AccessTab = (props: Props) => {
                 </FormRow>
             </ItemList>
 
+            {switchingAwayFromAttributeBased && (
+                <SwitchAwayWarning $warning={true}>
+                    <FormattedMessage defaultMessage="Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above."/>
+                </SwitchAwayWarning>
+            )}
+
             {policyEditor && (
-                <PolicyEditorWrapper disabled={serviceAccountFieldsLocked}>
+                <PolicyEditorWrapper disabled={serviceAccountFieldsLocked || switchingAwayFromAttributeBased}>
                     {policyEditor}
                 </PolicyEditorWrapper>
             )}
@@ -172,6 +186,11 @@ const PolicyNote = styled.div<{$warning?: boolean}>`
     line-height: 18px;
     background: ${(p) => (p.$warning ? 'rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.04)')};
     color: ${(p) => (p.$warning ? 'var(--dnd-indicator, #D24B4E)' : 'rgba(var(--center-channel-color-rgb), 0.72)')};
+`;
+
+const SwitchAwayWarning = styled(PolicyNote)`
+    width: 90%;
+    margin-top: 12px;
 `;
 
 const PolicyEditorWrapper = styled.fieldset`
