@@ -7,7 +7,6 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
-import {deleteAgentAccessPolicy, getAgentAccessPolicy} from '@/client/access_control';
 import {
     UserAgent,
     CreateAgentRequest,
@@ -202,18 +201,7 @@ type Props = {
     onSaved: (agent: UserAgent) => void; // called after successful create or update
 }
 
-// PolicySwitchState sequences the switch-away-from-attribute-based flow after
-// a successful agent update: confirm deletion of the leftover policy, delete
-// it, and surface a retry/error state when the deletion fails.
-type PolicySwitchState =
-    | {step: 'idle'}
-    | {step: 'confirming'; savedAgent: UserAgent}
-    | {step: 'deleting'; savedAgent: UserAgent}
-    | {step: 'delete-failed'; savedAgent: UserAgent; message: string};
-
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
-const DELETE_AGENT_POLICY_TITLE_ID = 'delete-agent-policy-title';
-const DELETE_AGENT_POLICY_RETRY_TITLE_ID = 'delete-agent-policy-retry-title';
 
 const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
@@ -251,8 +239,6 @@ const AgentConfigView = (props: Props) => {
     // The MCPs tab stays reachable while fields-locked so the off switch is available.
     const mcpsTabDisabled = draft.disableTools && !serviceAccountFieldsLocked;
 
-    const [policySwitch, setPolicySwitch] = useState<PolicySwitchState>({step: 'idle'});
-
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
         if (mcpsTabDisabled && activeTab === 'mcps') {
@@ -273,17 +259,12 @@ const AgentConfigView = (props: Props) => {
             return;
         }
 
-        // Mid-flight policy switch: the only exits are its own dialog actions,
-        // or navigation would abandon a still-enforced policy unresolved.
-        if (policySwitch.step !== 'idle') {
-            return;
-        }
         if (isDirty) {
             setShowDiscardDialog(true);
             return;
         }
         onBack();
-    }, [isDirty, onBack, saving, policySwitch.step]);
+    }, [isDirty, onBack, saving]);
 
     const handleDiscardConfirm = useCallback(() => {
         setShowDiscardDialog(false);
@@ -391,28 +372,6 @@ const AgentConfigView = (props: Props) => {
             setBaselineDraft(cloneDraft(draft));
             setAvatarFile(null);
 
-            // Switching away from attribute-based while a policy exists: ask
-            // whether to delete it. A kept policy continues to restrict access
-            // in addition to the new setting.
-            const switchedAwayFromAttributeBased =
-                baselineDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
-                draft.userAccessLevel !== UserAccessLevel.AttributeBased;
-            if (mode === 'edit' && switchedAwayFromAttributeBased) {
-                // Explicit existence check: the policy editor may never have
-                // mounted, so this flow cannot rely on its state.
-                let policyExists = true;
-                try {
-                    policyExists = (await getAgentAccessPolicy(savedAgent.id)) !== null;
-                } catch {
-                    // Unknown state: offer the delete flow rather than risk
-                    // silently leaving an invisible policy behind.
-                }
-                if (policyExists) {
-                    setPolicySwitch({step: 'confirming', savedAgent});
-                    return;
-                }
-            }
-
             onSaved(savedAgent);
         } catch (e: any) {
             const message = (typeof e?.message === 'string' ? e.message : '').trim();
@@ -432,38 +391,7 @@ const AgentConfigView = (props: Props) => {
         } finally {
             setSaving(false);
         }
-    }, [mode, agent, draft, baselineDraft, avatarFile, intl, onSaved, validate]);
-
-    const handleDeletePolicyConfirm = useCallback(async () => {
-        if (policySwitch.step !== 'confirming' && policySwitch.step !== 'delete-failed') {
-            return;
-        }
-        const {savedAgent} = policySwitch;
-        setPolicySwitch({step: 'deleting', savedAgent});
-        try {
-            await deleteAgentAccessPolicy(savedAgent.id);
-            setPolicySwitch({step: 'idle'});
-            onSaved(savedAgent);
-        } catch (e) {
-            // The agent was saved but its policy still exists and continues to
-            // restrict access. Keep the view open with a retry/error state.
-            const message = e instanceof Error && e.message ? e.message : '';
-            setPolicySwitch({
-                step: 'delete-failed',
-                savedAgent,
-                message: message || intl.formatMessage({defaultMessage: 'Failed to delete the access policy.'}),
-            });
-        }
-    }, [policySwitch, onSaved, intl]);
-
-    const handleDeletePolicyKeep = useCallback(() => {
-        if (policySwitch.step !== 'confirming' && policySwitch.step !== 'delete-failed') {
-            return;
-        }
-        const {savedAgent} = policySwitch;
-        setPolicySwitch({step: 'idle'});
-        onSaved(savedAgent);
-    }, [policySwitch, onSaved]);
+    }, [mode, agent, draft, avatarFile, intl, onSaved, validate]);
 
     const title = mode === 'create' ? intl.formatMessage({defaultMessage: 'New Agent'}) : draft.displayName || intl.formatMessage({defaultMessage: 'Edit Agent'});
 
@@ -533,6 +461,7 @@ const AgentConfigView = (props: Props) => {
                     {activeTab === 'access' && (
                         <AccessTab
                             draft={draft}
+                            baselineUserAccessLevel={baselineDraft.userAccessLevel}
                             onChange={updateDraft}
                             serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                             agentId={agent?.id}
@@ -571,40 +500,6 @@ const AgentConfigView = (props: Props) => {
                     </SaveButton>
                 </ViewFooter>
             </ViewContainer>
-            <ConfirmationDialog
-                show={policySwitch.step === 'confirming' || policySwitch.step === 'deleting'}
-                titleId={DELETE_AGENT_POLICY_TITLE_ID}
-                title={<FormattedMessage defaultMessage='Delete access policy?'/>}
-                message={(
-                    <FormattedMessage defaultMessage="You switched away from attribute-based access. Delete this agent's access policy? If kept, the policy continues to restrict access in addition to the new setting."/>
-                )}
-                confirmButtonText={<FormattedMessage defaultMessage='Delete policy'/>}
-                cancelButtonText={<FormattedMessage defaultMessage='Keep policy'/>}
-                onConfirm={handleDeletePolicyConfirm}
-                onCancel={handleDeletePolicyKeep}
-                isDestructive={true}
-                confirmPending={policySwitch.step === 'deleting'}
-                managedAccessibility={true}
-                zIndex={2100}
-            />
-            <ConfirmationDialog
-                show={policySwitch.step === 'delete-failed'}
-                titleId={DELETE_AGENT_POLICY_RETRY_TITLE_ID}
-                title={<FormattedMessage defaultMessage="Couldn't delete the access policy"/>}
-                message={(
-                    <>
-                        {policySwitch.step === 'delete-failed' ? `${policySwitch.message} ` : ''}
-                        <FormattedMessage defaultMessage='The agent was saved, but its access policy still exists and continues to restrict access. Retry the deletion, or keep the policy and remove it later from the Access tab.'/>
-                    </>
-                )}
-                confirmButtonText={<FormattedMessage defaultMessage='Retry'/>}
-                cancelButtonText={<FormattedMessage defaultMessage='Keep policy'/>}
-                onConfirm={handleDeletePolicyConfirm}
-                onCancel={handleDeletePolicyKeep}
-                isDestructive={true}
-                managedAccessibility={true}
-                zIndex={2100}
-            />
             <ConfirmationDialog
                 show={showDiscardDialog}
                 titleId={DISCARD_CHANGES_TITLE_ID}

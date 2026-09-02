@@ -94,16 +94,19 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
 type RenderOptions = {
     draft?: Partial<AgentDraft>;
     serviceAccountFieldsLocked?: boolean;
+    baselineUserAccessLevel?: UserAccessLevel;
     agentId?: string;
     abacSupported?: boolean;
     isSystemAdmin?: boolean;
 };
 
 function tabElement(options: RenderOptions, onChange: jest.Mock) {
+    const draft = makeDraft(options.draft);
     return (
         <IntlProvider locale='en'>
             <AccessTab
-                draft={makeDraft(options.draft)}
+                draft={draft}
+                baselineUserAccessLevel={options.baselineUserAccessLevel ?? draft.userAccessLevel}
                 onChange={onChange}
                 serviceAccountFieldsLocked={options.serviceAccountFieldsLocked ?? false}
                 agentId={options.agentId}
@@ -268,6 +271,7 @@ describe('AccessTab', () => {
     it('keeps a retained policy editor visible in legacy access modes', () => {
         renderTab({
             agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.Allow,
             draft: {userAccessLevel: UserAccessLevel.Allow},
         });
 
@@ -305,5 +309,47 @@ describe('AccessTab', () => {
             draft: {userAccessLevel: UserAccessLevel.All},
         });
         expect(screen.queryByTestId('policy-editor')).toBeNull();
+    });
+
+    it('shows a warning and keeps the retained policy visible but locked when switching away before save', () => {
+        const onChange = jest.fn();
+        const result = render(tabElement({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        }, onChange));
+        const editor = screen.getByTestId('policy-editor');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+
+        expect(screen.getByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeTruthy();
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+        const policyFieldset = editor.closest('fieldset');
+        expect(policyFieldset).not.toBeNull();
+        expect((policyFieldset as HTMLFieldSetElement).disabled).toBe(true);
+    });
+
+    it('does not show the switch-away warning when staying on attribute-based access', () => {
+        renderTab({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.queryByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeNull();
+    });
+
+    it('does not show the switch-away warning when creating a new agent', () => {
+        renderTab({
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.All},
+        });
+
+        expect(screen.queryByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeNull();
     });
 });
