@@ -499,8 +499,13 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 			return
 		}
 
+		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
 	}
+}
+
+func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {
+	c.ToolCatalog.SandboxFilesAttached = c.ToolCatalog.ResponseFilesSupported && bot.SandboxFileAttachmentAvailable()
 }
 
 // WithLLMContextConcreteTools adds the requester's tools but forces concrete MCP
@@ -512,6 +517,7 @@ func (b *Builder) WithLLMContextConcreteTools(ctx stdcontext.Context, bot *bots.
 			b.pluginAPI.Log.Error("Cannot add tools to context: RequestingUser is nil")
 			return
 		}
+		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, true)
 	}
 }

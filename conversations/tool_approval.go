@@ -679,7 +679,7 @@ func (c *Conversations) streamToolFollowUp(
 	// approvalContext is nil on the HandleToolResult path; the decorator
 	// tolerates nil contexts.
 	extraFileIDs := c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)
-	stream = c.decorateStreamWithCreatedFiles(stream, post, extraFileIDs, llmContext, approvalContext)
+	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, post, extraFileIDs, llmContext, llmContext, approvalContext)
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.

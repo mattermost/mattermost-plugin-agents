@@ -94,13 +94,11 @@ type turnAccumulator struct {
 	existingAnchorID string
 	isContinuation   bool
 
-	// Accumulated content
-	text          strings.Builder
-	reasoning     strings.Builder
-	reasoningData llm.ReasoningData
-	annotations   []llm.Annotation
-	toolCalls     []llm.ToolCall
-	serverTools   []llm.ServerToolUse
+	sequence    llm.TurnSequence
+	annotations []llm.Annotation
+	toolCalls   []llm.ToolCall
+	// serverTools is the latest cumulative snapshot; sequence stores positions only.
+	serverTools []llm.ServerToolUse
 
 	// Token usage
 	tokensIn  int64
@@ -114,41 +112,8 @@ type turnAccumulator struct {
 func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 	blocks := []conversation.ContentBlock{}
 
-	// 1. Thinking block (if reasoning completed)
-	if a.reasoningData.Text != "" {
-		blocks = append(blocks, conversation.ContentBlock{
-			Type:      conversation.BlockTypeThinking,
-			Text:      a.reasoningData.Text,
-			Signature: a.reasoningData.Signature,
-		})
-	} else if a.reasoning.Len() > 0 {
-		// Partial reasoning (error/cancel before ReasoningEnd)
-		blocks = append(blocks, conversation.ContentBlock{
-			Type: conversation.BlockTypeThinking,
-			Text: a.reasoning.String(),
-		})
-	}
+	blocks = append(blocks, conversation.SequenceBlocks(a.sequence.Segments(), a.serverTools)...)
 
-	// 2. Server tool activity blocks (provider-executed tools such as
-	// Anthropic web search / web fetch / code execution). They precede the
-	// text block because the activity happens before the final answer.
-	for i := range a.serverTools {
-		serverTool := a.serverTools[i]
-		blocks = append(blocks, conversation.ContentBlock{
-			Type:       conversation.BlockTypeServerToolUse,
-			ServerTool: &serverTool,
-		})
-	}
-
-	// 3. Text block
-	if a.text.Len() > 0 {
-		blocks = append(blocks, conversation.ContentBlock{
-			Type: conversation.BlockTypeText,
-			Text: a.text.String(),
-		})
-	}
-
-	// 4. Annotations block (web search context)
 	if len(a.annotations) > 0 {
 		resultsJSON, err := json.Marshal(a.annotations)
 		if err == nil {
@@ -162,7 +127,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 		}
 	}
 
-	// 5. Tool call blocks
+	// Tool use ends an assistant turn, so these always come last.
 	for _, tc := range a.toolCalls {
 		blocks = append(blocks, conversation.ContentBlock{
 			Type:             conversation.BlockTypeToolUse,
@@ -453,30 +418,6 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 	})
 }
 
-// isResolvedToolCallsEvent reports whether a ToolCalls event represents the
-// post-execution "resolved" broadcast (every call has a terminal status
-// assigned by toolrunner after execution) rather than the pre-execution
-// "pending" broadcast. toolrunner.buildResolvedToolCalls tags successful
-// auto-run tools as AutoApproved (not Success) and errored ones as Error;
-// user-approved tools are later tagged Success by the approval flow. Anything
-// else — most commonly Pending — indicates the event hasn't been executed yet.
-func isResolvedToolCallsEvent(toolCalls []llm.ToolCall) bool {
-	if len(toolCalls) == 0 {
-		return false
-	}
-	for _, tc := range toolCalls {
-		switch tc.Status {
-		case llm.ToolCallStatusSuccess,
-			llm.ToolCallStatusError,
-			llm.ToolCallStatusAutoApproved:
-			// terminal status after execution
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 // redactToolCalls returns a copy of the tool calls with Arguments, Result, and
 // MCPBareName cleared so non-requesters see tool identity and status but not
 // payloads. Must stay in lockstep with conversation.FilterForNonRequester
@@ -593,7 +534,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					post.Message = messageBuilder.String()
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 					if acc != nil {
-						acc.text.WriteString(textChunk)
+						acc.sequence.AppendText(textChunk)
 					}
 				}
 			case llm.EventTypeFiles:
@@ -632,7 +573,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					post.Message = emptyText
 					// Mirror into the accumulator so the turn carries the fallback.
 					if acc != nil {
-						acc.text.WriteString(emptyText)
+						acc.sequence.AppendText(emptyText)
 					}
 					p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 				}
@@ -666,9 +607,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				// Mirror into the accumulator so the turn carries the error.
 				if acc != nil {
 					if separator != "" {
-						acc.text.WriteString(separator)
+						acc.sequence.AppendText(separator)
 					}
-					acc.text.WriteString(errorText)
+					acc.sequence.AppendText(errorText)
 				}
 
 				if err := p.mmClient.UpdatePost(post); err != nil {
@@ -684,7 +625,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					// Send reasoning event with accumulated text so far
 					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningBuffer.String(), "reasoning_summary", broadcast)
 					if acc != nil {
-						acc.reasoning.WriteString(reasoningChunk)
+						acc.sequence.AppendReasoning(reasoningChunk)
 					}
 				}
 			case llm.EventTypeReasoningEnd:
@@ -693,7 +634,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					p.sendPostStreamingReasoningEventWithBroadcast(post, reasoningData.Text, "reasoning_summary_done", broadcast)
 					reasoningBuffer.Reset()
 					if acc != nil {
-						acc.reasoningData = reasoningData
+						acc.sequence.FinishReasoning(reasoningData)
 					}
 				}
 			case llm.EventTypeToolCalls:
@@ -713,10 +654,8 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// at the resolved tool_call event. On pending,
 						// retain the calls so a rejected-approval turn
 						// keeps them.
-						if isResolvedToolCallsEvent(toolCalls) {
-							acc.text.Reset()
-							acc.reasoning.Reset()
-							acc.reasoningData = llm.ReasoningData{}
+						if llm.IsResolvedToolCallBatch(toolCalls) {
+							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil
 							acc.serverTools = nil
@@ -729,20 +668,19 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					p.broadcastToolCalls(post, toolCalls, requesterUserID)
 				}
 			case llm.EventTypeAnnotations:
-				// Handle annotations - might include cleaned message for web search citations
 				if annotationMap, ok := event.Value.(map[string]interface{}); ok {
-					// Web search annotations with cleaned message
 					if annotations, hasAnnotations := annotationMap["annotations"].([]llm.Annotation); hasAnnotations {
 						if cleanedMsg, hasCleaned := annotationMap["cleanedMessage"].(string); hasCleaned {
-							// Replace post message with cleaned version (citation markers removed).
-							// Reset messageBuilder so subsequent text events append to the cleaned content.
 							messageBuilder.Reset()
 							messageBuilder.WriteString(cleanedMsg)
 							post.Message = cleanedMsg
 							p.sendPostStreamingUpdateEventWithBroadcast(post, post.Message, broadcast)
 							if acc != nil {
-								acc.text.Reset()
-								acc.text.WriteString(cleanedMsg)
+								originalMsg, hasOriginal := annotationMap["originalMessage"].(string)
+								removedRanges, hasRanges := annotationMap["removedTextRanges"].([]llm.TextRange)
+								if !hasOriginal || !hasRanges || !acc.sequence.RemoveTextRanges(originalMsg, removedRanges) || acc.sequence.Text() != cleanedMsg {
+									p.mmClient.LogWarn("Unable to preserve turn text segments during citation cleanup", "post_id", post.Id)
+								}
 							}
 						}
 
@@ -757,7 +695,6 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						}
 					}
 				} else if annotations, ok := event.Value.([]llm.Annotation); ok {
-					// Regular annotations without cleaned message
 					annotationsJSON, err := json.Marshal(annotations)
 					if err != nil {
 						p.mmClient.LogError("Failed to marshal annotations", "error", err)
@@ -777,15 +714,16 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					}
 				}
 			case llm.EventTypeServerToolUse:
-				// Provider-executed tool activity (web search / web fetch /
-				// code execution). The event carries the cumulative snapshot
-				// for the round; sanitize, persist, and broadcast it.
-				if serverTools, ok := event.Value.([]llm.ServerToolUse); ok {
+				if rawServerTools, ok := event.Value.([]llm.ServerToolUse); ok {
+					// Clone before sanitizing: this event can share FileIDs backing storage with ToolRunner's replay snapshot.
+					serverTools := llm.CloneServerToolUses(rawServerTools)
 					for i := range serverTools {
+						serverTools[i].ProviderRoute = ""
 						serverTools[i].Sanitize()
 					}
 					if acc != nil {
 						acc.serverTools = serverTools
+						acc.sequence.RecordServerTools(serverTools)
 					}
 					serverToolsJSON, err := json.Marshal(serverTools)
 					if err != nil {

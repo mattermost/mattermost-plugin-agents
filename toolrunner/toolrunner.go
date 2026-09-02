@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -100,11 +99,13 @@ type ToolTurn struct {
 	// AssistantReasoning holds the reasoning data from the assistant response.
 	AssistantReasoning llm.ReasoningData
 
-	// AssistantServerTools holds the provider-executed (server) tool activity
-	// observed during the assistant response — the final cumulative snapshot
-	// from EventTypeServerToolUse. Without it, a round that mixed server tools
-	// with client tool calls would lose the activity when persisted.
+	// AssistantServerTools is the final cumulative snapshot. Without it, a
+	// round that mixed server tools with client tool calls would lose activity.
 	AssistantServerTools []llm.ServerToolUse
+
+	// AssistantSegments is arrival order. Without it, narration between two
+	// sandbox runs collapses above both of them.
+	AssistantSegments []llm.TurnSegment
 
 	// ToolResults holds the executed tool results, one per tool call.
 	// Includes both successful and errored results.
@@ -207,13 +208,12 @@ func (r *ToolRunner) runLoop(
 		}
 
 		// Consume the stream, forwarding non-tool-call events in real-time.
-		var text strings.Builder
-		var reasoning strings.Builder
 		var reasoningData llm.ReasoningData
 		var toolCalls []llm.ToolCall
 		var serverTools []llm.ServerToolUse
 		var usage llm.TokenUsage
 		var streamErr error
+		var sequence llm.TurnSequence
 
 		for event := range stream.Stream {
 			switch event.Type {
@@ -222,27 +222,38 @@ func (r *ToolRunner) runLoop(
 					toolCalls = append(toolCalls, tcs...)
 				}
 			case llm.EventTypeServerToolUse:
-				// Cumulative snapshot of provider-executed tool activity;
-				// keep the latest so a tool round persists it (see ToolTurn).
 				if uses, ok := event.Value.([]llm.ServerToolUse); ok {
 					serverTools = uses
+					sequence.RecordServerTools(uses)
+					// Register files before presentation sanitation; downloads need exact ids and fallback routes.
+					for _, use := range uses {
+						refs := make([]llm.ProviderFileReference, 0, len(use.FileIDs))
+						for _, id := range use.FileIDs {
+							refs = append(refs, llm.ProviderFileReference{
+								ID:            id,
+								ProviderRoute: use.ProviderRoute,
+							})
+						}
+						request.Context.AddSandboxFiles(refs...)
+					}
 				}
 				output <- event
 			case llm.EventTypeEnd:
 				// Don't forward yet — handle after consuming the full stream.
 			case llm.EventTypeText:
 				if t, ok := event.Value.(string); ok {
-					text.WriteString(t)
+					sequence.AppendText(t)
 				}
 				output <- event
 			case llm.EventTypeReasoning:
 				if t, ok := event.Value.(string); ok {
-					reasoning.WriteString(t)
+					sequence.AppendReasoning(t)
 				}
 				output <- event
 			case llm.EventTypeReasoningEnd:
 				if data, ok := event.Value.(llm.ReasoningData); ok {
 					reasoningData = data
+					sequence.FinishReasoning(data)
 				}
 				output <- event
 			case llm.EventTypeUsage:
@@ -275,7 +286,7 @@ func (r *ToolRunner) runLoop(
 
 		// No tool calls = final response.
 		if len(toolCalls) == 0 {
-			result.FinalText = finalAssistantText(text.String(), synthesisForced, droppedToolCalls)
+			result.FinalText = finalAssistantText(sequence.Text(), synthesisForced, droppedToolCalls)
 			r.deliverToolTurns(result, onToolTurns)
 			output <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 			return
@@ -285,7 +296,7 @@ func (r *ToolRunner) runLoop(
 		if containsUnavailableTools(toolCalls, store) {
 			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+			appendToolTurnAndPost(result, &request, sequence.Text(), reasoningData, serverTools, sequence.Segments(), resolvedToolCalls, toolResults, usage)
 
 			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
 
@@ -336,7 +347,7 @@ func (r *ToolRunner) runLoop(
 		recordMCPDynamicSearchLoadCallSuccess(request.Context, toolCalls, toolResults)
 
 		resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-		appendToolTurnAndPost(result, &request, text.String(), reasoningData, serverTools, resolvedToolCalls, toolResults, usage)
+		appendToolTurnAndPost(result, &request, sequence.Text(), reasoningData, serverTools, sequence.Segments(), resolvedToolCalls, toolResults, usage)
 
 		// Forward resolved tool calls so the UI can show success/error states.
 		output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
@@ -527,6 +538,7 @@ func appendToolTurnAndPost(
 	text string,
 	reasoningData llm.ReasoningData,
 	serverTools []llm.ServerToolUse,
+	segments []llm.TurnSegment,
 	resolvedToolCalls []llm.ToolCall,
 	toolResults []ToolResult,
 	usage llm.TokenUsage,
@@ -536,6 +548,7 @@ func appendToolTurnAndPost(
 		AssistantToolCalls:   resolvedToolCalls,
 		AssistantReasoning:   reasoningData,
 		AssistantServerTools: serverTools,
+		AssistantSegments:    segments,
 		ToolResults:          toolResults,
 		TokensIn:             usage.InputTokens,
 		TokensOut:            usage.OutputTokens,
@@ -548,6 +561,8 @@ func appendToolTurnAndPost(
 		ToolUse:            resolvedToolCalls,
 		Reasoning:          reasoningData.Text,
 		ReasoningSignature: reasoningData.Signature,
+		ServerTools:        serverTools,
+		AssistantSegments:  segments,
 	})
 }
 

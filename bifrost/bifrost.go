@@ -10,8 +10,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -36,6 +38,16 @@ const (
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
+	// FileDownloadTimeout caps a provider file download so a wedged provider
+	// cannot hold a tool resolution open indefinitely.
+	FileDownloadTimeout = 60 * time.Second
+)
+
+const (
+	// anthropicBetaHeader and anthropicFilesAPIBeta mirror Bifrost's internal
+	// (unexported) constants for the Anthropic beta opt-in header.
+	anthropicBetaHeader   = "anthropic-beta"
+	anthropicFilesAPIBeta = "files-api-2025-04-14"
 )
 
 type webSearchFallbackSource struct {
@@ -74,6 +86,10 @@ type LLM struct {
 	// fallbacks is attached to every outgoing request so Bifrost retries with
 	// alternative providers when the primary fails.
 	fallbacks []schemas.Fallback
+
+	// providerFileDownloadRoutes are registered Bifrost routes that can serve
+	// captured files. Fallbacks of the same provider type have distinct routes.
+	providerFileDownloadRoutes map[schemas.ModelProvider]bool
 }
 
 // ProviderSettings holds the connection and credential fields needed to reach
@@ -374,6 +390,11 @@ func New(cfg Config) (*LLM, error) {
 	// key formats the generic redaction patterns don't recognize.
 	redactKeys := []string{cfg.APIKey}
 
+	providerFileDownloadRoutes := make(map[schemas.ModelProvider]bool)
+	if supportsProviderFileDownloadProvider(cfg.Provider) {
+		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
+	}
+
 	var fallbacks []schemas.Fallback
 	for _, fb := range cfg.Fallbacks {
 		if fb.APIKey != "" {
@@ -405,6 +426,9 @@ func New(cfg Config) (*LLM, error) {
 
 		account.addProvider(entry)
 		usedNames[name] = true
+		if supportsProviderFileDownloadProvider(fb.Provider) {
+			providerFileDownloadRoutes[name] = true
+		}
 		fallbacks = append(fallbacks, schemas.Fallback{
 			Provider: name,
 			Model:    fb.DefaultModel,
@@ -422,20 +446,21 @@ func New(cfg Config) (*LLM, error) {
 	}
 
 	return &LLM{
-		client:             client,
-		provider:           cfg.Provider,
-		apiKey:             cfg.APIKey,
-		fallbackAPIKeys:    redactKeys[1:],
-		defaultModel:       cfg.DefaultModel,
-		inputTokenLimit:    cfg.InputTokenLimit,
-		outputTokenLimit:   cfg.OutputTokenLimit,
-		streamingTimeout:   streamingTimeout,
-		enabledNativeTools: cfg.EnabledNativeTools,
-		reasoningEnabled:   cfg.ReasoningEnabled,
-		reasoningEffort:    cfg.ReasoningEffort,
-		thinkingBudget:     cfg.ThinkingBudget,
-		useResponsesAPI:    cfg.UseResponsesAPI,
-		fallbacks:          fallbacks,
+		client:                     client,
+		provider:                   cfg.Provider,
+		apiKey:                     cfg.APIKey,
+		fallbackAPIKeys:            redactKeys[1:],
+		defaultModel:               cfg.DefaultModel,
+		inputTokenLimit:            cfg.InputTokenLimit,
+		outputTokenLimit:           cfg.OutputTokenLimit,
+		streamingTimeout:           streamingTimeout,
+		enabledNativeTools:         cfg.EnabledNativeTools,
+		reasoningEnabled:           cfg.ReasoningEnabled,
+		reasoningEffort:            cfg.ReasoningEffort,
+		thinkingBudget:             cfg.ThinkingBudget,
+		useResponsesAPI:            cfg.UseResponsesAPI,
+		fallbacks:                  fallbacks,
+		providerFileDownloadRoutes: providerFileDownloadRoutes,
 	}, nil
 }
 
@@ -855,6 +880,113 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 		return 0, fmt.Errorf("bifrost count tokens returned nil response")
 	}
 	return resp.InputTokens, nil
+}
+
+// applyCompletionBetaHeaders opts into provider betas Bifrost does not set
+// itself. Anthropic only reports sandbox file ids when the Files API beta is
+// on the completion request; Bifrost adds that header only when the request
+// already references a file, never because code execution is enabled.
+func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
+	if bifrostCtx == nil {
+		return
+	}
+	// Any registered file-download route may end up serving the request —
+	// Anthropic can be a fallback rather than the primary — so key the beta
+	// opt-in off the routes, mirroring DownloadProviderFile. Only providers
+	// needing the beta register a route; others ignore the extra header.
+	if len(b.providerFileDownloadRoutes) == 0 || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
+		return
+	}
+
+	headers, _ := bifrostCtx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+	if slices.Contains(headers[anthropicBetaHeader], anthropicFilesAPIBeta) {
+		return
+	}
+	headers[anthropicBetaHeader] = append(headers[anthropicBetaHeader], anthropicFilesAPIBeta)
+	bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
+}
+
+// ProviderServices must be called on the concrete client before wrapping.
+func (b *LLM) ProviderServices() *llm.ProviderServices {
+	services := &llm.ProviderServices{}
+	if supportsProviderFileDownloadProvider(b.provider) {
+		services.FileDownloader = b
+	}
+	return services
+}
+
+// DownloadProviderFile fetches a provider-side file. The captured reference
+// selects the route so a fallback-created file uses that fallback's credentials.
+// Filename comes from the metadata endpoint; the content response has none.
+// A positive maxBytes rejects an oversized file from the metadata alone,
+// before its content is transferred.
+func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileReference, maxBytes int64) (llm.ProviderFile, error) {
+	providerRoute := b.provider
+	if ref.ProviderRoute != "" {
+		providerRoute = schemas.ModelProvider(ref.ProviderRoute)
+	}
+
+	downloadCtx, span := telemetry.Tracer().Start(ctx, "download provider file",
+		trace.WithAttributes(
+			telemetry.LLMProvider.String(string(providerRoute)),
+			telemetry.LLMOperation.String("file_download"),
+			telemetry.LLMStreaming.Bool(false),
+		),
+	)
+	defer span.End()
+
+	fail := func(err error) (llm.ProviderFile, error) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return llm.ProviderFile{}, err
+	}
+
+	if ref.ID == "" {
+		return fail(errors.New("file id is required"))
+	}
+	if !b.providerFileDownloadRoutes[providerRoute] {
+		return fail(errors.New("provider file route is not available"))
+	}
+
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(downloadCtx, FileDownloadTimeout)
+	defer cancel()
+
+	meta, bifrostErr := b.client.FileRetrieveRequest(bifrostCtx, &schemas.BifrostFileRetrieveRequest{
+		Provider: providerRoute,
+		FileID:   ref.ID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file retrieve error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return fail(err)
+	}
+	if meta == nil {
+		return fail(errors.New("bifrost file retrieve returned nil response"))
+	}
+	if maxBytes > 0 && meta.Bytes > maxBytes {
+		return fail(fmt.Errorf("provider file is %d bytes, over the %d-byte limit", meta.Bytes, maxBytes))
+	}
+
+	resp, bifrostErr := b.client.FileContentRequest(bifrostCtx, &schemas.BifrostFileContentRequest{
+		Provider: providerRoute,
+		FileID:   ref.ID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return fail(err)
+	}
+	if resp == nil {
+		return fail(errors.New("bifrost file content returned nil response"))
+	}
+
+	span.SetStatus(codes.Ok, "file download succeeded")
+	return llm.ProviderFile{
+		Name:        meta.Filename,
+		ContentType: resp.ContentType,
+		Content:     resp.Content,
+	}, nil
 }
 
 // functionToolsForCount keeps only function (custom) tool definitions, which
@@ -1717,16 +1849,8 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 			}
 
 		case llm.PostRoleBot:
-			// Handle tool calls in assistant messages
+			messages = append(messages, assistantReplayMessages(post)...)
 			if len(post.ToolUse) > 0 {
-				if post.Message != "" {
-					messages = append(messages, schemas.ResponsesMessage{
-						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-						Content: &schemas.ResponsesMessageContent{
-							ContentStr: Ptr(post.Message),
-						},
-					})
-				}
 				for _, tc := range post.ToolUse {
 					funcCallMsg := schemas.ResponsesMessage{
 						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
@@ -1749,17 +1873,65 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 					}
 					messages = append(messages, funcOutputMsg)
 				}
-			} else if post.Message != "" {
-				messages = append(messages, schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-					Content: &schemas.ResponsesMessageContent{
-						ContentStr: Ptr(post.Message),
-					},
-				})
 			}
 		}
 	}
 
+	return messages
+}
+
+func assistantReplayMessages(post llm.Post) []schemas.ResponsesMessage {
+	newTextMessage := func(text string) schemas.ResponsesMessage {
+		return schemas.ResponsesMessage{
+			Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
+			Content: &schemas.ResponsesMessageContent{
+				ContentStr: Ptr(text),
+			},
+		}
+	}
+
+	if len(post.AssistantSegments) == 0 {
+		messages := make([]schemas.ResponsesMessage, 0, 2)
+		if record := serverToolActivityRecord(post.ServerTools); record != "" {
+			messages = append(messages, newTextMessage(record))
+		}
+		if post.Message != "" {
+			messages = append(messages, newTextMessage(post.Message))
+		}
+		return messages
+	}
+
+	serverToolsByID := make(map[string]llm.ServerToolUse, len(post.ServerTools))
+	for i := range post.ServerTools {
+		serverToolsByID[post.ServerTools[i].ID] = post.ServerTools[i]
+	}
+
+	messages := make([]schemas.ResponsesMessage, 0, len(post.AssistantSegments))
+	headerEmitted := false
+	for _, segment := range post.AssistantSegments {
+		switch segment.Kind {
+		case llm.TurnSegmentText:
+			if segment.Text != "" {
+				messages = append(messages, newTextMessage(segment.Text))
+			}
+		case llm.TurnSegmentServerTool:
+			use, ok := serverToolsByID[segment.ServerToolID]
+			if !ok {
+				continue
+			}
+			line := serverToolActivityLine(&use)
+			if line == "" {
+				continue
+			}
+			// The header describes the whole turn, so it prefixes only the
+			// first activity record instead of repeating per segment.
+			if !headerEmitted {
+				headerEmitted = true
+				line = serverToolReplayHeader + "\n" + line
+			}
+			messages = append(messages, newTextMessage(line))
+		}
+	}
 	return messages
 }
 
@@ -2013,6 +2185,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	)
 	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
 	defer cancel()
+	b.applyCompletionBetaHeaders(bifrostCtx)
 
 	// Convert to Bifrost Responses API request
 	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
@@ -2058,6 +2231,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	// web fetch / code execution). Every state change re-emits the cumulative
 	// snapshot so receivers can replace prior state.
 	serverTools := newServerToolTracker()
+	providerRoute := b.provider
 	emitServerTools := func() {
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeServerToolUse,
@@ -2127,6 +2301,11 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 		// Process Responses API stream response
 		if chunk.BifrostResponsesStreamResponse != nil {
 			resp := chunk.BifrostResponsesStreamResponse
+			if routed := resp.ExtraFields.RoutingInfo.Provider; routed != "" {
+				providerRoute = routed
+			} else if resp.Response != nil && resp.Response.ExtraFields.RoutingInfo.Provider != "" {
+				providerRoute = resp.Response.ExtraFields.RoutingInfo.Provider
+			}
 
 			switch resp.Type {
 			case schemas.ResponsesStreamResponseTypeOutputTextDelta:
@@ -2283,7 +2462,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
 				// Server tool started (web_search_call / web_fetch_call /
 				// code_interpreter_call) — track and surface the activity.
-				if serverTools.observeItem(resp.Item) {
+				if serverTools.observeItem(resp.Item, providerRoute) {
 					emitServerTools()
 				}
 				// New output item added - register function calls so their
@@ -2317,7 +2496,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
 				// Server tool finished — fold the final payload (query,
 				// resolved URL/title, stdout/stderr, error) into the activity.
-				if serverTools.observeItem(resp.Item) {
+				if serverTools.observeItem(resp.Item, providerRoute) {
 					emitServerTools()
 				}
 				// Output item completed - finalize function call if any

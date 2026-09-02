@@ -192,7 +192,7 @@ func channelAnalysisToolBot(bot *bots.Bot) *bots.Bot {
 	// so load the MCP catalog even when the agent uses a narrower allowlist.
 	cfg.AutoEnableNewMCPTools = true
 	cfg.EnabledMCPTools = nil
-	return bots.NewBot(cfg, bot.GetService(), bot.GetMMBot(), bot.LLM())
+	return bot.WithConfig(cfg)
 }
 
 func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) {

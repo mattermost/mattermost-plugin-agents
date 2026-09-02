@@ -74,44 +74,86 @@ func unmarshalBlocks(raw json.RawMessage) ([]ContentBlock, error) {
 	return blocks, nil
 }
 
-// toolUseBlocks builds assistant-side content blocks from ToolRunner output.
-// Tool calls must carry their resolved status (AutoApproved / Error) — the
-// toolrunner stores resolved tool calls on ToolTurn.AssistantToolCalls after
-// execution, so this helper just forwards tc.Status verbatim.
+// SequenceBlocks renders segments in arrival order, resolving server_tool
+// ids against the snapshot. Missing activity is dropped, not rendered empty.
+func SequenceBlocks(segments []llm.TurnSegment, serverTools []llm.ServerToolUse) []ContentBlock {
+	byID := make(map[string]*llm.ServerToolUse, len(serverTools))
+	for i := range serverTools {
+		byID[serverTools[i].ID] = &serverTools[i]
+	}
+
+	blocks := make([]ContentBlock, 0, len(segments))
+	for _, segment := range segments {
+		switch segment.Kind {
+		case llm.TurnSegmentText:
+			if segment.Text == "" {
+				continue
+			}
+			blocks = append(blocks, ContentBlock{Type: BlockTypeText, Text: segment.Text})
+		case llm.TurnSegmentThinking:
+			if segment.Text == "" {
+				continue
+			}
+			blocks = append(blocks, ContentBlock{
+				Type:      BlockTypeThinking,
+				Text:      segment.Text,
+				Signature: segment.Signature,
+			})
+		case llm.TurnSegmentServerTool:
+			use, ok := byID[segment.ServerToolID]
+			if !ok {
+				continue
+			}
+			activity := use.Clone()
+			blocks = append(blocks, ContentBlock{
+				Type:       BlockTypeServerToolUse,
+				ServerTool: &activity,
+			})
+		}
+	}
+	return blocks
+}
+
+// toolUseBlocks builds assistant-side content blocks. Tool calls keep their
+// resolved status. Empty segments fall back to reasoning → activity → text.
 func toolUseBlocks(
 	message string,
 	reasoning llm.ReasoningData,
 	serverTools []llm.ServerToolUse,
+	segments []llm.TurnSegment,
 	toolCalls []llm.ToolCall,
 	shared bool,
 ) []ContentBlock {
 	var blocks []ContentBlock
 
-	if reasoning.Text != "" {
-		blocks = append(blocks, ContentBlock{
-			Type:      BlockTypeThinking,
-			Text:      reasoning.Text,
-			Signature: reasoning.Signature,
-		})
+	if len(segments) > 0 {
+		blocks = append(blocks, SequenceBlocks(segments, serverTools)...)
+	} else {
+		if reasoning.Text != "" {
+			blocks = append(blocks, ContentBlock{
+				Type:      BlockTypeThinking,
+				Text:      reasoning.Text,
+				Signature: reasoning.Signature,
+			})
+		}
+
+		for i := range serverTools {
+			serverTool := serverTools[i].Clone()
+			blocks = append(blocks, ContentBlock{
+				Type:       BlockTypeServerToolUse,
+				ServerTool: &serverTool,
+			})
+		}
+
+		if message != "" {
+			blocks = append(blocks, ContentBlock{
+				Type: BlockTypeText,
+				Text: message,
+			})
+		}
 	}
 
-	// Server tool activity precedes the text, matching the streaming layer's
-	// buildContentBlocks ordering (the activity happens before the answer).
-	for i := range serverTools {
-		serverTool := serverTools[i]
-		blocks = append(blocks, ContentBlock{
-			Type:       BlockTypeServerToolUse,
-			ServerTool: &serverTool,
-		})
-	}
-
-	if message != "" {
-		blocks = append(blocks, ContentBlock{
-			Type: BlockTypeText,
-			Text: message,
-		})
-	}
-
+	// Tool use ends an assistant turn, so calls always come last.
 	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
 			Type:            BlockTypeToolUse,

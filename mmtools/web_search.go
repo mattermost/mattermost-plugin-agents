@@ -820,12 +820,20 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 				}
 				// Pass through text events as normal during streaming
 				output <- event
+			case llm.EventTypeToolCalls:
+				// A resolved client-tool event closes the preceding round. The
+				// streaming accumulator resets at the same boundary, so citation
+				// cleanup at final End must target only the current round's text.
+				if toolCalls, ok := event.Value.([]llm.ToolCall); ok && llm.IsResolvedToolCallBatch(toolCalls) {
+					builder.Reset()
+				}
+				output <- event
 			case llm.EventTypeEnd:
 				fullMessage := builder.String()
 				if logger != nil {
 					logger.Debug("Building annotations from message", "message_length", len(fullMessage), "num_results", len(flat))
 				}
-				annotations, cleanedMessage := buildWebSearchAnnotationsAndCleanText(fullMessage, flat)
+				annotations, cleanedMessage, removedTextRanges := buildWebSearchAnnotationsAndCleanTextRanges(fullMessage, flat)
 				if logger != nil {
 					logger.Debug("Built annotations", "num_annotations", len(annotations), "cleaned_length", len(cleanedMessage), "original_length", len(fullMessage))
 				}
@@ -835,8 +843,10 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 					output <- llm.TextStreamEvent{
 						Type: llm.EventTypeAnnotations,
 						Value: map[string]interface{}{
-							"annotations":    annotations,
-							"cleanedMessage": cleanedMessage,
+							"annotations":       annotations,
+							"cleanedMessage":    cleanedMessage,
+							"originalMessage":   fullMessage,
+							"removedTextRanges": removedTextRanges,
 						},
 					}
 				}
@@ -853,8 +863,13 @@ func DecorateStreamWithAnnotations(result *llm.TextStreamResult, searchData []We
 // buildWebSearchAnnotationsAndCleanText finds citation markers, builds annotations, and returns
 // the message with markers removed. The frontend will re-insert markers based on annotations.
 func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchResult) ([]llm.Annotation, string) {
+	annotations, cleanedMessage, _ := buildWebSearchAnnotationsAndCleanTextRanges(message, results)
+	return annotations, cleanedMessage
+}
+
+func buildWebSearchAnnotationsAndCleanTextRanges(message string, results []WebSearchResult) ([]llm.Annotation, string, []llm.TextRange) {
 	if len(message) == 0 || len(results) == 0 {
-		return nil, message
+		return nil, message, nil
 	}
 
 	indexMap := make(map[int]WebSearchResult, len(results))
@@ -863,6 +878,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 	}
 
 	annotations := []llm.Annotation{}
+	var removedTextRanges []llm.TextRange
 	var cleanedMessage strings.Builder
 	pos := 0
 	utf16Index := 0
@@ -913,7 +929,8 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 							CitedText:  res.Snippet,
 							Index:      idx,
 						})
-						// Skip the marker in cleaned message - frontend will insert it based on annotation
+						// Skip the marker in cleaned message - frontend will insert it based on annotation.
+						removedTextRanges = append(removedTextRanges, llm.TextRange{Start: markerStartPos, End: nextPos})
 						pos = nextPos
 						continue
 					}
@@ -944,7 +961,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 		utf16Index += n
 	}
 
-	return annotations, cleanedMessage.String()
+	return annotations, cleanedMessage.String(), removedTextRanges
 }
 
 func buildWebSearchAnnotations(message string, results []WebSearchResult) []llm.Annotation {

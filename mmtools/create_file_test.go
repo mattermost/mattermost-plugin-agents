@@ -244,6 +244,12 @@ func TestCreateFileResolverValidation(t *testing.T) {
 				if tt.setup != nil {
 					tt.setup(client)
 				}
+				// Default upload-policy answers so each case exercises only
+				// its own failure; expectations from setup take precedence.
+				client.On("GetConfig").Return(&model.Config{
+					FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)},
+				}).Maybe()
+				client.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionUploadFile).Return(true).Maybe()
 				tool = NewCreateFileTool(client)
 			}
 
