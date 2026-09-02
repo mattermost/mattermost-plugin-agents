@@ -9,6 +9,7 @@
 
 /* eslint-disable no-console */
 
+import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -205,6 +206,28 @@ export function parseCompilerOptions(tsconfigPath) {
     return {...parsed.options, noEmit: true, skipLibCheck: true};
 }
 
+// Header line recording which host commit the snapshot was generated from.
+// Provenance only: check_editor_contract.mjs strips it (see
+// stripProvenance) before comparing the committed snapshot with a fresh
+// generation, so probing against a different host commit that exports the
+// same types does not report staleness.
+const PROVENANCE_PREFIX = ' * Generated from mattermost commit ';
+
+export function stripProvenance(snapshotText) {
+    return snapshotText.split('\n').filter((line) => !line.startsWith(PROVENANCE_PREFIX)).join('\n');
+}
+
+// hostCommit returns the host checkout's HEAD sha, or null when it is not a
+// git checkout (the snapshot then simply omits the provenance line).
+function hostCommit(host) {
+    const result = spawnSync('git', ['-C', host, 'rev-parse', 'HEAD'], {encoding: 'utf8'});
+    if (result.status !== 0) {
+        return null;
+    }
+    const sha = result.stdout.trim();
+    return (/^[0-9a-f]{40}$/).test(sha) ? sha : null;
+}
+
 // generateSnapshot resolves the contract types against the host checkout and
 // returns the snapshot file contents. compilerOptions must resolve modules
 // against the host (see the synthetic tsconfig in check_editor_contract.mjs).
@@ -239,6 +262,8 @@ export function generateSnapshot(host, compilerOptions) {
     }
 
     const sourceList = HOST_SOURCES.map((source) => ` *   - webapp/${source.file.join('/')}`).join('\n');
+    const commit = hostCommit(host);
+    const provenance = commit ? `${PROVENANCE_PREFIX}${commit}\n *\n` : '';
     return `// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
@@ -254,7 +279,7 @@ export function generateSnapshot(host, compilerOptions) {
  * Source of truth (in the mattermost repo):
 ${sourceList}
  *
- * Regenerate against a mattermost webapp checkout (and re-verify) with:
+${provenance} * Regenerate against a mattermost webapp checkout (and re-verify) with:
  *   MM_WEBAPP_PATH=/path/to/mattermost/webapp npm run update-editor-contract-snapshot
  * (MM_WEBAPP_PATH is optional when the checkout is a sibling of this repo.)
  */

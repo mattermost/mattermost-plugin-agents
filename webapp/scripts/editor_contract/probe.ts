@@ -6,12 +6,18 @@
 // executed or bundled: scripts/check_editor_contract.mjs type-checks it
 // against a mattermost webapp checkout when one is available.
 //
-// The mirrors must stay assignable to the host types. Two payloads are
-// deliberate exceptions, typed as the server wire shape the plugin proxies
-// through untouched: TableEditor's userAttributes and searchUsers results.
-// For those the probe checks the inverse direction — the host's strict type
-// must keep satisfying the plugin's wire mirror — so host-side
-// renames/removals still fail this check.
+// The mirrors must stay assignable to the host types. One payload is a
+// deliberate exception, typed as the server wire shape the plugin proxies
+// through untouched: TableEditor's userAttributes (AccessControlPropertyField
+// vs the host's UserPropertyField). For it the probe checks the inverse
+// direction — the host's strict type must keep satisfying the plugin's wire
+// mirror — so host-side renames/removals still fail this check.
+//
+// searchUsers results are NOT an exception anymore: src/types/access_control.ts
+// re-exports AccessControlTestResult from @mattermost/types, so the mirror
+// and host result types are identical. The result checks below still split
+// the envelope from the `users` element type so that a failure pinpoints
+// which of the two moved.
 
 /* eslint-disable @typescript-eslint/no-unused-vars, no-undef */
 
@@ -27,8 +33,10 @@ declare function expectAssignable<T>(value: T): void;
 
 // --- TableEditor ---
 
-// Everything except the wire-payload exceptions must be assignable to the
+// Everything except the userAttributes exception must be assignable to the
 // host contract (the plugin renders the host component with these props).
+// searchUsers is carved out only so its parameters and result can be
+// checked separately (and in both directions) below.
 expectAssignable<Omit<HostTableEditorProps, 'userAttributes' | 'actions'>>(
     {} as Omit<MirrorTableEditorProps, 'userAttributes' | 'actions'>,
 );
@@ -69,8 +77,8 @@ expectAssignable<Parameters<CELHostSearchUsers>>({} as Parameters<CELMirrorSearc
 expectAssignable<Parameters<CELMirrorSearchUsers>>({} as Parameters<CELHostSearchUsers>);
 
 // Actual callback return envelopes (not just the standalone result aliases):
-// Promise/ActionResult wrapper drift trips here. The strict users payload
-// stays a wire exception, checked separately below.
+// Promise/ActionResult wrapper drift trips here. The users payload is
+// checked separately below so a failure names the moving part.
 type MirrorSearchUsersResult = Awaited<ReturnType<MirrorSearchUsers>>;
 type HostSearchUsersResult = Awaited<ReturnType<HostSearchUsers>>;
 type CELMirrorSearchUsersResult = Awaited<ReturnType<CELMirrorSearchUsers>>;
@@ -87,7 +95,7 @@ expectAssignable<Omit<NonNullable<CELHostSearchUsersResult['data']>, 'users'>>(
 );
 expectAssignable<Array<object>>({} as NonNullable<CELHostSearchUsersResult['data']>['users']);
 
-// Result envelope matches modulo the users element type (wire exception).
+// Result envelope and users element type, checked apart from each other.
 expectAssignable<Omit<HostAccessControlTestResult, 'users'>>(
     {} as Omit<MirrorAccessControlTestResult, 'users'>,
 );
