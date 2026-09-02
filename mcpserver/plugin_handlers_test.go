@@ -500,6 +500,8 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 		userID     string
 		wantNative bool
 		wantPlugin bool
+		// unknownTool, when set, is called and must be rejected before reaching the SDK.
+		unknownTool string
 	}{
 		{
 			name:       "denied embedded omits native keeps plugin",
@@ -542,6 +544,15 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 			wantNative: true,
 			wantPlugin: true,
 		},
+		{
+			name:        "unknown tool name fail closed",
+			checker:     &stubMCPAccessChecker{},
+			embeddedID:  embeddedID,
+			userID:      userID,
+			wantNative:  true,
+			wantPlugin:  true,
+			unknownTool: "no_such_tool",
+		},
 	}
 
 	for _, tc := range tests {
@@ -577,6 +588,12 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 			} else {
 				require.NoError(t, pluginErr)
 				require.False(t, pluginResult.IsError)
+			}
+
+			if tc.unknownTool != "" {
+				_, unknownErr := callToolAs(t, h, tc.userID, tc.unknownTool, map[string]interface{}{})
+				require.Error(t, unknownErr)
+				require.Contains(t, unknownErr.Error(), "tool not available")
 			}
 		})
 	}

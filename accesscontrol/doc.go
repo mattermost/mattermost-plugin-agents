@@ -8,4 +8,8 @@
 // An allow with the no_policy reason is vacuous: legacy-mode agents fall
 // through to their allow/block checks, services and MCP servers are
 // unrestricted, and attribute-based agents fail open by design.
+//
+// Enforcement call sites: bots/ (agent+service gate), mcp/ (per-user server
+// filtering), api/ (authoring, list filters), mcpserver/ (external HTTP tool
+// filtering).
 package accesscontrol

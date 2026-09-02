@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -385,52 +387,45 @@ func hasToolFromOrigin(tools []llm.Tool, origin string) bool {
 	return false
 }
 
-func TestUnconnectedAllowedRemotes(t *testing.T) {
-	const (
-		originA = "https://mcp-a.example.com"
-		originB = "https://mcp-b.example.com"
-		originC = "https://mcp-c.example.com"
-	)
-	client := NewUserClients("user-1", newTestLogService(), nil, http.DefaultClient, nil)
-	client.clients["Already"] = &Client{}
+// TestGetUserToolsAccessDoesNotRedialFailedRemote proves an allowed remote
+// whose connect fails is not re-dialed on cache hits and its error is not
+// re-appended on every request.
+func TestGetUserToolsAccessDoesNotRedialFailedRemote(t *testing.T) {
+	ctx := context.Background()
+	const userID = "user-1"
 
-	m := &ClientManager{
-		config: Config{
-			Servers: []ServerConfig{
-				{Name: "A", Enabled: true, BaseURL: originA},
-				{Name: "Already", Enabled: true, BaseURL: originB},
-				{Name: "Disabled", Enabled: false, BaseURL: originC},
-				{Name: "EmptyURL", Enabled: true, BaseURL: ""},
-				{Name: "Denied", Enabled: true, BaseURL: originC},
-			},
-		},
-	}
+	var requests atomic.Int32
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(httpServer.Close)
 
-	tests := []struct {
-		name      string
-		denied    map[string]bool
-		wantNames []string
-	}{
-		{
-			name:      "skips connected, disabled, empty URL, and denied origins",
-			denied:    map[string]bool{originC: true},
-			wantNames: []string{"A"},
-		},
-		{
-			name:      "nil denied origins still skips already connected",
-			wantNames: []string{"A", "Denied"},
-		},
-	}
+	checker := &stubServerAccessChecker{denied: map[string]bool{}}
+	m := newRemoteAccessTestManager(t, []ServerConfig{{
+		ID: accessAllowedID, Name: "Down", Enabled: true, BaseURL: httpServer.URL,
+	}}, checker, httpServer.Client())
+	t.Cleanup(func() {
+		if uc := m.clients[userID]; uc != nil {
+			uc.Close()
+		}
+	})
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := m.unconnectedAllowedRemotes(client, tt.denied)
-			var names []string
-			for _, server := range got {
-				names = append(names, server.Name)
-			}
-			assert.Equal(t, tt.wantNames, names)
-		})
+	first := m.GetUserToolsAccess(ctx, userID)
+	require.NotNil(t, first.Errors)
+	require.Len(t, first.Errors.Errors, 1)
+	cached := m.clients[userID]
+	require.NotNil(t, cached)
+	dialsAfterFirst := requests.Load()
+	require.Positive(t, dialsAfterFirst)
+
+	for i := 0; i < 3; i++ {
+		again := m.GetUserToolsAccess(ctx, userID)
+		require.NotNil(t, again.Errors)
+		assert.Len(t, again.Errors.Errors, 1, "connect error must not accumulate across cache hits")
+		assert.Len(t, cached.InitialRemoteConnectErrors().Errors, 1)
+		assert.Same(t, cached, m.clients[userID])
+		assert.Equal(t, dialsAfterFirst, requests.Load(), "cache hit must not re-dial a failed remote")
 	}
 }
 
@@ -492,19 +487,21 @@ func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			assert.Same(t, cached, m.clients[userID])
 
 			checker.denied = map[string]bool{}
-			require.Len(t, m.unconnectedAllowedRemotes(cached, m.deniedExternalOrigins(ctx, userID, nil)), 1)
 
+			// deny→allow rebuilds the user client without an explicit refresh.
 			allowed := m.GetUserToolsAccess(ctx, userID)
-			assert.Same(t, cached, m.clients[userID], "RefreshUserToolsAccess must not be required")
+			rebuilt := m.clients[userID]
+			require.NotNil(t, rebuilt)
+			assert.NotSame(t, cached, rebuilt)
 			if tt.wantToolAfter {
 				assert.True(t, hasToolFromOrigin(allowed.Tools, origin))
-				assert.True(t, cached.hasClient(remoteName))
+				assert.True(t, rebuilt.hasClient(remoteName))
 				assert.Nil(t, allowed.Errors)
 			}
 			if tt.wantErrorsAfter {
 				require.NotNil(t, allowed.Errors)
-				assert.NotEmpty(t, allowed.Errors.Errors)
-				assert.False(t, cached.hasClient(remoteName))
+				assert.Len(t, allowed.Errors.Errors, 1)
+				assert.False(t, rebuilt.hasClient(remoteName))
 			}
 
 			if !tt.thenDenyDropsTool {
@@ -514,8 +511,8 @@ func TestGetUserToolsAccessDeltaConnectsNewlyAllowedRemote(t *testing.T) {
 			checker.denied = map[string]bool{accessDeniedID: true}
 			deniedAgain := m.GetUserToolsAccess(ctx, userID)
 			assert.False(t, hasToolFromOrigin(deniedAgain.Tools, origin))
-			assert.True(t, cached.hasClient(remoteName), "allow→deny filters tools without disconnecting")
-			assert.Same(t, cached, m.clients[userID])
+			assert.True(t, rebuilt.hasClient(remoteName), "allow→deny filters tools without disconnecting")
+			assert.Same(t, rebuilt, m.clients[userID])
 		})
 	}
 }

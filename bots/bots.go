@@ -463,8 +463,6 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 		return nil, nil, err
 	}
 
-	result = newFallbackAccessLLM(result, b, serviceConfig.ID)
-
 	// Truncation Support
 	result = llm.NewLLMTruncationWrapper(result)
 
@@ -483,6 +481,10 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 	// Structured output fallback
 	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
+
+	// Outermost so the per-user fallback prefix is resolved once per request
+	// and flows down through truncation's repeated CountTokens calls.
+	result = newFallbackAccessLLM(result, b, serviceConfig.ID)
 
 	return result, providerServices, nil
 }
