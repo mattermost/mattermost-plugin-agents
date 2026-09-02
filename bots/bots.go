@@ -96,9 +96,6 @@ type MMBots struct {
 	// forceRefresh bypasses the optimistic config-equality check in EnsureBots.
 	// Set to true by the cluster event handler or API handlers after agent CRUD.
 	forceRefresh bool
-	// agentLLMsStopped is set by ShutdownAgentLLMs so a concurrent EnsureBots
-	// cannot publish new clients after deactivation has snapshotted.
-	agentLLMsStopped bool
 }
 
 // SetBaseLLMBuilderForTest installs a test-only provider client builder. The
@@ -340,8 +337,8 @@ func (b *MMBots) EnsureBots() error {
 	b.botsLock.RLock()
 	previousEntries := make([]*agentLLMEntry, 0, len(b.bots))
 	for _, bot := range b.bots {
-		if entry := bot.llmEntryLocked(); entry != nil {
-			previousEntries = append(previousEntries, entry)
+		if bot.llmEntry != nil {
+			previousEntries = append(previousEntries, bot.llmEntry)
 		}
 	}
 	b.botsLock.RUnlock()
@@ -448,16 +445,11 @@ func (b *MMBots) EnsureBots() error {
 			b.shutdownAgentLLMEntries(builtEntries)
 			return err
 		}
-		bot.setLLM(model, entry)
+		bot.llm, bot.llmEntry = model, entry
 		builtEntries = append(builtEntries, entry)
 	}
 
 	b.botsLock.Lock()
-	if b.agentLLMsStopped {
-		b.botsLock.Unlock()
-		b.shutdownAgentLLMEntries(builtEntries)
-		return fmt.Errorf("agent LLMs are shutting down")
-	}
 	b.bots = bots
 	// Store deep copies of the successfully ensured configs for optimistic checking.
 	// Deep copy is needed because BotConfig contains slice fields (EnabledNativeTools, etc.)

@@ -850,6 +850,50 @@ func (s *stubAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 	return out, nil
 }
 
+// newEnsureBotsHarness returns an MMBots whose plugin API accepts every call
+// EnsureBots makes, so tests can drive real rebuilds against cfg and store.
+// Agent and service LLMs are shut down when the test ends.
+func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore) *MMBots {
+	t.Helper()
+
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
+	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
+	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 1}, nil).Maybe()
+	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
+	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, store, &http.Client{}, nil)
+	t.Cleanup(mmBots.ShutdownAgentLLMs)
+	t.Cleanup(mmBots.ShutdownServiceLLMs)
+	return mmBots
+}
+
+// dbAgents returns n DB-backed agent configs that all reference serviceID.
+func dbAgents(n int, serviceID string) []llm.BotConfig {
+	agents := make([]llm.BotConfig, n)
+	for i := range n {
+		agents[i] = llm.BotConfig{
+			ID:          fmt.Sprintf("bot%d", i+1),
+			Name:        fmt.Sprintf("agent%d", i+1),
+			DisplayName: fmt.Sprintf("Agent %d", i+1),
+			ServiceID:   serviceID,
+		}
+	}
+	return agents
+}
+
 // TestSnapshotBotsAndServicesDoesNotMutateConfigBots pins that
 // snapshotBotsAndServices treats config.GetBots() as read-only. Without the
 // clone, an unlicensed-server truncate-then-append overwrites the config's
@@ -892,25 +936,6 @@ func TestSnapshotBotsAndServicesDoesNotMutateConfigBots(t *testing.T) {
 // changes. Without the snapshot-based equality check, the optimistic
 // fast-path misses the change and the bot's LLM keeps the stale limit.
 func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
-	mockAPI := &plugintest.API{}
-	client := pluginapi.NewClient(mockAPI, nil)
-
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
-	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
-	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()
-	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
-	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-	licenseChecker := enterprise.NewLicenseChecker(client)
 	// DB-backed agent only — no file-config bot — exercises the path
 	// where the service is referenced only by an agent in the store.
 	cfg := &mockConfig{
@@ -930,7 +955,7 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil)
+	mmBots := newEnsureBotsHarness(t, cfg, agentStore)
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()
@@ -968,25 +993,6 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 // bot references only svc1, which falls back to svc2 — so svc2 is visible to
 // change detection solely because resolveServiceCfgs walks the chain.
 func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
-	mockAPI := &plugintest.API{}
-	client := pluginapi.NewClient(mockAPI, nil)
-
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
-	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
-	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()
-	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
-	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-
-	licenseChecker := enterprise.NewLicenseChecker(client)
 	primaryWithFallback := func(fallbackModel string) []llm.ServiceConfig {
 		return []llm.ServiceConfig{
 			{
@@ -1013,7 +1019,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, agentStore, &http.Client{}, nil)
+	mmBots := newEnsureBotsHarness(t, cfg, agentStore)
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()

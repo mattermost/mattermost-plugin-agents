@@ -4,8 +4,6 @@
 package bots
 
 import (
-	"sync"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -26,9 +24,10 @@ type Bot struct {
 	cfg     llm.BotConfig
 	service llm.ServiceConfig
 	mmBot   *model.Bot
-
-	llmMu    sync.RWMutex
-	llm      llm.LanguageModel
+	llm     llm.LanguageModel
+	// llmEntry is the lifecycle entry behind llm, set by EnsureBots before the
+	// bot is published and never changed afterwards. It is nil for bots built
+	// outside EnsureBots (NewBot, SetLLMForTest).
 	llmEntry *agentLLMEntry
 }
 
@@ -41,28 +40,7 @@ func (b *Bot) GetMMBot() *model.Bot {
 }
 
 func (b *Bot) LLM() llm.LanguageModel {
-	if b == nil {
-		return nil
-	}
-	b.llmMu.RLock()
-	defer b.llmMu.RUnlock()
 	return b.llm
-}
-
-func (b *Bot) setLLM(model llm.LanguageModel, entry *agentLLMEntry) {
-	b.llmMu.Lock()
-	defer b.llmMu.Unlock()
-	b.llm = model
-	b.llmEntry = entry
-}
-
-func (b *Bot) llmEntryLocked() *agentLLMEntry {
-	if b == nil {
-		return nil
-	}
-	b.llmMu.RLock()
-	defer b.llmMu.RUnlock()
-	return b.llmEntry
 }
 
 func (b *Bot) GetService() llm.ServiceConfig {
@@ -93,7 +71,7 @@ func (b *Bot) HasNativeWebSearchEnabled() bool {
 }
 
 func (b *Bot) SetLLMForTest(model llm.LanguageModel) {
-	b.setLLM(model, nil)
+	b.llm = model
 }
 
 func (b *Bot) SetServiceForTest(service llm.ServiceConfig) {

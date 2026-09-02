@@ -19,9 +19,10 @@ import (
 type agentLLMEntry struct {
 	shutdown func()
 
-	// inUse counts the handle stored on a Bot, copies of that handle held by
-	// in-flight callers, and in-progress ChatCompletion streams. Retired
-	// entries shut down once it drains.
+	// inUse holds one lease for the handle while it is reachable (from the
+	// Bot or from any caller that kept it), plus one per in-flight call and
+	// per unconsumed ChatCompletion stream. Retired entries shut down once it
+	// drains.
 	inUse sync.WaitGroup
 
 	shutdownOnce sync.Once
@@ -56,8 +57,11 @@ func newAgentLLMHandle(inner llm.LanguageModel, entry *agentLLMEntry) *agentLLMH
 	return h
 }
 
+// The per-call inUse.Add below must happen while the handle lease is still
+// held; runtime.KeepAlive pins h past the Add so the cleanup cannot run first.
 func (h *agentLLMHandle) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	h.entry.inUse.Add(1)
+	runtime.KeepAlive(h)
 	result, err := h.inner.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		h.entry.inUse.Done()
@@ -68,12 +72,14 @@ func (h *agentLLMHandle) ChatCompletion(ctx context.Context, request llm.Complet
 
 func (h *agentLLMHandle) ChatCompletionNoStream(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (string, error) {
 	h.entry.inUse.Add(1)
+	runtime.KeepAlive(h)
 	defer h.entry.inUse.Done()
 	return h.inner.ChatCompletionNoStream(ctx, request, opts...)
 }
 
 func (h *agentLLMHandle) CountTokens(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (int, error) {
 	h.entry.inUse.Add(1)
+	runtime.KeepAlive(h)
 	defer h.entry.inUse.Done()
 	return h.inner.CountTokens(ctx, request, opts...)
 }
@@ -150,15 +156,14 @@ func (b *MMBots) shutdownAgentLLMEntries(entries []*agentLLMEntry) {
 // of outstanding leases. Called on plugin deactivation alongside
 // ShutdownServiceLLMs.
 func (b *MMBots) ShutdownAgentLLMs() {
-	b.botsLock.Lock()
-	b.agentLLMsStopped = true
+	b.botsLock.RLock()
 	live := make([]*agentLLMEntry, 0, len(b.bots))
 	for _, bot := range b.bots {
-		if entry := bot.llmEntryLocked(); entry != nil {
-			live = append(live, entry)
+		if bot.llmEntry != nil {
+			live = append(live, bot.llmEntry)
 		}
 	}
-	b.botsLock.Unlock()
+	b.botsLock.RUnlock()
 
 	b.agentLLMMu.Lock()
 	entries := append([]*agentLLMEntry{}, live...)

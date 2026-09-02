@@ -5,18 +5,12 @@ package bots
 
 import (
 	"fmt"
-	"net/http"
 	"runtime"
 	"testing"
 	"time"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost/server/public/model"
-	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
-	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/maximhq/bifrost/core/schemas"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,46 +18,6 @@ import (
 // construction (schemas.DefaultConcurrency). A leaked client shows up as a
 // jump of this many goroutines.
 const perProviderWorkers = schemas.DefaultConcurrency
-
-func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore) *MMBots {
-	t.Helper()
-
-	mockAPI := &plugintest.API{}
-	client := pluginapi.NewClient(mockAPI, nil)
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
-	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
-	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 1}, nil).Maybe()
-	mockAPI.On("SetProfileImage", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
-	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
-	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, store, &http.Client{}, nil)
-	t.Cleanup(mmBots.ShutdownAgentLLMs)
-	t.Cleanup(mmBots.ShutdownServiceLLMs)
-	return mmBots
-}
-
-func dbAgents(n int, serviceID string) []llm.BotConfig {
-	agents := make([]llm.BotConfig, n)
-	for i := range n {
-		agents[i] = llm.BotConfig{
-			ID:          fmt.Sprintf("bot%d", i+1),
-			Name:        fmt.Sprintf("agent%d", i+1),
-			DisplayName: fmt.Sprintf("Agent %d", i+1),
-			ServiceID:   serviceID,
-		}
-	}
-	return agents
-}
 
 func settleGoroutines() int {
 	runtime.GC()

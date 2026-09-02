@@ -231,34 +231,3 @@ func TestReleaseStreamWhenConsumedDropsLeaseOnCancel(t *testing.T) {
 	_, ok := <-out.Stream
 	require.False(t, ok, "canceled relay must close the outbound stream")
 }
-
-func TestEnsureBotsDoesNotCommitAfterShutdown(t *testing.T) {
-	mmBots, store, builder := newAgentLLMTestBots(t)
-	require.NoError(t, mmBots.EnsureBots())
-	require.Equal(t, 1, builder.buildCount())
-
-	started := make(chan struct{})
-	release := make(chan struct{})
-	builder.beforeReturn = func(llm.ServiceConfig) {
-		select {
-		case <-started:
-		default:
-			close(started)
-		}
-		<-release
-	}
-
-	store.agents[0].CustomInstructions = "changed"
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- mmBots.EnsureBots()
-	}()
-	<-started
-
-	mmBots.ShutdownAgentLLMs()
-	close(release)
-
-	require.ErrorContains(t, <-errCh, "shutting down")
-	require.Equal(t, 1, len(mmBots.GetAllBots()), "EnsureBots must not replace bots after shutdown")
-	requireAgentShutdownIDs(t, builder, []string{"svc", "svc"})
-}
