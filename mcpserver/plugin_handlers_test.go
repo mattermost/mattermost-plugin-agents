@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -86,7 +87,7 @@ func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
 	return names
 }
 
-func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]any) (*gosdkmcp.CallToolResult, error) {
 	t.Helper()
 	ts := httptest.NewServer(h.MCPHandler)
 	t.Cleanup(ts.Close)
@@ -201,7 +202,7 @@ func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testin
 	require.Equal(t, 1, nativeNameCount, "native tool should remain registered once")
 	require.True(t, sawPluginUnique, "non-conflicting plugin tools should still be aggregated")
 
-	result, err := callTool(t, h, "create_post", map[string]interface{}{
+	result, err := callTool(t, h, "create_post", map[string]any{
 		"channel_id": "channel-id",
 		"message":    "from test",
 	})
@@ -311,11 +312,8 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 
 	after := listToolNames(t, h)
 	var sawProxy bool
-	for _, n := range after {
-		if n == "test_tool_0" {
-			sawProxy = true
-			break
-		}
+	if slices.Contains(after, "test_tool_0") {
+		sawProxy = true
 	}
 	require.True(t, sawProxy, "RebuildExternalServer should have picked up the new registration")
 }
@@ -362,11 +360,8 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 
 	after := listToolNames(t, h)
 	var sawHealthy bool
-	for _, n := range after {
-		if n == "test_tool_0" {
-			sawHealthy = true
-			break
-		}
+	if slices.Contains(after, "test_tool_0") {
+		sawHealthy = true
 	}
 	require.True(t, sawHealthy, "healthy plugins should still be aggregated after another plugin times out")
 }

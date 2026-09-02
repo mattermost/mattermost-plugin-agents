@@ -15,7 +15,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -56,7 +55,7 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -116,8 +115,8 @@ func (a *API) handleCancelJob(c *gin.Context) {
 			})
 			return
 		}
-		switch err.Error() {
-		case "not running":
+		switch {
+		case errors.Is(err, indexer.ErrNotRunning):
 			audit.AddParam(auditRec(c), "job_status", "not_running")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
@@ -151,12 +150,12 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case err.Error() == "no previous index found, run a full reindex first":
+		case errors.Is(err, indexer.ErrNoPreviousIndex):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:
@@ -182,7 +181,7 @@ func (a *API) handleRebuildVectorIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
@@ -206,7 +205,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
 	if err != nil {
-		if err.Error() == "search functionality is not configured" {
+		if errors.Is(err, indexer.ErrNotConfigured) {
 			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 			return
 		}
@@ -222,7 +221,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 		ModelName:          cfg.GetModelName(),
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -347,8 +346,7 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		// Try to connect to the server and discover tools
 		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
 		if err != nil {
-			var oauthErr *mcp.OAuthNeededError
-			if errors.As(err, &oauthErr) {
+			if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
 				serverInfo.NeedsOAuth = true
 				serverInfo.OAuthURL = oauthErr.AuthURL()
 			} else {
@@ -397,13 +395,8 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
-func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
-	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
-	if err != nil {
-		return nil, err
-	}
-
+// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
+func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
 	tools := make([]MCPToolInfo, 0, len(toolInfos))
 	for _, toolInfo := range toolInfos {
 		tools = append(tools, MCPToolInfo{
@@ -412,8 +405,17 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 			InputSchema: toolInfo.InputSchema,
 		})
 	}
+	return tools
+}
 
-	return tools, nil
+// discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
+func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serverConfig mcp.ServerConfig) ([]MCPToolInfo, error) {
+	toolInfos, err := mcp.DiscoverRemoteServerTools(ctx, userID, serverConfig, a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient(), a.mcpClientManager.GetToolsCache())
+	if err != nil {
+		return nil, err
+	}
+
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -425,16 +427,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -477,16 +470,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.

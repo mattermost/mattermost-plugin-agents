@@ -21,6 +21,7 @@ const groups = {
         'tests/rhs-core/new-messages-rhs.spec.ts',
         'tests/tool-config/policy-change.spec.ts',
         'tests/tool-config/tab-layout.spec.ts',
+        'tests/tool-config/mock-api/tool-preview-cards.spec.ts',
         'tests/custom-prompts/custom-prompts.spec.ts',
         'tests/meeting-summary/summary-persistence.spec.ts',
         'tests/channel-analysis/backend-verification/real-api.spec.ts',

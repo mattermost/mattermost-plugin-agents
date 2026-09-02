@@ -89,31 +89,34 @@ type Container struct {
 	listeners []UpdateListener
 }
 
-// Config retruns the whole configuration readonly.
+// Config returns the whole configuration readonly. It never returns nil: before
+// the first Update it returns a zero-value configuration.
 // Avoid using this method, prefer using config though interfaces.
 func (c *Container) Config() *Config {
-	return c.cfg.Load()
+	if cfg := c.cfg.Load(); cfg != nil {
+		return cfg
+	}
+	return &Config{}
 }
 
 func (c *Container) GetTranscriptGenerator() string {
-	return c.cfg.Load().TranscriptGenerator
+	return c.Config().TranscriptGenerator
 }
 
 func (c *Container) GetBots() []llm.BotConfig {
-	return c.cfg.Load().Bots
+	return c.Config().Bots
 }
 
 func (c *Container) GetDefaultBotName() string {
-	return c.cfg.Load().DefaultBotName
+	return c.Config().DefaultBotName
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {
-	return c.cfg.Load().EnableTokenUsageLogging
+	return c.Config().EnableTokenUsageLogging
 }
 
 func (c *Container) EnableTokenUsageLogToPlugin() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.Config().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -125,8 +128,7 @@ func (c *Container) EnableTokenUsageLogToPlugin() bool {
 }
 
 func (c *Container) EnableTokenUsageLogToFile() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil || !cfg.EnableTokenUsageLogging {
+	if !c.Config().EnableTokenUsageLogging {
 		return false
 	}
 
@@ -152,34 +154,19 @@ func parseBooleanEnv(key string) (bool, bool) {
 }
 
 func (c *Container) MCP() MCPConfig {
-	return c.cfg.Load().MCP
+	return c.Config().MCP
 }
 
 func (c *Container) AllowUnsafeLinks() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.AllowUnsafeLinks
+	return c.Config().AllowUnsafeLinks
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.EnableChannelMentionToolCalling
+	return c.Config().EnableChannelMentionToolCalling
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return false
-	}
-
-	return cfg.AllowNativeWebSearchInChannels
+	return c.Config().AllowNativeWebSearchInChannels
 }
 
 func (c *Container) RegisterUpdateListener(listener UpdateListener) {
@@ -187,7 +174,7 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 }
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
-	return c.cfg.Load().EmbeddingSearchConfig
+	return c.Config().EmbeddingSearchConfig
 }
 
 // GetServices returns a shallow copy of the configured services so callers can
@@ -202,31 +189,19 @@ func (c *Container) GetServices() []llm.ServiceConfig {
 
 // GetServiceByID returns the service configuration for the given ID
 func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
-	cfg := c.cfg.Load()
-	if cfg == nil {
-		return llm.ServiceConfig{}, false
-	}
-	return cfg.GetServiceByID(id)
+	return c.Config().GetServiceByID(id)
 }
 
-// Updates the current configuration
+// Update replaces the current configuration and notifies all listeners.
 // The new configuration is deep-copied to ensure the new and old
 // configurations are independent of each other.
 func (c *Container) Update(newConfig *Config) {
-	if newConfig == nil {
-		c.cfg.Store(nil)
-		return
-	}
-	// Create a deep copy of the new configuration
-	clone, err := DeepCopyJSON(*newConfig)
+	clone, err := cloneConfig(newConfig)
 	if err != nil {
-		panic(fmt.Sprintf("failed to deep copy configuration: %v", err))
+		panic(err)
 	}
+	c.cfg.Store(clone)
 
-	// Update the atomic pointer with the new configuration
-	c.cfg.Store(&clone)
-
-	// Notify all listeners about the configuration change
 	for _, listener := range c.listeners {
 		listener()
 	}
@@ -237,16 +212,26 @@ func (c *Container) Update(newConfig *Config) {
 // already be servicing a listener (for example after SaveConfig during legacy migration) to
 // avoid re-entrant listener invocation and deadlocks.
 func (c *Container) StorePersistedConfigWithoutNotify(newConfig *Config) error {
-	if newConfig == nil {
-		c.cfg.Store(nil)
-		return nil
-	}
-	clone, err := DeepCopyJSON(*newConfig)
+	clone, err := cloneConfig(newConfig)
 	if err != nil {
-		return fmt.Errorf("failed to deep copy configuration: %w", err)
+		return err
 	}
-	c.cfg.Store(&clone)
+	c.cfg.Store(clone)
 	return nil
+}
+
+// cloneConfig deep-copies cfg so the stored configuration is independent of
+// the caller's value. A nil cfg becomes a zero-value configuration, so the
+// container never holds a nil pointer.
+func cloneConfig(cfg *Config) (*Config, error) {
+	if cfg == nil {
+		return &Config{}, nil
+	}
+	clone, err := DeepCopyJSON(*cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deep copy configuration: %w", err)
+	}
+	return &clone, nil
 }
 
 // DeepCopyJSON creates a deep copy of JSON-serializable structs

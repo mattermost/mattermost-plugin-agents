@@ -668,10 +668,10 @@ func TestBridgeServiceCompletionAttribution(t *testing.T) {
 }
 
 // bridgeJSONSchema is a small object schema used to request structured output.
-var bridgeJSONSchema = map[string]interface{}{
+var bridgeJSONSchema = map[string]any{
 	"type": "object",
-	"properties": map[string]interface{}{
-		"answer": map[string]interface{}{"type": "string"},
+	"properties": map[string]any{
+		"answer": map[string]any{"type": "string"},
 	},
 }
 

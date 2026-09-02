@@ -62,7 +62,7 @@ type CompletionRequest struct {
 	// or converted into prompt instructions — is decided by the structured output policy
 	// an administrator configures on the target service, not by this client and not by
 	// agent configuration.
-	JSONOutputFormat map[string]interface{} `json:"json_output_format,omitempty"`
+	JSONOutputFormat map[string]any `json:"json_output_format,omitempty"`
 	// AllowedTools is an optional allowlist for agent completions. Each entry is a tool
 	// name as returned by GET .../agents/{id}/tools (MCP and embedded tools only; built-in
 	// tools are not discoverable or allowlistable via the bridge).

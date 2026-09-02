@@ -7,6 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {createAgent, updateAgent} from '@/client';
 import {EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
 
@@ -30,6 +31,10 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('@/utils/permissions', () => ({
+    useCurrentUserHasSystemPermission: jest.fn(),
+}));
+
 jest.mock('@/client', () => ({
     createAgent: jest.fn(),
     updateAgent: jest.fn(),
@@ -40,6 +45,8 @@ jest.mock('@/client', () => ({
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
+
+const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermission as unknown as jest.Mock;
 
 jest.mock('@/components/system_console/bot', () => ({
     ChannelAccessLevel: {
@@ -52,7 +59,15 @@ jest.mock('@/components/system_console/bot', () => ({
 
 jest.mock('./tabs/config_tab', () => ({
     __esModule: true,
-    default: ({draft, onChange, errors = {}}: {draft: AgentDraft; onChange: (updates: Partial<AgentDraft>) => void; errors?: Record<string, string>}) => (
+    default: ({
+        draft,
+        onChange,
+        errors = {},
+    }: {
+        draft: AgentDraft;
+        onChange: (updates: Partial<AgentDraft>) => void;
+        errors?: Record<string, string>;
+    }) => (
         <>
             <input
                 aria-label='Display Name'
@@ -82,6 +97,20 @@ jest.mock('./tabs/config_tab', () => ({
                 checked={draft.mcpDynamicToolLoading}
                 onChange={(e) => onChange({mcpDynamicToolLoading: e.target.checked})}
             />
+            <select
+                aria-label='AI Service'
+                value={draft.serviceId}
+                onChange={(e) => onChange({serviceId: e.target.value})}
+            >
+                <option value='svc_1'>{'Mock Service'}</option>
+                <option value='svc_2'>{'Other Service'}</option>
+            </select>
+            <input
+                aria-label='Enable Tools'
+                type='checkbox'
+                checked={!draft.disableTools}
+                onChange={(e) => onChange({disableTools: !e.target.checked})}
+            />
             <button
                 type='button'
                 onClick={() => onChange({serviceId: 'svc_1'})}
@@ -94,17 +123,38 @@ jest.mock('./tabs/config_tab', () => ({
 
 jest.mock('./tabs/access_tab', () => ({
     __esModule: true,
-    default: () => null,
+    default: () => (
+        <input
+            aria-label='Channel access'
+            type='checkbox'
+        />
+    ),
 }));
 
 jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
     default: ({
+        useServiceAccountAuth,
+        onChange,
         onReconcileEnabledTools,
     }: {
+        useServiceAccountAuth: boolean;
+        serviceAccountFieldsLocked: boolean;
+        canEditServiceAccountAuth: boolean;
+        onChange: (updates: {useServiceAccountAuth?: boolean}) => void;
         onReconcileEnabledTools?: (cleaned: EnabledTool[]) => void;
     }) => (
         <>
+            <input
+                aria-label='Use service accounts'
+                type='checkbox'
+                checked={useServiceAccountAuth}
+                onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
+            />
+            <input
+                aria-label='Automatically enable all MCP tools'
+                type='checkbox'
+            />
             <button
                 type='button'
                 onClick={() => onReconcileEnabledTools?.([])}
@@ -147,6 +197,7 @@ const savedAgent = {
     enabledMCPTools: [],
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
+    useServiceAccountAuth: false,
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
@@ -177,9 +228,12 @@ function renderView(onBack = jest.fn()) {
     };
 }
 
+const serviceAccountFieldsBanner = /Access and MCP tool grants require a system administrator/;
+
 describe('AgentConfigView', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
     });
 
     test('confirms before dismissing unsaved changes from back button', async () => {
@@ -244,6 +298,7 @@ describe('AgentConfigView', () => {
                 {server_origin: 'embedded://mattermost', tool_name: 'deleted_tool'},
             ],
             autoEnableNewMCPTools: false,
+            useServiceAccountAuth: false,
             mcpDynamicToolLoading: true,
             reasoningEnabled: true,
             reasoningEffort: 'medium',
@@ -301,6 +356,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         mcpDynamicToolLoading: true,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
@@ -344,6 +400,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
@@ -377,18 +434,21 @@ describe('AgentConfigView', () => {
         }));
     });
 
-    test('serializes explicit dynamic tool loading false on create', async () => {
-        mockCreateAgent.mockResolvedValue({...savedAgent, mcpDynamicToolLoading: false});
+    test('serializes explicit MCP settings on create', async () => {
+        mockCreateAgent.mockResolvedValue({...savedAgent, mcpDynamicToolLoading: false, useServiceAccountAuth: true});
         renderView();
 
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
         fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
         fireEvent.click(screen.getByLabelText('Dynamic tool loading'));
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByLabelText('Use service accounts'));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
         expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({
             mcpDynamicToolLoading: false,
+            useServiceAccountAuth: true,
         }));
     });
 
@@ -485,6 +545,7 @@ describe('AgentConfigView', () => {
                         enabledNativeTools: ['web_search'],
                         enabledMCPTools: [],
                         autoEnableNewMCPTools: true,
+                        useServiceAccountAuth: false,
                         mcpDynamicToolLoading: true,
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
@@ -542,14 +603,17 @@ describe('AgentConfigView', () => {
         expect(createAgent).not.toHaveBeenCalled();
     });
 
-    test('preserves explicit dynamic tool loading false on update', async () => {
-        mockUpdateAgent.mockResolvedValue({...savedAgent, mcpDynamicToolLoading: false});
+    // Update is a full-replace PUT: a payload that drops either flag would
+    // silently revert the saved MCP settings.
+    test('preserves explicit MCP settings on update', async () => {
+        mockUpdateAgent.mockResolvedValue({...savedAgent, mcpDynamicToolLoading: false, useServiceAccountAuth: true});
         const agent = {
             ...savedAgent,
             id: 'agent_dynamic_off',
             name: 'dynamicoff',
             displayName: 'Dynamic Off',
             mcpDynamicToolLoading: false,
+            useServiceAccountAuth: true,
         };
 
         render(
@@ -570,6 +634,47 @@ describe('AgentConfigView', () => {
         await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
         expect(mockUpdateAgent).toHaveBeenCalledWith('agent_dynamic_off', expect.objectContaining({
             mcpDynamicToolLoading: false,
+            useServiceAccountAuth: true,
         }));
+    });
+
+    // Parent-level soft-lock: Save stays enabled, banner explains the policy, and
+    // turning SA off clears the lock. Per-control disabled state is covered by
+    // config_tab / access_tab / mcps_tab real-component tests.
+    test('shows service-account soft-lock banner and keeps Save enabled for non-admins', () => {
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
+        const agent = {
+            ...savedAgent,
+            id: 'agent_sa',
+            name: 'saagent',
+            displayName: 'SA Agent',
+            useServiceAccountAuth: true,
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const saveButton = screen.getByRole('button', {name: 'Save'});
+        expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.getByText(serviceAccountFieldsBanner)).not.toBeNull();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'SA Agent Updated'}});
+        expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
+
+        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        expect((screen.getByLabelText('Use service accounts') as HTMLInputElement).disabled).toBe(false);
+
+        fireEvent.click(screen.getByLabelText('Use service accounts'));
+        expect(screen.queryByText(serviceAccountFieldsBanner)).toBeNull();
+        expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
     });
 });

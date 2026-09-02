@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -28,40 +29,71 @@ type ToolInfo struct {
 	InputSchema any    `json:"inputSchema"`
 }
 
-// UserClients represents a per-user MCP client with multiple server connections
+// UserClients represents a pooled MCP client bag. kind determines which
+// servers it may connect: remotes-only or local-only (embedded + plugin).
 type UserClients struct {
 	clientsMu    sync.RWMutex
-	clients      map[string]*Client // serverID -> client (both remote and embedded)
+	clients      map[string]*Client // serverID -> client
 	userID       string
+	kind         clientKind
 	log          pluginapi.LogService
 	oauthManager *OAuthManager
 	httpClient   *http.Client
 	toolsCache   *ToolsCache
 	// initialRemoteConnectErrors holds OAuth / connect failures from the first
 	// ConnectToRemoteServers. It must be re-returned on every lookup while this
-	// user client is cached; otherwise callers only see those errors once (first
-	// GetToolsForUser) and lose stable auth-required state on subsequent requests.
+	// bag is cached; otherwise callers only see those errors once and lose
+	// stable auth-required state on subsequent requests.
 	initialRemoteConnectErrors *Errors
 }
 
 type userClientSnapshot struct {
 	serverID string
 	client   *Client
+	owner    *UserClients
 }
 
-func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+func newClients(userID string, kind clientKind, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
 	return &UserClients{
 		log:          log,
 		clients:      make(map[string]*Client),
 		userID:       userID,
+		kind:         kind,
 		oauthManager: oauthManager,
 		httpClient:   httpClient,
 		toolsCache:   toolsCache,
 	}
 }
 
+func newRemoteClients(userID string, kind clientKind, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	// Service accounts never use per-user OAuth.
+	if kind == clientKindSARemote {
+		oauthManager = nil
+	}
+	return newClients(userID, kind, log, oauthManager, httpClient, toolsCache)
+}
+
+func newLocalClients(userID string, log pluginapi.LogService, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	return newClients(userID, clientKindLocal, log, nil, httpClient, toolsCache)
+}
+
+func (c *UserClients) allowsRemote() bool {
+	return c.kind == clientKindUserRemote || c.kind == clientKindSARemote
+}
+
+func (c *UserClients) allowsLocal() bool {
+	return c.kind == clientKindLocal
+}
+
+func (c *UserClients) serviceAccount() bool {
+	return c.kind == clientKindSARemote
+}
+
 // ConnectToRemoteServers initializes connections to remote MCP servers.
 func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []ServerConfig, forceRefresh bool) *Errors {
+	if !c.allowsRemote() {
+		return &Errors{Errors: []error{fmt.Errorf("remote connect is only valid on remote client bags")}}
+	}
 	if len(servers) == 0 {
 		c.log.Debug("No remote MCP servers provided for user", "userID", c.userID)
 		return nil
@@ -76,6 +108,14 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 			continue
 		}
 
+		// Fail closed: no service account credential means the server is excluded,
+		// never a fallback to user OAuth.
+		if c.serviceAccount() && !serverConfig.HasServiceAccountAuth() {
+			c.log.Debug("Skipping MCP server without service account headers in service account mode",
+				"userID", c.userID, "serverID", serverConfig.Name)
+			continue
+		}
+
 		if err := c.connectToServer(ctx, serverConfig.Name, serverConfig, forceRefresh); err != nil {
 			// Initialize errors struct if needed
 			if mcpErrors == nil {
@@ -83,8 +123,7 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 			}
 
 			// Check if this is an OAuth authentication error
-			var oauthErr *OAuthNeededError
-			if errors.As(err, &oauthErr) {
+			if oauthErr, ok := errors.AsType[*OAuthNeededError](err); ok {
 				mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
 					ServerName:   serverConfig.Name,
 					ServerOrigin: serverConfig.BaseURL,
@@ -104,6 +143,9 @@ func (c *UserClients) ConnectToRemoteServers(ctx context.Context, servers []Serv
 
 // ConnectToEmbeddedServerIfAvailable connects to the embedded server if session ID is provided.
 func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, sessionID string, embeddedClient *EmbeddedServerClient, embeddedConfig EmbeddedServerConfig) error {
+	if !c.allowsLocal() {
+		return fmt.Errorf("embedded connect is only valid on local client bags")
+	}
 	if !embeddedConfig.Enabled || embeddedClient == nil {
 		return nil
 	}
@@ -154,7 +196,14 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(ctx context.Context, se
 
 // connectToServer establishes a connection to a single server
 func (c *UserClients) connectToServer(ctx context.Context, serverID string, serverConfig ServerConfig, forceRefresh bool) error {
-	serverClient, err := NewClient(ctx, c.userID, serverConfig, c.log, c.oauthManager, c.httpClient, c.toolsCache, forceRefresh)
+	serverClient, err := newClient(ctx, c.userID, serverConfig, clientParams{
+		log:            c.log,
+		oauthManager:   c.oauthManager,
+		httpClient:     c.httpClient,
+		toolsCache:     c.toolsCache,
+		forceRefresh:   forceRefresh,
+		serviceAccount: c.serviceAccount(),
+	})
 	if err != nil {
 		return err
 	}
@@ -189,6 +238,7 @@ func (c *UserClients) snapshotClients() []userClientSnapshot {
 		snapshot = append(snapshot, userClientSnapshot{
 			serverID: serverID,
 			client:   c.clients[serverID],
+			owner:    c,
 		})
 	}
 	return snapshot
@@ -222,19 +272,30 @@ func (c *UserClients) Close() {
 	c.clients = make(map[string]*Client)
 }
 
-// GetTools returns the tools available from the clients
-func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
-	clientSnapshot := c.snapshotClients()
-	if len(clientSnapshot) == 0 {
+// collectToolsFromSnapshots namespaces and de-dupes tools across bags exactly
+// once so a remote named "Mattermost" cannot collide with the embedded server.
+func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshots ...[]userClientSnapshot) []llm.Tool {
+	var merged []userClientSnapshot
+	for _, snapshot := range snapshots {
+		merged = append(merged, snapshot...)
+	}
+	if len(merged) == 0 {
 		return nil
 	}
+	// Secondary key keeps unsuffixed-slug assignment deterministic when bags
+	// contain equal server IDs.
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].serverID != merged[j].serverID {
+			return merged[i].serverID < merged[j].serverID
+		}
+		return merged[i].client.config.BaseURL < merged[j].client.config.BaseURL
+	})
 
 	var tools []llm.Tool
-	seenTools := make(map[string]string) // runtime toolName -> serverID for conflict detection
-	usedSlugs := make(map[string]string) // slug -> server origin for collision suffixing
+	seenTools := make(map[string]string)
+	usedSlugs := make(map[string]string)
 
-	// Iterate over a snapshot so callers do not hold clientsMu during network work.
-	for _, entry := range clientSnapshot {
+	for _, entry := range merged {
 		serverID := entry.serverID
 		client := entry.client
 		clientTools := client.Tools()
@@ -247,11 +308,9 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
-			// Namespacing should make cross-server duplicate bare names safe. A
-			// final collision means the slug de-dupe or upstream catalog is broken.
 			if existingServerID, exists := seenTools[runtimeToolName]; exists {
-				c.log.Warn("Namespaced MCP tool name conflict detected",
-					"userID", c.userID,
+				log.Warn("Namespaced MCP tool name conflict detected",
+					"userID", userID,
 					"tool", runtimeToolName,
 					"server1", existingServerID,
 					"server2", serverID)
@@ -259,17 +318,33 @@ func (c *UserClients) GetTools(ctx context.Context) []llm.Tool {
 			}
 			seenTools[runtimeToolName] = serverID
 
+			resolver := entry.owner.createToolResolver(client, toolName)
+			// Title/Description are server-supplied; sanitize Unicode at this
+			// single capture point for embedded/plugin/external metadata.
+			// MCP display-name precedence: title > annotations.title.
+			title := sanitizeDisplayTitle(tool.Title)
+			if title == "" && tool.Annotations != nil {
+				title = sanitizeDisplayTitle(tool.Annotations.Title)
+			}
 			tools = append(tools, llm.Tool{
 				Name:         runtimeToolName,
-				Description:  tool.Description,
+				Description:  llm.SanitizeNonPrintableChars(tool.Description),
+				Title:        title,
 				Schema:       tool.InputSchema,
-				Resolver:     c.createToolResolver(client, toolName),
+				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
 			})
 		}
 	}
 
 	return tools
+}
+
+// sanitizeDisplayTitle sanitizes a server-supplied display title and treats
+// whitespace-only titles as absent so the webapp falls back to the prettified
+// tool name instead of rendering a blank header.
+func sanitizeDisplayTitle(title string) string {
+	return llm.SanitizeNonPrintableChars(strings.TrimSpace(title))
 }
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
@@ -291,9 +366,7 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, l
 	if llmContext.Tools != nil {
 		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
 			metadata = make(map[string]any, len(tool.CallMetadata)+1)
-			for k, v := range tool.CallMetadata {
-				metadata[k] = v
-			}
+			maps.Copy(metadata, tool.CallMetadata)
 		}
 	}
 
@@ -452,6 +525,9 @@ func pluginServerOriginKey(pluginID string) string {
 // over PluginHTTP, injecting X-Mattermost-UserID. Plugin servers use
 // inter-plugin auth, not user OAuth.
 func (c *UserClients) ConnectToPluginServer(ctx context.Context, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) error {
+	if !c.allowsLocal() {
+		return fmt.Errorf("plugin connect is only valid on local client bags")
+	}
 	originKey := pluginServerOriginKey(cfg.PluginID)
 	if c.hasClient(originKey) {
 		return nil

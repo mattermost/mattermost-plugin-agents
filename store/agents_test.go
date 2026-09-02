@@ -41,8 +41,9 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ReasoningEnabled:        true,
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          10000,
-		StructuredOutputEnabled: true,
+		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		MaxToolTurns:            42,
+		UseServiceAccountAuth:   true,
 	}
 }
 
@@ -102,6 +103,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
 	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
+	assert.True(t, fetched.UseServiceAccountAuth)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -222,6 +224,7 @@ func TestAgentUpdate(t *testing.T) {
 	agent.ChannelIDs = []string{"ch-3"}
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
+	agent.UseServiceAccountAuth = false
 
 	require.NoError(t, s.UpdateAgent(agent))
 
@@ -238,6 +241,7 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Equal(t, []string{"ch-3"}, fetched.ChannelIDs)
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
+	assert.False(t, fetched.UseServiceAccountAuth)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)
@@ -442,14 +446,14 @@ func TestAgentConcurrentCreates(t *testing.T) {
 	const count = 10
 	errCh := make(chan error, count)
 
-	for i := 0; i < count; i++ {
+	for i := range count {
 		go func(idx int) {
 			a := testAgent("creator-1", fmt.Sprintf("agent-%d", idx), fmt.Sprintf("Agent %d", idx))
 			errCh <- s.CreateAgent(a)
 		}(i)
 	}
 
-	for i := 0; i < count; i++ {
+	for range count {
 		require.NoError(t, <-errCh)
 	}
 

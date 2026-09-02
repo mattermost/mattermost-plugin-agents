@@ -698,10 +698,8 @@ func TestServiceConcurrentAccess(t *testing.T) {
 
 	stop := make(chan struct{})
 	var readers sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
+	for range 50 {
+		readers.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -715,15 +713,15 @@ func TestServiceConcurrentAccess(t *testing.T) {
 				// detector 50 spinning readers otherwise starve the writers.
 				runtime.Gosched()
 			}
-		}()
+		})
 	}
 
 	var writers sync.WaitGroup
-	for w := 0; w < 8; w++ {
+	for w := range 8 {
 		writers.Add(1)
 		go func(seed int) {
 			defer writers.Done()
-			for i := 0; i < 25; i++ {
+			for i := range 25 {
 				channelID := channelIDs[(seed+i)%len(channelIDs)]
 				switch i % 4 {
 				case 0:

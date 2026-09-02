@@ -52,7 +52,7 @@ type channelFollowUpTestMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
+func (p *channelFollowUpTestMCPToolProvider) GetTools(context.Context, mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	return p.tools, nil
 }
 
@@ -155,7 +155,7 @@ func buildChannelFollowUpStrictContext(t *testing.T, builder *llmcontext.Builder
 
 	allOpts := append([]llm.ContextOption{}, opts...)
 	bot := channelFollowUpTestBot()
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(context.Background(), bot))
 
 	return builder.BuildLLMContextUserRequest(
 		bot,
