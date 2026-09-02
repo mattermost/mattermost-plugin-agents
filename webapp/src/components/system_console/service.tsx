@@ -426,7 +426,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {intl.formatMessage({defaultMessage: 'No fallback'})}
                 </SelectionItemOption>
                 {(props.services ?? []).
-                    filter((s) => s.id !== props.service.id).
+
+                    // ID-less entries were added this session and aren't
+                    // addressable as fallbacks until the config is saved.
+                    filter((s) => s.id && s.id !== props.service.id).
                     map((s) => (
                         <SelectionItemOption
                             key={s.id}
