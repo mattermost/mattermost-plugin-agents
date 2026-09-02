@@ -117,6 +117,75 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 	}
 }
 
+func TestContainerConfigNeverNil(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, c *Container)
+	}{
+		{
+			name:  "zero-value container",
+			setup: func(*testing.T, *Container) {},
+		},
+		{
+			name:  "Update with nil",
+			setup: func(_ *testing.T, c *Container) { c.Update(nil) },
+		},
+		{
+			name: "StorePersistedConfigWithoutNotify with nil",
+			setup: func(t *testing.T, c *Container) {
+				if err := c.StorePersistedConfigWithoutNotify(nil); err != nil {
+					t.Fatalf("StorePersistedConfigWithoutNotify(nil) error = %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			tt.setup(t, container)
+
+			if container.Config() == nil {
+				t.Fatal("Config() returned nil")
+			}
+			if got := container.GetDefaultBotName(); got != "" {
+				t.Fatalf("GetDefaultBotName() = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestContainerUpdateNotifiesListeners(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{name: "config", cfg: &Config{DefaultBotName: "agent"}},
+		{name: "nil config", cfg: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			calls := 0
+			container.RegisterUpdateListener(func() { calls++ })
+
+			container.Update(tt.cfg)
+
+			if calls != 1 {
+				t.Fatalf("listener called %d times, want 1", calls)
+			}
+			want := ""
+			if tt.cfg != nil {
+				want = tt.cfg.DefaultBotName
+			}
+			if got := container.GetDefaultBotName(); got != want {
+				t.Fatalf("GetDefaultBotName() = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestTokenUsageSinkConfigUnmarshalCompatibility(t *testing.T) {
 	tests := []struct {
 		name                string
