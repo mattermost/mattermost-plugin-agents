@@ -102,6 +102,41 @@ func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 	assert.True(t, got)
 }
 
+// TestShouldAutoExecuteTool_PluginToolKeepsAdvertisedName pins that plugin MCP
+// tools (advertised as pluginid__native) still auto-execute when the admin
+// stored that advertised name. LookupToolPolicy must receive the plugin-prefixed
+// name, not a second BareMCPToolName strip that would look up "get_agent".
+func TestShouldAutoExecuteTool_PluginToolKeepsAdvertisedName(t *testing.T) {
+	const pluginID = "com.mattermost.plugin-cursor"
+	const origin = "plugin://" + pluginID
+	const advertisedName = "com_mattermost_plugin-cursor__get_agent"
+	const runtimeName = "cursor_cloud_agents__" + advertisedName
+
+	cfg := mcp.Config{
+		PluginServers: []mcp.PluginServerConfig{{
+			PluginID: pluginID,
+			Name:     "Cursor Cloud Agents",
+			Enabled:  true,
+			ToolConfigs: []mcp.ToolConfig{{
+				Name:    advertisedName,
+				Policy:  mcp.ToolPolicyAutoRunEverywhere,
+				Enabled: true,
+			}},
+		}},
+	}
+	c := &Conversations{
+		toolPolicyChecker: mcp.ToolPolicyFunc(func(serverBaseURL, toolName string) (string, bool) {
+			return mcp.LookupToolPolicy(cfg, serverBaseURL, toolName)
+		}),
+	}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: origin}})
+
+	got := c.shouldAutoExecuteTool(llmCtx, true)(llm.ToolCall{Name: runtimeName, ServerOrigin: origin})
+
+	assert.True(t, got)
+}
+
 func TestShouldAutoExecuteToolMetaToolsBypassPolicy(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
 

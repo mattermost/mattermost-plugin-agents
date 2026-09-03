@@ -23,8 +23,10 @@ func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (st
 }
 
 // ToolPolicyLookupName returns the configured name to use for a runtime tool name.
-// Runtime MCP tools may be namespaced while persisted policy config is usually
-// stored by the server's bare tool name. An exact configured name still wins.
+// Runtime MCP tools may be namespaced (serverSlug__advertisedName) while
+// persisted policy config is stored by the advertised name. Plugin tools
+// advertise pluginid__native, so that advertised name still contains "__";
+// callers must not pre-strip before this lookup. An exact configured name still wins.
 func ToolPolicyLookupName(sc *ServerConfig, toolName string) string {
 	if sc == nil || toolName == "" || llm.IsBareMCPToolName(toolName) {
 		return toolName
