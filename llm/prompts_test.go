@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -124,4 +125,71 @@ func TestEscapePromptContent(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestPromptLanguage(t *testing.T) {
+	assert.Equal(t, "", PromptLanguage(nil))
+	assert.Equal(t, "", PromptLanguage(NewContext()))
+	assert.Equal(t, "fr", PromptLanguage(NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr"}
+	})))
+	assert.Equal(t, "fr", PromptLanguage(NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr_FR"}
+	})))
+	assert.Equal(t, "fr", PromptLanguage(NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr-FR"}
+	})))
+	assert.Equal(t, "de", PromptLanguage(NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "de_DE"}
+	})))
+}
+
+func TestFormatUsesLocalizedTemplates(t *testing.T) {
+	prompts, err := NewPrompts(fstest.MapFS{
+		"meeting_summary_system.tmpl":    &fstest.MapFile{Data: []byte("EN summary")},
+		"fr/meeting_summary_system.tmpl": &fstest.MapFile{Data: []byte("FR summary ## Résumé")},
+	})
+	require.NoError(t, err)
+
+	en, err := prompts.Format("meeting_summary_system", NewContext())
+	require.NoError(t, err)
+	assert.Equal(t, "EN summary", en)
+
+	fr, err := prompts.Format("meeting_summary_system", NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr"}
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "FR summary ## Résumé", fr)
+
+	frFR, err := prompts.Format("meeting_summary_system", NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr_FR"}
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "FR summary ## Résumé", frFR)
+
+	de, err := prompts.Format("meeting_summary_system", NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "de"}
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "EN summary", de)
+}
+
+func TestFormatLocalizedNestedTemplates(t *testing.T) {
+	prompts, err := NewPrompts(fstest.MapFS{
+		"locale.tmpl":                    &fstest.MapFile{Data: []byte("EN locale")},
+		"meeting_summary_system.tmpl":    &fstest.MapFile{Data: []byte("body {{template \"locale.tmpl\" .}}")},
+		"fr/locale.tmpl":                 &fstest.MapFile{Data: []byte("FR locale")},
+		"fr/meeting_summary_system.tmpl": &fstest.MapFile{Data: []byte("corps {{template \"locale.tmpl\" .}}")},
+	})
+	require.NoError(t, err)
+
+	en, err := prompts.Format("meeting_summary_system", NewContext())
+	require.NoError(t, err)
+	assert.Equal(t, "body EN locale", en)
+
+	fr, err := prompts.Format("meeting_summary_system", NewContext(func(c *Context) {
+		c.RequestingUser = &model.User{Locale: "fr"}
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, "corps FR locale", fr)
 }

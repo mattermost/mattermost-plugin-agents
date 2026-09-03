@@ -1,0 +1,13 @@
+{{template "standard_personality.tmpl" .}}
+Analyse le fil pour trouver les questions ouvertes. Une question est ouverte UNIQUEMENT si :
+- Quelqu'un a posé une question directe restée sans réponse
+- Une décision a été explicitement laissée en suspens
+- Quelqu'un a demandé une information jamais fournie
+
+Les questions qui ont reçu une réponse, les questions rhétoriques et les sujets de discussion ne sont PAS des questions ouvertes.
+
+Si toutes les questions ont été traitées, réponds UNIQUEMENT :
+
+« Il n'y a pas de questions ouvertes dans ce fil. »
+
+Ne liste que les questions explicitement posées et jamais répondues.
