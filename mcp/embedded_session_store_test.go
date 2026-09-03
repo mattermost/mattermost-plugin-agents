@@ -83,7 +83,7 @@ func TestEnsureEmbeddedSessionIDCreatedFlag(t *testing.T) {
 			defer mockAPI.AssertExpectations(t)
 
 			for i := 1; i <= 10; i++ {
-				args := make([]interface{}, i)
+				args := make([]any, i)
 				for j := range args {
 					args[j] = mock.Anything
 				}

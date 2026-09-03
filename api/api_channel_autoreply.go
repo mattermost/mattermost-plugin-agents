@@ -86,8 +86,7 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, channelAutoReplyMaxRequestBodyBytes)
 	var req ChannelAutoReply
 	if err := c.ShouldBindJSON(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			c.AbortWithError(http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
@@ -146,7 +145,7 @@ func (a *API) publishChannelAutoReplyUpdated(channelID string, saved ChannelAuto
 	}
 	a.mmClient.PublishWebSocketEvent(
 		WebsocketEventChannelAutoReplyUpdated,
-		map[string]interface{}{
+		map[string]any{
 			"channel_id": channelID,
 			"bot_id":     saved.BotID,
 			"mode":       saved.Mode,

@@ -1,11 +1,13 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package llm
+package llmtest
 
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // StreamGenerator creates synthetic streams for benchmarking.
@@ -27,9 +29,9 @@ type StreamGenerator struct {
 
 // Generate creates a new TextStreamResult with synthetic events.
 // The stream is generated in a goroutine and returned immediately.
-func (g *StreamGenerator) Generate() *TextStreamResult {
+func (g *StreamGenerator) Generate() *llm.TextStreamResult {
 	bufferSize := (g.TotalTextSize / max(g.ChunkSize, 1)) + 10
-	stream := make(chan TextStreamEvent, bufferSize)
+	stream := make(chan llm.TextStreamEvent, bufferSize)
 
 	go func() {
 		defer close(stream)
@@ -39,14 +41,14 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 			reasoningText := GenerateBenchText(g.TotalTextSize / 2)
 			for i := 0; i < len(reasoningText); i += g.ChunkSize {
 				end := min(i+g.ChunkSize, len(reasoningText))
-				stream <- TextStreamEvent{
-					Type:  EventTypeReasoning,
+				stream <- llm.TextStreamEvent{
+					Type:  llm.EventTypeReasoning,
 					Value: reasoningText[i:end],
 				}
 			}
-			stream <- TextStreamEvent{
-				Type: EventTypeReasoningEnd,
-				Value: ReasoningData{
+			stream <- llm.TextStreamEvent{
+				Type: llm.EventTypeReasoningEnd,
+				Value: llm.ReasoningData{
 					Text:      reasoningText,
 					Signature: "bench-signature-12345",
 				},
@@ -57,26 +59,26 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 		text := GenerateBenchText(g.TotalTextSize)
 		for i := 0; i < len(text); i += g.ChunkSize {
 			end := min(i+g.ChunkSize, len(text))
-			stream <- TextStreamEvent{
-				Type:  EventTypeText,
+			stream <- llm.TextStreamEvent{
+				Type:  llm.EventTypeText,
 				Value: text[i:end],
 			}
 		}
 
 		// Send annotations if enabled
 		if g.IncludeAnnotations {
-			stream <- TextStreamEvent{
-				Type: EventTypeAnnotations,
-				Value: []Annotation{
+			stream <- llm.TextStreamEvent{
+				Type: llm.EventTypeAnnotations,
+				Value: []llm.Annotation{
 					{
-						Type:      AnnotationTypeURLCitation,
+						Type:      llm.AnnotationTypeURLCitation,
 						URL:       "https://example.com/source1",
 						Title:     "Example Source 1",
 						CitedText: "Some cited text",
 						Index:     1,
 					},
 					{
-						Type:      AnnotationTypeURLCitation,
+						Type:      llm.AnnotationTypeURLCitation,
 						URL:       "https://example.com/source2",
 						Title:     "Example Source 2",
 						CitedText: "More cited text",
@@ -88,9 +90,9 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 
 		// Send usage if enabled
 		if g.IncludeUsage {
-			stream <- TextStreamEvent{
-				Type: EventTypeUsage,
-				Value: TokenUsage{
+			stream <- llm.TextStreamEvent{
+				Type: llm.EventTypeUsage,
+				Value: llm.TokenUsage{
 					InputTokens:  int64(g.TotalTextSize / 4),
 					OutputTokens: int64(g.TotalTextSize / 4),
 				},
@@ -99,26 +101,26 @@ func (g *StreamGenerator) Generate() *TextStreamResult {
 
 		// End with tool calls or regular end
 		if g.IncludeToolCalls {
-			stream <- TextStreamEvent{
-				Type: EventTypeToolCalls,
-				Value: []ToolCall{
+			stream <- llm.TextStreamEvent{
+				Type: llm.EventTypeToolCalls,
+				Value: []llm.ToolCall{
 					{
 						ID:        "tc-bench-1",
 						Name:      "benchmark_tool",
 						Arguments: json.RawMessage(`{"param": "value"}`),
-						Status:    ToolCallStatusPending,
+						Status:    llm.ToolCallStatusPending,
 					},
 				},
 			}
 		} else {
-			stream <- TextStreamEvent{
-				Type:  EventTypeEnd,
+			stream <- llm.TextStreamEvent{
+				Type:  llm.EventTypeEnd,
 				Value: nil,
 			}
 		}
 	}()
 
-	return &TextStreamResult{
+	return &llm.TextStreamResult{
 		Stream: stream,
 	}
 }

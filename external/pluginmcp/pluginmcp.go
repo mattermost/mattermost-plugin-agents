@@ -54,10 +54,8 @@ type Server struct {
 	config    Config
 	pluginAPI PluginAPI
 
-	// mu guards lazy init of handler against concurrent first requests.
-	mu             sync.Mutex
-	handler        http.Handler
-	handlerBuiltOK bool
+	// streamableHandler lazily builds the go-sdk HTTP handler on first request.
+	streamableHandler func() http.Handler
 
 	// Unregister calls regCancel to stop pending retries before firing its
 	// own POST. regWG tracks the in-flight register goroutine so Unregister
@@ -78,7 +76,7 @@ func NewServer(pluginAPI PluginAPI, config Config) *Server {
 	if version == "" {
 		version = "0.0.1"
 	}
-	return &Server{
+	s := &Server{
 		server: mcp.NewServer(
 			&mcp.Implementation{
 				Name:    config.PluginID,
@@ -92,4 +90,6 @@ func NewServer(pluginAPI PluginAPI, config Config) *Server {
 		regCancel: regCancel,
 		retry:     defaultRetryPolicy,
 	}
+	s.streamableHandler = sync.OnceValue(s.buildStreamableHandler)
+	return s
 }

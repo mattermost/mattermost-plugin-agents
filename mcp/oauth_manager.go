@@ -211,14 +211,6 @@ type resolvedOAuthConfig struct {
 	creds *ClientCredentials
 }
 
-func (m *OAuthManager) createOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*oauth2.Config, error) {
-	resolved, err := m.resolveOAuthConfig(ctx, serverURL, metadataURL, staticCreds)
-	if err != nil {
-		return nil, err
-	}
-	return resolved.config, nil
-}
-
 func (m *OAuthManager) resolveOAuthConfig(ctx context.Context, serverURL, metadataURL string, staticCreds *StaticOAuthCredentials) (*resolvedOAuthConfig, error) {
 	parsedURL, err := url.Parse(serverURL)
 	if err != nil {

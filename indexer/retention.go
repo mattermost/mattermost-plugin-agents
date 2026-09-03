@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 )
 
 func retentionDaysValue(days *int) int {
@@ -46,7 +45,7 @@ func modelInfoFromConfig(cfg embeddings.EmbeddingSearchConfig) *ModelInfo {
 		Dimensions:         cfg.Dimensions,
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 	}
 }
 

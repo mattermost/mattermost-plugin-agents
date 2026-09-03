@@ -5,13 +5,16 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -26,13 +29,19 @@ import (
 func setupTestLogger(mockAPI *plugintest.API) {
 	for _, method := range []string{"LogDebug", "LogError", "LogWarn", "LogInfo"} {
 		for arity := 1; arity <= 16; arity++ {
-			args := make([]interface{}, arity)
+			args := make([]any, arity)
 			for i := range args {
 				args[i] = mock.Anything
 			}
 			mockAPI.On(method, args...).Return().Maybe()
 		}
 	}
+}
+
+// NewUserClients keeps direct task-level tests concise without exporting a
+// production constructor for an unrestricted client bag.
+func NewUserClients(userID string, log pluginapi.LogService, oauthManager *OAuthManager, httpClient *http.Client, toolsCache *ToolsCache) *UserClients {
+	return newRemoteClients(userID, clientKindUserRemote, log, oauthManager, httpClient, toolsCache)
 }
 
 func newFakePluginMCPServer(t *testing.T, toolCount int) *httptest.Server {
@@ -51,7 +60,7 @@ func newFakePluginMCPServerWithPrefix(t *testing.T, prefix string, toolCount int
 	type echoOut struct {
 		Echo string `json:"echo"`
 	}
-	for i := 0; i < toolCount; i++ {
+	for i := range toolCount {
 		name := fmt.Sprintf("%s_%d", prefix, i)
 		gomcp.AddTool(srv, &gomcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gomcp.CallToolRequest, in echoIn) (*gomcp.CallToolResult, echoOut, error) {
 			return nil, echoOut{Echo: in.Message}, nil
@@ -136,6 +145,84 @@ func TestUserClientsGetToolsEmbeddedToolNamesUseMattermostSlug(t *testing.T) {
 	requireToolNames(t, tools, "mattermost__search_users")
 }
 
+func TestUserClientsGetToolsResolvesAndSanitizesTitle(t *testing.T) {
+	tests := []struct {
+		name string
+		tool *gomcp.Tool
+
+		wantTitle       string
+		wantDescription string
+	}{
+		{
+			// Hostile bidi-override (U+202E) must be escaped at capture, and
+			// the top-level title takes precedence over annotations.title.
+			name: "sanitizes hostile unicode and prefers top-level title",
+			tool: &gomcp.Tool{
+				Name:        "create_issue",
+				Description: "Create\u202ean issue",
+				Title:       "Create\u202eIssue",
+				Annotations: &gomcp.ToolAnnotations{Title: "Annotation Title"},
+			},
+			wantTitle:       "Create[U+202E]Issue",
+			wantDescription: "Create[U+202E]an issue",
+		},
+		{
+			name: "effective title falls back to annotations.title",
+			tool: &gomcp.Tool{
+				Name:        "read_issue",
+				Description: "Read an issue",
+				Annotations: &gomcp.ToolAnnotations{Title: "Read\u202eIssue"},
+			},
+			wantTitle:       "Read[U+202E]Issue",
+			wantDescription: "Read an issue",
+		},
+		{
+			name: "no title or annotations leaves Title empty",
+			tool: &gomcp.Tool{
+				Name:        "plain",
+				Description: "Plain tool",
+			},
+			wantTitle:       "",
+			wantDescription: "Plain tool",
+		},
+		{
+			// A whitespace-only title must not become the display name; the
+			// webapp would render a blank header instead of the bare name.
+			name: "whitespace-only titles are treated as absent",
+			tool: &gomcp.Tool{
+				Name:        "spacey",
+				Description: "Spacey tool",
+				Title:       "  \t ",
+				Annotations: &gomcp.ToolAnnotations{Title: " \t  "},
+			},
+			wantTitle:       "",
+			wantDescription: "Spacey tool",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userClients := &UserClients{
+				userID: "user-id",
+				clients: map[string]*Client{
+					"jira": {
+						config: ServerConfig{Name: "Jira", BaseURL: "https://mcp.atlassian.com", Enabled: true},
+						tools:  map[string]*gomcp.Tool{tt.tool.Name: tt.tool},
+					},
+				},
+			}
+
+			tools := userClients.GetTools(context.Background())
+			require.Len(t, tools, 1)
+			got := tools[0]
+
+			require.Equal(t, "jira__"+tt.tool.Name, got.Name)
+			require.Equal(t, tt.wantTitle, got.Title)
+			require.Equal(t, tt.wantDescription, got.Description)
+		})
+	}
+}
+
 func TestUserClientsGetToolsDeterministicSlugCollision(t *testing.T) {
 	userClients := &UserClients{
 		userID: "user-id",
@@ -182,6 +269,36 @@ func TestUserClientsGetToolsUsesCachedCatalog(t *testing.T) {
 	requireToolNames(t, tools, "jira__old_tool")
 }
 
+// connectPluginServer is the single-server shorthand the plugin-connect tests
+// need; production always goes through a batch of tasks.
+func connectPluginServer(uc *UserClients, cfg PluginServerConfig, sourcePluginAPI mmapi.Client) *Errors {
+	ctx := context.Background()
+	return uc.ensureConnections(ctx, []connectTask{uc.pluginConnectTask(ctx, cfg, pluginConnectTimeout, sourcePluginAPI)})
+}
+
+// connectEmbeddedServer mirrors the manager's embedded scheduling decision: it
+// only dials when the user's embedded session differs from the cached one.
+func connectEmbeddedServer(uc *UserClients, sessionID string, embeddedClient *EmbeddedServerClient) *Errors {
+	if !uc.needsEmbeddedReconnect(sessionID) {
+		return nil
+	}
+	ctx := context.Background()
+	return uc.ensureConnections(ctx, []connectTask{uc.embeddedConnectTask(ctx, sessionID, embeddedClient)})
+}
+
+func TestOriginAttemptWaitFinishedOutcomeWinsCanceledContext(t *testing.T) {
+	connectErr := errors.New("connection refused")
+	attempt := &originAttempt{done: make(chan struct{}), err: connectErr}
+	close(attempt.done)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for range 100 {
+		require.ErrorIs(t, attempt.wait(ctx), connectErr)
+	}
+}
+
 func TestConnectToPluginServer_HappyPath(t *testing.T) {
 	target := newFakePluginMCPServer(t, 2)
 	t.Cleanup(target.Close)
@@ -191,7 +308,7 @@ func TestConnectToPluginServer_HappyPath(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 
 	cfg := PluginServerConfig{
 		PluginID: "com.mattermost.plugin-mcp-demo",
@@ -200,11 +317,9 @@ func TestConnectToPluginServer_HappyPath(t *testing.T) {
 		Enabled:  true,
 	}
 
-	err := uc.ConnectToPluginServer(context.Background(), cfg, mockAPI)
-	require.NoError(t, err)
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
 
 	originKey := "plugin://" + cfg.PluginID
-	require.True(t, uc.hasClient(originKey))
 	snapshot := uc.snapshotClients()
 	require.Len(t, snapshot, 1)
 	require.Equal(t, originKey, snapshot[0].client.config.BaseURL)
@@ -219,50 +334,93 @@ func TestConnectToPluginServer_Idempotent(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 
 	cfg := PluginServerConfig{PluginID: "com.example.test", Name: "Test", Path: "/mcp", Enabled: true}
 
-	require.NoError(t, uc.ConnectToPluginServer(context.Background(), cfg, mockAPI))
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
+	firstClient := uc.snapshotClients()[0].client
+
 	// Second call must not re-dial; tearing down the target proves it.
 	target.Close()
-	require.NoError(t, uc.ConnectToPluginServer(context.Background(), cfg, mockAPI))
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
+
+	snapshot := uc.snapshotClients()
+	require.Len(t, snapshot, 1)
+	require.Same(t, firstClient, snapshot[0].client)
+}
+
+// A plugin server that is briefly unreachable must be retried on the next
+// request rather than remembered as failed until cache invalidation.
+func TestConnectToPluginServer_FailuresAreRetryable(t *testing.T) {
+	target := newFakePluginMCPServer(t, 1)
+	t.Cleanup(target.Close)
+
+	var failing atomic.Bool
+	failing.Store(true)
+	mockAPI := &fakePluginHTTPClient{
+		pluginHTTP: func(req *http.Request) *http.Response {
+			rec := httptest.NewRecorder()
+			if failing.Load() {
+				rec.WriteHeader(http.StatusInternalServerError)
+				return rec.Result()
+			}
+			target.Config.Handler.ServeHTTP(rec, req)
+			return rec.Result()
+		},
+	}
+
+	pluginTestAPI := &plugintest.API{}
+	setupTestLogger(pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
+
+	cfg := PluginServerConfig{PluginID: "com.example.flaky", Name: "Flaky", Path: "/mcp", Enabled: true}
+
+	errs := connectPluginServer(uc, cfg, mockAPI)
+	require.NotNil(t, errs)
+	require.NotEmpty(t, errs.Errors)
+	require.Empty(t, uc.snapshotClients())
+
+	failing.Store(false)
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
+	require.Len(t, uc.snapshotClients(), 1)
 }
 
 func TestConnectToPluginServer_NilAPI(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
-	err := uc.ConnectToPluginServer(context.Background(), PluginServerConfig{PluginID: "x", Path: "/mcp"}, nil)
-	require.Error(t, err)
+	uc := newLocalClients("alice", client.Log, nil, nil)
+	errs := connectPluginServer(uc, PluginServerConfig{PluginID: "x", Path: "/mcp"}, nil)
+	require.NotNil(t, errs)
+	require.NotEmpty(t, errs.Errors)
 }
 
-func TestConnectToEmbeddedServerIfAvailable_Idempotent(t *testing.T) {
+func TestConnectToEmbeddedServer_Idempotent(t *testing.T) {
 	server := newTestMCPServer(0, "tool_1")
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	t.Cleanup(cancelRun)
 
 	pluginAPI := newTestPluginAPIForEmbeddedManager("alice", "session-id")
 	embeddedClient := NewEmbeddedServerClient(&fakeEmbeddedMCPServer{ctx: runCtx, server: server}, pluginAPI.Log, pluginAPI)
-	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
-	cfg := EmbeddedServerConfig{Enabled: true}
+	uc := newLocalClients("alice", pluginAPI.Log, nil, nil)
 
-	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "session-id", embeddedClient, cfg))
+	require.Nil(t, connectEmbeddedServer(uc, "session-id", embeddedClient))
 	firstSnapshot := uc.snapshotClients()
 	require.Len(t, firstSnapshot, 1)
 	firstClient := firstSnapshot[0].client
 
 	// Stop the embedded server so a second dial would fail if Connect re-created a client.
 	cancelRun()
-	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "session-id", embeddedClient, cfg))
+	require.Nil(t, connectEmbeddedServer(uc, "session-id", embeddedClient))
 
 	secondSnapshot := uc.snapshotClients()
 	require.Len(t, secondSnapshot, 1)
 	require.Same(t, firstClient, secondSnapshot[0].client)
 }
 
-func TestConnectToEmbeddedServerIfAvailable_ReconnectsWhenSessionChanges(t *testing.T) {
+func TestConnectToEmbeddedServer_ReconnectsWhenSessionChanges(t *testing.T) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	t.Cleanup(cancelRun)
 
@@ -274,13 +432,12 @@ func TestConnectToEmbeddedServerIfAvailable_ReconnectsWhenSessionChanges(t *test
 	}
 	pluginAPI := pluginapi.NewClient(fakeAPI, nil)
 	embeddedClient := NewEmbeddedServerClient(&sessionEchoEmbeddedMCPServer{ctx: runCtx}, pluginAPI.Log, pluginAPI)
-	uc := NewUserClients("alice", pluginAPI.Log, nil, nil, nil)
-	cfg := EmbeddedServerConfig{Enabled: true}
+	uc := newLocalClients("alice", pluginAPI.Log, nil, nil)
 
-	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "old-session", embeddedClient, cfg))
+	require.Nil(t, connectEmbeddedServer(uc, "old-session", embeddedClient))
 	require.Equal(t, "old-session", callSessionIdentityTool(t, uc.GetTools(context.Background())))
 
-	require.NoError(t, uc.ConnectToEmbeddedServerIfAvailable(context.Background(), "new-session", embeddedClient, cfg))
+	require.Nil(t, connectEmbeddedServer(uc, "new-session", embeddedClient))
 	require.Equal(t, "new-session", callSessionIdentityTool(t, uc.GetTools(context.Background())))
 }
 
@@ -358,13 +515,13 @@ func TestClientManagerGetToolsForUser_ReconnectsAfterStoredSessionRevoked(t *tes
 	)
 	t.Cleanup(manager.Close)
 
-	tools, mcpErrors := manager.GetToolsForUser(context.Background(), userID)
+	tools, mcpErrors := manager.GetTools(context.Background(), UserCatalogRequest(userID))
 	require.Nil(t, mcpErrors)
 	require.Equal(t, oldSessionID, callSessionIdentityTool(t, tools))
 
 	delete(sessions, oldSessionID)
 
-	tools, mcpErrors = manager.GetToolsForUser(context.Background(), userID)
+	tools, mcpErrors = manager.GetTools(context.Background(), UserCatalogRequest(userID))
 	require.Nil(t, mcpErrors)
 	require.Equal(t, newSessionID, storedSessionID)
 	require.Equal(t, newSessionID, callSessionIdentityTool(t, tools))

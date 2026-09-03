@@ -40,6 +40,15 @@ type Post struct {
 	ToolUse            []ToolCall
 	Reasoning          string // Extended thinking/reasoning content from models that support it
 	ReasoningSignature string // Signature for thinking blocks (opaque verification field)
+
+	// ServerTools is provider-executed activity from this turn. The provider
+	// drops those results from later requests, so we replay a labeled summary
+	// (not reconstructed blocks: fields are truncated and the sandbox is gone).
+	ServerTools []ServerToolUse
+
+	// AssistantSegments is arrival order of text vs server-tool activity.
+	// ServerTools holds payloads; segments reference them by ID.
+	AssistantSegments []TurnSegment
 }
 
 type CompletionRequest struct {
@@ -53,8 +62,7 @@ func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int
 	oldPosts := b.Posts
 	b.Posts = make([]Post, 0, len(oldPosts))
 	var totalTokens int
-	for i := len(oldPosts) - 1; i >= 0; i-- {
-		post := oldPosts[i]
+	for _, post := range slices.Backward(oldPosts) {
 		if totalTokens >= maxTokens {
 			slices.Reverse(b.Posts)
 			return true
@@ -63,6 +71,9 @@ func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int
 		if (totalTokens + postTokens) > maxTokens {
 			charactersToCut := (postTokens - (maxTokens - totalTokens)) * 4
 			post.Message = strings.TrimSpace(post.Message[charactersToCut:])
+			// Drop replay metadata: a token-budget cut cannot be mapped onto interleaved segments.
+			post.AssistantSegments = nil
+			post.ServerTools = nil
 			b.Posts = append(b.Posts, post)
 			slices.Reverse(b.Posts)
 			return true

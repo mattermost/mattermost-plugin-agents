@@ -84,96 +84,26 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	groupMessageDesc := fmt.Sprintf(groupMessageDescriptionFmt, attachmentsParam)
 
 	return []MCPTool{
-		{
-			Name:        "read_post",
-			Description: readPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[ReadPostArgs](string(p.accessMode)),
-			Resolver:    typed("read_post", p.toolReadPost),
-		},
-		{
-			Name:        "create_post",
-			Description: createPostDesc,
-			Schema:      NewJSONSchemaForAccessMode[CreatePostArgs](string(p.accessMode)),
-			Resolver:    typed("create_post", p.toolCreatePost),
-		},
-		{
-			Name:        "dm",
-			Description: dmDesc,
-			Schema:      NewJSONSchemaForAccessMode[DMArgs](string(p.accessMode)),
-			Resolver:    typed("dm", p.toolDM),
-		},
-		{
-			Name:        "group_message",
-			Description: groupMessageDesc,
-			Schema:      NewJSONSchemaForAccessMode[GroupMessageArgs](string(p.accessMode)),
-			Resolver:    typed("group_message", p.toolGroupMessage),
-		},
-		{
-			Name:        "get_post_info",
-			Description: getPostInfoDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetPostInfoArgs](string(p.accessMode)),
-			Resolver:    typed("get_post_info", p.toolGetPostInfo),
-		},
-		{
-			Name:        "list_pinned_posts",
-			Description: listPinnedPostsDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListPinnedPostsArgs](string(p.accessMode)),
-			Resolver:    typed("list_pinned_posts", p.toolListPinnedPosts),
-		},
-		{
-			Name:        "list_saved_posts",
-			Description: listSavedPostsDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListSavedPostsArgs](string(p.accessMode)),
-			Resolver:    typed("list_saved_posts", p.toolListSavedPosts),
-		},
-		{
-			Name:        "update_post",
-			Description: updatePostDescription,
-			Schema:      NewJSONSchemaForAccessMode[UpdatePostArgs](string(p.accessMode)),
-			Resolver:    typed("update_post", p.toolUpdatePost),
-		},
-		{
-			Name:        "delete_post",
-			Description: deletePostDescription,
-			Schema:      NewJSONSchemaForAccessMode[DeletePostArgs](string(p.accessMode)),
-			Resolver:    typed("delete_post", p.toolDeletePost),
-		},
-		{
-			Name:        "pin_post",
-			Description: pinPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[PinPostArgs](string(p.accessMode)),
-			Resolver:    typed("pin_post", p.toolPinPost),
-		},
-		{
-			Name:        "unpin_post",
-			Description: unpinPostDescription,
-			Schema:      NewJSONSchemaForAccessMode[UnpinPostArgs](string(p.accessMode)),
-			Resolver:    typed("unpin_post", p.toolUnpinPost),
-		},
-		{
-			Name:        "save_post",
-			Description: savePostDescription,
-			Schema:      NewJSONSchemaForAccessMode[SavePostArgs](string(p.accessMode)),
-			Resolver:    typed("save_post", p.toolSavePost),
-		},
-		{
-			Name:        "acknowledge_post",
-			Description: acknowledgePostDescription,
-			Schema:      NewJSONSchemaForAccessMode[AcknowledgePostArgs](string(p.accessMode)),
-			Resolver:    typed("acknowledge_post", p.toolAcknowledgePost),
-		},
+		mcpTool(p, "read_post", readPostDescription, p.toolReadPost),
+		mcpTool(p, "create_post", createPostDesc, p.toolCreatePost),
+		mcpTool(p, "dm", dmDesc, p.toolDM),
+		mcpTool(p, "group_message", groupMessageDesc, p.toolGroupMessage),
+		mcpTool(p, "get_post_info", getPostInfoDescription, p.toolGetPostInfo),
+		mcpTool(p, "list_pinned_posts", listPinnedPostsDescription, p.toolListPinnedPosts),
+		mcpTool(p, "list_saved_posts", listSavedPostsDescription, p.toolListSavedPosts),
+		mcpTool(p, "update_post", updatePostDescription, p.toolUpdatePost),
+		mcpTool(p, "delete_post", deletePostDescription, p.toolDeletePost),
+		mcpTool(p, "pin_post", pinPostDescription, p.toolPinPost),
+		mcpTool(p, "unpin_post", unpinPostDescription, p.toolUnpinPost),
+		mcpTool(p, "save_post", savePostDescription, p.toolSavePost),
+		mcpTool(p, "acknowledge_post", acknowledgePostDescription, p.toolAcknowledgePost),
 	}
 }
 
 // getDevPostTools returns development post-related tools for MCP
 func (p *MattermostToolProvider) getDevPostTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "create_post_as_user",
-			Description: "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.",
-			Schema:      NewJSONSchemaForAccessMode[CreatePostAsUserArgs](string(p.accessMode)),
-			Resolver:    typed("create_post_as_user", p.toolCreatePostAsUser),
-		},
+		mcpTool(p, "create_post_as_user", "Create a post as a specific user using username/password login. Use this tool in dev mode for creating realistic multi-user scenarios. Simply provide the username and password of created users.", p.toolCreatePostAsUser),
 	}
 }
 
@@ -244,12 +174,12 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	// Format the response
 	var result strings.Builder
 	if channelName != "" && teamName != "" {
-		result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelName, teamName))
+		fmt.Fprintf(&result, "Channel: %s (Team: %s)\n", channelName, teamName)
 	}
 
 	// Add Channel ID and Root ID to header
 	if len(posts) > 0 {
-		result.WriteString(fmt.Sprintf("Channel ID: %s\n", posts[0].ChannelId))
+		fmt.Fprintf(&result, "Channel ID: %s\n", posts[0].ChannelId)
 
 		// Find any post with a non-empty RootId - all replies share the same RootId
 		var rootID string
@@ -261,13 +191,13 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 		}
 
 		if rootID != "" {
-			result.WriteString(fmt.Sprintf("Root ID: %s\n", rootID))
+			fmt.Fprintf(&result, "Root ID: %s\n", rootID)
 		}
 	}
 	result.WriteString("\n")
 
 	if includeThread && len(posts) > 1 {
-		result.WriteString(fmt.Sprintf("Thread with %d posts:\n\n", len(posts)))
+		fmt.Fprintf(&result, "Thread with %d posts:\n\n", len(posts))
 	}
 
 	for i, post := range posts {
@@ -838,7 +768,7 @@ func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d %s:\n\n", len(posts), noun))
+	fmt.Fprintf(&result, "Found %d %s:\n\n", len(posts), noun)
 	for i, post := range posts {
 		username := userCache[post.UserId]
 		if username == "" {

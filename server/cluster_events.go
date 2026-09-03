@@ -37,8 +37,8 @@ type channelAutoReplyRefresher interface {
 	RefreshChannel(channelID string) error
 }
 
-func (p *Plugin) publishClusterEvent(eventID string) error {
-	ev := model.PluginClusterEvent{Id: eventID}
+func (p *Plugin) publishClusterEvent(eventID string, data []byte) error {
+	ev := model.PluginClusterEvent{Id: eventID, Data: data}
 	opts := model.PluginClusterEventSendOptions{
 		SendType: model.PluginClusterEventSendTypeReliable,
 	}
@@ -49,14 +49,22 @@ func (p *Plugin) publishClusterEvent(eventID string) error {
 	return nil
 }
 
+func (p *Plugin) publishClusterEventWithPayload(eventID string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.publishClusterEvent(eventID, data)
+}
+
 // PublishConfigUpdate broadcasts a config update event to all other nodes in the cluster.
 func (p *Plugin) PublishConfigUpdate() error {
-	return p.publishClusterEvent(clusterEventConfigUpdate)
+	return p.publishClusterEvent(clusterEventConfigUpdate, nil)
 }
 
 // PublishAgentUpdate broadcasts an agent update event to all other nodes in the cluster.
 func (p *Plugin) PublishAgentUpdate() error {
-	return p.publishClusterEvent(clusterEventAgentUpdate)
+	return p.publishClusterEvent(clusterEventAgentUpdate, nil)
 }
 
 // PublishMCPOAuthUpdate broadcasts a per-user MCP OAuth cache invalidation to all other nodes.
@@ -64,24 +72,7 @@ func (p *Plugin) PublishMCPOAuthUpdate(userID string) error {
 	if userID == "" {
 		return nil
 	}
-
-	payload, err := json.Marshal(mcpOAuthUserInvalidateClusterPayload{UserID: userID})
-	if err != nil {
-		return err
-	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventMCPOAuthUserInvalidate,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventMCPOAuthUserInvalidate, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventMCPOAuthUserInvalidate, mcpOAuthUserInvalidateClusterPayload{UserID: userID})
 }
 
 // PublishStreamStop broadcasts a stop-streaming request to all other nodes so
@@ -94,24 +85,7 @@ func (p *Plugin) PublishStreamStop(postID string) error {
 	if postID == "" {
 		return nil
 	}
-
-	payload, err := json.Marshal(streamStopClusterPayload{PostID: postID})
-	if err != nil {
-		return err
-	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventStreamStop,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventStreamStop, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventStreamStop, streamStopClusterPayload{PostID: postID})
 }
 
 // PublishChannelAutoReplyInvalidate broadcasts a per-channel auto-reply cache
@@ -122,24 +96,7 @@ func (p *Plugin) PublishChannelAutoReplyInvalidate(channelID string) error {
 	if channelID == "" {
 		return nil
 	}
-
-	payload, err := json.Marshal(channelAutoReplyInvalidateClusterPayload{ChannelID: channelID})
-	if err != nil {
-		return err
-	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventChannelAutoReplyInvalidate,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventChannelAutoReplyInvalidate, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventChannelAutoReplyInvalidate, channelAutoReplyInvalidateClusterPayload{ChannelID: channelID})
 }
 
 // OnPluginClusterEvent handles cluster events from other nodes.
@@ -162,7 +119,7 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 			p.pluginAPI.Log.Error("Failed to re-ensure bots after agent update cluster event", "error", err.Error())
 		}
 		// Clients connected to this node need the same RHS cache invalidation as on the originating node.
-		mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
+		mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
 
 	case clusterEventMCPOAuthUserInvalidate:
 		var payload mcpOAuthUserInvalidateClusterPayload

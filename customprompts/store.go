@@ -167,31 +167,6 @@ func (s *Store) ListForUser(userID string) ([]CustomPrompt, error) {
 	return prompts, nil
 }
 
-// GetPinnedForUser returns all pinned prompts for a user, excluding soft-deleted prompts.
-func (s *Store) GetPinnedForUser(userID string) ([]CustomPrompt, error) {
-	var prompts []CustomPrompt
-	if err := s.db.DoQuery(&prompts, s.db.Builder().
-		Select("p.ID", "p.CreatorID", "p.Name", "p.Description", "p.Template", "p.IsShared", "p.CreatedAt", "p.UpdatedAt", "p.DeletedAt").
-		From("LLM_CustomPrompts AS p").
-		Join("LLM_CustomPromptPins AS pin ON pin.PromptID = p.ID").
-		Where(sq.Eq{"pin.UserID": userID}).
-		Where(sq.Eq{"p.DeletedAt": 0}).
-		Where(sq.Or{
-			sq.Eq{"p.CreatorID": userID},
-			sq.Eq{"p.IsShared": true},
-		}).
-		OrderBy("p.Name"),
-	); err != nil {
-		return nil, fmt.Errorf("failed to get pinned prompts: %w", err)
-	}
-
-	if prompts == nil {
-		prompts = []CustomPrompt{}
-	}
-
-	return prompts, nil
-}
-
 // SetPinned pins or unpins a prompt for a user.
 func (s *Store) SetPinned(userID, promptID string, pinned bool) error {
 	if pinned {

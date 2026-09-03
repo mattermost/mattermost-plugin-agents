@@ -13,7 +13,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -67,14 +66,14 @@ type JobStatus struct {
 	Status        string    `json:"status"`
 	Error         string    `json:"error,omitempty"`
 	StartedAt     time.Time `json:"started_at"`
-	CompletedAt   time.Time `json:"completed_at,omitempty"`
+	CompletedAt   time.Time `json:"completed_at"`
 	ProcessedRows int64     `json:"processed_rows"`
 	TotalRows     int64     `json:"total_rows"`
 	Resumable     bool      `json:"resumable"`
 	ErrorCount    int       `json:"error_count"`
 	NodeID        string    `json:"node_id,omitempty"`
 	CutoffAt      int64     `json:"cutoff_at,omitempty"`
-	LastUpdatedAt time.Time `json:"last_updated_at,omitempty"`
+	LastUpdatedAt time.Time `json:"last_updated_at"`
 	IsStale       bool      `json:"is_stale"`
 	// Phase is a short-lived UI hint (e.g. JobPhaseBuildingIndex); empty otherwise.
 	Phase string `json:"phase,omitempty"`
@@ -112,6 +111,13 @@ func (js *JobStatus) isUnfinishedFullReindex() bool {
 
 func (js *JobStatus) isCatchUp() bool {
 	return js != nil && js.Operation == JobOperationCatchUp
+}
+
+// fail marks the job failed with the given error message.
+func (js *JobStatus) fail(errMsg string) {
+	js.Status = JobStatusFailed
+	js.Error = errMsg
+	js.CompletedAt = time.Now()
 }
 
 // Cursor stores the cursor position for resumable indexing
@@ -305,10 +311,7 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 			} else if repairPending {
 				errMsg = appendPendingRepairNote(errMsg)
 			}
-			jobStatus.Status = JobStatusFailed
-			jobStatus.Error = errMsg
-			jobStatus.CompletedAt = time.Now()
-			s.saveJobStatus(jobStatus)
+			s.failJob(jobStatus, errMsg)
 		}
 	}()
 
@@ -325,10 +328,7 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 				errMsg = fmt.Sprintf("%s; additionally failed to release the vector index claim: %s", errMsg, abandonErr)
 			}
 		}
-		jobStatus.Status = JobStatusFailed
-		jobStatus.Error = errMsg
-		jobStatus.CompletedAt = time.Now()
-		s.saveJobStatus(jobStatus)
+		s.failJob(jobStatus, errMsg)
 		return
 	}
 
@@ -348,27 +348,18 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 					s.pluginAPI.LogError("Failed to release vector index claim", "error", abandonErr)
 					errMsg = fmt.Sprintf("%s (additionally failed to release the vector index claim: %s)", errMsg, abandonErr)
 				}
-				jobStatus.Status = JobStatusFailed
-				jobStatus.Error = errMsg
-				jobStatus.CompletedAt = time.Now()
-				s.saveJobStatus(jobStatus)
+				s.failJob(jobStatus, errMsg)
 				return
 			}
 			if ok, casErr := s.casVectorIndexState(&ownedState, &ownedState); casErr != nil || !ok {
 				s.pluginAPI.LogError("Deferred index claim is no longer current; aborting before DROP",
 					"job_id", jobStatus.JobID, "error", casErr)
-				jobStatus.Status = JobStatusFailed
-				jobStatus.Error = "Deferred index claim lost before bulk load began"
-				jobStatus.CompletedAt = time.Now()
-				s.saveJobStatus(jobStatus)
+				s.failJob(jobStatus, "Deferred index claim lost before bulk load began")
 				return
 			}
 			deferPending = true
 			if err := bulk.PrepareBulkIndex(ctx); err != nil {
-				jobStatus.Status = JobStatusFailed
-				jobStatus.Error = appendDroppedIndexNote(fmt.Sprintf("Failed to drop vector index: %s", err))
-				jobStatus.CompletedAt = time.Now()
-				s.saveJobStatus(jobStatus)
+				s.failJob(jobStatus, appendDroppedIndexNote(fmt.Sprintf("Failed to drop vector index: %s", err)))
 				return
 			}
 		}
@@ -382,10 +373,7 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 				if deferPending {
 					errMsg = appendDroppedIndexNote(errMsg)
 				}
-				jobStatus.Status = JobStatusFailed
-				jobStatus.Error = errMsg
-				jobStatus.CompletedAt = time.Now()
-				s.saveJobStatus(jobStatus)
+				s.failJob(jobStatus, errMsg)
 				return
 			}
 		}
@@ -481,11 +469,8 @@ func (s *Indexer) runIndexJob(ctx context.Context, jobStatus *JobStatus, deferRu
 	s.pluginAPI.LogWarn(spec.completeLog, "processed_posts", jobStatus.ProcessedRows)
 }
 
-// filterAndCreateDocs filters posts and creates PostDocuments
-func (s *Indexer) filterAndCreateDocs(posts []PostRecord) []embeddings.PostDocument {
-	return s.filterAndCreateDocsWithFloor(posts, 0)
-}
-
+// filterAndCreateDocsWithFloor filters posts and creates PostDocuments,
+// skipping posts with CreateAt below the retention floor (0 means no floor).
 func (s *Indexer) filterAndCreateDocsWithFloor(posts []PostRecord, floor int64) []embeddings.PostDocument {
 	docs := make([]embeddings.PostDocument, 0, len(posts))
 	for _, post := range posts {
@@ -530,11 +515,15 @@ func (s *Indexer) filterAndCreateDocsWithFloor(posts []PostRecord, floor int64) 
 	return docs
 }
 
+// failJob marks the job failed and persists it.
+func (s *Indexer) failJob(jobStatus *JobStatus, errMsg string) {
+	jobStatus.fail(errMsg)
+	s.saveJobStatus(jobStatus)
+}
+
 // handleJobError handles a job error by saving cursor and updating status
 func (s *Indexer) handleJobError(jobStatus *JobStatus, errMsg string, lastCreateAt int64, lastID string) {
-	jobStatus.Status = JobStatusFailed
-	jobStatus.Error = errMsg
-	jobStatus.CompletedAt = time.Now()
+	jobStatus.fail(errMsg)
 	jobStatus.ErrorCount++
 
 	// Rebuild jobs are not cursor-resumable; leaving IndexerCursorKey would
@@ -570,7 +559,7 @@ func (s *Indexer) persistProvenIndexRetentionDays(days int) {
 	if err != nil {
 		stored = ModelInfo{}
 	}
-	stored.IndexRetentionDays = utils.Ptr(days)
+	stored.IndexRetentionDays = new(days)
 	if saveErr := s.SaveModelInfo(stored); saveErr != nil {
 		s.pluginAPI.LogError("Failed to save index retention days after catch-up", "error", saveErr)
 	}
@@ -671,7 +660,7 @@ func (s *Indexer) saveJobStatus(status *JobStatus) {
 		return
 	}
 
-	var oldValue interface{}
+	var oldValue any
 	if err == nil {
 		oldValue = current
 	}
@@ -736,7 +725,7 @@ func (s *Indexer) finishJob(jobStatus *JobStatus) bool {
 		}
 		newStatus.CompletedAt = time.Now()
 
-		var oldValue interface{}
+		var oldValue any
 		if err == nil {
 			oldValue = current
 		}

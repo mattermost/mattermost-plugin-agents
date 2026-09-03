@@ -33,29 +33,52 @@ type otelTracer struct {
 	// so the no-op implementations preserve normal streaming behavior.
 	bschemas.NoOpTracer
 
-	mu             sync.Mutex
-	deferredSpans  map[string]bschemas.SpanHandle
-	streamStarts   map[string]time.Time
-	streamChunks   map[string]int
-	streamFirstAt  map[string]time.Time
-	streamResponse map[string]*bschemas.BifrostResponse
+	mu            sync.Mutex
+	deferredSpans map[string]bschemas.SpanHandle
+	streams       map[string]*streamState
+}
+
+// streamState is the per-trace accumulator state for a streaming request.
+type streamState struct {
+	start    time.Time
+	chunks   int
+	firstAt  time.Time
+	response *bschemas.BifrostResponse
 }
 
 // newOTelTracer returns a Bifrost Tracer that emits spans into the plugin's
 // OpenTelemetry pipeline.
 func newOTelTracer() bschemas.Tracer {
 	return &otelTracer{
-		deferredSpans:  make(map[string]bschemas.SpanHandle),
-		streamStarts:   make(map[string]time.Time),
-		streamChunks:   make(map[string]int),
-		streamFirstAt:  make(map[string]time.Time),
-		streamResponse: make(map[string]*bschemas.BifrostResponse),
+		deferredSpans: make(map[string]bschemas.SpanHandle),
+		streams:       make(map[string]*streamState),
 	}
+}
+
+// lockedStreamState returns the accumulator state for the trace, creating it
+// if needed. Callers must hold t.mu.
+func (t *otelTracer) lockedStreamState(traceID string) *streamState {
+	s := t.streams[traceID]
+	if s == nil {
+		s = &streamState{}
+		t.streams[traceID] = s
+	}
+	return s
 }
 
 // otelSpanHandle is the SpanHandle implementation backed by an OTel span.
 type otelSpanHandle struct {
 	span trace.Span
+}
+
+// spanOf extracts the OTel span from a Bifrost span handle, returning nil for
+// foreign or empty handles.
+func spanOf(handle bschemas.SpanHandle) trace.Span {
+	h, ok := handle.(*otelSpanHandle)
+	if !ok || h == nil || h.span == nil {
+		return nil
+	}
+	return h.span
 }
 
 // CreateTrace is a no-op for the OTel adapter: OTel traces are identified by
@@ -89,17 +112,17 @@ func (t *otelTracer) StartSpan(ctx context.Context, name string, kind bschemas.S
 
 // EndSpan closes the span with the given status.
 func (t *otelTracer) EndSpan(handle bschemas.SpanHandle, status bschemas.SpanStatus, statusMsg string) {
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil {
+	span := spanOf(handle)
+	if span == nil {
 		return
 	}
 	switch status {
 	case bschemas.SpanStatusError:
-		h.span.SetStatus(otelcodes.Error, statusMsg)
+		span.SetStatus(otelcodes.Error, statusMsg)
 	case bschemas.SpanStatusOk:
-		h.span.SetStatus(otelcodes.Ok, statusMsg)
+		span.SetStatus(otelcodes.Ok, statusMsg)
 	}
-	h.span.End()
+	span.End()
 }
 
 // SetAttribute records a single attribute on the span. We pass values
@@ -107,24 +130,24 @@ func (t *otelTracer) EndSpan(handle bschemas.SpanHandle, status bschemas.SpanSta
 // attribute type; anything else is stringified so traces still capture
 // the value.
 func (t *otelTracer) SetAttribute(handle bschemas.SpanHandle, key string, value any) {
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil {
+	span := spanOf(handle)
+	if span == nil {
 		return
 	}
-	h.span.SetAttributes(attributeFromAny(key, value))
+	span.SetAttributes(attributeFromAny(key, value))
 }
 
 // AddEvent records a timestamped event on the span.
 func (t *otelTracer) AddEvent(handle bschemas.SpanHandle, name string, attrs map[string]any) {
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil {
+	span := spanOf(handle)
+	if span == nil {
 		return
 	}
 	otelAttrs := make([]attribute.KeyValue, 0, len(attrs))
 	for k, v := range attrs {
 		otelAttrs = append(otelAttrs, attributeFromAny(k, v))
 	}
-	h.span.AddEvent(name, trace.WithAttributes(otelAttrs...))
+	span.AddEvent(name, trace.WithAttributes(otelAttrs...))
 }
 
 // PopulateLLMRequestAttributes pulls provider/model out of the Bifrost
@@ -132,12 +155,12 @@ func (t *otelTracer) AddEvent(handle bschemas.SpanHandle, name string, attrs map
 // semantic-convention attributes via SetAttribute, so we just add provider
 // and model here for direct correlation with the outer plugin span.
 func (t *otelTracer) PopulateLLMRequestAttributes(handle bschemas.SpanHandle, req *bschemas.BifrostRequest) {
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil || req == nil {
+	span := spanOf(handle)
+	if span == nil || req == nil {
 		return
 	}
 	provider, model, _ := req.GetRequestFields()
-	h.span.SetAttributes(
+	span.SetAttributes(
 		telemetry.LLMProvider.String(string(provider)),
 		telemetry.LLMModel.String(model),
 	)
@@ -145,17 +168,17 @@ func (t *otelTracer) PopulateLLMRequestAttributes(handle bschemas.SpanHandle, re
 
 // PopulateLLMResponseAttributes captures token usage and any error.
 func (t *otelTracer) PopulateLLMResponseAttributes(_ *bschemas.BifrostContext, handle bschemas.SpanHandle, resp *bschemas.BifrostResponse, bErr *bschemas.BifrostError) {
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil {
+	span := spanOf(handle)
+	if span == nil {
 		return
 	}
 	if usage := chatUsage(resp); usage != nil {
-		setUsageAttributes(h.span, usage)
+		setUsageAttributes(span, usage)
 	}
 	if bErr != nil && bErr.Error != nil {
 		// Sanitize before recording: provider error messages can echo back API
 		// keys, which would otherwise be exported in the span status.
-		h.span.SetStatus(otelcodes.Error, llm.SanitizeProviderErrorMessage(bErr.Error.Message, ""))
+		span.SetStatus(otelcodes.Error, llm.SanitizeProviderErrorMessage(bErr.Error.Message, ""))
 	}
 }
 
@@ -196,11 +219,11 @@ func (t *otelTracer) GetDeferredSpanID(traceID string) string {
 	t.mu.Lock()
 	handle := t.deferredSpans[traceID]
 	t.mu.Unlock()
-	h, ok := handle.(*otelSpanHandle)
-	if !ok || h == nil || h.span == nil {
+	span := spanOf(handle)
+	if span == nil {
 		return ""
 	}
-	return h.span.SpanContext().SpanID().String()
+	return span.SpanContext().SpanID().String()
 }
 
 // CreateStreamAccumulator records the stream start time. We don't keep the
@@ -211,17 +234,15 @@ func (t *otelTracer) CreateStreamAccumulator(traceID string, startTime time.Time
 		return
 	}
 	t.mu.Lock()
-	t.streamStarts[traceID] = startTime
-	t.streamChunks[traceID] = 0
+	s := t.lockedStreamState(traceID)
+	s.start = startTime
+	s.chunks = 0
 	t.mu.Unlock()
 }
 
 func (t *otelTracer) CleanupStreamAccumulator(traceID string) {
 	t.mu.Lock()
-	delete(t.streamStarts, traceID)
-	delete(t.streamChunks, traceID)
-	delete(t.streamFirstAt, traceID)
-	delete(t.streamResponse, traceID)
+	delete(t.streams, traceID)
 	t.mu.Unlock()
 }
 
@@ -233,27 +254,28 @@ func (t *otelTracer) AddStreamingChunk(traceID string, response *bschemas.Bifros
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.streamChunks[traceID]++
-	if _, seen := t.streamFirstAt[traceID]; !seen {
-		t.streamFirstAt[traceID] = time.Now()
+	s := t.lockedStreamState(traceID)
+	s.chunks++
+	if s.firstAt.IsZero() {
+		s.firstAt = time.Now()
 	}
 	if response != nil {
-		t.streamResponse[traceID] = response
+		s.response = response
 	}
 }
 
 func (t *otelTracer) GetAccumulatedChunks(traceID string) (*bschemas.BifrostResponse, int64, int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	resp := t.streamResponse[traceID]
-	count := t.streamChunks[traceID]
-	var ttft int64
-	if start, ok := t.streamStarts[traceID]; ok {
-		if first, firstOk := t.streamFirstAt[traceID]; firstOk {
-			ttft = first.Sub(start).Nanoseconds()
-		}
+	s := t.streams[traceID]
+	if s == nil {
+		return nil, 0, 0
 	}
-	return resp, ttft, count
+	var ttft int64
+	if !s.start.IsZero() && !s.firstAt.IsZero() {
+		ttft = s.firstAt.Sub(s.start).Nanoseconds()
+	}
+	return s.response, ttft, s.chunks
 }
 
 // ProcessStreamingChunk forwards the chunk into the accumulator and
@@ -269,11 +291,13 @@ func (t *otelTracer) ProcessStreamingChunk(_ *bschemas.BifrostContext, traceID s
 		return nil
 	}
 
+	var count int
+	var start, first time.Time
+	var last *bschemas.BifrostResponse
 	t.mu.Lock()
-	count := t.streamChunks[traceID]
-	start := t.streamStarts[traceID]
-	first := t.streamFirstAt[traceID]
-	last := t.streamResponse[traceID]
+	if s := t.streams[traceID]; s != nil {
+		count, start, first, last = s.chunks, s.start, s.firstAt, s.response
+	}
 	t.mu.Unlock()
 
 	out := &bschemas.StreamAccumulatorResult{
@@ -325,13 +349,10 @@ func (t *otelTracer) CompleteAndFlushTrace(traceID string) {
 	t.mu.Lock()
 	handle := t.deferredSpans[traceID]
 	delete(t.deferredSpans, traceID)
-	delete(t.streamStarts, traceID)
-	delete(t.streamChunks, traceID)
-	delete(t.streamFirstAt, traceID)
-	delete(t.streamResponse, traceID)
+	delete(t.streams, traceID)
 	t.mu.Unlock()
-	if h, ok := handle.(*otelSpanHandle); ok && h != nil && h.span != nil {
-		h.span.End()
+	if span := spanOf(handle); span != nil {
+		span.End()
 	}
 }
 
@@ -340,10 +361,7 @@ func (t *otelTracer) CompleteAndFlushTrace(traceID string) {
 func (t *otelTracer) Stop() {
 	t.mu.Lock()
 	t.deferredSpans = map[string]bschemas.SpanHandle{}
-	t.streamStarts = map[string]time.Time{}
-	t.streamChunks = map[string]int{}
-	t.streamFirstAt = map[string]time.Time{}
-	t.streamResponse = map[string]*bschemas.BifrostResponse{}
+	t.streams = map[string]*streamState{}
 	t.mu.Unlock()
 }
 

@@ -84,7 +84,7 @@ func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
 	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}

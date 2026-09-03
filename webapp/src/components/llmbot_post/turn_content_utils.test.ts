@@ -8,7 +8,6 @@ import {ToolCallStatus} from '../tool_types';
 import {
     statusStringToEnum,
     extractToolCallsForPost,
-    extractReasoningFromTurn,
     extractAnnotationsFromTurn,
     deriveApprovalStageForPost,
     hasAutoApprovedToolsForPost,
@@ -122,6 +121,57 @@ describe('extractToolCallsForPost', () => {
             status: ToolCallStatus.Error,
             decided: false,
         });
+    });
+
+    test('maps server_origin, mcp_bare_name, title, and description from the block', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {
+                    type: 'tool_use',
+                    id: 'tc_1',
+                    name: 'mattermost__create_post',
+                    server_origin: 'embedded://mattermost',
+                    mcp_bare_name: 'create_post',
+                    title: 'Create Post',
+                    description: 'Create a new post in Mattermost.',
+                    input: {channel_id: 'c1'},
+                    status: 'pending',
+                    shared: true,
+                },
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+            id: 'tc_1',
+            name: 'mattermost__create_post',
+            server_origin: 'embedded://mattermost',
+            mcp_bare_name: 'create_post',
+            title: 'Create Post',
+            description: 'Create a new post in Mattermost.',
+        });
+    });
+
+    test('leaves new identity fields undefined when the block omits them (legacy data)', () => {
+        const assistantTurn = makeTurn({
+            post_id: 'post_1',
+            sequence: 1,
+            content: [
+                {type: 'tool_use', id: 'tc_1', name: 'search', input: {q: 'x'}, status: 'pending'},
+            ],
+        });
+        const conv = makeConversation([assistantTurn]);
+        const result = extractToolCallsForPost(conv, 'post_1');
+
+        expect(result).toHaveLength(1);
+        expect(result[0].title).toBeUndefined();
+        expect(result[0].server_origin).toBeUndefined();
+        expect(result[0].mcp_bare_name).toBeUndefined();
+        expect(result[0].description).toBe('');
     });
 
     test('maps interaction, auto-execution, and decided fields onto ToolCall', () => {
@@ -340,37 +390,6 @@ describe('extractToolCallsForPost', () => {
         expect(result[0].id).toBe('tc_here');
     });
 });
-describe('extractReasoningFromTurn', () => {
-    test('returns empty strings when no thinking blocks', () => {
-        const turn = makeTurn({content: [{type: 'text', text: 'hello'}]});
-        expect(extractReasoningFromTurn(turn)).toEqual({summary: '', signature: ''});
-    });
-
-    test('extracts reasoning and signature from thinking block', () => {
-        const turn = makeTurn({
-            content: [
-                {type: 'thinking', text: 'Let me think...', signature: 'sig123'},
-            ],
-        });
-        expect(extractReasoningFromTurn(turn)).toEqual({
-            summary: 'Let me think...',
-            signature: 'sig123',
-        });
-    });
-
-    test('concatenates multiple thinking blocks', () => {
-        const turn = makeTurn({
-            content: [
-                {type: 'thinking', text: 'Part 1', signature: 'sig1'},
-                {type: 'thinking', text: 'Part 2', signature: 'sig2'},
-            ],
-        });
-        const result = extractReasoningFromTurn(turn);
-        expect(result.summary).toBe('Part 1\nPart 2');
-        expect(result.signature).toBe('sig2'); // last block's signature
-    });
-});
-
 describe('extractAnnotationsFromTurn', () => {
     test('returns empty array when no annotations or citations', () => {
         const turn = makeTurn({content: [{type: 'text', text: 'hello'}]});

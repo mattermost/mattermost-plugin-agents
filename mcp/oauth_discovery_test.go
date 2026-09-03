@@ -17,7 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
+// TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency verifies the discovery
 // strictness posture: spec-compliant metadata resolves the advertised
 // (non-conventional) endpoints; a missing PKCE advertisement — the one
 // deliberate leniency — recovers with a logged warning; and spec violations
@@ -27,7 +27,7 @@ import (
 //
 // The advertised endpoints use /custom-* paths so discovered endpoints are
 // observably different from the conventional /authorize and /token fallbacks.
-func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
+func TestResolveOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 	tests := []struct {
 		name string
 		// prmResourceSuffix is appended to the server URL in the advertised
@@ -119,12 +119,13 @@ func TestCreateOAuthConfig_DiscoveryStrictnessAndLeniency(t *testing.T) {
 				mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 			}
 
-			config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
+			resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
 				ClientID:     "static-client",
 				ClientSecret: "static-secret",
 			})
 
 			require.NoError(t, err)
+			config := resolved.config
 			require.Equal(t, serverURL+tt.wantAuthPath, config.Endpoint.AuthURL)
 			require.Equal(t, serverURL+tt.wantTokenPath, config.Endpoint.TokenURL)
 			require.Equal(t, tt.wantScopes, config.Scopes)
@@ -312,11 +313,11 @@ func TestFetchProtectedResourceMetadataRootFallback(t *testing.T) {
 	require.Equal(t, []string{origin}, prm.AuthorizationServers)
 }
 
-// TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when
+// TestResolveOAuthConfig_ASMetadataFailureFallsBackToIssuer verifies that when
 // protected resource metadata names an external authorization server whose
 // metadata cannot be fetched, the conventional /authorize and /token fallback
 // endpoints are derived from that issuer — not from the MCP resource server.
-func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
+func TestResolveOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	var serverURL string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/.well-known/oauth-protected-resource" {
@@ -337,11 +338,12 @@ func TestCreateOAuthConfig_ASMetadataFailureFallsBackToIssuer(t *testing.T) {
 	manager, mockClient := setupTestOAuthManagerFull(t, nil, server.Client())
 	mockClient.On("LogWarn", mock.AnythingOfType("string"), mock.Anything).Return()
 
-	config, err := manager.createOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
+	resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL, "", &StaticOAuthCredentials{
 		ClientID:     "static-client",
 		ClientSecret: "static-secret",
 	})
 	require.NoError(t, err)
+	config := resolved.config
 	require.Equal(t, serverURL+"/as/authorize", config.Endpoint.AuthURL,
 		"fallback authorize endpoint must live on the discovered issuer")
 	require.Equal(t, serverURL+"/as/token", config.Endpoint.TokenURL,

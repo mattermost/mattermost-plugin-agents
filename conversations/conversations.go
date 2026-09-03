@@ -230,15 +230,14 @@ func (c *Conversations) processDMRequest(
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
 	if beforeProvider != nil {
 		beforeProvider()
 	}
-	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
-		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
-			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
-		}
-	})
+	runResult, err := c.runToolLoop(ctx, lm, maxToolTurns, *completionReq,
+		c.shouldAutoExecuteTool(llmCtx, true),
+		convID,
+		func([]toolrunner.ToolTurn) bool { return true },
+		nil, "Failed to write tool turns", "conversation_id", convID)
 	if err != nil {
 		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}
@@ -249,6 +248,36 @@ func (c *Conversations) processDMRequest(
 	}
 
 	return &DMStreamResult{Stream: stream}, nil
+}
+
+// runToolLoop runs the ToolRunner over req, persisting each intermediate tool
+// round to the conversation as it completes. sharedForTurns decides the shared
+// flag written with each round; writeFailMsg (plus writeFailArgs) is logged
+// when persisting a round fails.
+func (c *Conversations) runToolLoop(
+	ctx stdcontext.Context,
+	lm llm.LanguageModel,
+	maxRounds int,
+	req llm.CompletionRequest,
+	shouldExecute func(llm.ToolCall) bool,
+	convID string,
+	sharedForTurns func([]toolrunner.ToolTurn) bool,
+	opts []llm.LanguageModelOption,
+	writeFailMsg string,
+	writeFailArgs ...any,
+) (*toolrunner.ToolRunResult, error) {
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds))
+	return runner.Run(ctx, req, shouldExecute, func(turns []toolrunner.ToolTurn) {
+		if writeErr := c.convService.WriteToolTurns(convID, turns, sharedForTurns(turns)); writeErr != nil {
+			c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
+		}
+	}, opts...)
+}
+
+// channelMentionToolCallingEnabled reports whether the admin config allows
+// tool calling for channel mentions.
+func (c *Conversations) channelMentionToolCallingEnabled() bool {
+	return c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 }
 
 // shouldAutoExecuteTool returns a callback that decides whether a tool call

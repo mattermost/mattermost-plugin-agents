@@ -412,19 +412,4 @@ func TestSemanticSearchWithFilters(t *testing.T) {
 		}
 		assert.Len(t, results, 2, "Should find 2 posts in channel1")
 	})
-
-	// Search with time filter
-	t.Run("time filter", func(t *testing.T) {
-		results, err := search.Search(ctx, "Python programming", embeddings.SearchOptions{
-			Limit:        10,
-			UserID:       "user1",
-			CreatedAfter: now + 5000,
-		})
-		require.NoError(t, err)
-
-		for _, r := range results {
-			assert.Greater(t, r.Document.CreateAt, now+5000, "All results should be after filter time")
-		}
-		assert.Len(t, results, 2, "Should find 2 newer posts")
-	})
 }

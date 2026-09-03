@@ -86,11 +86,11 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = client.Tools()
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		client.toolsMu.Lock()
 		client.tools = make(map[string]*mcp.Tool)
 		client.toolsMu.Unlock()
@@ -100,27 +100,58 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 }
 
 func TestClientOAuthNeededError(t *testing.T) {
-	client := &Client{
-		config: ServerConfig{
-			Name: "OAuth Server",
+	tests := []struct {
+		name           string
+		err            error
+		serviceAccount bool
+		wantOAuthError bool
+	}{
+		{
+			name: "mcp unauthorized error",
+			err: &mcpUnauthorized{
+				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+			},
+			wantOAuthError: true,
 		},
-		oauthManager: &OAuthManager{
-			callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
+		{
+			name: "service account mode ignores an unauthorized error",
+			err: &mcpUnauthorized{
+				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+			},
+			serviceAccount: true,
 		},
 	}
 
-	err := client.oauthNeededError(&mcpUnauthorized{
-		metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
-	})
-	require.Error(t, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Service account bags have no OAuth manager in production; keeping one here
+			// pins the mode guard rather than the nil.
+			client := &Client{
+				config: ServerConfig{
+					Name: "OAuth Server",
+				},
+				oauthManager: &OAuthManager{
+					callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
+				},
+				serviceAccount: tt.serviceAccount,
+			}
 
-	var oauthErr *OAuthNeededError
-	require.ErrorAs(t, err, &oauthErr)
-	authURL, parseErr := url.Parse(oauthErr.AuthURL())
-	require.NoError(t, parseErr)
-	require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
-	require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
-	require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
+			err := client.oauthNeededError(tt.err)
+			if !tt.wantOAuthError {
+				require.NoError(t, err, "service account mode must never ask the user to connect an account")
+				return
+			}
+			require.Error(t, err)
+
+			var oauthErr *OAuthNeededError
+			require.ErrorAs(t, err, &oauthErr)
+			authURL, parseErr := url.Parse(oauthErr.AuthURL())
+			require.NoError(t, parseErr)
+			require.Equal(t, "https://mattermost.example.com", authURL.Scheme+"://"+authURL.Host)
+			require.Equal(t, "/plugins/mattermost-ai/mcp/oauth/OAuth%20Server/start", authURL.EscapedPath())
+			require.Equal(t, "https://oauth.example.com/.well-known/oauth-protected-resource", authURL.Query().Get("resource_metadata"))
+		})
+	}
 }
 
 // TestNilCacheHandling verifies that nil cache is handled gracefully in the cache code
@@ -139,7 +170,7 @@ func TestNilCacheHandling(t *testing.T) {
 	require.Nil(t, tools)
 }
 
-func TestShouldUseSharedToolsCache(t *testing.T) {
+func TestSharedToolsCacheAllowedForServer(t *testing.T) {
 	tests := []struct {
 		name         string
 		serverConfig ServerConfig
@@ -167,7 +198,7 @@ func TestShouldUseSharedToolsCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, shouldUseSharedToolsCache(tt.serverConfig))
+			require.Equal(t, tt.expected, sharedToolsCacheAllowedForServer(tt.serverConfig))
 		})
 	}
 }

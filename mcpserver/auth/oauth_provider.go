@@ -14,32 +14,22 @@ import (
 // OAuthAuthenticationProvider provides OAuth authentication for HTTP transport
 // As a resource server, we only need to validate tokens using Mattermost's API
 type OAuthAuthenticationProvider struct {
-	mmServerURL string // Mattermost server URL for API communication
-	issuer      string
-	logger      logger.Logger
+	providerBase
+	issuer string
 }
 
 // NewOAuthAuthenticationProvider creates a new OAuth authentication provider for resource server
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
 func NewOAuthAuthenticationProvider(externalURL, internalURL, issuer string, logger logger.Logger) *OAuthAuthenticationProvider {
-	// Use internal URL for API communication if provided, otherwise fallback to external URL
-	mmServerURL := internalURL
-	if mmServerURL == "" {
-		mmServerURL = externalURL
-	}
-
 	return &OAuthAuthenticationProvider{
-		mmServerURL: mmServerURL,
-		issuer:      issuer,
-		logger:      logger,
+		providerBase: newProviderBase(externalURL, internalURL, logger),
+		issuer:       issuer,
 	}
 }
 
 // ValidateAuth validates OAuth authentication from context
 func (p *OAuthAuthenticationProvider) ValidateAuth(ctx context.Context) error {
-	// Get authenticated client, which handles all validation
-	_, err := p.GetAuthenticatedMattermostClient(ctx)
-	return err
+	return validateAuth(ctx, p)
 }
 
 // GetAuthenticatedMattermostClient returns an OAuth-authenticated Mattermost client

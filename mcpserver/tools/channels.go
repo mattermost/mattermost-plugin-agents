@@ -79,96 +79,21 @@ const (
 // getChannelTools returns all channel-related tools
 func (p *MattermostToolProvider) getChannelTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "read_channel",
-			Description: readChannelDescription,
-			Schema:      NewJSONSchemaForAccessMode[ReadChannelArgs](string(p.accessMode)),
-			Resolver:    typed("read_channel", p.toolReadChannel),
-		},
-		{
-			Name:        "create_channel",
-			Description: createChannelDescription,
-			Schema:      NewJSONSchemaForAccessMode[CreateChannelArgs](string(p.accessMode)),
-			Resolver:    typed("create_channel", p.toolCreateChannel),
-		},
-		{
-			Name:        "get_channel_info",
-			Description: getChannelInfoDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetChannelInfoArgs](string(p.accessMode)),
-			Resolver:    typed("get_channel_info", p.toolGetChannelInfo),
-		},
-		{
-			Name:        "get_channel_members",
-			Description: getChannelMembersDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetChannelMembersArgs](string(p.accessMode)),
-			Resolver:    typed("get_channel_members", p.toolGetChannelMembers),
-		},
-		{
-			Name:        "add_channel_member",
-			Description: "Add a user to a channel (channel membership). Parameters: user_id (required), channel_id (required). Returns confirmation message.",
-			Schema:      NewJSONSchemaForAccessMode[AddChannelMemberArgs](string(p.accessMode)),
-			Resolver:    typed("add_channel_member", p.toolAddChannelMember),
-		},
-		{
-			Name:        "get_user_channels",
-			Description: getUserChannelsDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetUserChannelsArgs](string(p.accessMode)),
-			Resolver:    typed("get_user_channels", p.toolGetUserChannels),
-		},
-		{
-			Name:        "get_channel_stats",
-			Description: getChannelStatsDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetChannelStatsArgs](string(p.accessMode)),
-			Resolver:    typed("get_channel_stats", p.toolGetChannelStats),
-		},
-		{
-			Name:        "get_channel_member_counts",
-			Description: getChannelMemberCountsDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetChannelMemberCountsArgs](string(p.accessMode)),
-			Resolver:    typed("get_channel_member_counts", p.toolGetChannelMemberCounts),
-		},
-		{
-			Name:        "search_channels",
-			Description: searchChannelsDescription,
-			Schema:      NewJSONSchemaForAccessMode[SearchChannelsArgs](string(p.accessMode)),
-			Resolver:    typed("search_channels", p.toolSearchChannels),
-		},
-		{
-			Name:        "list_team_channels",
-			Description: listTeamChannelsDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListTeamChannelsArgs](string(p.accessMode)),
-			Resolver:    typed("list_team_channels", p.toolListTeamChannels),
-		},
-		{
-			Name:        "list_archived_channels",
-			Description: listArchivedChannelsDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListArchivedChannelsArgs](string(p.accessMode)),
-			Resolver:    typed("list_archived_channels", p.toolListArchivedChannels),
-		},
-		{
-			Name:        "update_channel",
-			Description: updateChannelDescription,
-			Schema:      NewJSONSchemaForAccessMode[UpdateChannelArgs](string(p.accessMode)),
-			Resolver:    typed("update_channel", p.toolUpdateChannel),
-		},
-		{
-			Name:        "archive_channel",
-			Description: archiveChannelDescription,
-			Schema:      NewJSONSchemaForAccessMode[ArchiveChannelArgs](string(p.accessMode)),
-			Resolver:    typed("archive_channel", p.toolArchiveChannel),
-		},
-		{
-			Name:        "restore_channel",
-			Description: restoreChannelDescription,
-			Schema:      NewJSONSchemaForAccessMode[RestoreChannelArgs](string(p.accessMode)),
-			Resolver:    typed("restore_channel", p.toolRestoreChannel),
-		},
-		{
-			Name:        "convert_channel_privacy",
-			Description: convertChannelPrivacyDescription,
-			Schema:      NewJSONSchemaForAccessMode[ConvertChannelPrivacyArgs](string(p.accessMode)),
-			Resolver:    typed("convert_channel_privacy", p.toolConvertChannelPrivacy),
-		},
+		mcpTool(p, "read_channel", readChannelDescription, p.toolReadChannel),
+		mcpTool(p, "create_channel", createChannelDescription, p.toolCreateChannel),
+		mcpTool(p, "get_channel_info", getChannelInfoDescription, p.toolGetChannelInfo),
+		mcpTool(p, "get_channel_members", getChannelMembersDescription, p.toolGetChannelMembers),
+		mcpTool(p, "add_channel_member", "Add a user to a channel (channel membership). Parameters: user_id (required), channel_id (required). Returns confirmation message.", p.toolAddChannelMember),
+		mcpTool(p, "get_user_channels", getUserChannelsDescription, p.toolGetUserChannels),
+		mcpTool(p, "get_channel_stats", getChannelStatsDescription, p.toolGetChannelStats),
+		mcpTool(p, "get_channel_member_counts", getChannelMemberCountsDescription, p.toolGetChannelMemberCounts),
+		mcpTool(p, "search_channels", searchChannelsDescription, p.toolSearchChannels),
+		mcpTool(p, "list_team_channels", listTeamChannelsDescription, p.toolListTeamChannels),
+		mcpTool(p, "list_archived_channels", listArchivedChannelsDescription, p.toolListArchivedChannels),
+		mcpTool(p, "update_channel", updateChannelDescription, p.toolUpdateChannel),
+		mcpTool(p, "archive_channel", archiveChannelDescription, p.toolArchiveChannel),
+		mcpTool(p, "restore_channel", restoreChannelDescription, p.toolRestoreChannel),
+		mcpTool(p, "convert_channel_privacy", convertChannelPrivacyDescription, p.toolConvertChannelPrivacy),
 	}
 }
 
@@ -324,8 +249,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 
 	// Format the response
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName))
-	result.WriteString(fmt.Sprintf("Found %d posts:\n\n", len(filteredPosts)))
+	fmt.Fprintf(&result, "Channel: %s (Team: %s)\n", channelDisplayName, teamDisplayName)
+	fmt.Fprintf(&result, "Found %d posts:\n\n", len(filteredPosts))
 
 	postIndex := format.BuildPostIndex(filteredPosts)
 	for i, post := range filteredPosts {
@@ -452,14 +377,14 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 
 		if len(channels) == 0 {
 			var notFoundMsg strings.Builder
-			notFoundMsg.WriteString(fmt.Sprintf("No channels found matching '%s'.", args.ChannelName))
+			fmt.Fprintf(&notFoundMsg, "No channels found matching '%s'.", args.ChannelName)
 
 			if args.TeamID != "" {
 				team, _, teamErr := client.GetTeam(ctx, args.TeamID, "")
 				if teamErr == nil {
-					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID))
+					fmt.Fprintf(&notFoundMsg, " (searched within team '%s', ID: %s)", team.DisplayName, args.TeamID)
 				} else {
-					notFoundMsg.WriteString(fmt.Sprintf(" (searched within team ID: %s)", args.TeamID))
+					fmt.Fprintf(&notFoundMsg, " (searched within team ID: %s)", args.TeamID)
 				}
 			} else {
 				notFoundMsg.WriteString(" (searched across all teams)")
@@ -468,10 +393,10 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 			notFoundMsg.WriteString("\n\nACTION REQUIRED - Try these alternatives before asking the user:\n")
 			stepNum := 1
 			if args.TeamID == "" {
-				notFoundMsg.WriteString(fmt.Sprintf("%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum))
+				fmt.Fprintf(&notFoundMsg, "%d. If you know the team, call get_channel_info with team_id parameter to narrow the search\n", stepNum)
 				stepNum++
 			}
-			notFoundMsg.WriteString(fmt.Sprintf("%d. Call get_user_channels to list all channels you have access to\n", stepNum))
+			fmt.Fprintf(&notFoundMsg, "%d. Call get_user_channels to list all channels you have access to\n", stepNum)
 			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
 
 			return notFoundMsg.String(), nil
@@ -546,7 +471,7 @@ func (p *MattermostToolProvider) lookupChannelRole(ctx context.Context, client *
 // It uses a local team cache to avoid redundant GetTeam calls within the same result set.
 func (p *MattermostToolProvider) formatMultipleChannels(ctx context.Context, client *model.Client4, channels []*model.Channel, userID string) (string, error) {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d channels with matching name:\n\n", len(channels)))
+	fmt.Fprintf(&result, "Found %d channels with matching name:\n\n", len(channels))
 
 	// Cache teams to avoid duplicate fetches
 	teamCache := make(map[string]*model.Team)
@@ -627,15 +552,7 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 		return "no members found in this channel", nil
 	}
 
-	rendered := make([]renderMember, len(members))
-	for i, member := range members {
-		rendered[i] = renderMember{
-			userID: member.UserId,
-			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
-		}
-	}
-
-	return p.renderMembers(ctx, client, "Channel Members", args.Page, rendered, excludeBots), nil
+	return p.renderMembers(ctx, client, "Channel Members", args.Page, channelRenderMembers(members), excludeBots), nil
 }
 
 // toolAddChannelMember implements the add_channel_member tool using the context client
@@ -903,7 +820,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 
 	// Build human-readable response (consistent with get_channel_members, read_channel, etc.)
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("User Channels (page %d, showing %d of %d channels):\n\n", args.Page, len(channels), totalCount))
+	fmt.Fprintf(&result, "User Channels (page %d, showing %d of %d channels):\n\n", args.Page, len(channels), totalCount)
 
 	for i, channel := range channels {
 		displayName := channel.DisplayName
@@ -937,7 +854,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 
 	if hasMore {
-		result.WriteString(fmt.Sprintf("Page %d of results shown. More channels available — use page=%d to see the next page.\n", args.Page, args.Page+1))
+		fmt.Fprintf(&result, "Page %d of results shown. More channels available — use page=%d to see the next page.\n", args.Page, args.Page+1)
 	}
 
 	return result.String(), nil
@@ -1033,13 +950,8 @@ func (p *MattermostToolProvider) toolGetChannelStats(mcpContext *MCPToolContext,
 
 // toolGetChannelMemberCounts implements the get_channel_member_counts tool.
 func (p *MattermostToolProvider) toolGetChannelMemberCounts(mcpContext *MCPToolContext, args GetChannelMemberCountsArgs) (string, error) {
-	if len(args.ChannelIDs) == 0 {
-		return "", fmt.Errorf("channel_ids cannot be empty")
-	}
-	for _, id := range args.ChannelIDs {
-		if err := requireID("channel_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("channel_ids", args.ChannelIDs); err != nil {
+		return "", err
 	}
 
 	counts, _, err := mcpContext.Client.GetChannelsMemberCount(mcpContext.Ctx, args.ChannelIDs)
@@ -1050,7 +962,7 @@ func (p *MattermostToolProvider) toolGetChannelMemberCounts(mcpContext *MCPToolC
 	var result strings.Builder
 	result.WriteString("Channel member counts:\n")
 	for _, id := range args.ChannelIDs {
-		result.WriteString(fmt.Sprintf("%s: %d\n", id, counts[id]))
+		fmt.Fprintf(&result, "%s: %d\n", id, counts[id])
 	}
 	return result.String(), nil
 }
@@ -1210,7 +1122,7 @@ func (p *MattermostToolProvider) formatChannelList(ctx context.Context, client *
 
 	teamCache := make(map[string]string)
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d %s:\n\n", len(channels), noun))
+	fmt.Fprintf(&result, "Found %d %s:\n\n", len(channels), noun)
 	for i, channel := range channels {
 		teamName := ""
 		if channel.TeamId != "" {

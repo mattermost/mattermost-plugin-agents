@@ -89,11 +89,13 @@ func TestHandleGetUserMCPToolsIncludesZeroToolConfiguredServers(t *testing.T) {
 
 	require.Equal(t, zeroToolServer.Name, response.Servers[0].Name)
 	require.Equal(t, zeroToolServer.BaseURL, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 	require.False(t, response.Servers[0].Authenticated)
 	require.Empty(t, response.Servers[0].Tools)
 
 	require.Equal(t, toolServer.Name, response.Servers[1].Name)
 	require.Equal(t, toolServer.BaseURL, response.Servers[1].ServerOrigin)
+	require.Equal(t, mcp.ServerKindRemote, response.Servers[1].Kind)
 	require.True(t, response.Servers[1].Authenticated)
 	require.Len(t, response.Servers[1].Tools, 2)
 	require.Equal(t, "a_tool", response.Servers[1].Tools[0].Name)
@@ -478,6 +480,8 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, mcp.EmbeddedServerName, response.Servers[0].Name)
 	require.Equal(t, mcp.EmbeddedClientKey, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindEmbedded, response.Servers[0].Kind)
+	require.False(t, response.Servers[0].ServiceAccountConfigured)
 	require.True(t, response.Servers[0].Authenticated)
 	require.Empty(t, response.Servers[0].Tools)
 	require.False(t, response.Servers[0].NeedsOAuth)
@@ -526,6 +530,8 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	require.Len(t, response.Servers, 1)
 	require.Equal(t, pluginCfg.Name, response.Servers[0].Name)
 	require.Equal(t, "plugin://"+pluginCfg.PluginID, response.Servers[0].ServerOrigin)
+	require.Equal(t, mcp.ServerKindPlugin, response.Servers[0].Kind)
+	require.False(t, response.Servers[0].ServiceAccountConfigured)
 	require.True(t, response.Servers[0].Authenticated)
 	require.False(t, response.Servers[0].NeedsOAuth)
 	require.Len(t, response.Servers[0].Tools, 2)
@@ -596,18 +602,193 @@ func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing
 
 func getUserMCPToolsResponse(t *testing.T, api *API) UserMCPToolsResponse {
 	t.Helper()
+	response, status := requestUserMCPTools(t, api, "")
+	require.Equal(t, http.StatusOK, status)
+	return response
+}
 
-	request := httptest.NewRequest(http.MethodGet, "/mcp/tools", nil)
+func requestUserMCPTools(t *testing.T, api *API, rawQuery string) (UserMCPToolsResponse, int) {
+	t.Helper()
+
+	path := "/mcp/tools"
+	if rawQuery != "" {
+		path += "?" + rawQuery
+	}
+	request := httptest.NewRequest(http.MethodGet, path, nil)
 	request.Header.Add("Mattermost-User-Id", testUserID)
 
 	recorder := httptest.NewRecorder()
 	api.ServeHTTP(nil, recorder, request)
 
-	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-
 	var response UserMCPToolsResponse
-	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
-	return response
+	if recorder.Result().StatusCode == http.StatusOK {
+		require.NoError(t, json.NewDecoder(recorder.Body).Decode(&response))
+	}
+	return response, recorder.Result().StatusCode
+}
+
+func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	n8nServer := mcp.ServerConfig{
+		Name:                  "n8n",
+		Enabled:               true,
+		BaseURL:               "https://n8n.example.com/mcp",
+		ServiceAccountHeaders: map[string]string{"X-API-KEY": "sa-pat"},
+	}
+	oauthOnlyServer := mcp.ServerConfig{
+		Name:     "OAuth Only",
+		Enabled:  true,
+		BaseURL:  "https://oauth.example.com/mcp",
+		ClientID: "client-id",
+	}
+	saTool := llm.Tool{
+		Name:         "workflow_list",
+		Description:  "List n8n workflows",
+		ServerOrigin: n8nServer.BaseURL,
+	}
+	userTool := llm.Tool{
+		Name:         "user_only_tool",
+		Description:  "should not appear in SA catalog",
+		ServerOrigin: oauthOnlyServer.BaseURL,
+	}
+
+	t.Run("uses the agent's bot user SA catalog and hides OAuth", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID:                    "agent-1",
+			CreatorID:             testUserID,
+			BotUserID:             testBotUserID,
+			UseServiceAccountAuth: true,
+		}
+		mcpMock := &mockMCPClientManager{
+			tools:               []llm.Tool{userTool},
+			serviceAccountTools: []llm.Tool{saTool},
+		}
+		e.api.mcpClientManager = mcpMock
+		e.config.mcpConfig = mcp.Config{
+			Enabled: true,
+			Servers: []mcp.ServerConfig{n8nServer, oauthOnlyServer},
+		}
+
+		response, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, []string{testBotUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
+		require.Empty(t, mcpMock.getContexts)
+
+		require.Len(t, response.Servers, 2)
+		require.Equal(t, "n8n", response.Servers[0].Name)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
+		require.True(t, response.Servers[0].Authenticated)
+		require.False(t, response.Servers[0].NeedsOAuth)
+		require.Empty(t, response.Servers[0].AuthURL)
+		require.True(t, response.Servers[0].ServiceAccountConfigured)
+		require.Len(t, response.Servers[0].Tools, 1)
+		require.Equal(t, "workflow_list", response.Servers[0].Tools[0].Name)
+
+		require.Equal(t, "OAuth Only", response.Servers[1].Name)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[1].Kind)
+		require.False(t, response.Servers[1].Authenticated)
+		require.False(t, response.Servers[1].NeedsOAuth)
+		require.Empty(t, response.Servers[1].AuthURL)
+		require.False(t, response.Servers[1].ServiceAccountConfigured)
+		require.Empty(t, response.Servers[1].Tools)
+	})
+
+	t.Run("rejects catalog=service_account without manage access", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID:                    "agent-1",
+			CreatorID:             testOtherUserID,
+			BotUserID:             testBotUserID,
+			UseServiceAccountAuth: true,
+		}
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+		mcpMock := &mockMCPClientManager{}
+		e.api.mcpClientManager = mcpMock
+
+		_, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+		require.Equal(t, http.StatusForbidden, status)
+		require.Empty(t, mcpMock.getServiceAccountCalls)
+		require.Empty(t, mcpMock.getContexts)
+	})
+
+	t.Run("sysadmin can preview SA catalog before the flag is saved", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID:                    "agent-1",
+			CreatorID:             testUserID,
+			BotUserID:             testBotUserID,
+			UseServiceAccountAuth: false,
+		}
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+		mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+		e.api.mcpClientManager = mcpMock
+		e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+		response, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, []string{testBotUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
+		require.True(t, response.Servers[0].Authenticated)
+	})
+
+	t.Run("empty BotUserID returns 500 and does not fetch SA tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.agentStore.agents["agent-1"] = &llm.BotConfig{
+			ID:                    "agent-1",
+			CreatorID:             testUserID,
+			BotUserID:             "",
+			UseServiceAccountAuth: true,
+		}
+		mcpMock := &mockMCPClientManager{}
+		e.api.mcpClientManager = mcpMock
+
+		_, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+		require.Equal(t, http.StatusInternalServerError, status)
+		require.Empty(t, mcpMock.getServiceAccountCalls)
+		require.Empty(t, mcpMock.getContexts)
+	})
+
+	t.Run("rejects unknown catalog values", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		mcpMock := &mockMCPClientManager{}
+		e.api.mcpClientManager = mcpMock
+		_, status := requestUserMCPTools(t, e.api, "catalog=user")
+		require.Equal(t, http.StatusBadRequest, status)
+		require.Empty(t, mcpMock.getServiceAccountCalls)
+		require.Empty(t, mcpMock.getContexts)
+	})
+
+	t.Run("sysadmin unsaved-agent preview uses the viewer as remote owner and invoker", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
+		mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+		e.api.mcpClientManager = mcpMock
+		e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+		response, status := requestUserMCPTools(t, e.api, "catalog=service_account")
+		require.Equal(t, http.StatusOK, status)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountCalls)
+		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
+		require.True(t, response.Servers[0].Authenticated)
+		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
+	})
 }
 
 func refreshUserMCPToolsResponse(t *testing.T, api *API, body io.Reader) UserMCPToolsResponse {
@@ -647,12 +828,12 @@ func TestHandleDeleteUserMCPOAuth(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient
@@ -897,12 +1078,12 @@ func TestPublishMCPConnectionUpdatedEmitsUserScopedEvent(t *testing.T) {
 
 	mmClient := mmapimocks.NewMockClient(t)
 	var gotEvent string
-	var gotPayload map[string]interface{}
+	var gotPayload map[string]any
 	var gotBroadcast *model.WebsocketBroadcast
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
 			gotEvent = args.String(0)
-			gotPayload, _ = args.Get(1).(map[string]interface{})
+			gotPayload, _ = args.Get(1).(map[string]any)
 			gotBroadcast, _ = args.Get(2).(*model.WebsocketBroadcast)
 		}).Return()
 	e.api.mmClient = mmClient

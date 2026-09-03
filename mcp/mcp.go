@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"net/http"
 
-	gosdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -86,38 +84,20 @@ func DiscoverPluginServerTools(
 		return nil, fmt.Errorf("sourcePluginAPI is nil; plugin MCP server %s cannot be reached", cfg.PluginID)
 	}
 
-	// Transport chain: PluginHTTPRoundTripper (URL rewrite) -> headerTransport (UserID).
-	roundTripper := NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI)
-	httpClient := &http.Client{
-		Transport: &headerTransport{
-			base:    roundTripper,
-			headers: map[string]string{MMUserIDHeader: userID},
-		},
-	}
-
-	mcpClient := NewSDKClient(
-		&gosdkmcp.Implementation{
-			Name:    "mattermost-agents-admin-probe",
-			Version: "1.0",
-		},
-		&gosdkmcp.ClientOptions{},
-	)
-	session, err := mcpClient.Connect(ctx, &gosdkmcp.StreamableClientTransport{
-		Endpoint:   "http://plugin" + cfg.Path,
-		HTTPClient: httpClient,
-	}, nil)
+	httpClient := PluginServerHTTPClient(NewPluginHTTPRoundTripper(cfg.PluginID, cfg.Path, sourcePluginAPI), userID)
+	session, err := ConnectPluginServer(ctx, "mattermost-agents-admin-probe", cfg.Path, httpClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 	defer func() { _ = session.Close() }()
 
-	result, err := session.ListTools(ctx, &gosdkmcp.ListToolsParams{})
+	remoteTools, err := ListSessionTools(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tools on plugin MCP server %s: %w", cfg.PluginID, err)
 	}
 
-	tools := make([]ToolInfo, 0, len(result.Tools))
-	for _, t := range result.Tools {
+	tools := make([]ToolInfo, 0, len(remoteTools))
+	for _, t := range remoteTools {
 		tools = append(tools, ToolInfo{
 			Name:        t.Name,
 			Description: t.Description,

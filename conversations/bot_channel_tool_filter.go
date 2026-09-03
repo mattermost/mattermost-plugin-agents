@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -79,6 +80,20 @@ func applyToolAvailability(context *llm.Context, isDM bool, allowToolsInChannel 
 	return toolsDisabled
 }
 
+// toolsDisabledLLMOptions returns the language-model options for a run whose
+// tools are disabled: tools off, plus native web search when both the config
+// and the bot allow it in channels. Nil when tools are enabled.
+func (c *Conversations) toolsDisabledLLMOptions(bot *bots.Bot, toolsDisabled bool) []llm.LanguageModelOption {
+	if !toolsDisabled {
+		return nil
+	}
+	opts := []llm.LanguageModelOption{llm.WithToolsDisabled()}
+	if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
+		opts = append(opts, llm.WithNativeWebSearchAllowed())
+	}
+	return opts
+}
+
 func botChannelAutoEverywhereKeepTool(checker mcp.ToolPolicyChecker, tool llm.Tool) bool {
 	if mcp.IsMCPMetaTool(tool.Name) {
 		return true
@@ -111,7 +126,7 @@ func (c *Conversations) channelFollowUpMCPToolFilterContextOptions(isDM bool, co
 }
 
 func (c *Conversations) shouldConstrainChannelFollowUpToAutoEverywhere(isDM bool, conv *store.Conversation) bool {
-	if isDM || c.configProvider == nil || !c.configProvider.EnableChannelMentionToolCalling() {
+	if isDM || !c.channelMentionToolCallingEnabled() {
 		return false
 	}
 

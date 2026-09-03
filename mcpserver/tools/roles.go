@@ -46,10 +46,10 @@ const (
 // getRoleTools returns the role and permission tools.
 func (p *MattermostToolProvider) getRoleTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_role", Description: getRoleDescription, Schema: NewJSONSchemaForAccessMode[GetRoleArgs](string(p.accessMode)), Resolver: typed("get_role", p.toolGetRole)},
-		{Name: "get_channel_moderations", Description: getChannelModerationsDescription, Schema: NewJSONSchemaForAccessMode[GetChannelModerationsArgs](string(p.accessMode)), Resolver: typed("get_channel_moderations", p.toolGetChannelModerations)},
-		{Name: "update_channel_member_roles", Description: updateChannelMemberRolesDescription, Schema: NewJSONSchemaForAccessMode[UpdateChannelMemberRolesArgs](string(p.accessMode)), Resolver: typed("update_channel_member_roles", p.toolUpdateChannelMemberRoles)},
-		{Name: "update_team_member_roles", Description: updateTeamMemberRolesDescription, Schema: NewJSONSchemaForAccessMode[UpdateTeamMemberRolesArgs](string(p.accessMode)), Resolver: typed("update_team_member_roles", p.toolUpdateTeamMemberRoles)},
+		mcpTool(p, "get_role", getRoleDescription, p.toolGetRole),
+		mcpTool(p, "get_channel_moderations", getChannelModerationsDescription, p.toolGetChannelModerations),
+		mcpTool(p, "update_channel_member_roles", updateChannelMemberRolesDescription, p.toolUpdateChannelMemberRoles),
+		mcpTool(p, "update_team_member_roles", updateTeamMemberRolesDescription, p.toolUpdateTeamMemberRoles),
 	}
 }
 

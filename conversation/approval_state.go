@@ -4,8 +4,6 @@
 package conversation
 
 import (
-	"encoding/json"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 )
 
@@ -59,8 +57,8 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 	pendingToolUse := false
 	executedToolUseIDs := make(map[string]struct{})
 	for _, t := range responseTurns {
-		var blocks []ContentBlock
-		if err := json.Unmarshal(t.Content, &blocks); err != nil {
+		blocks, err := UnmarshalBlocks(t.Content)
+		if err != nil {
 			continue
 		}
 		for _, b := range blocks {
@@ -86,8 +84,8 @@ func ComputePostApprovalState(turns []store.Turn, postID string) string {
 	undecidedResult := false
 	sawMatchingResult := false
 	for _, t := range turns {
-		var blocks []ContentBlock
-		if err := json.Unmarshal(t.Content, &blocks); err != nil {
+		blocks, err := UnmarshalBlocks(t.Content)
+		if err != nil {
 			continue
 		}
 		for _, b := range blocks {

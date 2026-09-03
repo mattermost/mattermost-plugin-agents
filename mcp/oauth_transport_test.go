@@ -53,7 +53,7 @@ func TestOAuthRoundTripper(t *testing.T) {
 			var gotAuthorization atomic.Value
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Metadata discovery endpoints intentionally 404 so
-				// createOAuthConfig uses its hardcoded endpoint fallback.
+				// resolveOAuthConfig uses its hardcoded endpoint fallback.
 				if r.URL.Path != "/mcp" {
 					http.NotFound(w, r)
 					return

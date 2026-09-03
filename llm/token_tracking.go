@@ -24,7 +24,7 @@ type TokenUsagePluginLogger interface {
 
 // TokenUsageLoggingWrapper wraps a LanguageModel to log token usage
 type TokenUsageLoggingWrapper struct {
-	wrapped     LanguageModel
+	LanguageModel
 	botUsername string
 	sinks       *TokenUsageSinks
 	metrics     MetricsObserver
@@ -33,10 +33,10 @@ type TokenUsageLoggingWrapper struct {
 // NewTokenUsageLoggingWrapper creates a wrapper using a shared sink controller.
 func NewTokenUsageLoggingWrapper(wrapped LanguageModel, botUsername string, sinks *TokenUsageSinks, metrics MetricsObserver) *TokenUsageLoggingWrapper {
 	return &TokenUsageLoggingWrapper{
-		wrapped:     wrapped,
-		botUsername: botUsername,
-		sinks:       sinks,
-		metrics:     metrics,
+		LanguageModel: wrapped,
+		botUsername:   botUsername,
+		sinks:         sinks,
+		metrics:       metrics,
 	}
 }
 
@@ -52,7 +52,7 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 		Format: "json",
 		Levels: []mlog.Level{mlog.LvlInfo, mlog.LvlDebug},
 	}
-	jsonFileOptions := map[string]interface{}{
+	jsonFileOptions := map[string]any{
 		"filename": "logs/agents/token_usage.log",
 		"max_size": 100,  // MB
 		"compress": true, // compress rotated files
@@ -76,13 +76,13 @@ func CreateTokenLogger() (*mlog.Logger, error) {
 // ChatCompletion intercepts the streaming response to extract and log token usage
 func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	if !w.shouldTrackTokenUsage() {
-		return w.wrapped.ChatCompletion(ctx, request, opts...)
+		return w.LanguageModel.ChatCompletion(ctx, request, opts...)
 	}
 	if request.OperationSubType == "" {
 		request.OperationSubType = SubTypeStreaming
 	}
 
-	result, err := w.wrapped.ChatCompletion(ctx, request, opts...)
+	result, err := w.LanguageModel.ChatCompletion(ctx, request, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -127,6 +127,8 @@ func (w *TokenUsageLoggingWrapper) ChatCompletion(ctx context.Context, request C
 
 type tokenUsageDimensions struct {
 	userID           string
+	actingUserID     string
+	toolAuthMode     string
 	teamID           string
 	channelID        string
 	channelType      string
@@ -175,6 +177,8 @@ func buildTokenUsageLogKeyValuePairs(dimensions tokenUsageDimensions, usage Toke
 		// Temporary compatibility alias for existing dashboards/queries.
 		"bot_username", dimensions.botUsername,
 		"agent_user_id", dimensions.botUserID,
+		"acting_user_id", dimensions.actingUserID,
+		"tool_auth_mode", dimensions.toolAuthMode,
 		"model", dimensions.model,
 		"service_type", dimensions.serviceType,
 		"operation", dimensions.operation,
@@ -204,6 +208,8 @@ func tokenUsageKeyValuePairsToMlogFields(keyValuePairs []any) []mlog.Field {
 func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername, optionModel string) tokenUsageDimensions {
 	dimensions := tokenUsageDimensions{
 		userID:           TokenUsageUnknown,
+		actingUserID:     TokenUsageUnknown,
+		toolAuthMode:     ToolAuthModeUser,
 		teamID:           TokenUsageUnknown,
 		channelID:        TokenUsageUnknown,
 		channelType:      TokenUsageUnknown,
@@ -228,6 +234,17 @@ func extractTokenUsageDimensions(request CompletionRequest, fallbackBotUsername,
 	if request.Context != nil {
 		if request.Context.RequestingUser != nil && request.Context.RequestingUser.Id != "" {
 			dimensions.userID = request.Context.RequestingUser.Id
+		}
+
+		// The acting identity is the requesting user in user mode, the agent's
+		// bot user in service-account mode.
+		dimensions.actingUserID = dimensions.userID
+		if request.Context.ToolAuthMode == ToolAuthModeServiceAccount {
+			dimensions.toolAuthMode = ToolAuthModeServiceAccount
+			dimensions.actingUserID = TokenUsageUnknown
+			if request.Context.BotUserID != "" {
+				dimensions.actingUserID = request.Context.BotUserID
+			}
 		}
 
 		if request.Context.Team != nil && request.Context.Team.Id != "" {
@@ -329,19 +346,4 @@ func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(ctx context.Context, r
 
 func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
 	return w != nil && w.sinks != nil && w.sinks.LoggingEnabled()
-}
-
-// CountTokens delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
-	return w.wrapped.CountTokens(ctx, request, opts...)
-}
-
-// InputTokenLimit delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) InputTokenLimit() int {
-	return w.wrapped.InputTokenLimit()
-}
-
-// OutputTokenLimit delegates to the wrapped model
-func (w *TokenUsageLoggingWrapper) OutputTokenLimit() int {
-	return w.wrapped.OutputTokenLimit()
 }

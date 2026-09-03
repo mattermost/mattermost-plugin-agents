@@ -550,7 +550,7 @@ func TestChannelMentionToolSharingFlip(t *testing.T) {
 
 	for i := range assistantBlocks {
 		if assistantBlocks[i].Type == conversation.BlockTypeToolUse {
-			assistantBlocks[i].Shared = conversation.BoolPtr(true)
+			assistantBlocks[i].Shared = new(true)
 		}
 	}
 	updatedAssistant, err := json.Marshal(assistantBlocks)
@@ -565,7 +565,7 @@ func TestChannelMentionToolSharingFlip(t *testing.T) {
 
 	for i := range resultBlocks {
 		if resultBlocks[i].Type == conversation.BlockTypeToolResult {
-			resultBlocks[i].Shared = conversation.BoolPtr(true)
+			resultBlocks[i].Shared = new(true)
 		}
 	}
 	updatedResult, err := json.Marshal(resultBlocks)

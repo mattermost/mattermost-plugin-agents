@@ -9,19 +9,16 @@ package bifrost
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/google/jsonschema-go/jsonschema"
 	bifrostcore "github.com/maximhq/bifrost/core"
 	providerutils "github.com/maximhq/bifrost/core/providers/utils"
 	"github.com/maximhq/bifrost/core/schemas"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
@@ -36,20 +33,17 @@ const (
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
+	// FileDownloadTimeout caps a provider file download so a wedged provider
+	// cannot hold a tool resolution open indefinitely.
+	FileDownloadTimeout = 60 * time.Second
 )
 
-type webSearchFallbackSource struct {
-	URL   string
-	Title string
-}
-
-type pendingAnnotationPosition struct {
-	index        int
-	missingStart bool
-	missingEnd   bool
-}
-
-const missingContentIndex = -1
+const (
+	// anthropicBetaHeader and anthropicFilesAPIBeta mirror Bifrost's internal
+	// (unexported) constants for the Anthropic beta opt-in header.
+	anthropicBetaHeader   = "anthropic-beta"
+	anthropicFilesAPIBeta = "files-api-2025-04-14"
+)
 
 // LLM implements the llm.LanguageModel interface using the Bifrost gateway.
 type LLM struct {
@@ -74,6 +68,10 @@ type LLM struct {
 	// fallbacks is attached to every outgoing request so Bifrost retries with
 	// alternative providers when the primary fails.
 	fallbacks []schemas.Fallback
+
+	// providerFileDownloadRoutes are registered Bifrost routes that can serve
+	// captured files. Fallbacks of the same provider type have distinct routes.
+	providerFileDownloadRoutes map[schemas.ModelProvider]bool
 }
 
 // ProviderSettings holds the connection and credential fields needed to reach
@@ -135,216 +133,6 @@ type FallbackEntry struct {
 	ChatOnly bool
 }
 
-// providerAccount implements the Bifrost Account interface for a single provider.
-type providerAccount struct {
-	ProviderSettings
-
-	// name is the Bifrost registration name: empty for a standard provider, or
-	// a unique custom-provider name when this account shares a base provider
-	// type with another in the same client (which would otherwise collide on
-	// the base type's single slot).
-	name     schemas.ModelProvider
-	keyless  bool
-	chatOnly bool
-}
-
-// registeredName returns the name this account is registered under with Bifrost,
-// defaulting to the base provider type when no custom name is set.
-func (a *providerAccount) registeredName() schemas.ModelProvider {
-	if a.name != "" {
-		return a.name
-	}
-	return a.Provider
-}
-
-// isCustom reports whether this account is registered as a Bifrost custom
-// provider (a unique name backed by the base provider type), which lets two
-// services sharing a base provider type keep their own base URL and credentials.
-func (a *providerAccount) isCustom() bool {
-	return a.name != "" && a.name != a.Provider
-}
-
-func (a *providerAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return []schemas.ModelProvider{a.registeredName()}, nil
-}
-
-func (a *providerAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
-	if provider != a.registeredName() {
-		return nil, fmt.Errorf("provider %s not supported", provider)
-	}
-
-	key := schemas.Key{
-		Value:  schemas.SecretVar{Val: a.APIKey},
-		Weight: 1.0,
-		// Bifrost v1.5+ requires keys to declare which models they support;
-		// "*" allows any model the configured provider can serve.
-		Models: schemas.WhiteList{"*"},
-	}
-
-	// Handle Azure config
-	if a.Provider == schemas.Azure && a.APIURL != "" {
-		key.AzureKeyConfig = &schemas.AzureKeyConfig{
-			Endpoint: schemas.SecretVar{Val: a.APIURL},
-		}
-	}
-
-	// Handle Bedrock config
-	if a.Provider == schemas.Bedrock {
-		region := schemas.SecretVar{Val: a.Region}
-		key.BedrockKeyConfig = &schemas.BedrockKeyConfig{
-			AccessKey: schemas.SecretVar{Val: a.AWSAccessKeyID},
-			SecretKey: schemas.SecretVar{Val: a.AWSSecretAccessKey},
-			Region:    &region,
-		}
-	}
-
-	// Handle Vertex config. Empty AuthCredentials signals ADC / attached IAM role.
-	if a.Provider == schemas.Vertex {
-		key.VertexKeyConfig = &schemas.VertexKeyConfig{
-			ProjectID:       schemas.SecretVar{Val: a.VertexProjectID},
-			ProjectNumber:   schemas.SecretVar{Val: a.VertexProjectNumber},
-			Region:          schemas.SecretVar{Val: a.Region},
-			AuthCredentials: schemas.SecretVar{Val: a.VertexAuthCredentials},
-		}
-	}
-
-	return []schemas.Key{key}, nil
-}
-
-func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	if provider != a.registeredName() {
-		return nil, fmt.Errorf("provider %s not supported", provider)
-	}
-
-	networkConfig := schemas.DefaultNetworkConfig
-
-	// Pass through the streaming timeout to the Bifrost HTTP client so that
-	// long-running requests (e.g. thinking models) are not killed by the
-	// underlying fasthttp ReadTimeout before the watchdog timer fires.
-	if a.StreamingTimeout > 0 {
-		networkConfig.DefaultRequestTimeoutInSeconds = int(a.StreamingTimeout.Seconds()) * 10
-	} else {
-		networkConfig.DefaultRequestTimeoutInSeconds = int(DefaultStreamingTimeout.Seconds()) * 10
-	}
-
-	// Use BaseURL for providers that support custom endpoints (not Azure, which uses AzureKeyConfig)
-	if a.APIURL != "" && a.Provider != schemas.Azure {
-		networkConfig.BaseURL = a.APIURL
-	}
-
-	// Pass OrgID via ExtraHeaders for OpenAI
-	if a.OrgID != "" && a.Provider == schemas.OpenAI {
-		networkConfig.ExtraHeaders = map[string]string{
-			"OpenAI-Organization": a.OrgID,
-		}
-	}
-
-	// Configure retry logic with sensible defaults
-	networkConfig.MaxRetries = 2
-	networkConfig.RetryBackoffInitial = 1 * time.Second
-	networkConfig.RetryBackoffMax = 10 * time.Second
-
-	config := &schemas.ProviderConfig{
-		NetworkConfig:            networkConfig,
-		ConcurrencyAndBufferSize: schemas.DefaultConcurrencyAndBufferSize,
-		ProxyConfig: &schemas.ProxyConfig{
-			Type: schemas.EnvProxy,
-		},
-	}
-
-	if a.isCustom() {
-		cpc := &schemas.CustomProviderConfig{
-			BaseProviderType: a.Provider,
-			IsKeyLess:        a.keyless,
-		}
-		if a.chatOnly {
-			// Chat-only AllowedRequests makes Bifrost transparently downgrade a
-			// Responses-API request to /v1/chat/completions instead of POSTing
-			// /v1/responses to an endpoint that does not implement it.
-			cpc.AllowedRequests = &schemas.AllowedRequests{
-				ChatCompletion:       true,
-				ChatCompletionStream: true,
-			}
-		}
-		config.CustomProviderConfig = cpc
-	}
-
-	return config, nil
-}
-
-// multiProviderAccount implements the Bifrost Account interface for the
-// primary provider plus every fallback in the chain.
-type multiProviderAccount struct {
-	entries map[schemas.ModelProvider]*providerAccount
-	order   []schemas.ModelProvider
-}
-
-func newMultiProviderAccount() *multiProviderAccount {
-	return &multiProviderAccount{
-		entries: make(map[schemas.ModelProvider]*providerAccount),
-	}
-}
-
-// isCustomCapableProvider reports whether Bifrost can host a second instance of
-// this provider type as a custom provider backed by the same base type. Only the
-// providers in schemas.SupportedBaseProviders qualify; others (e.g. Azure,
-// Mistral, Vertex) cannot be disambiguated this way.
-func isCustomCapableProvider(p schemas.ModelProvider) bool {
-	for _, base := range schemas.SupportedBaseProviders {
-		if base == p {
-			return true
-		}
-	}
-	return false
-}
-
-// customProviderName builds a stable, unique Bifrost custom-provider name for a
-// service that shares a base provider type with another in the same client.
-func customProviderName(base schemas.ModelProvider, serviceID string) schemas.ModelProvider {
-	return schemas.ModelProvider(fmt.Sprintf("%s::%s", base, serviceID))
-}
-
-// addProvider registers a provider under its Bifrost registration name.
-// First-registered wins on a name collision, because Bifrost indexes by name.
-func (m *multiProviderAccount) addProvider(entry *providerAccount) {
-	name := entry.registeredName()
-	if _, exists := m.entries[name]; exists {
-		return
-	}
-	m.entries[name] = entry
-	m.order = append(m.order, name)
-}
-
-func (m *multiProviderAccount) GetConfiguredProviders() ([]schemas.ModelProvider, error) {
-	return m.order, nil
-}
-
-func (m *multiProviderAccount) GetKeysForProvider(ctx context.Context, provider schemas.ModelProvider) ([]schemas.Key, error) {
-	entry, ok := m.entries[provider]
-	if !ok {
-		return nil, fmt.Errorf("provider %s not configured", provider)
-	}
-	return entry.GetKeysForProvider(ctx, provider)
-}
-
-func (m *multiProviderAccount) GetConfigForProvider(provider schemas.ModelProvider) (*schemas.ProviderConfig, error) {
-	entry, ok := m.entries[provider]
-	if !ok {
-		return nil, fmt.Errorf("provider %s not configured", provider)
-	}
-	return entry.GetConfigForProvider(provider)
-}
-
-// toolArgsToJSON ensures tool arguments are valid JSON.
-// Tools with no parameters produce an empty string which is not valid JSON,
-// so we default to "{}".
-func toolArgsToJSON(s string) json.RawMessage {
-	if s == "" {
-		return json.RawMessage("{}")
-	}
-	return json.RawMessage(s)
-}
-
 func readFileData(file llm.File) ([]byte, error) {
 	if len(file.Data) > 0 {
 		return file.Data, nil
@@ -373,6 +161,11 @@ func New(cfg Config) (*LLM, error) {
 	// Redact the primary and every fallback key from error/log surfaces, even
 	// key formats the generic redaction patterns don't recognize.
 	redactKeys := []string{cfg.APIKey}
+
+	providerFileDownloadRoutes := make(map[schemas.ModelProvider]bool)
+	if supportsProviderFileDownloadProvider(cfg.Provider) {
+		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
+	}
 
 	var fallbacks []schemas.Fallback
 	for _, fb := range cfg.Fallbacks {
@@ -405,6 +198,9 @@ func New(cfg Config) (*LLM, error) {
 
 		account.addProvider(entry)
 		usedNames[name] = true
+		if supportsProviderFileDownloadProvider(fb.Provider) {
+			providerFileDownloadRoutes[name] = true
+		}
 		fallbacks = append(fallbacks, schemas.Fallback{
 			Provider: name,
 			Model:    fb.DefaultModel,
@@ -422,20 +218,21 @@ func New(cfg Config) (*LLM, error) {
 	}
 
 	return &LLM{
-		client:             client,
-		provider:           cfg.Provider,
-		apiKey:             cfg.APIKey,
-		fallbackAPIKeys:    redactKeys[1:],
-		defaultModel:       cfg.DefaultModel,
-		inputTokenLimit:    cfg.InputTokenLimit,
-		outputTokenLimit:   cfg.OutputTokenLimit,
-		streamingTimeout:   streamingTimeout,
-		enabledNativeTools: cfg.EnabledNativeTools,
-		reasoningEnabled:   cfg.ReasoningEnabled,
-		reasoningEffort:    cfg.ReasoningEffort,
-		thinkingBudget:     cfg.ThinkingBudget,
-		useResponsesAPI:    cfg.UseResponsesAPI,
-		fallbacks:          fallbacks,
+		client:                     client,
+		provider:                   cfg.Provider,
+		apiKey:                     cfg.APIKey,
+		fallbackAPIKeys:            redactKeys[1:],
+		defaultModel:               cfg.DefaultModel,
+		inputTokenLimit:            cfg.InputTokenLimit,
+		outputTokenLimit:           cfg.OutputTokenLimit,
+		streamingTimeout:           streamingTimeout,
+		enabledNativeTools:         cfg.EnabledNativeTools,
+		reasoningEnabled:           cfg.ReasoningEnabled,
+		reasoningEffort:            cfg.ReasoningEffort,
+		thinkingBudget:             cfg.ThinkingBudget,
+		useResponsesAPI:            cfg.UseResponsesAPI,
+		fallbacks:                  fallbacks,
+		providerFileDownloadRoutes: providerFileDownloadRoutes,
 	}, nil
 }
 
@@ -480,211 +277,6 @@ func (b *LLM) createConfig(opts []llm.LanguageModelOption) llm.LanguageModelConf
 	return cfg
 }
 
-func buildResponsesJSONSchema(schemaMap map[string]interface{}) (*schemas.ResponsesTextConfigFormatJSONSchema, error) {
-	responseSchema := &schemas.ResponsesTextConfigFormatJSONSchema{}
-
-	if typeVal, ok := schemaMap["type"].(string); ok {
-		responseSchema.Type = Ptr(typeVal)
-	} else if typeList, ok := schemaMap["type"].([]interface{}); ok {
-		anyOf := make([]schemas.OrderedMap, 0, len(typeList))
-		for i, item := range typeList {
-			typeName, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("responses JSON schema type[%d] must be a string", i)
-			}
-			anyOf = append(anyOf, *schemas.NewOrderedMapFromPairs(schemas.KV("type", typeName)))
-		}
-		if len(anyOf) > 0 {
-			responseSchema.AnyOf = anyOf
-		}
-	}
-	if properties, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		responseSchema.Properties = schemas.OrderedMapFromMap(properties)
-	}
-	if required := extractStringSlice(schemaMap["required"]); len(required) > 0 {
-		responseSchema.Required = required
-	}
-	if description, ok := schemaMap["description"].(string); ok {
-		responseSchema.Description = Ptr(description)
-	}
-	if additionalProps, ok := schemaMap["additionalProperties"].(bool); ok {
-		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
-			AdditionalPropertiesBool: &additionalProps,
-		}
-	} else if additionalProps, ok := schemas.SafeExtractOrderedMap(schemaMap["additionalProperties"]); ok {
-		responseSchema.AdditionalProperties = &schemas.AdditionalPropertiesStruct{
-			AdditionalPropertiesMap: additionalProps,
-		}
-	}
-	if name, ok := schemaMap["name"].(string); ok {
-		responseSchema.Name = Ptr(name)
-	} else if title, ok := schemaMap["title"].(string); ok {
-		responseSchema.Name = Ptr(title)
-	}
-	if defs, ok := schemaMap["$defs"].(map[string]interface{}); ok {
-		responseSchema.Defs = schemas.OrderedMapFromMap(defs)
-	}
-	if definitions, ok := schemaMap["definitions"].(map[string]interface{}); ok {
-		responseSchema.Definitions = schemas.OrderedMapFromMap(definitions)
-	}
-	if ref, ok := schemaMap["$ref"].(string); ok {
-		responseSchema.Ref = Ptr(ref)
-	}
-	if items, ok := schemaMap["items"].(map[string]interface{}); ok {
-		responseSchema.Items = schemas.OrderedMapFromMap(items)
-	}
-	if minItems, ok := toInt64(schemaMap["minItems"]); ok {
-		responseSchema.MinItems = &minItems
-	}
-	if maxItems, ok := toInt64(schemaMap["maxItems"]); ok {
-		responseSchema.MaxItems = &maxItems
-	}
-	if anyOf := extractSchemaList(schemaMap["anyOf"]); len(anyOf) > 0 {
-		responseSchema.AnyOf = append(responseSchema.AnyOf, anyOf...)
-	}
-	if oneOf := extractSchemaList(schemaMap["oneOf"]); len(oneOf) > 0 {
-		responseSchema.OneOf = oneOf
-	}
-	if allOf := extractSchemaList(schemaMap["allOf"]); len(allOf) > 0 {
-		responseSchema.AllOf = allOf
-	}
-	if format, ok := schemaMap["format"].(string); ok {
-		responseSchema.Format = Ptr(format)
-	}
-	if pattern, ok := schemaMap["pattern"].(string); ok {
-		responseSchema.Pattern = Ptr(pattern)
-	}
-	if minLength, ok := toInt64(schemaMap["minLength"]); ok {
-		responseSchema.MinLength = &minLength
-	}
-	if maxLength, ok := toInt64(schemaMap["maxLength"]); ok {
-		responseSchema.MaxLength = &maxLength
-	}
-	if minimum, ok := toFloat64(schemaMap["minimum"]); ok {
-		responseSchema.Minimum = &minimum
-	}
-	if maximum, ok := toFloat64(schemaMap["maximum"]); ok {
-		responseSchema.Maximum = &maximum
-	}
-	if title, ok := schemaMap["title"].(string); ok {
-		responseSchema.Title = Ptr(title)
-	}
-	if defaultVal, exists := schemaMap["default"]; exists {
-		responseSchema.Default = defaultVal
-	}
-	if nullable, ok := schemaMap["nullable"].(bool); ok {
-		responseSchema.Nullable = &nullable
-	}
-
-	enumValues, err := extractStringEnum(schemaMap["enum"])
-	if err != nil {
-		return nil, err
-	}
-	if len(enumValues) > 0 {
-		responseSchema.Enum = enumValues
-	}
-
-	return responseSchema, nil
-}
-
-func extractStringSlice(value interface{}) []string {
-	switch items := value.(type) {
-	case []string:
-		if len(items) == 0 {
-			return nil
-		}
-		return append([]string(nil), items...)
-	case []interface{}:
-		result := make([]string, 0, len(items))
-		for _, item := range items {
-			str, ok := item.(string)
-			if !ok {
-				continue
-			}
-			result = append(result, str)
-		}
-		if len(result) == 0 {
-			return nil
-		}
-		return result
-	default:
-		return nil
-	}
-}
-
-func extractStringEnum(value interface{}) ([]string, error) {
-	switch items := value.(type) {
-	case nil:
-		return nil, nil
-	case []string:
-		if len(items) == 0 {
-			return nil, nil
-		}
-		return append([]string(nil), items...), nil
-	case []interface{}:
-		result := make([]string, 0, len(items))
-		for i, item := range items {
-			str, ok := item.(string)
-			if !ok {
-				return nil, fmt.Errorf("responses JSON schema enum[%d] must be a string, got %T", i, item)
-			}
-			result = append(result, str)
-		}
-		if len(result) == 0 {
-			return nil, nil
-		}
-		return result, nil
-	default:
-		return nil, fmt.Errorf("responses JSON schema enum must be an array, got %T", value)
-	}
-}
-
-func extractSchemaList(value interface{}) []schemas.OrderedMap {
-	items, ok := value.([]interface{})
-	if !ok {
-		return nil
-	}
-
-	result := make([]schemas.OrderedMap, 0, len(items))
-	for _, item := range items {
-		schemaMap, ok := item.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		result = append(result, *schemas.OrderedMapFromMap(schemaMap))
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
-}
-
-func toInt64(value interface{}) (int64, bool) {
-	switch v := value.(type) {
-	case float64:
-		return int64(v), true
-	case int:
-		return int64(v), true
-	case int64:
-		return v, true
-	default:
-		return 0, false
-	}
-}
-
-func toFloat64(value interface{}) (float64, bool) {
-	switch v := value.(type) {
-	case float64:
-		return v, true
-	case int:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	default:
-		return 0, false
-	}
-}
-
 // ChatCompletion performs a streaming chat completion request.
 func (b *LLM) ChatCompletion(ctx context.Context, request llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	cfg := b.createConfig(opts)
@@ -727,89 +319,6 @@ func (b *LLM) InputTokenLimit() int {
 // Zero means the request-building layer falls back to DefaultMaxTokens.
 func (b *LLM) OutputTokenLimit() int {
 	return b.outputTokenLimit
-}
-
-// setTokenUsageSpanAttributes is the converted-TokenUsage counterpart of
-// setUsageAttributes in tracer.go.
-func setTokenUsageSpanAttributes(span trace.Span, usage llm.TokenUsage) {
-	attrs := []attribute.KeyValue{
-		telemetry.LLMInputTokens.Int64(usage.InputTokens),
-		telemetry.LLMOutputTokens.Int64(usage.OutputTokens),
-	}
-	if usage.CachedReadTokens > 0 {
-		attrs = append(attrs, telemetry.LLMCachedReadTokens.Int64(usage.CachedReadTokens))
-	}
-	if usage.CachedWriteTokens > 0 {
-		attrs = append(attrs, telemetry.LLMCachedWriteTokens.Int64(usage.CachedWriteTokens))
-	}
-	if usage.ReasoningTokens > 0 {
-		attrs = append(attrs, telemetry.LLMReasoningTokens.Int64(usage.ReasoningTokens))
-	}
-	if usage.Cost > 0 {
-		attrs = append(attrs, telemetry.LLMCost.Float64(usage.Cost))
-	}
-	span.SetAttributes(attrs...)
-}
-
-// setCompositionSpanAttributes attaches per-source token attribution to the
-// span, derived from the request's posts and tools and scaled to the
-// provider's input-token total. One attribute per source.
-func setCompositionSpanAttributes(span trace.Span, request llm.CompletionRequest, usage llm.TokenUsage) {
-	if usage.InputTokens <= 0 {
-		return
-	}
-	inputs := request.Composition()
-	if len(inputs) == 0 {
-		return
-	}
-	composition := llm.ComputeComposition(inputs, int(usage.InputTokens), llm.CompositionTotalProvider)
-	attrs := composition.SpanAttributes()
-	if len(attrs) == 0 {
-		return
-	}
-	span.SetAttributes(attrs...)
-}
-
-func convertChatUsage(u *schemas.BifrostLLMUsage) llm.TokenUsage {
-	if u == nil {
-		return llm.TokenUsage{}
-	}
-	usage := llm.TokenUsage{
-		InputTokens:  int64(u.PromptTokens),
-		OutputTokens: int64(u.CompletionTokens),
-	}
-	if u.PromptTokensDetails != nil {
-		usage.CachedReadTokens = int64(u.PromptTokensDetails.CachedReadTokens)
-		usage.CachedWriteTokens = int64(u.PromptTokensDetails.CachedWriteTokens)
-	}
-	if u.CompletionTokensDetails != nil {
-		usage.ReasoningTokens = int64(u.CompletionTokensDetails.ReasoningTokens)
-	}
-	if u.Cost != nil {
-		usage.Cost = u.Cost.TotalCost
-	}
-	return usage
-}
-
-func convertResponsesUsage(u *schemas.ResponsesResponseUsage) llm.TokenUsage {
-	if u == nil {
-		return llm.TokenUsage{}
-	}
-	usage := llm.TokenUsage{
-		InputTokens:  int64(u.InputTokens),
-		OutputTokens: int64(u.OutputTokens),
-	}
-	if u.InputTokensDetails != nil {
-		usage.CachedReadTokens = int64(u.InputTokensDetails.CachedReadTokens)
-		usage.CachedWriteTokens = int64(u.InputTokensDetails.CachedWriteTokens)
-	}
-	if u.OutputTokensDetails != nil {
-		usage.ReasoningTokens = int64(u.OutputTokensDetails.ReasoningTokens)
-	}
-	if u.Cost != nil {
-		usage.Cost = u.Cost.TotalCost
-	}
-	return usage
 }
 
 // bifrostUnsupportedOperationCode is the error Code Bifrost returns when a
@@ -857,6 +366,113 @@ func (b *LLM) CountTokens(ctx context.Context, request llm.CompletionRequest, op
 	return resp.InputTokens, nil
 }
 
+// applyCompletionBetaHeaders opts into provider betas Bifrost does not set
+// itself. Anthropic only reports sandbox file ids when the Files API beta is
+// on the completion request; Bifrost adds that header only when the request
+// already references a file, never because code execution is enabled.
+func (b *LLM) applyCompletionBetaHeaders(bifrostCtx *schemas.BifrostContext) {
+	if bifrostCtx == nil {
+		return
+	}
+	// Any registered file-download route may end up serving the request —
+	// Anthropic can be a fallback rather than the primary — so key the beta
+	// opt-in off the routes, mirroring DownloadProviderFile. Only providers
+	// needing the beta register a route; others ignore the extra header.
+	if len(b.providerFileDownloadRoutes) == 0 || !b.isNativeToolEnabled(llm.NativeToolCodeInterpreter) {
+		return
+	}
+
+	headers, _ := bifrostCtx.Value(schemas.BifrostContextKeyExtraHeaders).(map[string][]string)
+	if headers == nil {
+		headers = map[string][]string{}
+	}
+	if slices.Contains(headers[anthropicBetaHeader], anthropicFilesAPIBeta) {
+		return
+	}
+	headers[anthropicBetaHeader] = append(headers[anthropicBetaHeader], anthropicFilesAPIBeta)
+	bifrostCtx.SetValue(schemas.BifrostContextKeyExtraHeaders, headers)
+}
+
+// ProviderServices must be called on the concrete client before wrapping.
+func (b *LLM) ProviderServices() *llm.ProviderServices {
+	services := &llm.ProviderServices{}
+	if supportsProviderFileDownloadProvider(b.provider) {
+		services.FileDownloader = b
+	}
+	return services
+}
+
+// DownloadProviderFile fetches a provider-side file. The captured reference
+// selects the route so a fallback-created file uses that fallback's credentials.
+// Filename comes from the metadata endpoint; the content response has none.
+// A positive maxBytes rejects an oversized file from the metadata alone,
+// before its content is transferred.
+func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileReference, maxBytes int64) (llm.ProviderFile, error) {
+	providerRoute := b.provider
+	if ref.ProviderRoute != "" {
+		providerRoute = schemas.ModelProvider(ref.ProviderRoute)
+	}
+
+	downloadCtx, span := telemetry.Tracer().Start(ctx, "download provider file",
+		trace.WithAttributes(
+			telemetry.LLMProvider.String(string(providerRoute)),
+			telemetry.LLMOperation.String("file_download"),
+			telemetry.LLMStreaming.Bool(false),
+		),
+	)
+	defer span.End()
+
+	fail := func(err error) (llm.ProviderFile, error) {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return llm.ProviderFile{}, err
+	}
+
+	if ref.ID == "" {
+		return fail(errors.New("file id is required"))
+	}
+	if !b.providerFileDownloadRoutes[providerRoute] {
+		return fail(errors.New("provider file route is not available"))
+	}
+
+	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(downloadCtx, FileDownloadTimeout)
+	defer cancel()
+
+	meta, bifrostErr := b.client.FileRetrieveRequest(bifrostCtx, &schemas.BifrostFileRetrieveRequest{
+		Provider: providerRoute,
+		FileID:   ref.ID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file retrieve error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return fail(err)
+	}
+	if meta == nil {
+		return fail(errors.New("bifrost file retrieve returned nil response"))
+	}
+	if maxBytes > 0 && meta.Bytes > maxBytes {
+		return fail(fmt.Errorf("provider file is %d bytes, over the %d-byte limit", meta.Bytes, maxBytes))
+	}
+
+	resp, bifrostErr := b.client.FileContentRequest(bifrostCtx, &schemas.BifrostFileContentRequest{
+		Provider: providerRoute,
+		FileID:   ref.ID,
+	})
+	if bifrostErr != nil {
+		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		return fail(err)
+	}
+	if resp == nil {
+		return fail(errors.New("bifrost file content returned nil response"))
+	}
+
+	span.SetStatus(codes.Ok, "file download succeeded")
+	return llm.ProviderFile{
+		Name:        meta.Filename,
+		ContentType: resp.ContentType,
+		Content:     resp.Content,
+	}, nil
+}
+
 // functionToolsForCount keeps only function (custom) tool definitions, which
 // contribute to the input-token count, and drops native server tools that the
 // count_tokens endpoint rejects.
@@ -870,598 +486,32 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 	return out
 }
 
-// streamChat handles the streaming chat completion.
-func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	span := telemetry.SpanFromContext(ctx)
-	span.SetAttributes(
-		telemetry.LLMPath.String("chat"),
-		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
-	)
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
-	defer cancel()
-
-	// Convert to Bifrost request
-	bifrostReq := b.convertToBifrostRequest(request, cfg)
-	if bifrostReq.Params != nil {
-		recordReasoningSent(span, bifrostReq.Params.Reasoning)
-	} else {
-		recordReasoningSent(span, nil)
-	}
-
-	// Make streaming request
-	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
-	if bifrostErr != nil {
-		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: err,
-		}
-		return
-	}
-
-	// Process stream
-	var toolCalls []llm.ToolCall
-	var toolCallsBuffer map[int]*toolCallBuffer
-
-	// Reasoning buffers
-	var reasoningBuffer strings.Builder
-	var reasoningSignature string
-	var reasoningComplete bool
-
-	// Watchdog timer for streaming timeout
-	watchdog := make(chan struct{})
-	var watchdogMu sync.Mutex
-
-	go func() {
-		timer := time.NewTimer(b.streamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel()
-				return
-			case <-bifrostCtx.Done():
-				return
-			case <-watchdog:
-				watchdogMu.Lock()
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(b.streamingTimeout)
-				watchdogMu.Unlock()
-			}
-		}
-	}()
-
-	for chunk := range streamChan {
-		// Ping watchdog
-		select {
-		case watchdog <- struct{}{}:
-		default:
-		}
-
-		if chunk.BifrostError != nil {
-			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: err,
-			}
-			return
-		}
-
-		// Process response chunk
-		if chunk.BifrostChatResponse != nil {
-			resp := chunk.BifrostChatResponse
-			if len(resp.Choices) > 0 {
-				choice := resp.Choices[0]
-
-				// Handle text content from delta (streaming)
-				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil && choice.Delta.Content != nil {
-					content := *choice.Delta.Content
-					if content != "" {
-						// Emit reasoning end before first text if we have accumulated reasoning
-						if !reasoningComplete && reasoningBuffer.Len() > 0 {
-							output <- llm.TextStreamEvent{
-								Type: llm.EventTypeReasoningEnd,
-								Value: llm.ReasoningData{
-									Text:      reasoningBuffer.String(),
-									Signature: reasoningSignature,
-								},
-							}
-							reasoningComplete = true
-						}
-						output <- llm.TextStreamEvent{
-							Type:  llm.EventTypeText,
-							Value: content,
-						}
-					}
-				}
-
-				// Handle reasoning/thinking content (streaming)
-				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil {
-					if choice.Delta.Reasoning != nil && *choice.Delta.Reasoning != "" {
-						output <- llm.TextStreamEvent{
-							Type:  llm.EventTypeReasoning,
-							Value: *choice.Delta.Reasoning,
-						}
-						reasoningBuffer.WriteString(*choice.Delta.Reasoning)
-					}
-					for _, rd := range choice.Delta.ReasoningDetails {
-						if rd.Signature != nil && *rd.Signature != "" {
-							reasoningSignature = *rd.Signature
-						}
-					}
-				}
-
-				// Handle tool calls (streaming)
-				if choice.ChatStreamResponseChoice != nil && choice.Delta != nil && len(choice.Delta.ToolCalls) > 0 {
-					if toolCallsBuffer == nil {
-						toolCallsBuffer = make(map[int]*toolCallBuffer)
-					}
-					for _, tc := range choice.Delta.ToolCalls {
-						idx := int(tc.Index)
-						if toolCallsBuffer[idx] == nil {
-							toolCallsBuffer[idx] = &toolCallBuffer{}
-						}
-						if tc.ID != nil {
-							toolCallsBuffer[idx].id = *tc.ID
-						}
-						if tc.Function.Name != nil {
-							toolCallsBuffer[idx].name = *tc.Function.Name
-						}
-						toolCallsBuffer[idx].arguments.WriteString(tc.Function.Arguments)
-					}
-				}
-
-				// Check finish reason
-				if choice.FinishReason != nil {
-					switch *choice.FinishReason {
-					case "tool_calls":
-						// Convert buffered tool calls in index order
-						indices := make([]int, 0, len(toolCallsBuffer))
-						for k := range toolCallsBuffer {
-							indices = append(indices, k)
-						}
-						sort.Ints(indices)
-						for _, k := range indices {
-							buf := toolCallsBuffer[k]
-							toolCalls = append(toolCalls, llm.ToolCall{
-								ID:        buf.id,
-								Name:      buf.name,
-								Arguments: toolArgsToJSON(buf.arguments.String()),
-							})
-						}
-						if len(toolCalls) > 0 {
-							output <- llm.TextStreamEvent{
-								Type:  llm.EventTypeToolCalls,
-								Value: toolCalls,
-							}
-							return
-						}
-					case "stop":
-						// Emit reasoning end if we accumulated reasoning
-						if !reasoningComplete && reasoningBuffer.Len() > 0 {
-							output <- llm.TextStreamEvent{
-								Type: llm.EventTypeReasoningEnd,
-								Value: llm.ReasoningData{
-									Text:      reasoningBuffer.String(),
-									Signature: reasoningSignature,
-								},
-							}
-							reasoningComplete = true
-						}
-					}
-				}
-			}
-
-			// Handle usage data
-			if resp.Usage != nil {
-				usage := convertChatUsage(resp.Usage)
-				if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-					setTokenUsageSpanAttributes(span, usage)
-					setCompositionSpanAttributes(span, request, usage)
-					output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeUsage,
-						Value: usage,
-					}
-				}
-			}
-		}
-	}
-
-	// Emit any unsent reasoning
-	if !reasoningComplete && reasoningBuffer.Len() > 0 {
-		output <- llm.TextStreamEvent{
-			Type: llm.EventTypeReasoningEnd,
-			Value: llm.ReasoningData{
-				Text:      reasoningBuffer.String(),
-				Signature: reasoningSignature,
-			},
-		}
-	}
-
-	// If we have pending tool calls, emit them in index order
-	if len(toolCallsBuffer) > 0 && len(toolCalls) == 0 {
-		indices := make([]int, 0, len(toolCallsBuffer))
-		for k := range toolCallsBuffer {
-			indices = append(indices, k)
-		}
-		sort.Ints(indices)
-		for _, k := range indices {
-			buf := toolCallsBuffer[k]
-			if buf.name != "" {
-				toolCalls = append(toolCalls, llm.ToolCall{
-					ID:        buf.id,
-					Name:      buf.name,
-					Arguments: toolArgsToJSON(buf.arguments.String()),
-				})
-			}
-		}
-		if len(toolCalls) > 0 {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeToolCalls,
-				Value: toolCalls,
-			}
-			return
-		}
-	}
-
-	output <- llm.TextStreamEvent{
-		Type:  llm.EventTypeEnd,
-		Value: nil,
-	}
-}
-
-type toolCallBuffer struct {
-	id        string
-	name      string
-	arguments strings.Builder
-}
-
-// thinkingBlockedBySchema reports whether extended thinking must be dropped
-// for this request: Anthropic rejects thinking combined with structured output.
-func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
-	return b.provider == schemas.Anthropic && cfg.JSONOutputFormat != nil
-}
-
-// buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
-func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
-		return nil
-	}
-
-	switch b.provider {
-	case schemas.Anthropic:
-		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
-		if !ok {
-			return nil
-		}
-		return &schemas.ChatReasoning{MaxTokens: Ptr(budget)}
-	case schemas.Gemini, schemas.Vertex:
-		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
-		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
-		// When an explicit budget is set use it; otherwise fall back to effort.
-		reasoning := &schemas.ChatReasoning{}
-		if b.thinkingBudget > 0 {
-			reasoning.MaxTokens = Ptr(b.thinkingBudget)
-		} else {
-			effort := b.reasoningEffort
-			if effort == "" {
-				effort = "medium"
-			}
-			reasoning.Effort = Ptr(effort)
-		}
-		return reasoning
-	default:
-		// OpenAI/Azure reasoning goes through the Responses API; providers that
-		// reach chat completions here (Cohere, Mistral, Bedrock) reject reasoning_effort.
-		return nil
-	}
-}
-
-// Anthropic budget-based extended thinking requires
-// minThinkingBudget <= budget < max_tokens.
-const (
-	minThinkingBudget        = 1024
-	defaultMaxThinkingBudget = 8192
-)
-
-// calculateThinkingBudget computes the thinking budget for Anthropic models.
-func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
-	if b.thinkingBudget > 0 {
-		return max(b.thinkingBudget, minThinkingBudget)
-	}
-	budget := maxGeneratedTokens / 4
-	return max(min(budget, defaultMaxThinkingBudget), minThinkingBudget)
-}
-
-// anthropicThinkingBudget returns the thinking budget to send for an Anthropic
-// request, clamped into the provider's valid range (minThinkingBudget <=
-// budget < max_tokens). Clamping — rather than gating on the primary model's
-// capabilities — keeps the value valid for every Anthropic model that may see
-// it: models that only support adaptive thinking ignore the budget entirely,
-// while budget-based models (including any Anthropic fallback in the request's
-// fallback chain) reject an out-of-range value with a 400. Returns ok=false
-// when no valid budget exists, in which case thinking must be omitted.
-func (b *LLM) anthropicThinkingBudget(maxGeneratedTokens int) (int, bool) {
-	budget := b.calculateThinkingBudget(maxGeneratedTokens)
-	if budget >= maxGeneratedTokens {
-		budget = maxGeneratedTokens - 1
-	}
-	if budget < minThinkingBudget {
-		return 0, false
-	}
-	return budget, true
-}
-
-// convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
-func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) *schemas.BifrostChatRequest {
-	messages := b.convertMessages(request.Posts, cfg)
-	tools := b.convertTools(request, cfg)
-
-	req := &schemas.BifrostChatRequest{
-		Provider: b.provider,
-		Model:    cfg.Model,
-		Input:    messages,
-	}
-
-	// Set parameters
-	params := &schemas.ChatParameters{}
-	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxCompletionTokens = Ptr(cfg.MaxGeneratedTokens)
-	}
-	if len(tools) > 0 {
-		params.Tools = tools
-		if cfg.ToolsDisabled {
-			none := string(schemas.ChatToolChoiceTypeNone)
-			params.ToolChoice = &schemas.ChatToolChoice{ChatToolChoiceStr: &none}
-		}
-	}
-	// Apply reasoning configuration
-	params.Reasoning = b.buildChatReasoning(cfg)
-	// Apply structured output (JSON schema) configuration
-	if cfg.JSONOutputFormat != nil {
-		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
-	}
-	if b.promptCachingEnabled() {
-		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
-	}
-	req.Params = params
-
-	// Attach fallback chain so Bifrost retries with alternative providers on failure.
-	req.Fallbacks = b.fallbacks
-
-	return req
-}
-
-// convertMessages converts llm.Post messages to Bifrost ChatMessage format.
-func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []schemas.ChatMessage {
-	messages := make([]schemas.ChatMessage, 0, len(posts))
-
-	for _, post := range posts {
-		var msg schemas.ChatMessage
-
-		switch post.Role {
-		case llm.PostRoleSystem:
-			msg = schemas.ChatMessage{
-				Role: schemas.ChatMessageRoleSystem,
-				Content: &schemas.ChatMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-
-		case llm.PostRoleUser:
-			if len(post.Files) > 0 {
-				// Multimodal message with images
-				parts := b.createMultimodalContent(post)
-				msg = schemas.ChatMessage{
-					Role: schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{
-						ContentBlocks: parts,
-					},
-				}
-			} else {
-				msg = schemas.ChatMessage{
-					Role: schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{
-						ContentStr: Ptr(post.Message),
-					},
-				}
-			}
-
-		case llm.PostRoleBot:
-			msg = schemas.ChatMessage{
-				Role: schemas.ChatMessageRoleAssistant,
-				Content: &schemas.ChatMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-
-			// Add reasoning details for thinking-enabled conversations.
-			// Anthropic requires historical thinking blocks to include a valid
-			// provider-issued signature. If a previous stream failed before the
-			// signature arrived, we persist partial reasoning for display only; do
-			// not replay it to Anthropic as an unsigned thinking block. Other
-			// providers may accept unsigned reasoning, so preserve it for them.
-			// Also skip replay when thinking is disabled for this request:
-			// Anthropic rejects input thinking blocks when thinking is off.
-			if post.Reasoning != "" &&
-				(b.provider != schemas.Anthropic || post.ReasoningSignature != "") &&
-				!b.thinkingBlockedBySchema(cfg) {
-				if msg.ChatAssistantMessage == nil {
-					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
-				}
-				msg.ReasoningDetails = []schemas.ChatReasoningDetails{{
-					Index:     0,
-					Type:      schemas.BifrostReasoningDetailsTypeText,
-					Text:      Ptr(post.Reasoning),
-					Signature: Ptr(post.ReasoningSignature),
-				}}
-			}
-
-			// Handle tool calls in assistant messages
-			if len(post.ToolUse) > 0 {
-				if post.Message == "" {
-					msg.Content = nil
-				}
-				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
-				for i, tc := range post.ToolUse {
-					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
-						Index: uint16(i % 65536), //nolint:gosec // index will never exceed uint16 max in practice
-						ID:    Ptr(tc.ID),
-						Type:  Ptr("function"),
-						Function: schemas.ChatAssistantMessageToolCallFunction{
-							Name:      Ptr(tc.Name),
-							Arguments: string(tc.Arguments),
-						},
-					})
-				}
-				if msg.ChatAssistantMessage == nil {
-					msg.ChatAssistantMessage = &schemas.ChatAssistantMessage{}
-				}
-				msg.ToolCalls = toolCalls
-
-				// Add the assistant message with tool calls
-				messages = append(messages, msg)
-
-				// Add tool result messages. Anthropic rejects tool result
-				// messages with empty content ("text content blocks must be
-				// non-empty"), so substitute a placeholder if the tool
-				// returned an empty string.
-				for _, tc := range post.ToolUse {
-					result := tc.Result
-					if result == "" {
-						result = "(no output)"
-					}
-					toolResultMsg := schemas.ChatMessage{
-						Role: schemas.ChatMessageRoleTool,
-						Content: &schemas.ChatMessageContent{
-							ContentStr: Ptr(result),
-						},
-						ChatToolMessage: &schemas.ChatToolMessage{
-							ToolCallID: Ptr(tc.ID),
-						},
-					}
-					messages = append(messages, toolResultMsg)
-				}
-				continue // Skip adding msg again
-			}
-		}
-
-		messages = append(messages, msg)
-	}
-
-	// Merge consecutive same-role messages for Anthropic
-	if b.provider == schemas.Anthropic {
-		messages = b.mergeConsecutiveSameRoleMessages(messages)
-	}
-
-	return messages
-}
-
-// mergeConsecutiveSameRoleMessages merges consecutive messages with the same role
-// into a single message with combined content blocks. Tool messages are never merged.
-func (b *LLM) mergeConsecutiveSameRoleMessages(messages []schemas.ChatMessage) []schemas.ChatMessage {
-	if len(messages) <= 1 {
-		return messages
-	}
-	merged := make([]schemas.ChatMessage, 0, len(messages))
-	for _, msg := range messages {
-		if len(merged) > 0 && merged[len(merged)-1].Role == msg.Role &&
-			msg.Role != schemas.ChatMessageRoleTool {
-			// Merge into previous message by converting both to content blocks
-			prev := &merged[len(merged)-1]
-			prevBlocks := messageToContentBlocks(prev)
-			newBlocks := messageToContentBlocks(&msg)
-			prev.Content = &schemas.ChatMessageContent{
-				ContentBlocks: append(prevBlocks, newBlocks...),
-			}
-			// Merge assistant metadata (tool calls, reasoning)
-			if msg.ChatAssistantMessage != nil {
-				if prev.ChatAssistantMessage == nil {
-					prev.ChatAssistantMessage = msg.ChatAssistantMessage
-				} else {
-					prev.ToolCalls = append(
-						prev.ToolCalls,
-						msg.ToolCalls...)
-					if msg.ReasoningDetails != nil {
-						prev.ReasoningDetails = append(
-							prev.ReasoningDetails,
-							msg.ReasoningDetails...)
-					}
-				}
-			}
-		} else {
-			merged = append(merged, msg)
-		}
-	}
-	return merged
-}
-
-// messageToContentBlocks extracts content blocks from a ChatMessage.
-func messageToContentBlocks(msg *schemas.ChatMessage) []schemas.ChatContentBlock {
-	if msg.Content == nil {
-		return nil
-	}
-	if len(msg.Content.ContentBlocks) > 0 {
-		return msg.Content.ContentBlocks
-	}
-	if msg.Content.ContentStr != nil {
-		return []schemas.ChatContentBlock{{
-			Type: schemas.ChatContentBlockTypeText,
-			Text: msg.Content.ContentStr,
-		}}
-	}
-	return nil
-}
-
-// createMultimodalContent creates content blocks for messages with images.
-func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock {
-	parts := make([]schemas.ChatContentBlock, 0, len(post.Files)+1)
+// multimodalContent creates content blocks for a message with images: the
+// message text first, then one block per file — the image as a base64 data URL
+// when supported and readable, a placeholder text block otherwise. The block
+// type differs between the chat and Responses APIs, so callers supply the
+// text- and image-block constructors.
+func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
+	parts := make([]T, 0, len(post.Files)+1)
 
 	if post.Message != "" {
-		parts = append(parts, schemas.ChatContentBlock{
-			Type: schemas.ChatContentBlockTypeText,
-			Text: Ptr(post.Message),
-		})
+		parts = append(parts, textBlock(post.Message))
 	}
 
 	for _, file := range post.Files {
-		if !isValidImageType(file.MimeType) {
-			parts = append(parts, schemas.ChatContentBlock{
-				Type: schemas.ChatContentBlockTypeText,
-				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
-			})
+		if !llm.IsSupportedImageMimeType(file.MimeType) {
+			parts = append(parts, textBlock(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)))
 			continue
 		}
 
 		data, err := readFileData(file)
 		if err != nil {
-			parts = append(parts, schemas.ChatContentBlock{
-				Type: schemas.ChatContentBlockTypeText,
-				Text: Ptr("[Error reading image data]"),
-			})
+			parts = append(parts, textBlock("[Error reading image data]"))
 			continue
 		}
 
 		encoded := base64.StdEncoding.EncodeToString(data)
-		dataURL := fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)
-
-		parts = append(parts, schemas.ChatContentBlock{
-			Type: "image_url",
-			ImageURLStruct: &schemas.ChatInputImage{
-				URL: dataURL,
-			},
-		})
+		parts = append(parts, imageBlock(fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)))
 	}
 
 	return parts
@@ -1474,152 +524,6 @@ func hasToolUseHistory(posts []llm.Post) bool {
 		}
 	}
 	return false
-}
-
-// convertTools converts llm.Tool to Bifrost ChatTool format.
-func (b *LLM) convertTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ChatTool {
-	if request.Context == nil || request.Context.Tools == nil {
-		return nil
-	}
-	// Keep tools defined when the history has tool_use blocks; tool_choice="none"
-	// (set by the caller) forbids further calls.
-	if cfg.ToolsDisabled && !hasToolUseHistory(request.Posts) {
-		return nil
-	}
-
-	tools := request.Context.Tools.GetTools()
-	result := make([]schemas.ChatTool, 0, len(tools))
-
-	for _, tool := range tools {
-		// Convert schema to ToolFunctionParameters
-		var params *schemas.ToolFunctionParameters
-		if tool.Schema != nil {
-			switch s := tool.Schema.(type) {
-			case map[string]interface{}:
-				params = schemaMapToFunctionParams(s)
-			default:
-				// Marshal and unmarshal to convert to map
-				data, err := json.Marshal(tool.Schema)
-				if err == nil {
-					var schemaMap map[string]interface{}
-					if json.Unmarshal(data, &schemaMap) == nil {
-						params = schemaMapToFunctionParams(schemaMap)
-					}
-				}
-			}
-		}
-
-		// Ensure params has default values
-		if params == nil {
-			params = &schemas.ToolFunctionParameters{
-				Type: "object",
-			}
-		}
-		if params.Type == "" {
-			params.Type = "object"
-		}
-
-		bifrostTool := schemas.ChatTool{
-			Type: schemas.ChatToolTypeFunction,
-			Function: &schemas.ChatToolFunction{
-				Name:        tool.Name,
-				Description: Ptr(tool.Description),
-				Parameters:  params,
-			},
-		}
-		result = append(result, bifrostTool)
-	}
-
-	return result
-}
-
-// schemaMapToFunctionParams converts a schema map to ToolFunctionParameters
-func schemaMapToFunctionParams(schemaMap map[string]interface{}) *schemas.ToolFunctionParameters {
-	params := &schemas.ToolFunctionParameters{
-		Type: "object",
-	}
-
-	if t, ok := schemaMap["type"].(string); ok {
-		params.Type = t
-	}
-	if desc, ok := schemaMap["description"].(string); ok {
-		params.Description = &desc
-	}
-	if props, ok := schemaMap["properties"].(map[string]interface{}); ok {
-		params.Properties = schemas.OrderedMapFromMap(props)
-	}
-	if req, ok := schemaMap["required"].([]interface{}); ok {
-		required := make([]string, 0, len(req))
-		for _, r := range req {
-			if s, ok := r.(string); ok {
-				required = append(required, s)
-			}
-		}
-		params.Required = required
-	}
-
-	return params
-}
-
-// jsonSchemaToMap converts a *jsonschema.Schema to a map[string]interface{} via JSON round-trip.
-func jsonSchemaToMap(schema *jsonschema.Schema) (map[string]interface{}, error) {
-	data, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal JSON schema: %w", err)
-	}
-	var schemaMap map[string]interface{}
-	if err := json.Unmarshal(data, &schemaMap); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON schema: %w", err)
-	}
-	return schemaMap, nil
-}
-
-// buildChatResponseFormat creates the response_format parameter for the Chat Completions API.
-func buildChatResponseFormat(schema *jsonschema.Schema) *interface{} {
-	schemaMap, err := jsonSchemaToMap(schema)
-	if err != nil {
-		return nil
-	}
-	var responseFormat interface{} = map[string]interface{}{
-		"type": "json_schema",
-		"json_schema": map[string]interface{}{
-			"name":   "response",
-			"schema": schemaMap,
-			"strict": true,
-		},
-	}
-	return &responseFormat
-}
-
-// buildResponsesTextConfig creates the text configuration for the Responses API with JSON schema output.
-func buildResponsesTextConfig(schema *jsonschema.Schema) (*schemas.ResponsesTextConfig, error) {
-	schemaMap, err := jsonSchemaToMap(schema)
-	if err != nil {
-		return nil, err
-	}
-
-	responseSchema, err := buildResponsesJSONSchema(schemaMap)
-	if err != nil {
-		return nil, err
-	}
-	return &schemas.ResponsesTextConfig{
-		Format: &schemas.ResponsesTextConfigFormat{
-			Type:       "json_schema",
-			Name:       Ptr("response"),
-			Strict:     Ptr(true),
-			JSONSchema: responseSchema,
-		},
-	}, nil
-}
-
-// isValidImageType checks if the MIME type is supported.
-func isValidImageType(mimeType string) bool {
-	return llm.IsSupportedImageMimeType(mimeType)
-}
-
-// Ptr is a helper function to create a pointer to a value.
-func Ptr[T any](v T) *T {
-	return &v
 }
 
 func (b *LLM) providerSupportsNativeTools() bool {
@@ -1672,881 +576,5 @@ func (b *LLM) promptCachingEnabled() bool {
 
 // isNativeToolEnabled checks if a native tool is enabled by name.
 func (b *LLM) isNativeToolEnabled(name string) bool {
-	for _, t := range b.enabledNativeTools {
-		if t == name {
-			return true
-		}
-	}
-	return false
-}
-
-// convertToResponsesMessages converts llm.Post messages to Bifrost ResponsesMessage format.
-func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMessage {
-	messages := make([]schemas.ResponsesMessage, 0, len(posts))
-
-	for _, post := range posts {
-		switch post.Role {
-		case llm.PostRoleSystem:
-			msg := schemas.ResponsesMessage{
-				Role: Ptr(schemas.ResponsesInputMessageRoleSystem),
-				Content: &schemas.ResponsesMessageContent{
-					ContentStr: Ptr(post.Message),
-				},
-			}
-			messages = append(messages, msg)
-
-		case llm.PostRoleUser:
-			if len(post.Files) > 0 {
-				// Multimodal message with images
-				parts := b.createResponsesMultimodalContent(post)
-				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
-					Content: &schemas.ResponsesMessageContent{
-						ContentBlocks: parts,
-					},
-				}
-				messages = append(messages, msg)
-			} else {
-				msg := schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleUser),
-					Content: &schemas.ResponsesMessageContent{
-						ContentStr: Ptr(post.Message),
-					},
-				}
-				messages = append(messages, msg)
-			}
-
-		case llm.PostRoleBot:
-			// Handle tool calls in assistant messages
-			if len(post.ToolUse) > 0 {
-				if post.Message != "" {
-					messages = append(messages, schemas.ResponsesMessage{
-						Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-						Content: &schemas.ResponsesMessageContent{
-							ContentStr: Ptr(post.Message),
-						},
-					})
-				}
-				for _, tc := range post.ToolUse {
-					funcCallMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCall),
-						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID:    Ptr(tc.ID),
-							Name:      Ptr(tc.Name),
-							Arguments: Ptr(string(tc.Arguments)),
-						},
-					}
-					messages = append(messages, funcCallMsg)
-
-					funcOutputMsg := schemas.ResponsesMessage{
-						Type: Ptr(schemas.ResponsesMessageTypeFunctionCallOutput),
-						ResponsesToolMessage: &schemas.ResponsesToolMessage{
-							CallID: Ptr(tc.ID),
-							Output: &schemas.ResponsesToolMessageOutputStruct{
-								ResponsesToolCallOutputStr: Ptr(tc.Result),
-							},
-						},
-					}
-					messages = append(messages, funcOutputMsg)
-				}
-			} else if post.Message != "" {
-				messages = append(messages, schemas.ResponsesMessage{
-					Role: Ptr(schemas.ResponsesInputMessageRoleAssistant),
-					Content: &schemas.ResponsesMessageContent{
-						ContentStr: Ptr(post.Message),
-					},
-				})
-			}
-		}
-	}
-
-	return messages
-}
-
-// createResponsesMultimodalContent creates content blocks for Responses API messages with images.
-func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.ResponsesMessageContentBlock {
-	parts := make([]schemas.ResponsesMessageContentBlock, 0, len(post.Files)+1)
-
-	if post.Message != "" {
-		parts = append(parts, schemas.ResponsesMessageContentBlock{
-			Type: schemas.ResponsesInputMessageContentBlockTypeText,
-			Text: Ptr(post.Message),
-		})
-	}
-
-	for _, file := range post.Files {
-		if !isValidImageType(file.MimeType) {
-			parts = append(parts, schemas.ResponsesMessageContentBlock{
-				Type: schemas.ResponsesInputMessageContentBlockTypeText,
-				Text: Ptr(fmt.Sprintf("[Unsupported image type: %s]", file.MimeType)),
-			})
-			continue
-		}
-
-		data, err := readFileData(file)
-		if err != nil {
-			parts = append(parts, schemas.ResponsesMessageContentBlock{
-				Type: schemas.ResponsesInputMessageContentBlockTypeText,
-				Text: Ptr("[Error reading image data]"),
-			})
-			continue
-		}
-
-		encoded := base64.StdEncoding.EncodeToString(data)
-		dataURL := fmt.Sprintf("data:%s;base64,%s", file.MimeType, encoded)
-
-		parts = append(parts, schemas.ResponsesMessageContentBlock{
-			Type: schemas.ResponsesInputMessageContentBlockTypeImage,
-			ResponsesInputMessageContentBlockImage: &schemas.ResponsesInputMessageContentBlockImage{
-				ImageURL: Ptr(dataURL),
-			},
-		})
-	}
-
-	return parts
-}
-
-// anthropicDirectToolCaller is the allowed_callers value that restricts a
-// server tool to direct model invocation. See webToolResponsesTool.
-const anthropicDirectToolCaller = "direct"
-
-// sandboxEnabled reports whether the agent explicitly enabled the provider code
-// sandbox (the code_interpreter native tool — Anthropic's code_execution).
-func (b *LLM) sandboxEnabled() bool {
-	return b.isNativeToolEnabled(llm.NativeToolCodeInterpreter)
-}
-
-// webToolResponsesTool builds a native web_search / web_fetch tool definition.
-//
-// Unless the agent explicitly enabled the code sandbox (code_interpreter),
-// AllowedCallers is pinned to "direct" — Anthropic's documented opt-out from
-// dynamic filtering, which would otherwise auto-provision the code-execution
-// sandbox on newer Claude models:
-// https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering
-// Bifrost strips the field for providers that don't accept it; pinned by
-// TestWebSearchAllowedCallersStrippedForOpenAI and
-// TestAnthropicOnlyWebFetchDroppedForOpenAI.
-func (b *LLM) webToolResponsesTool(toolType schemas.ResponsesToolType) schemas.ResponsesTool {
-	tool := schemas.ResponsesTool{Type: toolType}
-	if !b.sandboxEnabled() {
-		tool.AllowedCallers = []string{anthropicDirectToolCaller}
-	}
-	return tool
-}
-
-// convertToResponsesTools creates Responses API tools including native tools and function tools.
-func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.LanguageModelConfig) []schemas.ResponsesTool {
-	var result []schemas.ResponsesTool
-
-	// Add native tools (always add when configured, regardless of ToolsDisabled)
-	for _, nativeTool := range b.enabledNativeTools {
-		switch nativeTool {
-		case llm.NativeToolWebSearch:
-			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
-		case llm.NativeToolWebFetch:
-			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
-		case llm.NativeToolFileSearch:
-			// Currently unreachable: SupportedNativeToolsForServiceType
-			// withholds file_search until the plugin can configure the
-			// vector_store_ids OpenAI requires on the tool definition.
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeFileSearch,
-			})
-		case llm.NativeToolCodeInterpreter:
-			result = append(result, schemas.ResponsesTool{
-				Type: schemas.ResponsesToolTypeCodeInterpreter,
-			})
-		}
-	}
-
-	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
-	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
-		result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
-	}
-
-	// Keep function tools defined when the history has tool_use blocks; the
-	// caller sets tool_choice="none" to forbid further calls. See hasToolUseHistory.
-	keepFunctionTools := !cfg.ToolsDisabled || hasToolUseHistory(request.Posts)
-	if keepFunctionTools && request.Context != nil && request.Context.Tools != nil {
-		tools := request.Context.Tools.GetTools()
-		for _, tool := range tools {
-			var params *schemas.ToolFunctionParameters
-			if tool.Schema != nil {
-				switch s := tool.Schema.(type) {
-				case map[string]interface{}:
-					params = schemaMapToFunctionParams(s)
-				default:
-					data, err := json.Marshal(tool.Schema)
-					if err == nil {
-						var schemaMap map[string]interface{}
-						if json.Unmarshal(data, &schemaMap) == nil {
-							params = schemaMapToFunctionParams(schemaMap)
-						}
-					}
-				}
-			}
-			if params == nil {
-				params = &schemas.ToolFunctionParameters{Type: "object"}
-			}
-			if params.Type == "" {
-				params.Type = "object"
-			}
-
-			responsesTool := schemas.ResponsesTool{
-				Type:        schemas.ResponsesToolTypeFunction,
-				Name:        Ptr(tool.Name),
-				Description: Ptr(tool.Description),
-				ResponsesToolFunction: &schemas.ResponsesToolFunction{
-					Parameters: params,
-				},
-			}
-			result = append(result, responsesTool)
-		}
-	}
-
-	return result
-}
-
-// buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
-func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
-		return nil
-	}
-
-	switch b.provider {
-	case schemas.Anthropic:
-		budget, ok := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
-		if !ok {
-			return nil
-		}
-		return &schemas.ResponsesParametersReasoning{MaxTokens: Ptr(budget)}
-	case schemas.Gemini, schemas.Vertex:
-		// Gemini / Vertex map reasoning.max_tokens to thinkingConfig.thinkingBudget
-		// and reasoning.effort to thinkingConfig.thinkingLevel (3.0+) via Bifrost.
-		// Prefer an explicit budget; otherwise fall back to effort. Enable summary
-		// so the provider returns reasoning text in the stream.
-		reasoning := &schemas.ResponsesParametersReasoning{Summary: Ptr("auto")}
-		if b.thinkingBudget > 0 {
-			reasoning.MaxTokens = Ptr(b.thinkingBudget)
-		} else {
-			effort := b.reasoningEffort
-			if effort == "" {
-				effort = "medium"
-			}
-			reasoning.Effort = Ptr(effort)
-		}
-		return reasoning
-	case schemas.OpenAI, schemas.Azure:
-		effort := b.reasoningEffort
-		if effort == "" {
-			effort = "medium"
-		}
-		// Enable reasoning summaries so the provider returns reasoning text in
-		// the stream; without this OpenAI omits reasoning_summary events.
-		return &schemas.ResponsesParametersReasoning{
-			Effort:  Ptr(effort),
-			Summary: Ptr("auto"),
-		}
-	default:
-		// Bifrost will route a Responses-API request to chat completions for
-		// providers without native Responses support (e.g. Mistral). Those
-		// providers don't accept reasoning_effort, so drop it here too.
-		return nil
-	}
-}
-
-// convertToBifrostResponsesRequest converts our CompletionRequest to Bifrost's Responses API format.
-func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cfg llm.LanguageModelConfig) (*schemas.BifrostResponsesRequest, error) {
-	messages := b.convertToResponsesMessages(request.Posts)
-	tools := b.convertToResponsesTools(request, cfg)
-
-	req := &schemas.BifrostResponsesRequest{
-		Provider: b.provider,
-		Model:    cfg.Model,
-		Input:    messages,
-	}
-
-	// Set parameters
-	params := &schemas.ResponsesParameters{}
-	if cfg.MaxGeneratedTokens > 0 {
-		params.MaxOutputTokens = Ptr(cfg.MaxGeneratedTokens)
-	}
-	if len(tools) > 0 {
-		params.Tools = tools
-		if cfg.ToolsDisabled {
-			none := string(schemas.ResponsesToolChoiceTypeNone)
-			params.ToolChoice = &schemas.ResponsesToolChoice{ResponsesToolChoiceStr: &none}
-		}
-	}
-	// Apply reasoning configuration
-	params.Reasoning = b.buildResponsesReasoning(cfg)
-	// Apply structured output (JSON schema) configuration
-	if cfg.JSONOutputFormat != nil {
-		textConfig, err := buildResponsesTextConfig(cfg.JSONOutputFormat)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build responses text config: %w", err)
-		}
-		params.Text = textConfig
-	}
-	// The Anthropic provider reads cache_control from ExtraParams on the
-	// Responses path (there is no typed field on ResponsesParameters).
-	if b.promptCachingEnabled() {
-		params.ExtraParams = map[string]interface{}{
-			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
-		}
-	}
-	req.Params = params
-
-	// Attach fallback chain so Bifrost retries with alternative providers on failure.
-	req.Fallbacks = b.fallbacks
-
-	return req, nil
-}
-
-// streamResponses handles the streaming Responses API completion.
-func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest, cfg llm.LanguageModelConfig, output chan<- llm.TextStreamEvent) {
-	span := telemetry.SpanFromContext(ctx)
-	span.SetAttributes(
-		telemetry.LLMPath.String("responses"),
-		telemetry.LLMUseResponsesAPI.Bool(b.useResponsesAPI),
-	)
-	bifrostCtx, cancel := schemas.NewBifrostContextWithTimeout(ctx, b.streamingTimeout*10)
-	defer cancel()
-
-	// Convert to Bifrost Responses API request
-	bifrostReq, err := b.convertToBifrostResponsesRequest(request, cfg)
-	if err != nil {
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: err,
-		}
-		return
-	}
-	if bifrostReq.Params != nil {
-		recordResponsesReasoningSent(span, bifrostReq.Params.Reasoning)
-	} else {
-		recordResponsesReasoningSent(span, nil)
-	}
-
-	// Make streaming request
-	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
-	if bifrostErr != nil {
-		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeError,
-			Value: err,
-		}
-		return
-	}
-
-	// Process stream
-	var toolCalls []llm.ToolCall
-	toolCallsBuffer := make(map[string]*responsesToolCallBuffer)
-	// outputIndexToFuncCallID maps a Responses-API output_index to the function
-	// call_id that we accepted via OutputItemAdded for that index. Argument
-	// deltas are routed through this map so deltas from non-function output
-	// items (e.g. Anthropic native server tools like code_execution that
-	// bifrost does not surface as OutputItemAdded events) do not bleed into
-	// an unrelated function call's argument buffer.
-	outputIndexToFuncCallID := make(map[int]string)
-
-	// serverTools accumulates provider-executed tool activity (web search /
-	// web fetch / code execution). Every state change re-emits the cumulative
-	// snapshot so receivers can replace prior state.
-	serverTools := newServerToolTracker()
-	emitServerTools := func() {
-		output <- llm.TextStreamEvent{
-			Type:  llm.EventTypeServerToolUse,
-			Value: serverTools.snapshot(),
-		}
-	}
-
-	// Reasoning buffers
-	var reasoningBuffer strings.Builder
-	var reasoningSignature string
-	var reasoningComplete bool
-
-	// Annotation buffer and text position tracking
-	var annotations []llm.Annotation
-	var fallbackSources []webSearchFallbackSource
-	pendingAnnotationPositions := make(map[int][]pendingAnnotationPosition)
-	var textLen int       // cumulative UTF-16 length of all streamed text
-	var blockStartPos int // UTF-16 position where current text block started
-
-	// Watchdog timer for streaming timeout
-	watchdog := make(chan struct{})
-	var watchdogMu sync.Mutex
-
-	go func() {
-		timer := time.NewTimer(b.streamingTimeout)
-		defer timer.Stop()
-		for {
-			select {
-			case <-timer.C:
-				cancel()
-				return
-			case <-bifrostCtx.Done():
-				return
-			case <-watchdog:
-				watchdogMu.Lock()
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
-				timer.Reset(b.streamingTimeout)
-				watchdogMu.Unlock()
-			}
-		}
-	}()
-
-	for chunk := range streamChan {
-		// Ping watchdog
-		select {
-		case watchdog <- struct{}{}:
-		default:
-		}
-
-		if chunk.BifrostError != nil {
-			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeError,
-				Value: err,
-			}
-			return
-		}
-
-		// Process Responses API stream response
-		if chunk.BifrostResponsesStreamResponse != nil {
-			resp := chunk.BifrostResponsesStreamResponse
-
-			switch resp.Type {
-			case schemas.ResponsesStreamResponseTypeOutputTextDelta:
-				// Emit reasoning end before first text if we have accumulated reasoning
-				if !reasoningComplete && reasoningBuffer.Len() > 0 {
-					output <- llm.TextStreamEvent{
-						Type: llm.EventTypeReasoningEnd,
-						Value: llm.ReasoningData{
-							Text:      reasoningBuffer.String(),
-							Signature: reasoningSignature,
-						},
-					}
-					reasoningComplete = true
-				}
-				// Text delta
-				if resp.Delta != nil && *resp.Delta != "" {
-					output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeText,
-						Value: *resp.Delta,
-					}
-					textLen += llm.UTF16CodeUnitCount(*resp.Delta)
-				}
-
-			case schemas.ResponsesStreamResponseTypeReasoningSummaryTextDelta:
-				// Reasoning text chunk - stream immediately
-				if resp.Delta != nil && *resp.Delta != "" {
-					output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeReasoning,
-						Value: *resp.Delta,
-					}
-					reasoningBuffer.WriteString(*resp.Delta)
-				}
-				// Capture signature if present
-				if resp.Signature != nil && *resp.Signature != "" {
-					reasoningSignature = *resp.Signature
-				}
-
-			case schemas.ResponsesStreamResponseTypeReasoningSummaryPartAdded,
-				schemas.ResponsesStreamResponseTypeReasoningSummaryPartDone,
-				schemas.ResponsesStreamResponseTypeReasoningSummaryTextDone:
-				// These events mark progress but don't require action
-				// Signature may come with these events
-				if resp.Signature != nil && *resp.Signature != "" {
-					reasoningSignature = *resp.Signature
-				}
-
-			case schemas.ResponsesStreamResponseTypeOutputTextAnnotationAdded:
-				// Accumulate annotations as they arrive
-				if resp.Annotation != nil {
-					if ann := convertBifrostAnnotation(resp.Annotation, len(annotations)+1); ann != nil {
-						// Bifrost doesn't provide output-text positions during Anthropic streaming.
-						// Attach those citations to the current text block and correct the end
-						// position when output_text.done arrives.
-						missingStart := resp.Annotation.StartIndex == nil
-						missingEnd := resp.Annotation.EndIndex == nil
-						if resp.Annotation.StartIndex == nil {
-							ann.StartIndex = blockStartPos
-						}
-						if resp.Annotation.EndIndex == nil {
-							ann.EndIndex = textLen
-						}
-						annotations = append(annotations, *ann)
-						if missingStart || missingEnd {
-							contentIndex := missingContentIndex
-							if resp.ContentIndex != nil {
-								contentIndex = *resp.ContentIndex
-							}
-							pendingAnnotationPositions[contentIndex] = append(
-								pendingAnnotationPositions[contentIndex],
-								pendingAnnotationPosition{
-									index:        len(annotations) - 1,
-									missingStart: missingStart,
-									missingEnd:   missingEnd,
-								},
-							)
-						}
-					}
-				}
-
-			case schemas.ResponsesStreamResponseTypeOutputTextAnnotationDone:
-				// Annotation finalized - no additional action needed
-
-			case schemas.ResponsesStreamResponseTypeOutputTextDone:
-				// Text block complete - emit accumulated annotations and advance block position.
-				// Keep the annotation buffer so subsequent output_text_done events can include
-				// citations accumulated across the full response.
-				contentIndex := missingContentIndex
-				if resp.ContentIndex != nil {
-					contentIndex = *resp.ContentIndex
-				}
-				flushPendingAnnotationPositions(
-					annotations,
-					pendingAnnotationPositions,
-					contentIndex,
-					blockStartPos,
-					textLen,
-				)
-				if len(annotations) > 0 {
-					output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeAnnotations,
-						Value: annotations,
-					}
-				}
-				blockStartPos = textLen
-
-			case schemas.ResponsesStreamResponseTypeFunctionCallArgumentsDelta:
-				// Tool call arguments delta. Bifrost does not always populate
-				// resp.Item on delta events, so the call_id is recovered via
-				// the OutputIndex map populated by the preceding
-				// OutputItemAdded event.
-				//
-				// Routing strictly by OutputIndex matters because providers
-				// like Anthropic emit native server-tool blocks (e.g.
-				// code_execution) for which Bifrost does not surface an
-				// OutputItemAdded of type FunctionCall, but it still emits
-				// FunctionCallArgumentsDelta events for them. Without this
-				// guard, those orphan deltas were appended to whatever
-				// function call most recently started, producing concatenated
-				// JSON like `{"team_id":"…"}{"code":"…"}` that later failed
-				// to marshal as a tool_use.input json.RawMessage.
-				if resp.Item != nil && resp.Item.ResponsesToolMessage != nil {
-					tm := resp.Item.ResponsesToolMessage
-					callID := ""
-					if tm.CallID != nil {
-						callID = *tm.CallID
-					}
-					if callID != "" {
-						if toolCallsBuffer[callID] == nil {
-							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
-						}
-						if tm.Name != nil {
-							toolCallsBuffer[callID].name = *tm.Name
-						}
-						if resp.Delta != nil {
-							toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
-						}
-					}
-				} else if resp.OutputIndex != nil && resp.Delta != nil {
-					if callID, ok := outputIndexToFuncCallID[*resp.OutputIndex]; ok {
-						if toolCallsBuffer[callID] == nil {
-							toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
-						}
-						toolCallsBuffer[callID].arguments.WriteString(*resp.Delta)
-					}
-				}
-
-			case schemas.ResponsesStreamResponseTypeCodeInterpreterCallCodeDone:
-				// Sandbox code/command finalized before execution starts —
-				// surface it so the activity card can show what is running.
-				if resp.ItemID != nil && resp.Code != nil && serverTools.setCommand(*resp.ItemID, *resp.Code) {
-					emitServerTools()
-				}
-
-			case schemas.ResponsesStreamResponseTypeOutputItemAdded:
-				// Server tool started (web_search_call / web_fetch_call /
-				// code_interpreter_call) — track and surface the activity.
-				if serverTools.observeItem(resp.Item) {
-					emitServerTools()
-				}
-				// New output item added - register function calls so their
-				// argument deltas can be routed back to the right buffer by
-				// OutputIndex.
-				if resp.Item != nil && resp.Item.Type != nil {
-					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
-						tm := resp.Item.ResponsesToolMessage
-						callID := ""
-						if tm.CallID != nil {
-							callID = *tm.CallID
-						}
-						if callID != "" {
-							if resp.OutputIndex != nil {
-								outputIndexToFuncCallID[*resp.OutputIndex] = callID
-							}
-							if toolCallsBuffer[callID] == nil {
-								toolCallsBuffer[callID] = &responsesToolCallBuffer{id: callID}
-							}
-							if tm.Name != nil {
-								toolCallsBuffer[callID].name = *tm.Name
-							}
-							if tm.Arguments != nil {
-								toolCallsBuffer[callID].arguments.WriteString(*tm.Arguments)
-							}
-						}
-					}
-				}
-
-			case schemas.ResponsesStreamResponseTypeOutputItemDone:
-				fallbackSources = appendFirstWebSearchFallbackSource(fallbackSources, resp.Item)
-				// Server tool finished — fold the final payload (query,
-				// resolved URL/title, stdout/stderr, error) into the activity.
-				if serverTools.observeItem(resp.Item) {
-					emitServerTools()
-				}
-				// Output item completed - finalize function call if any
-				if resp.Item != nil && resp.Item.Type != nil {
-					if *resp.Item.Type == schemas.ResponsesMessageTypeFunctionCall && resp.Item.ResponsesToolMessage != nil {
-						tm := resp.Item.ResponsesToolMessage
-						callID := ""
-						if tm.CallID != nil {
-							callID = *tm.CallID
-						}
-						if callID != "" && toolCallsBuffer[callID] != nil {
-							buf := toolCallsBuffer[callID]
-							// Update with final values if available
-							if tm.Name != nil && *tm.Name != "" {
-								buf.name = *tm.Name
-							}
-							if tm.Arguments != nil && *tm.Arguments != "" {
-								buf.arguments.Reset()
-								buf.arguments.WriteString(*tm.Arguments)
-							}
-						}
-					}
-				}
-
-			case schemas.ResponsesStreamResponseTypeCompleted:
-				// Emit any unsent reasoning
-				if !reasoningComplete && reasoningBuffer.Len() > 0 {
-					output <- llm.TextStreamEvent{
-						Type: llm.EventTypeReasoningEnd,
-						Value: llm.ReasoningData{
-							Text:      reasoningBuffer.String(),
-							Signature: reasoningSignature,
-						},
-					}
-					reasoningComplete = true
-				}
-
-				// Emit any accumulated annotations
-				for contentIndex, positions := range pendingAnnotationPositions {
-					applyPendingAnnotationPositions(annotations, positions, blockStartPos, textLen)
-					delete(pendingAnnotationPositions, contentIndex)
-				}
-				if len(annotations) == 0 && len(fallbackSources) > 0 {
-					annotations = buildFallbackAnnotations(fallbackSources, textLen)
-				}
-				if len(annotations) > 0 {
-					output <- llm.TextStreamEvent{
-						Type:  llm.EventTypeAnnotations,
-						Value: annotations,
-					}
-				}
-
-				// Response completed - emit tool calls if any, in sorted key order
-				if len(toolCallsBuffer) > 0 {
-					keys := make([]string, 0, len(toolCallsBuffer))
-					for k := range toolCallsBuffer {
-						keys = append(keys, k)
-					}
-					sort.Strings(keys)
-					for _, k := range keys {
-						buf := toolCallsBuffer[k]
-						if buf.name != "" {
-							toolCalls = append(toolCalls, llm.ToolCall{
-								ID:        buf.id,
-								Name:      buf.name,
-								Arguments: toolArgsToJSON(buf.arguments.String()),
-							})
-						}
-					}
-					if len(toolCalls) > 0 {
-						output <- llm.TextStreamEvent{
-							Type:  llm.EventTypeToolCalls,
-							Value: toolCalls,
-						}
-						return
-					}
-				}
-
-				// Handle usage data from completed response
-				if resp.Response != nil && resp.Response.Usage != nil {
-					usage := convertResponsesUsage(resp.Response.Usage)
-					if usage.InputTokens > 0 || usage.OutputTokens > 0 {
-						setTokenUsageSpanAttributes(span, usage)
-						setCompositionSpanAttributes(span, request, usage)
-						output <- llm.TextStreamEvent{
-							Type:  llm.EventTypeUsage,
-							Value: usage,
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// If we have pending tool calls, emit them in sorted key order
-	if len(toolCallsBuffer) > 0 && len(toolCalls) == 0 {
-		keys := make([]string, 0, len(toolCallsBuffer))
-		for k := range toolCallsBuffer {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			buf := toolCallsBuffer[k]
-			if buf.name != "" {
-				toolCalls = append(toolCalls, llm.ToolCall{
-					ID:        buf.id,
-					Name:      buf.name,
-					Arguments: toolArgsToJSON(buf.arguments.String()),
-				})
-			}
-		}
-		if len(toolCalls) > 0 {
-			output <- llm.TextStreamEvent{
-				Type:  llm.EventTypeToolCalls,
-				Value: toolCalls,
-			}
-			return
-		}
-	}
-
-	output <- llm.TextStreamEvent{
-		Type:  llm.EventTypeEnd,
-		Value: nil,
-	}
-}
-
-type responsesToolCallBuffer struct {
-	id        string
-	name      string
-	arguments strings.Builder
-}
-
-// convertBifrostAnnotation converts a Bifrost annotation to llm.Annotation
-func convertBifrostAnnotation(ann *schemas.ResponsesOutputMessageContentTextAnnotation, index int) *llm.Annotation {
-	if ann == nil || ann.Type != "url_citation" {
-		return nil
-	}
-
-	result := &llm.Annotation{
-		Type:  llm.AnnotationTypeURLCitation,
-		Index: index,
-	}
-
-	if ann.StartIndex != nil {
-		result.StartIndex = *ann.StartIndex
-	}
-	if ann.EndIndex != nil {
-		result.EndIndex = *ann.EndIndex
-	}
-	if ann.URL != nil {
-		result.URL = *ann.URL
-	}
-	if ann.Title != nil {
-		result.Title = *ann.Title
-	}
-	if ann.Text != nil {
-		result.CitedText = *ann.Text
-	}
-
-	return result
-}
-
-func appendFirstWebSearchFallbackSource(sources []webSearchFallbackSource, item *schemas.ResponsesMessage) []webSearchFallbackSource {
-	if item == nil || item.Type == nil || *item.Type != schemas.ResponsesMessageTypeWebSearchCall {
-		return sources
-	}
-	if item.Action == nil || item.Action.ResponsesWebSearchToolCallAction == nil {
-		return sources
-	}
-
-	for _, source := range item.Action.ResponsesWebSearchToolCallAction.Sources {
-		if source.URL == "" || hasFallbackSource(sources, source.URL) {
-			continue
-		}
-		title := ""
-		if source.Title != nil {
-			title = *source.Title
-		}
-		sources = append(sources, webSearchFallbackSource{
-			URL:   source.URL,
-			Title: title,
-		})
-	}
-	return sources
-}
-
-func hasFallbackSource(sources []webSearchFallbackSource, url string) bool {
-	for _, source := range sources {
-		if source.URL == url {
-			return true
-		}
-	}
-	return false
-}
-
-func buildFallbackAnnotations(sources []webSearchFallbackSource, endIndex int) []llm.Annotation {
-	annotations := make([]llm.Annotation, 0, len(sources))
-	for i, source := range sources {
-		annotations = append(annotations, llm.Annotation{
-			Type:       llm.AnnotationTypeURLCitation,
-			StartIndex: endIndex,
-			EndIndex:   endIndex,
-			URL:        source.URL,
-			Title:      source.Title,
-			Index:      i + 1,
-		})
-	}
-	return annotations
-}
-
-func applyPendingAnnotationPositions(annotations []llm.Annotation, positions []pendingAnnotationPosition, startIndex, endIndex int) {
-	for _, position := range positions {
-		if position.index < 0 || position.index >= len(annotations) {
-			continue
-		}
-		if position.missingStart {
-			annotations[position.index].StartIndex = startIndex
-		}
-		if position.missingEnd {
-			annotations[position.index].EndIndex = endIndex
-		}
-	}
-}
-
-func flushPendingAnnotationPositions(
-	annotations []llm.Annotation,
-	pending map[int][]pendingAnnotationPosition,
-	contentIndex, startIndex, endIndex int,
-) {
-	applyPendingAnnotationPositions(annotations, pending[contentIndex], startIndex, endIndex)
-	delete(pending, contentIndex)
+	return slices.Contains(b.enabledNativeTools, name)
 }

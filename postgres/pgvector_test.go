@@ -180,6 +180,25 @@ func cleanupDB(t *testing.T, db *sqlx.DB) {
 	dropTestDB(t)
 }
 
+// vectorIndexExists is a test-only observation helper reporting whether the
+// HNSW index currently exists in the database catalog.
+func (pv *PGVector) vectorIndexExists(ctx context.Context) (bool, error) {
+	var exists bool
+	err := pv.db.GetContext(ctx, &exists, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_catalog.pg_class c
+			JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+			WHERE c.relname = $1
+				AND n.nspname = current_schema()
+				AND c.relkind = 'i'
+		)`, vectorIndexName)
+	if err != nil {
+		return false, fmt.Errorf("failed to check vector index existence: %w", err)
+	}
+	return exists, nil
+}
+
 // addTestPosts adds test posts to the Posts table
 func addTestPosts(t *testing.T, db *sqlx.DB, postIDs []string, createAts []int64) {
 	for i, postID := range postIDs {
@@ -500,7 +519,7 @@ func TestStoreUpdate(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	// Setup test data with system user for non-permission tests
-	setupSearchTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB, []int64, []float32) {
+	setupSearchTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB, []float32) {
 		db := testDB(t)
 
 		// Set up PGVector
@@ -580,11 +599,11 @@ func TestSearch(t *testing.T) {
 		// Search vector
 		searchVector := []float32{1.0, 1.0, 1.0}
 
-		return ctx, pgVector, db, createAts, searchVector
+		return ctx, pgVector, db, searchVector
 	}
 
 	t.Run("basic search with limit", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		// In the original test environment, we need permission filtering to work
@@ -692,7 +711,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("search with team filter", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		opts := embeddings.SearchOptions{
@@ -709,7 +728,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("search with channel filter", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		opts := embeddings.SearchOptions{
@@ -723,45 +742,8 @@ func TestSearch(t *testing.T) {
 		assert.Equal(t, "post3", results[0].Document.PostID)
 	})
 
-	t.Run("search with min score filter", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
-		defer cleanupDB(t, db)
-
-		// With correct L2-to-cosine-similarity conversion:
-		// - post2 [0.9,0.9,0.9] vs [1,1,1]: L2 ≈ 0.173, score ≈ 0.985
-		// - post1 [0.7,0.7,0.7] vs [1,1,1]: L2 ≈ 0.52, score ≈ 0.865
-		// MinScore 0.9 should only match post2
-		opts := embeddings.SearchOptions{
-			MinScore: 0.9, // Only include very similar vectors
-			UserID:   "system_user",
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		assert.Len(t, results, 1)
-		assert.Equal(t, "post2", results[0].Document.PostID)
-	})
-
-	t.Run("search with creation time filter", func(t *testing.T) {
-		ctx, pgVector, db, createAts, searchVector := setupSearchTest(t)
-		defer cleanupDB(t, db)
-
-		opts := embeddings.SearchOptions{
-			CreatedAfter: createAts[1], // After post2
-			UserID:       "system_user",
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		assert.Len(t, results, 2)
-		// Should contain post3 and post4
-		ids := []string{results[0].Document.PostID, results[1].Document.PostID}
-		assert.Contains(t, ids, "post3")
-		assert.Contains(t, ids, "post4")
-	})
-
 	t.Run("search with offset for pagination", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		// First, get all results to establish the order
@@ -788,7 +770,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("offset beyond results returns empty", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		opts := embeddings.SearchOptions{
@@ -802,7 +784,7 @@ func TestSearch(t *testing.T) {
 	})
 
 	t.Run("offset with limit for pagination", func(t *testing.T) {
-		ctx, pgVector, db, _, searchVector := setupSearchTest(t)
+		ctx, pgVector, db, searchVector := setupSearchTest(t)
 		defer cleanupDB(t, db)
 
 		// Get all results first
@@ -1996,7 +1978,7 @@ func TestStoreValidation(t *testing.T) {
 }
 
 func TestSearchValidation(t *testing.T) {
-	setupSearchValidationTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB, []int64) {
+	setupSearchValidationTest := func(t *testing.T) (context.Context, *PGVector, *sqlx.DB) {
 		db := testDB(t)
 
 		config := PGVectorConfig{
@@ -2034,11 +2016,11 @@ func TestSearchValidation(t *testing.T) {
 		err = pgVector.Store(ctx, docs, embedVectors)
 		require.NoError(t, err)
 
-		return ctx, pgVector, db, createAts
+		return ctx, pgVector, db
 	}
 
 	t.Run("limit zero uses maxSearchLimit default", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		ctx, pgVector, db := setupSearchValidationTest(t)
 		defer cleanupDB(t, db)
 
 		searchVector := []float32{0.5, 0.5, 0.5}
@@ -2054,7 +2036,7 @@ func TestSearchValidation(t *testing.T) {
 	})
 
 	t.Run("negative limit uses maxSearchLimit default", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		ctx, pgVector, db := setupSearchValidationTest(t)
 		defer cleanupDB(t, db)
 
 		searchVector := []float32{0.5, 0.5, 0.5}
@@ -2069,126 +2051,8 @@ func TestSearchValidation(t *testing.T) {
 		assert.Len(t, results, 5)
 	})
 
-	t.Run("combined filters: team + channel + time range + min score", func(t *testing.T) {
-		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.9, 0.9, 0.9}
-		opts := embeddings.SearchOptions{
-			Limit:         10,
-			UserID:        "user1",
-			TeamID:        "team2",
-			ChannelID:     "channel1",
-			CreatedAfter:  createAts[2], // After post3
-			CreatedBefore: createAts[4], // Before post5
-			MinScore:      0.5,
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// Should only return post4 (team2, in time range, meets min score)
-		assert.Len(t, results, 1)
-		if len(results) > 0 {
-			assert.Equal(t, "post4", results[0].Document.PostID)
-		}
-	})
-
-	t.Run("CreatedBefore filter alone", func(t *testing.T) {
-		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.5, 0.5, 0.5}
-		opts := embeddings.SearchOptions{
-			Limit:         10,
-			UserID:        "user1",
-			CreatedBefore: createAts[2], // Before post3
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// Should return post1, post2 (created before createAts[2])
-		assert.Len(t, results, 2)
-		for _, result := range results {
-			assert.True(t, result.Document.CreateAt < createAts[2])
-		}
-	})
-
-	t.Run("CreatedAfter AND CreatedBefore together (time range query)", func(t *testing.T) {
-		ctx, pgVector, db, createAts := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.5, 0.5, 0.5}
-		opts := embeddings.SearchOptions{
-			Limit:         10,
-			UserID:        "user1",
-			CreatedAfter:  createAts[1], // After post2
-			CreatedBefore: createAts[4], // Before post5
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// Should return post3, post4 (between createAts[1] and createAts[4])
-		assert.Len(t, results, 2)
-		for _, result := range results {
-			assert.True(t, result.Document.CreateAt > createAts[1])
-			assert.True(t, result.Document.CreateAt < createAts[4])
-		}
-	})
-
-	t.Run("zero MinScore value", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.5, 0.5, 0.5}
-		opts := embeddings.SearchOptions{
-			Limit:    10,
-			UserID:   "user1",
-			MinScore: 0.0,
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// MinScore 0 should not filter anything
-		assert.Len(t, results, 5)
-	})
-
-	t.Run("negative MinScore value", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.5, 0.5, 0.5}
-		opts := embeddings.SearchOptions{
-			Limit:    10,
-			UserID:   "user1",
-			MinScore: -0.5,
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// Negative MinScore should not filter (condition is opts.MinScore > 0)
-		assert.Len(t, results, 5)
-	})
-
-	t.Run("very high MinScore value greater than 1.0", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
-		defer cleanupDB(t, db)
-
-		searchVector := []float32{0.5, 0.5, 0.5}
-		opts := embeddings.SearchOptions{
-			Limit:    10,
-			UserID:   "user1",
-			MinScore: 1.5, // Score > 1.0 (impossible for normalized scores)
-		}
-
-		results, err := pgVector.Search(ctx, searchVector, opts)
-		require.NoError(t, err)
-		// With MinScore > 1.0, maxDistance = 1 - 1.5 = -0.5, so SQL filter should exclude everything
-		// In the scanSearchResults, score < minScore check will also filter out results
-		assert.Len(t, results, 0, "No results should have score > 1.0")
-	})
-
 	t.Run("empty embedding vector passed to search", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		ctx, pgVector, db := setupSearchValidationTest(t)
 		defer cleanupDB(t, db)
 
 		emptyVector := []float32{}
@@ -2203,7 +2067,7 @@ func TestSearchValidation(t *testing.T) {
 	})
 
 	t.Run("malformed embedding vector (wrong dimensions)", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		ctx, pgVector, db := setupSearchValidationTest(t)
 		defer cleanupDB(t, db)
 
 		// Table was created with 3 dimensions, search with 5
@@ -2219,7 +2083,7 @@ func TestSearchValidation(t *testing.T) {
 	})
 
 	t.Run("user who is member of zero channels", func(t *testing.T) {
-		ctx, pgVector, db, _ := setupSearchValidationTest(t)
+		ctx, pgVector, db := setupSearchValidationTest(t)
 		defer cleanupDB(t, db)
 
 		searchVector := []float32{0.5, 0.5, 0.5}
@@ -2251,7 +2115,7 @@ func TestSearchLargeResultSets(t *testing.T) {
 
 		postIDs := make([]string, numPosts)
 		createAts := make([]int64, numPosts)
-		for i := 0; i < numPosts; i++ {
+		for i := range numPosts {
 			postIDs[i] = fmt.Sprintf("post_%d", i)
 			createAts[i] = now + int64(i)
 		}
@@ -2263,7 +2127,7 @@ func TestSearchLargeResultSets(t *testing.T) {
 
 		docs := make([]embeddings.PostDocument, numPosts)
 		embedVectors := make([][]float32, numPosts)
-		for i := 0; i < numPosts; i++ {
+		for i := range numPosts {
 			docs[i] = embeddings.PostDocument{
 				PostID:    postIDs[i],
 				CreateAt:  createAts[i],
@@ -2413,7 +2277,7 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		numGoroutines := 10
 		errChan := make(chan error, numGoroutines)
 
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(idx int) {
 				docs := []embeddings.PostDocument{
 					{
@@ -2433,7 +2297,7 @@ func TestConcurrentStoreOperations(t *testing.T) {
 		}
 
 		// Wait for all goroutines to complete
-		for i := 0; i < numGoroutines; i++ {
+		for range numGoroutines {
 			// Just drain the channel - we don't need to track errors for this test
 			<-errChan
 		}
@@ -2466,11 +2330,11 @@ func TestStoreConcurrentNoDuplicateKey(t *testing.T) {
 	var dupKeyCount, otherErrCount atomic.Int32
 	var sampleDupErr, sampleOtherErr atomic.Value
 
-	for iter := 0; iter < numIterations; iter++ {
+	for iter := range numIterations {
 		start := make(chan struct{})
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(idx int) {
 				defer wg.Done()
 				<-start
@@ -2531,12 +2395,12 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 	const numGoroutines = 20
 	const numIterations = 10
 
-	for iter := 0; iter < numIterations; iter++ {
+	for iter := range numIterations {
 		start := make(chan struct{})
 		storeErrs := make([]error, numGoroutines)
 		var wg sync.WaitGroup
 		wg.Add(numGoroutines)
-		for i := 0; i < numGoroutines; i++ {
+		for i := range numGoroutines {
 			go func(idx int) {
 				defer wg.Done()
 				<-start
@@ -2548,7 +2412,7 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 
 				docs := make([]embeddings.PostDocument, chunkCount)
 				vecs := make([][]float32, chunkCount)
-				for j := 0; j < chunkCount; j++ {
+				for j := range chunkCount {
 					docs[j] = embeddings.PostDocument{
 						PostID:    postID,
 						CreateAt:  now,
@@ -2582,9 +2446,9 @@ func TestStoreConcurrentChunkConsistency(t *testing.T) {
 		// Every surviving row must belong to the same writer, and the count
 		// must equal that writer's TotalChunks — the winning Store must have
 		// replaced the row set atomically.
-		firstTag := strings.SplitN(contents[0], "/", 2)[0]
+		firstTag, _, _ := strings.Cut(contents[0], "/")
 		for _, c := range contents {
-			tag := strings.SplitN(c, "/", 2)[0]
+			tag, _, _ := strings.Cut(c, "/")
 			if tag != firstTag {
 				t.Fatalf("iter %d: mixed-writer state: rows tagged with both %q and %q (rows=%v)",
 					iter, firstTag, tag, contents)
@@ -2714,11 +2578,17 @@ func TestDeleteOrphaned(t *testing.T) {
 
 		docs := []embeddings.PostDocument{
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 0",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 0, TotalChunks: 3}},
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk: true, ChunkIndex: 0, TotalChunks: 3},
+			},
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 1",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 1, TotalChunks: 3}},
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk: true, ChunkIndex: 1, TotalChunks: 3},
+			},
 			{PostID: "chunked_post", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 2",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 2, TotalChunks: 3}},
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk: true, ChunkIndex: 2, TotalChunks: 3},
+			},
 		}
 		vecs := [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}, {0.7, 0.8, 0.9}}
 

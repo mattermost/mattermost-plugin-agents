@@ -127,7 +127,6 @@ func TestDMAndGroupMessageLengths(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			raw, ok := buildToolArguments(DefaultReadSearchHeavyProfile(), llm.Tool{Name: tt.tool}, &llm.Context{}, deterministicTestRand(2))
@@ -163,7 +162,6 @@ func TestDMSkipsWithoutRecipient(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			profile := DefaultReadSearchHeavyProfile()
@@ -286,7 +284,7 @@ func TestChooseWeightedBuildableToolHonorsEligibleWeights(t *testing.T) {
 		"read_channel":  0,
 		"search_posts":  1,
 	}
-	for seed := int64(0); seed < 20; seed++ {
+	for seed := range int64(20) {
 		tool, args, ok := chooseWeightedBuildableTool(profile, tools, weights, ctx, deterministicTestRand(seed))
 		require.True(t, ok)
 		require.Equal(t, "search_posts", tool.Name)
@@ -331,7 +329,6 @@ func TestUnknownToolSchemaRequiredControlsEligibility(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			raw, ok := buildToolArguments(profile, tt.tool, nil, deterministicTestRand(12))
@@ -349,7 +346,7 @@ func TestWebSearchFetchSourceUsesAllowedContextURL(t *testing.T) {
 	t.Parallel()
 	profile := DefaultReadSearchHeavyProfile()
 	ctx := &llm.Context{
-		Parameters: map[string]interface{}{
+		Parameters: map[string]any{
 			"mm_web_search_allowed_urls": []string{
 				"https://mattermost.com/blog/page",
 				"https://docs.mattermost.com/agents",

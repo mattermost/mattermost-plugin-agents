@@ -38,73 +38,50 @@ func DefaultOptions() Options {
 	}
 }
 
+// unchunked returns the content as a single non-chunk.
+func unchunked(content string) []Chunk {
+	return []Chunk{{
+		Content: content,
+		ChunkInfo: ChunkInfo{
+			IsChunk:     false,
+			ChunkIndex:  0,
+			TotalChunks: 1,
+		},
+	}}
+}
+
+// strategySeparators maps a chunking strategy to the separators passed to the
+// recursive-character splitter; unknown strategies fall back to sentences.
+var strategySeparators = map[string][]string{
+	"paragraphs": {"\n\n", "\n", " ", ""},
+	"fixed":      {" ", ""},
+	"sentences":  {".", "!", "?", "\n", " ", ""},
+}
+
 // ChunkText splits text into chunks based on the provided options
 func ChunkText(content string, opts Options) []Chunk {
 	// If content is empty, return a single non-chunk
 	if strings.TrimSpace(content) == "" {
-		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
-		}}
+		return unchunked(content)
 	}
 
 	// If chunk size is zero or negative, return the original as non-chunk
 	if opts.ChunkSize <= 0 {
-		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
-		}}
+		return unchunked(content)
 	}
 
-	// Extract chunks based on the chosen strategy
-	var textChunks []string
-	var err error
-
-	switch opts.ChunkingStrategy {
-	case "paragraphs":
-		// For paragraphs, use RecursiveCharacter with "\n\n" as first separator
-		splitter := textsplitter.NewRecursiveCharacter(
-			textsplitter.WithChunkSize(opts.ChunkSize),
-			textsplitter.WithChunkOverlap(opts.ChunkOverlap),
-			textsplitter.WithSeparators([]string{"\n\n", "\n", " ", ""}),
-		)
-		textChunks, err = splitter.SplitText(content)
-	case "fixed":
-		// For fixed chunks, use RecursiveCharacter with just space and empty string as separators
-		splitter := textsplitter.NewRecursiveCharacter(
-			textsplitter.WithChunkSize(opts.ChunkSize),
-			textsplitter.WithChunkOverlap(opts.ChunkOverlap),
-			textsplitter.WithSeparators([]string{" ", ""}),
-		)
-		textChunks, err = splitter.SplitText(content)
-	default: // Default to sentences
-		// For sentences, use RecursiveCharacter with sentence ending punctuation as separators
-		splitter := textsplitter.NewRecursiveCharacter(
-			textsplitter.WithChunkSize(opts.ChunkSize),
-			textsplitter.WithChunkOverlap(opts.ChunkOverlap),
-			textsplitter.WithSeparators([]string{".", "!", "?", "\n", " ", ""}),
-		)
-		textChunks, err = splitter.SplitText(content)
+	separators, ok := strategySeparators[opts.ChunkingStrategy]
+	if !ok {
+		separators = strategySeparators["sentences"]
 	}
-
+	splitter := textsplitter.NewRecursiveCharacter(
+		textsplitter.WithChunkSize(opts.ChunkSize),
+		textsplitter.WithChunkOverlap(opts.ChunkOverlap),
+		textsplitter.WithSeparators(separators),
+	)
+	textChunks, err := splitter.SplitText(content)
 	if err != nil || (len(textChunks) == 1 && textChunks[0] == content) {
-		// Return as non-chunk
-		return []Chunk{{
-			Content: content,
-			ChunkInfo: ChunkInfo{
-				IsChunk:     false,
-				ChunkIndex:  0,
-				TotalChunks: 1,
-			},
-		}}
+		return unchunked(content)
 	}
 
 	// Create chunks with metadata

@@ -20,11 +20,12 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-	MaxToolTurns,
+	MaxToolTurns, UseServiceAccountAuth,
 	CreateAt, UpdateAt, DeleteAt`
 
-// mustMarshalSlice marshals a string slice to JSON, returning "[]" on nil/empty or error.
-func mustMarshalSlice(s []string) string {
+// marshalJSONSlice serializes a slice for a JSON TEXT column.
+// nil and [] both encode as "[]", as does a marshal error.
+func marshalJSONSlice[T any](s []T) string {
 	if len(s) == 0 {
 		return "[]"
 	}
@@ -35,55 +36,8 @@ func mustMarshalSlice(s []string) string {
 	return string(b)
 }
 
-// unmarshalStringSlice parses a JSON string into a *[]string, setting nil for "" or "[]".
-func unmarshalStringSlice(raw string, target *[]string) error {
-	if raw == "" || raw == "[]" {
-		*target = nil
-		return nil
-	}
-	if err := json.Unmarshal([]byte(raw), target); err != nil {
-		return fmt.Errorf("failed to unmarshal JSON slice: %w", err)
-	}
-	return nil
-}
-
-// marshalEnabledMCPTools serializes EnabledMCPTools as a JSON array.
-// nil and [] both encode as "[]".
-func marshalEnabledMCPTools(tools []llm.EnabledMCPTool) string {
-	if len(tools) == 0 {
-		return "[]"
-	}
-	b, err := json.Marshal(tools)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-// unmarshalEnabledMCPTools parses the EnabledTools TEXT column. "" or "[]" → nil.
-func unmarshalEnabledMCPTools(raw string, target *[]llm.EnabledMCPTool) error {
-	if raw == "" || raw == "[]" {
-		*target = nil
-		return nil
-	}
-	return json.Unmarshal([]byte(raw), target)
-}
-
-// marshalNativeTools serializes a []string for the EnabledNativeTools column.
-// Nil serializes as "[]" (no separate null vs empty semantics here).
-func marshalNativeTools(tools []string) string {
-	if tools == nil {
-		return "[]"
-	}
-	b, err := json.Marshal(tools)
-	if err != nil {
-		return "[]"
-	}
-	return string(b)
-}
-
-// unmarshalNativeTools parses the EnabledNativeTools TEXT column. "" or "[]" → nil.
-func unmarshalNativeTools(raw string, target *[]string) error {
+// unmarshalJSONSlice parses a JSON TEXT column into target. "" or "[]" → nil.
+func unmarshalJSONSlice[T any](raw string, target *[]T) error {
 	if raw == "" || raw == "[]" {
 		*target = nil
 		return nil
@@ -120,6 +74,7 @@ type agentRow struct {
 	ThinkingBudget          int    `db:"thinkingbudget"`
 	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
 	MaxToolTurns            int    `db:"maxtoolturns"`
+	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
 	CreateAt                int64  `db:"createat"`
 	UpdateAt                int64  `db:"updateat"`
 	DeleteAt                int64  `db:"deleteat"`
@@ -147,27 +102,28 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		ThinkingBudget:          r.ThinkingBudget,
 		StructuredOutputEnabled: r.StructuredOutputEnabled,
 		MaxToolTurns:            r.MaxToolTurns,
+		UseServiceAccountAuth:   r.UseServiceAccountAuth,
 		CreateAt:                r.CreateAt,
 		UpdateAt:                r.UpdateAt,
 		DeleteAt:                r.DeleteAt,
 	}
 
-	if err := unmarshalStringSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
+	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse ChannelIDs: %w", err)
 	}
-	if err := unmarshalStringSlice(r.UserIDs, &cfg.UserIDs); err != nil {
+	if err := unmarshalJSONSlice(r.UserIDs, &cfg.UserIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse UserIDs: %w", err)
 	}
-	if err := unmarshalStringSlice(r.TeamIDs, &cfg.TeamIDs); err != nil {
+	if err := unmarshalJSONSlice(r.TeamIDs, &cfg.TeamIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse TeamIDs: %w", err)
 	}
-	if err := unmarshalStringSlice(r.AdminUserIDs, &cfg.AdminUserIDs); err != nil {
+	if err := unmarshalJSONSlice(r.AdminUserIDs, &cfg.AdminUserIDs); err != nil {
 		return nil, fmt.Errorf("failed to parse AdminUserIDs: %w", err)
 	}
-	if err := unmarshalEnabledMCPTools(r.EnabledTools, &cfg.EnabledMCPTools); err != nil {
+	if err := unmarshalJSONSlice(r.EnabledTools, &cfg.EnabledMCPTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledTools: %w", err)
 	}
-	if err := unmarshalNativeTools(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
+	if err := unmarshalJSONSlice(r.EnabledNativeTools, &cfg.EnabledNativeTools); err != nil {
 		return nil, fmt.Errorf("failed to parse EnabledNativeTools: %w", err)
 	}
 
@@ -191,9 +147,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			EnabledTools, AutoEnableNewMCPTools, mcp_dynamic_tool_loading,
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
-			MaxToolTurns,
+			MaxToolTurns, UseServiceAccountAuth,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -202,23 +158,24 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.ServiceID,
 		cfg.CustomInstructions,
 		int(cfg.ChannelAccessLevel),
-		mustMarshalSlice(cfg.ChannelIDs),
+		marshalJSONSlice(cfg.ChannelIDs),
 		int(cfg.UserAccessLevel),
-		mustMarshalSlice(cfg.UserIDs),
-		mustMarshalSlice(cfg.TeamIDs),
-		mustMarshalSlice(cfg.AdminUserIDs),
-		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		marshalJSONSlice(cfg.UserIDs),
+		marshalJSONSlice(cfg.TeamIDs),
+		marshalJSONSlice(cfg.AdminUserIDs),
+		marshalJSONSlice(cfg.EnabledMCPTools),
 		cfg.AutoEnableNewMCPTools,
 		cfg.MCPDynamicToolLoading,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,
-		marshalNativeTools(cfg.EnabledNativeTools),
+		marshalJSONSlice(cfg.EnabledNativeTools),
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
 		cfg.MaxToolTurns,
+		cfg.UseServiceAccountAuth,
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -345,30 +302,32 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			ThinkingBudget = $20,
 			StructuredOutputEnabled = $21,
 			MaxToolTurns = $22,
-			UpdateAt = $23
-		WHERE ID = $24 AND DeleteAt = 0`,
+			UseServiceAccountAuth = $23,
+			UpdateAt = $24
+		WHERE ID = $25 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
 		cfg.CustomInstructions,
 		int(cfg.ChannelAccessLevel),
-		mustMarshalSlice(cfg.ChannelIDs),
+		marshalJSONSlice(cfg.ChannelIDs),
 		int(cfg.UserAccessLevel),
-		mustMarshalSlice(cfg.UserIDs),
-		mustMarshalSlice(cfg.TeamIDs),
-		mustMarshalSlice(cfg.AdminUserIDs),
-		marshalEnabledMCPTools(cfg.EnabledMCPTools),
+		marshalJSONSlice(cfg.UserIDs),
+		marshalJSONSlice(cfg.TeamIDs),
+		marshalJSONSlice(cfg.AdminUserIDs),
+		marshalJSONSlice(cfg.EnabledMCPTools),
 		cfg.AutoEnableNewMCPTools,
 		cfg.MCPDynamicToolLoading,
 		cfg.Model,
 		cfg.EnableVision,
 		cfg.DisableTools,
-		marshalNativeTools(cfg.EnabledNativeTools),
+		marshalJSONSlice(cfg.EnabledNativeTools),
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
 		cfg.StructuredOutputEnabled,
 		cfg.MaxToolTurns,
+		cfg.UseServiceAccountAuth,
 		cfg.UpdateAt,
 		cfg.ID,
 	)
@@ -408,14 +367,3 @@ func (s *Store) DeleteAgent(id string) error {
 
 	return nil
 }
-
-// Compile-time check that *Store satisfies the AgentStore interface.
-var _ interface {
-	CreateAgent(cfg *llm.BotConfig) error
-	GetAgent(id string) (*llm.BotConfig, error)
-	ListAgents() ([]*llm.BotConfig, error)
-	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
-	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
-	DeleteAgent(id string) error
-} = (*Store)(nil)

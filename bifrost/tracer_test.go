@@ -189,7 +189,7 @@ func TestOTelTracer_ProcessStreamingChunkRoutingInfo(t *testing.T) {
 				Provider:     bschemas.OpenAI,
 				Model:        "gpt-4o",
 				IsFallback:   true,
-				PrimaryModel: Ptr("claude-opus-5"),
+				PrimaryModel: new("claude-opus-5"),
 			},
 			wantRequested: "claude-opus-5",
 			wantResolved:  "gpt-4o",

@@ -24,6 +24,8 @@ Usage:
     pluginctl disable <plugin id>
     pluginctl enable <plugin id>
     pluginctl reset <plugin id>
+    pluginctl logs <plugin id>
+    pluginctl logs-watch <plugin id>
 `
 
 func main() {
@@ -103,7 +105,6 @@ func getClient(ctx context.Context) (*model.Client4, error) {
 	}
 
 	if adminUsername != "" && adminPassword != "" {
-		client := model.NewAPIv4Client(siteURL)
 		log.Printf("Authenticating as %s against %s.", adminUsername, siteURL)
 		_, _, err := client.Login(ctx, adminUsername, adminPassword)
 		if err != nil {
@@ -137,13 +138,13 @@ func deploy(ctx context.Context, client *model.Client4, pluginID, bundlePath str
 	log.Print("Uploading plugin via API.")
 	_, _, err = client.UploadPluginForced(ctx, pluginBundle)
 	if err != nil {
-		return fmt.Errorf("failed to upload plugin bundle: %s", err.Error())
+		return fmt.Errorf("failed to upload plugin bundle: %w", err)
 	}
 
 	log.Print("Enabling plugin.")
 	_, err = client.EnablePlugin(ctx, pluginID)
 	if err != nil {
-		return fmt.Errorf("failed to enable plugin: %s", err.Error())
+		return fmt.Errorf("failed to enable plugin: %w", err)
 	}
 
 	return nil
@@ -173,15 +174,9 @@ func enablePlugin(ctx context.Context, client *model.Client4, pluginID string) e
 
 // resetPlugin attempts to reset the plugin via the Client4 API.
 func resetPlugin(ctx context.Context, client *model.Client4, pluginID string) error {
-	err := disablePlugin(ctx, client, pluginID)
-	if err != nil {
+	if err := disablePlugin(ctx, client, pluginID); err != nil {
 		return err
 	}
 
-	err = enablePlugin(ctx, client, pluginID)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return enablePlugin(ctx, client, pluginID)
 }

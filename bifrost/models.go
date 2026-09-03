@@ -97,20 +97,6 @@ func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
 	return out
 }
 
-// FetchModelsForServiceType fetches models for a given service type string.
-// This variant is kept for services that only require API-key style credentials
-// (OpenAI, Anthropic, Azure, OpenAI-compatible, Gemini, Cohere, Mistral). Use
-// FetchModelsForService for Vertex AI and other providers that need structured
-// credentials beyond a single API key.
-func FetchModelsForServiceType(serviceType, apiKey, apiURL, orgID string) ([]llm.ModelInfo, error) {
-	return FetchModelsForService(llm.ServiceConfig{
-		Type:   serviceType,
-		APIKey: apiKey,
-		APIURL: apiURL,
-		OrgID:  orgID,
-	})
-}
-
 // FetchModelsForService fetches models for a given service configuration. This
 // handles provider-specific credentials (for example, Vertex AI's project ID,
 // region, and service-account JSON) that cannot be expressed as a single API

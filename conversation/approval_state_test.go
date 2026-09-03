@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func postPtr(s string) *string { return &s }
-
 func blockJSON(t *testing.T, blocks []ContentBlock) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(blocks)
@@ -44,7 +42,7 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusPending},
 				})},
 			},
@@ -55,7 +53,7 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusPending, WouldAutoExecute: true},
 				})},
 			},
@@ -66,7 +64,7 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusSuccess},
 				})},
 				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
@@ -80,11 +78,11 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusSuccess},
 				})},
 				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
-					{Type: BlockTypeToolResult, ToolUseID: "tc1", Status: StatusSuccess, DecidedAt: Int64Ptr(1000)},
+					{Type: BlockTypeToolResult, ToolUseID: "tc1", Status: StatusSuccess, DecidedAt: new(int64(1000))},
 				})},
 			},
 			want: ApprovalStageDone,
@@ -94,11 +92,11 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc1", Name: "x", Status: StatusRejected},
 				})},
 				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
-					{Type: BlockTypeToolResult, ToolUseID: "tc1", Status: StatusError, DecidedAt: Int64Ptr(1000)},
+					{Type: BlockTypeToolResult, ToolUseID: "tc1", Status: StatusError, DecidedAt: new(int64(1000))},
 				})},
 			},
 			want: ApprovalStageDone,
@@ -108,7 +106,7 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p1",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeToolUse, ID: "tc_reject", Name: "a", Status: StatusRejected},
 					{Type: BlockTypeToolUse, ID: "tc_ok", Name: "b", Status: StatusSuccess},
 				})},
@@ -128,9 +126,9 @@ func TestComputePostApprovalState(t *testing.T) {
 					{Type: BlockTypeToolUse, ID: "tc_auto", Name: "read", Status: StatusAutoApproved},
 				})},
 				{Role: "tool_result", Sequence: 3, Content: blockJSON(t, []ContentBlock{
-					{Type: BlockTypeToolResult, ToolUseID: "tc_auto", Status: StatusSuccess, DecidedAt: Int64Ptr(1000)},
+					{Type: BlockTypeToolResult, ToolUseID: "tc_auto", Status: StatusSuccess, DecidedAt: new(int64(1000))},
 				})},
-				{Role: "assistant", Sequence: 4, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 4, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "done"},
 				})},
 			},
@@ -141,11 +139,11 @@ func TestComputePostApprovalState(t *testing.T) {
 			postID: "p2",
 			turns: []store.Turn{
 				{Role: "user", Sequence: 1, Content: blockJSON(t, nil)},
-				{Role: "assistant", Sequence: 2, PostID: postPtr("p1"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 2, PostID: new("p1"), Content: blockJSON(t, []ContentBlock{
 					// Still pending for p1 — must not force p2 into 'call'.
 					{Type: BlockTypeToolUse, ID: "tc_p1", Name: "x", Status: StatusPending},
 				})},
-				{Role: "assistant", Sequence: 3, PostID: postPtr("p2"), Content: blockJSON(t, []ContentBlock{
+				{Role: "assistant", Sequence: 3, PostID: new("p2"), Content: blockJSON(t, []ContentBlock{
 					{Type: BlockTypeText, Text: "follow up"},
 				})},
 			},

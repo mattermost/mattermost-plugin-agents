@@ -76,15 +76,15 @@ const (
 // getThreadTools returns the threads, mentions, and unread-state tools.
 func (p *MattermostToolProvider) getThreadTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_threads", Description: getThreadsDescription, Schema: NewJSONSchemaForAccessMode[GetThreadsArgs](string(p.accessMode)), Resolver: typed("get_threads", p.toolGetThreads)},
-		{Name: "get_mentions", Description: getMentionsDescription, Schema: NewJSONSchemaForAccessMode[GetMentionsArgs](string(p.accessMode)), Resolver: typed("get_mentions", p.toolGetMentions)},
-		{Name: "get_unread_counts", Description: getUnreadCountsDescription, Schema: NewJSONSchemaForAccessMode[GetUnreadCountsArgs](string(p.accessMode)), Resolver: typed("get_unread_counts", p.toolGetUnreadCounts)},
-		{Name: "get_channel_unread", Description: getChannelUnreadDescription, Schema: NewJSONSchemaForAccessMode[GetChannelUnreadArgs](string(p.accessMode)), Resolver: typed("get_channel_unread", p.toolGetChannelUnread)},
-		{Name: "get_posts_around_unread", Description: getPostsAroundUnreadDescription, Schema: NewJSONSchemaForAccessMode[GetPostsAroundUnreadArgs](string(p.accessMode)), Resolver: typed("get_posts_around_unread", p.toolGetPostsAroundUnread)},
-		{Name: "mark_channel_read", Description: markChannelReadDescription, Schema: NewJSONSchemaForAccessMode[MarkChannelReadArgs](string(p.accessMode)), Resolver: typed("mark_channel_read", p.toolMarkChannelRead)},
-		{Name: "mark_channels_viewed", Description: markChannelsViewedDescription, Schema: NewJSONSchemaForAccessMode[MarkChannelsViewedArgs](string(p.accessMode)), Resolver: typed("mark_channels_viewed", p.toolMarkChannelsViewed)},
-		{Name: "mark_post_unread", Description: markPostUnreadDescription, Schema: NewJSONSchemaForAccessMode[MarkPostUnreadArgs](string(p.accessMode)), Resolver: typed("mark_post_unread", p.toolMarkPostUnread)},
-		{Name: "set_thread_follow", Description: setThreadFollowDescription, Schema: NewJSONSchemaForAccessMode[SetThreadFollowArgs](string(p.accessMode)), Resolver: typed("set_thread_follow", p.toolSetThreadFollow)},
+		mcpTool(p, "get_threads", getThreadsDescription, p.toolGetThreads),
+		mcpTool(p, "get_mentions", getMentionsDescription, p.toolGetMentions),
+		mcpTool(p, "get_unread_counts", getUnreadCountsDescription, p.toolGetUnreadCounts),
+		mcpTool(p, "get_channel_unread", getChannelUnreadDescription, p.toolGetChannelUnread),
+		mcpTool(p, "get_posts_around_unread", getPostsAroundUnreadDescription, p.toolGetPostsAroundUnread),
+		mcpTool(p, "mark_channel_read", markChannelReadDescription, p.toolMarkChannelRead),
+		mcpTool(p, "mark_channels_viewed", markChannelsViewedDescription, p.toolMarkChannelsViewed),
+		mcpTool(p, "mark_post_unread", markPostUnreadDescription, p.toolMarkPostUnread),
+		mcpTool(p, "set_thread_follow", setThreadFollowDescription, p.toolSetThreadFollow),
 	}
 }
 
@@ -93,11 +93,12 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 	if err := requireID("team_id", args.TeamID); err != nil {
 		return "", err
 	}
-	if args.Limit <= 0 {
-		args.Limit = 30
+	pageSize := uint64(30)
+	if args.Limit > 0 {
+		pageSize = uint64(args.Limit)
 	}
-	if args.Limit > 100 {
-		args.Limit = 100
+	if pageSize > 100 {
+		pageSize = 100
 	}
 
 	userID, err := p.resolveUserID(mcpContext)
@@ -106,7 +107,7 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 	}
 
 	opts := model.GetUserThreadsOpts{
-		PageSize: uint64(args.Limit),
+		PageSize: pageSize,
 		Extended: true,
 		Unread:   args.UnreadOnly,
 	}
@@ -120,8 +121,8 @@ func (p *MattermostToolProvider) toolGetThreads(mcpContext *MCPToolContext, args
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Threads inbox: %d total, %d unread threads, %d unread mentions\n\n",
-		threads.Total, threads.TotalUnreadThreads, threads.TotalUnreadMentions))
+	fmt.Fprintf(&result, "Threads inbox: %d total, %d unread threads, %d unread mentions\n\n",
+		threads.Total, threads.TotalUnreadThreads, threads.TotalUnreadMentions)
 	for i, tr := range threads.Threads {
 		username := ""
 		if tr.Post != nil {
@@ -216,7 +217,7 @@ func (p *MattermostToolProvider) toolGetUnreadCounts(mcpContext *MCPToolContext,
 	if len(unreads) == 0 {
 		return "no unread messages across your teams", nil
 	}
-	result.WriteString(fmt.Sprintf("Unread counts across %d team(s):\n", len(unreads)))
+	fmt.Fprintf(&result, "Unread counts across %d team(s):\n", len(unreads))
 	for _, unread := range unreads {
 		format.WriteTeamUnread(&result, unread)
 	}
@@ -289,13 +290,8 @@ func (p *MattermostToolProvider) toolMarkChannelRead(mcpContext *MCPToolContext,
 
 // toolMarkChannelsViewed implements the mark_channels_viewed tool.
 func (p *MattermostToolProvider) toolMarkChannelsViewed(mcpContext *MCPToolContext, args MarkChannelsViewedArgs) (string, error) {
-	if len(args.ChannelIDs) == 0 {
-		return "", fmt.Errorf("channel_ids cannot be empty")
-	}
-	for _, id := range args.ChannelIDs {
-		if err := requireID("channel_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("channel_ids", args.ChannelIDs); err != nil {
+		return "", err
 	}
 
 	userID, err := p.resolveUserID(mcpContext)

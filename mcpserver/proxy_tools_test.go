@@ -31,7 +31,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *
 	type echoOut struct {
 		Echo string `json:"echo"`
 	}
-	for i := 0; i < toolCount; i++ {
+	for i := range toolCount {
 		name := fmt.Sprintf("test_tool_%d", i)
 		gosdkmcp.AddTool(srv, &gosdkmcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gosdkmcp.CallToolRequest, in echoIn) (*gosdkmcp.CallToolResult, echoOut, error) {
 			return nil, echoOut{Echo: in.Message}, nil
