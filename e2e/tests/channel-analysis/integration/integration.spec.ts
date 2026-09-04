@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, CHANNEL_ANALYSIS_USER_PROMPT } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -242,6 +242,7 @@ data: [DONE]
 
         const analysisText = 'The channel discussed the project kickoff meeting and budget approval.';
         const followUpText = 'The first point was about the project kickoff meeting.';
+        const followUpUserText = 'Can you tell me more about the first point?';
         const sse = (id: string, content: string) => `
 data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
 data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
@@ -249,14 +250,13 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Register both turns once. addMock resets Smocker and can hang an
-        // in-flight completion. Title generation shares /chat/completions —
-        // match it first. Follow-up bodies may omit the new user text, so
-        // consume the first user-visible completion with times:1.
+        // Smocker first-match: title gen, then the follow-up user phrase
+        // (history still contains the analysis prompt), then analysis.
+        // Do not sequence turns with times:1 — extra /chat/completions steal those slots.
         await openAIMock.addMocks([
             titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { times: 1 }),
-            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText)),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: CHANNEL_ANALYSIS_USER_PROMPT }),
         ]);
 
         // 5. Submit channel analysis query using quick action
@@ -268,16 +268,14 @@ data: [DONE]
         // 7. Verify channel analysis response contains channel-specific content
         const analysisPostText = llmBotHelper.getPostText();
         await expect(analysisPostText).toBeVisible();
-        const analysisContent = await analysisPostText.textContent();
-        expect(analysisContent).toBeTruthy();
-        expect(analysisContent!.toLowerCase()).toMatch(/meeting|budget|kickoff|approval/);
+        await expect(analysisPostText).toContainText(analysisText);
 
         await aiPlugin.waitForThreadComposerIdle();
-        await aiPlugin.sendMessage('Can you tell me more about the first point?');
+        await aiPlugin.sendMessage(followUpUserText);
 
-        await expect(page.getByText(followUpText).last()).toBeVisible({ timeout: 30000 });
-        const followUpContent = await llmBotHelper.getPostText().textContent();
-        expect(followUpContent).toContain('kickoff meeting');
+        await expect(page.getByText(analysisText)).toBeVisible();
+        await expect(page.getByText(followUpText)).toBeVisible({ timeout: 30000 });
+        await expect(llmBotHelper.getPostText()).toContainText(followUpText);
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {
