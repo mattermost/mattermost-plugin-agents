@@ -408,10 +408,49 @@ func (a *API) handleCELTest(c *gin.Context) {
 	}
 	// Plugin RPC (gob) turns an empty users slice into nil; JSON would then
 	// emit "users": null and crash the host TestResultsModal on spread.
-	if result != nil && result.Users == nil {
-		result.Users = []*model.User{}
+	if result != nil {
+		if result.Users == nil {
+			result.Users = []*model.User{}
+		}
+		a.sanitizeUsersForHTTPResponse(result.Users, userID)
 	}
 	c.JSON(http.StatusOK, result)
+}
+
+// sanitizeUsersForHTTPResponse applies core's profile sanitization to users
+// returned over HTTP. Mirrors App.SanitizeProfile: options from
+// Config.GetSanitizeOptions, with email/fullname/authservice forced on for
+// PermissionManageSystem. auth_data is never opted in, so Sanitize blanks it
+// for everyone.
+func (a *API) sanitizeUsersForHTTPResponse(users []*model.User, actingUserID string) {
+	asAdmin := isSystemAdmin(a.pluginAPI, actingUserID)
+	options := a.userProfileSanitizeOptions(asAdmin)
+	for _, user := range users {
+		if user == nil {
+			continue
+		}
+		user.SanitizeProfile(options, asAdmin)
+	}
+}
+
+// userProfileSanitizeOptions mirrors core App.GetSanitizeOptions: privacy
+// ShowEmailAddress/ShowFullName, plus email/fullname/authservice for sysadmins.
+func (a *API) userProfileSanitizeOptions(asAdmin bool) map[string]bool {
+	options := map[string]bool{
+		"email":    false,
+		"fullname": false,
+	}
+	if cfg := a.pluginAPI.Configuration.GetConfig(); cfg != nil &&
+		cfg.PrivacySettings.ShowEmailAddress != nil &&
+		cfg.PrivacySettings.ShowFullName != nil {
+		options = cfg.GetSanitizeOptions()
+	}
+	if asAdmin {
+		options["email"] = true
+		options["fullname"] = true
+		options["authservice"] = true
+	}
+	return options
 }
 
 func (a *API) handleCELAutocompleteFields(c *gin.Context) {
