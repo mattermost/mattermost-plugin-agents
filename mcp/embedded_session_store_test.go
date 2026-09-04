@@ -55,7 +55,7 @@ func TestEnsureEmbeddedSessionIDCreatedFlag(t *testing.T) {
 					UserId:    "userdddddddddddddddddddddd",
 					ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
 				}, (*model.AppError)(nil))
-				api.On("KVDelete", sessionKey).Return((*model.AppError)(nil))
+				api.On("KVSetWithOptions", sessionKey, ([]byte)(nil), mock.Anything).Return(true, (*model.AppError)(nil))
 				api.On("GetConfig").Return(&model.Config{})
 				api.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(&model.Session{
 					Id:     mintedSessionID,
