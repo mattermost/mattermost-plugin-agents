@@ -5,12 +5,40 @@ package llm
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+type traceCaptureLog struct {
+	entries []string
+}
+
+func (l *traceCaptureLog) Info(message string, keyValuePairs ...any) {
+	l.entries = append(l.entries, fmt.Sprint(append([]any{message}, keyValuePairs...)...))
+}
+
+func TestToolTracingDoesNotLogSensitivePayloads(t *testing.T) {
+	const (
+		sensitiveArgument = "private-tool-argument"
+		sensitiveResult   = "private-tool-result"
+	)
+
+	log := &traceCaptureLog{}
+	store := NewToolStore(log, true)
+	store.TraceResolved("sensitive_tool", func(target any) error {
+		return json.Unmarshal([]byte(`{"secret":"`+sensitiveArgument+`"}`), target)
+	}, sensitiveResult, nil)
+
+	require.NotEmpty(t, log.entries)
+	for _, entry := range log.entries {
+		assert.NotContains(t, entry, sensitiveArgument, "tool arguments must never be written to logs")
+		assert.NotContains(t, entry, sensitiveResult, "tool results must never be written to logs")
+	}
+}
 
 func TestSanitizeNonPrintableChars(t *testing.T) {
 	tests := []struct {

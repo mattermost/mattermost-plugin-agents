@@ -204,7 +204,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(c.Request.Context(), userID, bot, post, channel, fileID)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -224,7 +224,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(c.Request.Context(), userID, bot, post, channel)
 	if err != nil {
 		if err.Error() == "not a calls or zoom bot post" {
 			c.AbortWithError(http.StatusBadRequest, errors.New("not a calls or zoom bot post"))
@@ -277,7 +277,7 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	err := a.conversationsService.HandleRegenerate(userID, post, channel)
+	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
@@ -311,7 +311,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolCall(userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
@@ -361,7 +361,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleToolResult(userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
 	}
