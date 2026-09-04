@@ -602,6 +602,7 @@ func TestCELTestNormalizesNilUsers(t *testing.T) {
 	defer e.Cleanup(t)
 
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true).Maybe()
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeService, mock.AnythingOfType("string"), "", "", 0).
 		Return(&model.AccessControlPolicyTestResponse{Users: nil, Total: 0}, nil).Once()
 
@@ -618,6 +619,121 @@ func TestCELTestNormalizesNilUsers(t *testing.T) {
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.NewDecoder(recorder.Body).Decode(&raw))
 	require.Equal(t, json.RawMessage("[]"), raw["users"])
+}
+
+func TestCELTestSanitizesReturnedUsers(t *testing.T) {
+	const (
+		sentinelEmail    = "sentinel-email@example.test"
+		sentinelAuthData = "uid=sentinel,dc=example,dc=com"
+		sentinelFirst    = "SentinelFirst"
+		sentinelLast     = "SentinelLast"
+		sentinelAuthSvc  = "sentinel-authservice"
+		keepUsername     = "keep-username"
+	)
+
+	tests := []struct {
+		name            string
+		isAdmin         bool
+		showEmail       bool
+		showFullName    bool
+		wantEmail       bool
+		wantNames       bool
+		wantAuthService bool
+	}{
+		{
+			name: "non-admin privacy off hides email names and auth",
+		},
+		{
+			name:         "non-admin privacy on keeps email and names not auth",
+			showEmail:    true,
+			showFullName: true,
+			wantEmail:    true,
+			wantNames:    true,
+		},
+		{
+			name:      "non-admin show email only",
+			showEmail: true,
+			wantEmail: true,
+		},
+		{
+			name:         "non-admin show full name only",
+			showFullName: true,
+			wantNames:    true,
+		},
+		{
+			name:            "system admin sees email names authservice despite privacy off",
+			isAdmin:         true,
+			wantEmail:       true,
+			wantNames:       true,
+			wantAuthService: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			matched := &model.User{
+				Id:          model.NewId(),
+				Username:    keepUsername,
+				Email:       sentinelEmail,
+				FirstName:   sentinelFirst,
+				LastName:    sentinelLast,
+				AuthService: sentinelAuthSvc,
+				AuthData:    model.NewPointer(sentinelAuthData),
+			}
+
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.OverrideConfig(&model.Config{
+				PrivacySettings: model.PrivacySettings{
+					ShowEmailAddress: model.NewPointer(tt.showEmail),
+					ShowFullName:     model.NewPointer(tt.showFullName),
+				},
+			})
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(!tt.isAdmin).Maybe()
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string"), "", "", 0).
+				Return(&model.AccessControlPolicyTestResponse{
+					Users: []*model.User{matched},
+					Total: 1,
+				}, nil).Once()
+
+			body := map[string]any{
+				"resource_type": accesscontrol.ResourceTypeAgent,
+				"expression":    `user.attributes.department == "eng"`,
+				"term":          "",
+				"after":         "",
+				"limit":         0,
+			}
+			recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/test", body, userID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			raw := recorder.Body.String()
+			assert.Contains(t, raw, matched.Id)
+			assert.Contains(t, raw, keepUsername)
+			assert.NotContains(t, raw, sentinelAuthData)
+
+			if tt.wantEmail {
+				assert.Contains(t, raw, sentinelEmail)
+			} else {
+				assert.NotContains(t, raw, sentinelEmail)
+			}
+			if tt.wantNames {
+				assert.Contains(t, raw, sentinelFirst)
+				assert.Contains(t, raw, sentinelLast)
+			} else {
+				assert.NotContains(t, raw, sentinelFirst)
+				assert.NotContains(t, raw, sentinelLast)
+			}
+			if tt.wantAuthService {
+				assert.Contains(t, raw, sentinelAuthSvc)
+			} else {
+				assert.NotContains(t, raw, sentinelAuthSvc)
+			}
+		})
+	}
 }
 
 // perIDDecisionClient denies specific resource IDs; everything else is no_policy.
