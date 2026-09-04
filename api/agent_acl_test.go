@@ -102,6 +102,24 @@ func TestServiceAccountChangeNeedsAdmin(t *testing.T) {
 	}
 }
 
+func TestServiceAccountPolicyWriteNeedsAdmin(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *llm.BotConfig
+		want bool
+	}{
+		{name: "nil config does not need admin", cfg: nil},
+		{name: "SA off does not need admin", cfg: &llm.BotConfig{UseServiceAccountAuth: false}},
+		{name: "SA on needs admin", cfg: &llm.BotConfig{UseServiceAccountAuth: true}, want: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, serviceAccountPolicyWriteNeedsAdmin(tc.cfg))
+		})
+	}
+}
+
 // TestServiceAccountSensitiveFieldsAreExhaustive fails when a BotConfig field is
 // added without deciding whether an agent manager may change it while service
 // account auth is on. Manager-editable fields are listed in

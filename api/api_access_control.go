@@ -137,6 +137,10 @@ func (a *API) handlePutAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return
+	}
 	if !policyWritableID(c, cfg.ID) {
 		return
 	}
@@ -159,6 +163,10 @@ func (a *API) handleDeleteAgentPolicy(c *gin.Context) {
 		return
 	}
 	auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
+	if serviceAccountPolicyWriteNeedsAdmin(cfg) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return
+	}
 	if !policyWritableID(c, cfg.ID) {
 		return
 	}
