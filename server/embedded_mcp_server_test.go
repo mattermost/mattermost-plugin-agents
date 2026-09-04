@@ -4,11 +4,63 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
 	"github.com/mattermost/mattermost/server/public/model"
+	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type noopMCPLogger struct{}
+
+func (noopMCPLogger) Debug(string, ...any) {}
+func (noopMCPLogger) Info(string, ...any)  {}
+func (noopMCPLogger) Warn(string, ...any)  {}
+func (noopMCPLogger) Error(string, ...any) {}
+func (noopMCPLogger) Flush() error         { return nil }
+
+func TestEmbeddedMCPServerDoesNotLogSessionIDs(t *testing.T) {
+	const sessionID = "sensitive-session-id"
+
+	var debugLogs []string
+	mockAPI := &plugintest.API{}
+	mockAPI.On(
+		"LogDebug",
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+		mock.Anything,
+	).Run(func(args mock.Arguments) {
+		debugLogs = append(debugLogs, fmt.Sprint(args...))
+	}).Return()
+
+	pluginClient := pluginapi.NewClient(mockAPI, nil)
+	inMemoryServer, err := mcpserver.NewInMemoryServer(
+		mcpserver.InMemoryConfig{BaseConfig: mcpserver.BaseConfig{
+			MMServerURL:         "https://mattermost.example.com",
+			MMInternalServerURL: "http://localhost:8065",
+		}},
+		noopMCPLogger{},
+		nil,
+	)
+	require.NoError(t, err)
+
+	embeddedServer := &EmbeddedMCPServer{
+		server: inMemoryServer,
+		logger: pluginClient.Log,
+	}
+	_, err = embeddedServer.CreateClientTransport("requesting-user", sessionID, pluginClient)
+	require.NoError(t, err)
+	require.NotEmpty(t, debugLogs)
+	for _, entry := range debugLogs {
+		require.NotContains(t, entry, sessionID, "session identifiers must never be written to logs")
+	}
+}
 
 func TestDeriveInternalServerURL(t *testing.T) {
 	cfgWith := func(listen, connSec *string) *model.Config {
