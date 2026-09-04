@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -150,6 +151,7 @@ func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot 
 	}
 
 	sessionID := auth.SessionIDFromContext(ctx)
+	backgroundCtx := telemetry.DetachContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -171,8 +173,8 @@ func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot 
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", err)
 		}
-		if err := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, transcriptionFileID); err != nil {
-			return err
+		if permissionErr := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, transcriptionFileID); permissionErr != nil {
+			return permissionErr
 		}
 		transcriptionFileInfo, err := s.mmClient.GetFileInfo(transcriptionFileID)
 		if err != nil {
@@ -209,7 +211,7 @@ func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot 
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
+		summaryStream, err := s.SummarizeTranscription(backgroundCtx, bot, text, requestContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -220,7 +222,7 @@ func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot 
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		if err := s.streamingService.StreamToNewPost(backgroundCtx, bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -243,6 +245,7 @@ func (s *Service) summarizeCallRecording(ctx stdcontext.Context, bot *bots.Bot, 
 	}
 
 	sessionID := auth.SessionIDFromContext(ctx)
+	backgroundCtx := telemetry.DetachContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -276,7 +279,7 @@ func (s *Service) summarizeCallRecording(ctx stdcontext.Context, bot *bots.Bot, 
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
+		summaryStream, err := s.SummarizeTranscription(backgroundCtx, bot, transcription, llmContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -285,7 +288,7 @@ func (s *Service) summarizeCallRecording(ctx stdcontext.Context, bot *bots.Bot, 
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
-		ctx, err := s.streamingService.GetStreamingContext(stdcontext.Background(), transcriptPost.Id)
+		ctx, err := s.streamingService.GetStreamingContext(backgroundCtx, transcriptPost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to get post streaming context: %w", err)
 		}
