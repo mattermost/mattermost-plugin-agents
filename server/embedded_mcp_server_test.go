@@ -4,7 +4,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/mcpserver"
@@ -25,6 +28,12 @@ func (noopMCPLogger) Flush() error         { return nil }
 
 func TestEmbeddedMCPServerDoesNotLogSessionIDs(t *testing.T) {
 	const sessionID = "sensitive-session-id"
+
+	mattermostServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v4/users/me", r.URL.Path)
+		require.NoError(t, json.NewEncoder(w).Encode(&model.User{Id: "requesting-user"}))
+	}))
+	t.Cleanup(mattermostServer.Close)
 
 	var debugLogs []string
 	mockAPI := &plugintest.API{}
@@ -47,8 +56,8 @@ func TestEmbeddedMCPServerDoesNotLogSessionIDs(t *testing.T) {
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	inMemoryServer, err := mcpserver.NewInMemoryServer(
 		mcpserver.InMemoryConfig{BaseConfig: mcpserver.BaseConfig{
-			MMServerURL:         "https://mattermost.example.com",
-			MMInternalServerURL: "http://localhost:8065",
+			MMServerURL:         mattermostServer.URL,
+			MMInternalServerURL: mattermostServer.URL,
 		}},
 		noopMCPLogger{},
 		nil,
