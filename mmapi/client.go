@@ -212,7 +212,8 @@ func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 // reads using the requesting session. It intentionally does not accept a user
 // ID: channel RBAC remains a separate, additive check at each call site.
 func CheckFileDownloadPermission(mm Client, sessionID, fileID string) error {
-	if !mm.HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment) {
+	allowed := mm.HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment)
+	if sessionID == "" || !allowed {
 		return ErrFileActionForbidden
 	}
 	return nil
