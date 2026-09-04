@@ -38,6 +38,11 @@ func TestEmbeddedMCPServerDoesNotLogSessionIDs(t *testing.T) {
 	).Run(func(args mock.Arguments) {
 		debugLogs = append(debugLogs, fmt.Sprint(args...))
 	}).Return()
+	mockAPI.On("GetSession", sessionID).Return(&model.Session{
+		Id:     sessionID,
+		UserId: "requesting-user",
+		Token:  "session-token",
+	}, (*model.AppError)(nil))
 
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	inMemoryServer, err := mcpserver.NewInMemoryServer(
