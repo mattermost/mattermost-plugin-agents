@@ -73,7 +73,7 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (string, error) {
 
 	sess, getErr := m.pluginAPI.Session.Get(stored)
 	if getErr != nil || sess == nil {
-		m.log.Debug("Stored embedded session invalid or missing", "userID", userID, "error", getErr)
+		m.log.Debug("Stored embedded session invalid or missing", "userID", userID)
 		if deleteErr := m.deleteEmbeddedSessionID(userID); deleteErr != nil {
 			m.log.Debug("Failed to delete stale embedded session key", "userID", userID, "error", deleteErr)
 		}
