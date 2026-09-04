@@ -339,22 +339,45 @@ func (a *API) handleDeleteMCPPolicy(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
-// celRouteAuthzRequired: system admins and agent managers pass; otherwise a
-// per-agent admin passes when agent_id names an agent they manage.
-func (a *API) celRouteAuthzRequired(c *gin.Context) {
-	userID := c.GetHeader("Mattermost-User-Id")
+// canAuthorAgentCEL reports whether userID may author an agent access policy:
+// manage_own_agent / manage_others_agent / manage_system, or ?agent_id= plus
+// canManageAgent. Mirrors "anyone can create a channel" for agents.
+func (a *API) canAuthorAgentCEL(c *gin.Context, userID string) bool {
 	if canConfigureAgentServices(a.pluginAPI, userID) {
-		c.Next()
-		return
+		return true
 	}
 	if agentID := c.Query("agent_id"); agentID != "" {
 		cfg, err := a.agentStore.GetAgent(agentID)
 		if err == nil && cfg != nil && canManageAgent(a.pluginAPI, cfg, userID) {
-			c.Next()
-			return
+			return true
 		}
 	}
+	return false
+}
+
+// celRouteAuthzRequired: schema/lint editor routes (check, visual_ast,
+// autocomplete). /cel/test uses canAuthorCELTest instead.
+func (a *API) celRouteAuthzRequired(c *gin.Context) {
+	userID := c.GetHeader("Mattermost-User-Id")
+	if a.canAuthorAgentCEL(c, userID) {
+		c.Next()
+		return
+	}
 	abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to use the access policy editor"))
+}
+
+// canAuthorCELTest: people who could save that policy may Test it. Agent
+// policies are authorable by agent managers; service/MCP policies are /admin
+// CRUD, so only manage_system.
+func (a *API) canAuthorCELTest(c *gin.Context, userID, resourceType string) bool {
+	switch resourceType {
+	case accesscontrol.ResourceTypeAgent:
+		return a.canAuthorAgentCEL(c, userID)
+	case accesscontrol.ResourceTypeService, accesscontrol.ResourceTypeMCP:
+		return isSystemAdmin(a.pluginAPI, userID)
+	default:
+		return false
+	}
 }
 
 type celExpressionRequest struct {
@@ -409,6 +432,30 @@ func (a *API) handleCELTest(c *gin.Context) {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid resource_type %q", req.ResourceType))
 		return
 	}
+	if !a.canAuthorCELTest(c, userID, req.ResourceType) {
+		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to test this access policy expression"))
+		return
+	}
+
+	// Core Channel Settings: ManageSystem skips self-inclusion and gets the
+	// unrestricted match list. Delegated authors must match the expression
+	// first; a failed self-check returns an empty list (not 403), then a
+	// successful check still dumps every match, not self-only.
+	if !isSystemAdmin(a.pluginAPI, userID) {
+		matches, err := a.accessChecker.RequesterMatchesExpression(c.Request.Context(), userID, req.ResourceType, req.Expression)
+		if err != nil {
+			abortPolicyRequest(c, err)
+			return
+		}
+		if !matches {
+			c.JSON(http.StatusOK, &model.AccessControlPolicyTestResponse{
+				Users: []*model.User{},
+				Total: 0,
+			})
+			return
+		}
+	}
+
 	result, err := a.accessChecker.TestExpression(c.Request.Context(), userID, req.ResourceType, req.Expression, req.Term, req.After, req.Limit)
 	if err != nil {
 		abortPolicyRequest(c, err)
