@@ -36,7 +36,7 @@ func TestLanguageModelLoggingDoesNotLogFileAttachmentData(t *testing.T) {
 		mock.Anything,
 		mock.Anything,
 	).Run(func(args mock.Arguments) {
-		entries = append(entries, fmt.Sprint(args...))
+		entries = append(entries, fmt.Sprint(args.Get(2)))
 	}).Return()
 
 	logger := pluginapi.NewClient(mockAPI, nil).Log
