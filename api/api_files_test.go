@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 func TestHandleRawFileContent(t *testing.T) {
@@ -123,4 +125,45 @@ func TestHandleRawFileContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRawFileContentPreservesPluginSession(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	userID := model.NewId()
+	sessionID := model.NewId()
+	channelID := model.NewId()
+	fileID := model.NewId()
+
+	m := mocks.NewMockClient(t)
+	m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+		Id: fileID, ChannelId: channelID, MimeType: "text/plain",
+	}, nil)
+	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false).Once()
+
+	adminReadCalled := false
+	m.EXPECT().GetFile(fileID).
+		Run(func(string) { adminReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+		Maybe()
+	e.api.fileService = files.New(m)
+
+	body, err := json.Marshal(RawFileContentRequest{FileID: fileID})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mattermost-User-Id", userID)
+	rec := httptest.NewRecorder()
+
+	e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.False(t, adminReadCalled, "admin GetFile must not run after the caller's file policy denies access")
 }

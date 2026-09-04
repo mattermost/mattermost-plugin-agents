@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -278,6 +279,49 @@ func TestGetContent(t *testing.T) {
 				require.NoError(t, err)
 				tt.assert(t, c)
 			}
+		})
+	}
+}
+
+func TestGetContentDeniedByFilePolicy(t *testing.T) {
+	userID := model.NewId()
+	channelID := model.NewId()
+	fileID := model.NewId()
+
+	tests := []struct {
+		name      string
+		sessionID string
+	}{
+		{name: "policy denied", sessionID: model.NewId()},
+		{name: "missing session", sessionID: ""},
+		{name: "invalid session", sessionID: "invalid-session"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := mocks.NewMockClient(t)
+			m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+				Id: fileID, ChannelId: channelID, MimeType: "text/plain",
+			}, nil)
+			m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+			m.On(
+				"HasPermissionToFileAction",
+				tt.sessionID,
+				fileID,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(false).Once()
+
+			adminReadCalled := false
+			m.EXPECT().GetFile(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+				Maybe()
+
+			ctx := context.WithValue(t.Context(), auth.SessionIDContextKey, tt.sessionID)
+			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+
+			assert.ErrorIs(t, err, ErrForbidden)
+			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")
 		})
 	}
 }
