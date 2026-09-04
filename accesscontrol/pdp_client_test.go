@@ -55,7 +55,7 @@ func TestPluginAPIClientEvaluateAccessRequest(t *testing.T) {
 		},
 		{
 			// A deny labeled no_policy is self-contradictory; it must not be
-			// mistaken for the unregulated case, which fails open.
+			// mistaken for the unregulated case (legacy agents, services, MCP).
 			name: "deny contradicting the no_policy reason stays a deny",
 			decision: &model.AccessDecision{
 				Decision: false,

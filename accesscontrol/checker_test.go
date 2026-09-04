@@ -60,8 +60,8 @@ func noPolicyDecision() *model.AccessDecision {
 }
 
 // contradictoryDecision is a deny carrying the no_policy reason. The PDP should
-// never emit one; if the checkers read the reason without the boolean they
-// would fail open on it.
+// never emit one; checkers must honor Decision and not treat the reason as a
+// grant.
 func contradictoryDecision() *model.AccessDecision {
 	return &model.AccessDecision{
 		Decision: false,
@@ -172,7 +172,7 @@ func TestCanUseAgentDecisionTable(t *testing.T) {
 		// attribute-based mode: legacy check must NEVER run
 		{name: "attr allow", decision: allowDecision(), attributeBased: true, legacy: legacyFail},
 		{name: "attr deny", decision: denyDecision(), attributeBased: true, legacy: legacyPass, wantDenied: true},
-		{name: "attr no_policy fails open", decision: noPolicyDecision(), attributeBased: true, legacy: legacyFail},
+		{name: "attr no_policy denies", decision: noPolicyDecision(), attributeBased: true, legacy: legacyFail, wantDenied: true},
 		{name: "attr contradictory deny fails closed", decision: contradictoryDecision(), attributeBased: true, legacy: legacyPass, wantDenied: true},
 		{name: "attr eval error fails closed", evalErr: evalErr, attributeBased: true, legacy: legacyPass, wantDenied: true},
 		{name: "attr missing decision fails closed", attributeBased: true, legacy: legacyPass, wantDenied: true},
@@ -294,7 +294,9 @@ func TestCanUseServiceAndMCPServerDecisionTable(t *testing.T) {
 
 // Resource IDs the caller chooses (config-file bot IDs, service and MCP server
 // IDs) need not be 26-char platform IDs. No policy can be stored against one, so
-// the resource is ungoverned and the caller's own default applies.
+// evaluate() reports no_policy and the caller applies its own default: legacy
+// agents keep allow/block lists, services/MCP stay unrestricted, and
+// attribute-based agents deny (they cannot store a policy on that ID).
 func TestEvaluateNonAddressableResourceIDsAreNoPolicy(t *testing.T) {
 	legacyErr := errors.New("legacy restriction")
 
@@ -314,11 +316,18 @@ func TestEvaluateNonAddressableResourceIDsAreNoPolicy(t *testing.T) {
 			c := New(client, nil, NoMCPServerIDs, nil)
 			userID := model.NewId()
 
-			// Agent path: falls back to legacy behavior.
+			// Legacy agent path: falls back to allow/block lists.
 			legacyCalls := 0
 			err := c.CanUseAgent(context.Background(), userID, &llm.BotConfig{ID: tt.resourceID}, func() error { legacyCalls++; return legacyErr })
 			assert.ErrorIs(t, err, legacyErr)
 			assert.Equal(t, 1, legacyCalls)
+
+			// Attribute-based agents cannot store a policy on a non-addressable
+			// ID, so no_policy denies rather than falling through.
+			attrLegacyCalls := 0
+			err = c.CanUseAgent(context.Background(), userID, &llm.BotConfig{ID: tt.resourceID, UserAccessLevel: llm.UserAccessLevelAttributeBased}, func() error { attrLegacyCalls++; return nil })
+			assert.ErrorIs(t, err, ErrAccessDenied)
+			assert.Zero(t, attrLegacyCalls)
 
 			// Mode-less paths: allow.
 			assert.NoError(t, c.CanUseService(context.Background(), userID, tt.resourceID))
@@ -333,7 +342,8 @@ func TestEvaluateNonAddressableResourceIDsAreNoPolicy(t *testing.T) {
 
 // A user ID that cannot name a user is a caller bug with no legitimate case, so
 // it denies rather than reporting the resource ungoverned. Treating it as
-// no_policy would fail attribute-based agents open.
+// no_policy would let legacy-mode agents run their allow/block lists, and
+// services/MCP stay unrestricted.
 func TestEvaluateInvalidUserIDDenies(t *testing.T) {
 	userIDs := []struct {
 		name   string
@@ -344,8 +354,7 @@ func TestEvaluateInvalidUserIDDenies(t *testing.T) {
 		{name: "uuid", userID: "550e8400-e29b-41d4-a716-446655440000"},
 	}
 
-	// Attribute-based agents are the ones that fail open on a wrong no_policy;
-	// the legacy modes must deny too rather than run their legacy check.
+	// Every agent mode must deny rather than run a legacy check.
 	agentModes := []llm.UserAccessLevel{
 		llm.UserAccessLevelAttributeBased,
 		llm.UserAccessLevelAll,
