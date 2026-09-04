@@ -103,6 +103,7 @@ export class AIPlugin {
     const composer = rhs.getByTestId('reply_textbox');
     if (await composer.isVisible().catch(() => false)) {
       await expect(composer).toBeEnabled({ timeout: 30000 });
+      await composer.click();
       await composer.fill(message);
       const send = rhs.getByTestId('SendMessageButton');
       const newChat = rhs.getByTestId('rhs-new-tab-create-post');

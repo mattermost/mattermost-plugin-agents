@@ -315,18 +315,18 @@ export function buildTextResponse(text: string): string {
 export const TITLE_GENERATION_BODY_MATCH =
 	'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
 
-/**
- * First user turn of channels.AnalyzeChannel. Present in the analysis
- * completion and in later follow-up history, so follow-up rules that match a
- * unique user phrase must be registered before a rule that uses this string.
- */
-export const CHANNEL_ANALYSIS_USER_PROMPT = 'Please summarize the channel activity as requested.';
-
-/** User-turn marker from prompts/thread_user.tmpl (thread summarization). */
-export const THREAD_SUMMARY_USER_MARKER = '---- Posts Start ----';
-
 export function titleGenerationMockRule(title = 'E2E title'): any {
 	return buildChatCompletionMockRule(buildTextResponse(title), {
 		bodyContains: TITLE_GENERATION_BODY_MATCH,
 	});
+}
+
+/**
+ * Title-generation siphon plus a catch-all turn response. Use this for a
+ * single user-visible completion. To sequence follow-ups, wait until the
+ * composer is idle, then register the next turn with this helper — do not
+ * use times:1 or overlapping history body matchers.
+ */
+export function turnMocksWithTitleSiphon(sseBody: string): any[] {
+	return [titleGenerationMockRule(), buildChatCompletionMockRule(sseBody)];
 }
