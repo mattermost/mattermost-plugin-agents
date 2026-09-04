@@ -168,8 +168,8 @@ func (s *Service) newCallTranscriptionSummaryThread(ctx context.Context, bot *bo
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", err)
 		}
-		if err := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, transcriptionFileID); err != nil {
-			return err
+		if permissionErr := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, transcriptionFileID); permissionErr != nil {
+			return permissionErr
 		}
 		transcriptionFileInfo, err := s.mmClient.GetFileInfo(transcriptionFileID)
 		if err != nil {

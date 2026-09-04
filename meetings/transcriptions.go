@@ -29,8 +29,8 @@ func (s *Service) HandleTranscribeFile(ctx context.Context, userID string, bot *
 		return nil, err
 	}
 
-	if err := mmapi.CheckFileDownloadPermission(s.mmClient, auth.SessionIDFromContext(ctx), fileID); err != nil {
-		return nil, err
+	if permissionErr := mmapi.CheckFileDownloadPermission(s.mmClient, auth.SessionIDFromContext(ctx), fileID); permissionErr != nil {
+		return nil, permissionErr
 	}
 	recordingFileInfo, err := s.mmClient.GetFileInfo(fileID)
 	if err != nil {
