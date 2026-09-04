@@ -308,3 +308,13 @@ export function buildTextResponse(text: string): string {
 	chunks.push('data: [DONE]');
 	return chunks.join('\n\n') + '\n\n';
 }
+
+/** Matches GenerateTitle ChatCompletionNoStream requests so they do not consume turn mocks. */
+export const TITLE_GENERATION_BODY_MATCH =
+	'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
+
+export function titleGenerationMockRule(title = 'E2E title'): any {
+	return buildChatCompletionMockRule(buildTextResponse(title), {
+		bodyContains: TITLE_GENERATION_BODY_MATCH,
+	});
+}

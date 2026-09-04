@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -250,10 +250,11 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
         // Register both turns once. addMock resets Smocker and can hang an
-        // in-flight completion. Follow-up request bodies still contain the
-        // analysis prompt and may omit the new user text, so body matchers
-        // cannot tell turns apart — consume the first completion with times:1.
+        // in-flight completion. Title generation shares /chat/completions —
+        // match it first. Follow-up bodies may omit the new user text, so
+        // consume the first user-visible completion with times:1.
         await openAIMock.addMocks([
+            titleGenerationMockRule(),
             buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { times: 1 }),
             buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText)),
         ]);
@@ -274,7 +275,7 @@ data: [DONE]
         await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.sendMessage('Can you tell me more about the first point?');
 
-        await expect(page.getByText(followUpText)).toBeVisible({ timeout: 30000 });
+        await expect(page.getByText(followUpText).last()).toBeVisible({ timeout: 30000 });
         const followUpContent = await llmBotHelper.getPostText().textContent();
         expect(followUpContent).toContain('kickoff meeting');
     });

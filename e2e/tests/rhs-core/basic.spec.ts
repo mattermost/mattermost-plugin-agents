@@ -5,7 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
-import { OpenAIMockContainer, RunOpenAIMocks, buildChatCompletionMockRule, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, buildChatCompletionMockRule, titleGenerationMockRule, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
 const username = 'regularuser';
@@ -229,6 +229,7 @@ test.describe('Thread Analysis', () => {
     // in-flight completion. Follow-up bodies may omit the new user text, so
     // consume the first completion with times:1.
     await openAIMock.addMocks([
+      titleGenerationMockRule(),
       buildChatCompletionMockRule(responseTest, { times: 1 }),
       buildChatCompletionMockRule(responseTest2),
     ]);
