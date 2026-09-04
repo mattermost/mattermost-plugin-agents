@@ -4,8 +4,10 @@ import { MattermostPage } from 'helpers/mm';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
+    buildChatCompletionMockRule,
     buildToolCallResponse,
     buildTextResponse,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithDynamicPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -72,23 +74,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const finalMarker2 = `XTD_FINAL_TURN2_${Date.now()}`;
 
         await openAIMock.addMocks([
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value:
-                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
-                    },
-                },
-                context: {times: 1},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildTextResponse('Cross-turn derivation'),
-                },
-            },
+            titleGenerationMockRule('Cross-turn derivation'),
             {
                 request: {
                     method: 'POST',
@@ -165,42 +151,34 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     body: buildTextResponse(finalMarker1),
                 },
             },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: turn2User,
-                    },
-                },
-                context: {times: 1},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildToolCallResponse(
-                        businessCallID2,
-                        businessTool,
-                        '{"channel_name":"Town Square"}',
-                    ),
-                },
-            },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: businessCallID2,
-                    },
-                },
-                context: {times: 1},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildTextResponse(finalMarker2),
-                },
-            },
+            buildChatCompletionMockRule(
+                buildToolCallResponse(
+                    businessCallID2,
+                    businessTool,
+                    '{"channel_name":"Town Square"}',
+                ),
+                {bodyContains: turn2User},
+            ),
+            buildChatCompletionMockRule(
+                buildToolCallResponse(
+                    businessCallID2,
+                    businessTool,
+                    '{"channel_name":"Town Square"}',
+                ),
+                {bodyContains: finalMarker1},
+            ),
+            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {
+                bodyContains: businessCallID2,
+            }),
+            // Follow-up ChatCompletion bodies sometimes omit the new user phrase
+            // after times:1 rules are exhausted, which left an empty bot post.
+            buildChatCompletionMockRule(
+                buildToolCallResponse(
+                    businessCallID2,
+                    businessTool,
+                    '{"channel_name":"Town Square"}',
+                ),
+            ),
         ]);
 
         const mmPage = new MattermostPage(page);
