@@ -244,51 +244,49 @@ data: [DONE]
         expect(firstContent!.length).toBeGreaterThan(10);
         expect(firstContent).toContain('Development');
 
-        // Mock response 2
+        // Mock response 2. addCompletionMock replaces prior rules (reset=true).
+        // Avoid a "timeline" body filter: that word is already in the channel posts.
+        const mockResponse2Text = 'The workstream ship date is 12 March 2099.';
         const mockResponse2 = `
 data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The timeline is set for a Q1 deadline."},"finish_reason":null}]}
+data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${mockResponse2Text}"},"finish_reason":null}]}
 data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse2, "timeline");
+        await openAIMock.addCompletionMock(mockResponse2);
 
         // 7. Send second question in the same RHS conversation
-        await aiPlugin.sendMessage('What is the timeline?');
+        await aiPlugin.sendMessage('What is the ship date for this workstream?');
 
-        // 8. Wait for second response to complete
-        await llmBotHelper.waitForStreamingComplete();
+        await expect(page.getByText(mockResponse2Text)).toBeVisible({ timeout: 30000 });
 
-        // 9. Verify second response is visible
+        // 9. Verify second response is the latest bot post
         const secondPostText = llmBotHelper.getPostText();
         await expect(secondPostText).toBeVisible();
         const secondContent = await secondPostText.textContent();
-        expect(secondContent).toBeTruthy();
-        expect(secondContent!.length).toBeGreaterThan(10);
-        expect(secondContent).toContain('Q1');
+        expect(secondContent).toContain(mockResponse2Text);
 
         // Mock response 3
+        const mockResponse3Text = 'The team consists of 5 developers.';
         const mockResponse3 = `
 data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The team consists of 5 developers."},"finish_reason":null}]}
+data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${mockResponse3Text}"},"finish_reason":null}]}
 data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse3, "many developers");
+        await openAIMock.addCompletionMock(mockResponse3);
 
         // 10. Send third question in the same RHS conversation
         await aiPlugin.sendMessage('How many developers?');
 
-        // 11. Wait for third response to complete
-        await llmBotHelper.waitForStreamingComplete();
+        // 11. Wait for third response
+        await expect(page.getByText(mockResponse3Text)).toBeVisible({ timeout: 30000 });
 
         // 12. Verify third response is visible and system handled multiple questions without crashes
         const thirdPostText = llmBotHelper.getPostText();
         await expect(thirdPostText).toBeVisible();
         const thirdContent = await thirdPostText.textContent();
-        expect(thirdContent).toBeTruthy();
-        expect(thirdContent!.length).toBeGreaterThan(10);
-        expect(thirdContent).toContain('5 developers');
+        expect(thirdContent).toContain(mockResponse3Text);
     });
 
     test('Channel analysis while RHS already open', async ({ page }) => {
