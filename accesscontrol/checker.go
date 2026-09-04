@@ -68,8 +68,8 @@ var errInvalidSubject = errors.New("access control evaluation requires a valid u
 // against it, so it short-circuits to no_policy and the caller applies its own
 // default. A non-addressable user ID has no such case — nothing can be
 // evaluated for a subject that cannot exist — so it is a caller bug and errors
-// out, denying. Failing open there would hand every attribute-based resource to
-// anyone who could get a malformed ID this far.
+// out, denying. Treating it as no_policy would let legacy-mode agents run
+// their allow/block lists and leave services/MCP unrestricted.
 func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID string) (*model.AccessDecision, error) {
 	if !model.IsValidId(userID) {
 		logError(c.log, "ABAC evaluate called with a user ID no policy can be evaluated against", "resource_type", resourceType, "resource_id", resourceID)
@@ -92,8 +92,9 @@ func (c *Checker) evaluate(ctx context.Context, userID, resourceType, resourceID
 }
 
 // CanUseAgent combines the resource policy with cfg.UserAccessLevel.
-// Attribute-based mode never invokes legacyCheck. Any failure to obtain a
-// decision denies in every agent mode.
+// Attribute-based mode never invokes legacyCheck: an explicit allow grants,
+// and no_policy (including a missing policy, or a non-addressable agent ID)
+// denies. Any failure to obtain a decision denies in every agent mode.
 func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotConfig, legacyCheck func() error) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "abac can_use_agent", trace.WithAttributes(
 		telemetry.UserID.String(userID),
@@ -127,9 +128,12 @@ func (c *Checker) CanUseAgent(ctx context.Context, userID string, cfg *llm.BotCo
 	if !decision.Decision {
 		return deny()
 	}
-	// Vacuous no_policy allow is the deliberate fail-open for attribute-based
-	// agents; explicit grants land here too. The span attribute keeps them apart.
 	if attributeBased {
+		// Vacuous no_policy allow is not a grant: attribute-based mode has no
+		// allow/block lists to fall through to, so a missing policy denies.
+		if decision.IsNoPolicy() {
+			return deny()
+		}
 		return nil
 	}
 	return runLegacy()

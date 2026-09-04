@@ -597,6 +597,14 @@ func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
 			wantDenied: true,
 		},
 		{
+			name: "attribute-based agent with no policy denies",
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			},
+			wantDenied: true,
+		},
+		{
 			// A failed evaluation leaves policy existence unknowable, so even
 			// a legacy-mode agent whose user lists would allow fails closed at
 			// the enforcement point.
