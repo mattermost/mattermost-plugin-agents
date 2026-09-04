@@ -16,7 +16,6 @@
   "/6XfA0os": "GCP Project Number (Optional)",
   "/80OC6Vw": "Minimum score multiplier for old messages (0-1). Higher values preserve old but highly relevant results; 1 disables the recency effect.",
   "/GrzAbOb": "Auto Run (Everywhere)",
-  "/Jlt6H7I": "Failed to fetch models. Please check your API key and API URL.",
   "/L9yICAK": "Failed to save configuration.",
   "/ZGMpdmH": "Failed to reindex posts: {error}",
   "/cP+FWmj": "Use multiple AI bots on qualifying Mattermost plans",

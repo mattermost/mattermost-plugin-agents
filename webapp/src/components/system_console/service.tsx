@@ -11,9 +11,8 @@ import IconAI from '../assets/icon_ai';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {fetchModels} from '../../client';
-
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
+import {fetchModelsForService, type ModelInfo, supportsModelFetching} from './model_fetch';
 
 export type LLMService = {
     id: string
@@ -65,17 +64,10 @@ function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string 
     return mapServiceTypeToDisplayName.get(serviceType) || serviceType;
 }
 
-type ModelInfo = {
-    id: string
-    displayName: string
-    inputTokenLimit?: number
-    outputTokenLimit?: number
-    contextLength?: number
-}
-
 type ServiceFieldsProps = {
     service: LLMService
     services?: LLMService[]
+    isPersisted?: boolean
     onChange: (service: LLMService) => void
 }
 
@@ -87,10 +79,12 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
+    const isPersisted = props.isPersisted ?? false;
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
+    const modelsRequestGeneration = useRef(0);
 
     // Cached admin entries so toggling to a Bifrost-known model and back
     // restores the prior manual values instead of the auto-detected ones.
@@ -123,7 +117,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
+    const canFetchModels = supportsModelFetching(type);
 
     useEffect(() => {
         if (type === 'openai' && !props.service.useResponsesAPI) {
@@ -132,56 +126,43 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     }, [type, props.onChange, props.service]);
 
     useEffect(() => {
-        // Providers have different credential shapes for model listing:
-        // - openaicompatible: API key OR API URL
-        // - vertex: GCP project ID + region (service-account JSON optional)
-        // - others: API key
-        let hasRequiredCredentials = false;
-        switch (type) {
-        case 'openaicompatible':
-            hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
-            break;
-        case 'vertex':
-            hasRequiredCredentials = Boolean(props.service.vertexProjectID && props.service.region);
-            break;
-        default:
-            hasRequiredCredentials = Boolean(props.service.apiKey);
-        }
-
-        if (!supportsModelFetching || !hasRequiredCredentials) {
-            setAvailableModels([]);
-            setModelsFetchError('');
-            return;
-        }
+        const abortController = new AbortController();
+        const generation = ++modelsRequestGeneration.current;
+        const isCurrentRequest = () => !abortController.signal.aborted && generation === modelsRequestGeneration.current;
 
         const loadModels = async () => {
             setLoadingModels(true);
             setModelsFetchError('');
 
             try {
-                const data: ModelInfo[] = await fetchModels(
-                    type,
-                    props.service.apiKey,
-                    props.service.apiURL || '',
-                    props.service.orgId || '',
-                    {
-                        region: props.service.region || '',
-                        vertexProjectID: props.service.vertexProjectID || '',
-                        vertexProjectNumber: props.service.vertexProjectNumber || '',
-                        vertexAuthCredentials: props.service.vertexAuthCredentials || '',
-                    },
-                );
+                const data = await fetchModelsForService(props.service, isPersisted, abortController.signal);
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                if (data === null) {
+                    setAvailableModels((models) => (models.length === 0 ? models : []));
+                    return;
+                }
                 setAvailableModels(data);
             } catch (error) {
-                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check your API key and API URL.'}));
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
                 setAvailableModels([]);
             } finally {
-                setLoadingModels(false);
+                if (isCurrentRequest()) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
-    }, [type, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, supportsModelFetching, intl]);
+
+        return () => {
+            abortController.abort();
+        };
+    }, [type, props.service.id, props.service.apiKey, props.service.apiURL, props.service.orgId, props.service.region, props.service.vertexProjectID, props.service.vertexProjectNumber, props.service.vertexAuthCredentials, isPersisted, intl]);
 
     const getDefaultOutputTokenLimit = () => {
         switch (type) {
@@ -195,7 +176,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     };
 
     let loadModelsHelpText = '';
-    if (supportsModelFetching) {
+    if (canFetchModels) {
         if (loadingModels) {
             loadModelsHelpText = intl.formatMessage({defaultMessage: 'Loading models...'});
         } else if (modelsFetchError) {
@@ -359,7 +340,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     )}
                 </>
             )}
-            {supportsModelFetching && availableModels.length > 0 && (
+            {canFetchModels && availableModels.length > 0 && (
                 <ComboboxItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -370,7 +351,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     isClearable={false}
                 />
             )}
-            {!(supportsModelFetching && availableModels.length > 0) && (
+            {!(canFetchModels && availableModels.length > 0) && (
                 <TextItem
                     label={intl.formatMessage({defaultMessage: 'Default model'})}
                     value={props.service.defaultModel}
@@ -443,6 +424,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
 type Props = {
     service: LLMService
     services: LLMService[]
+    isPersisted: boolean
     onChange: (service: LLMService) => void
     onDelete: () => void
 }
@@ -485,6 +467,7 @@ const Service = (props: Props) => {
                         <ServiceFields
                             service={props.service}
                             services={props.services}
+                            isPersisted={props.isPersisted}
                             onChange={props.onChange}
                         />
                     </ItemList>

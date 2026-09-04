@@ -15,6 +15,10 @@ import (
 )
 
 func normalizeAdminConfig(cfg config.Config) config.Config {
+	if cfg.Services != nil {
+		cfg.Services = append([]llm.ServiceConfig{}, cfg.Services...)
+	}
+
 	cfg.MCP.Enabled = true
 	cfg.MCP.EmbeddedServer.Enabled = true
 
@@ -37,7 +41,7 @@ func (a *API) handleGetConfig(c *gin.Context) {
 	}
 
 	if cfg == nil {
-		c.JSON(http.StatusOK, normalizeAdminConfig(config.Config{
+		normalized := normalizeAdminConfig(config.Config{
 			Services: []llm.ServiceConfig{},
 			Bots:     []llm.BotConfig{},
 			MCP: mcp.Config{
@@ -50,13 +54,13 @@ func (a *API) handleGetConfig(c *gin.Context) {
 			WebSearch: config.WebSearchConfig{
 				DomainDenylist: []string{},
 			},
-		}))
+		})
+		c.JSON(http.StatusOK, config.RedactSecrets(normalized))
 		return
 	}
 
-	// Clone before normalizeAdminConfig: it mutates Services (e.g. UseResponsesAPI); the store
-	// pointer may alias the in-memory cached config, and GET must not mutate shared state.
-	c.JSON(http.StatusOK, normalizeAdminConfig(*cfg.Clone()))
+	normalized := normalizeAdminConfig(*cfg)
+	c.JSON(http.StatusOK, config.RedactSecrets(normalized))
 }
 
 // handleSaveConfig saves a new plugin configuration to the database,
@@ -79,20 +83,21 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
-	// Audit which top-level config sections change — never their values,
-	// since services/webSearch/mcp carry credentials. Best effort: a failed
-	// read of the prior config must not block the save, so the record then
-	// simply omits changed_keys.
-	if rec := auditRec(c); rec != nil {
-		if prev, err := a.configStore.GetConfig(); err == nil {
-			audit.AddParam(rec, "changed_keys", audit.ChangedJSONKeys(prev, cfg))
+	var storedForAudit *config.Config
+	saved, err := a.configStore.UpdateConfig(func(stored *config.Config) (config.Config, error) {
+		storedForAudit = stored
+		if stored == nil {
+			return config.RestoreSecrets(cfg, config.Config{}), nil
 		}
-	}
-
-	if err := a.configStore.SaveConfig(cfg); err != nil {
+		return config.RestoreSecrets(cfg, *stored), nil
+	})
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save config: %w", err))
 		return
 	}
+
+	// Audit which top-level config sections changed, never their values.
+	audit.AddParam(auditRec(c), "changed_keys", audit.ChangedJSONKeys(storedForAudit, saved))
 
 	// From here on the config HAS changed in the database. If a later step
 	// fails (cluster notify), the audit record's fail status would otherwise
@@ -100,7 +105,7 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	audit.AddParam(auditRec(c), "persisted", true)
 
 	// Update in-memory config on this node
-	a.configUpdater.Update(&cfg)
+	a.configUpdater.Update(&saved)
 
 	// Notify other cluster nodes to reload config from DB
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {

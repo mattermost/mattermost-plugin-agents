@@ -192,7 +192,7 @@ Existing posts that mention or were authored by the agent remain in channels wit
 
 ## Legacy bot migration
 
-Mattermost Agents V1 stored bot definitions inline in the plugin's `config.bots` array in `config.json`. V2 moves agents into the database. To make this transition automatic, the plugin runs a one-time migration on startup.
+Mattermost Agents V1 stored bot definitions inline in the plugin's `config.bots` array. V2 stores current plugin-wide configuration in `Agents_ConfigHistory`, managed through `GET` and `PUT /plugins/mattermost-ai/admin/config`, and stores agents in `Agents_UserAgents`. To make this transition automatic, the plugin runs a one-time migration on startup.
 
 ### What happens on upgrade
 
@@ -202,7 +202,9 @@ When the v2 plugin first activates against a server that previously used v1:
 2. It reads the stored config and, for each entry in `config.bots` that is not already represented in `Agents_UserAgents`, creates a new agent record. The existing Mattermost bot user account is reused; only the agent record is new.
 3. Each migrated agent is created with `AutoEnableNewMCPTools = true` so it preserves the legacy "all tools allowed" behavior. The MCP tool allowlist is not carried over from any prior gate because v1 bots had access to every MCP tool by default.
 4. Each migrated agent has an **empty `CreatorID`** and an **empty admin list**. This is what marks them as legacy. Any system administrator (`manage_system`) can edit or delete migrated agents from the Agents page.
-5. The plugin clears `config.bots` from the stored configuration to prevent duplicate bot registration on the next run, and writes `legacy_config_bots_migrated = true` to the system table so the migration does not run again.
+5. The plugin clears `config.bots` from the active `Agents_ConfigHistory` configuration to prevent duplicate bot registration on the next run, and writes `legacy_config_bots_migrated = true` to the system table so the migration does not run again.
+
+An upgraded server may retain a legacy `PluginSettings` blob in the Mattermost configuration file for compatibility, and that blob may still contain the prior `config.bots` value. It is not the live configuration. The Mattermost configuration API masks the plugin's `Config` value.
 
 ### Soft-deferred migration
 
@@ -221,10 +223,7 @@ After upgrading:
 
 1. Open the **Agents** page. Each pre-existing v1 bot should now appear as an agent row.
 2. Open **System Console > AI Bots**. You should see the **AI bot configuration has moved** notice with a link to the Agents page.
-3. Confirm in the database that `Agents_UserAgents` contains the expected number of rows and that `config.bots` is empty in the stored plugin configuration. Use:
-   ```bash
-   mmctl config get PluginSettings.Plugins.mattermost-ai.bots
-   ```
+3. Confirm that `Agents_UserAgents` contains the expected number of rows and that the current configuration returned by `GET /plugins/mattermost-ai/admin/config` no longer contains migrated `config.bots` entries. Use:
    ```sql
    SELECT COUNT(*) FROM Agents_UserAgents WHERE DeleteAt = 0;
    ```
@@ -237,7 +236,7 @@ If migration was not performed (because no `config.bots` entries existed) the fl
 
 ### Backups
 
-`Agents_UserAgents` is a plugin-owned table and is included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
+`Agents_ConfigHistory` and `Agents_UserAgents` are plugin-owned tables and are included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are not sufficient to restore current plugin-wide configuration or agents; they may contain only the legacy compatibility blob. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
 
 ## HA cluster behavior
 

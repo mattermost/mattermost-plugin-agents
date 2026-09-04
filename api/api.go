@@ -83,6 +83,7 @@ type MCPClientManager interface {
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
 	SaveConfig(cfg config.Config) error
+	UpdateConfig(update func(stored *config.Config) (config.Config, error)) (config.Config, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.

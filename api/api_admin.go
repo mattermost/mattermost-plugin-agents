@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -532,10 +533,24 @@ type UpdatePluginServerRequest struct {
 	ToolConfigs *[]mcp.ToolConfig `json:"tool_configs,omitempty"`
 }
 
+func mergePluginServerUpdate(live mcp.PluginServerConfig, persisted *mcp.PluginServerConfig, req UpdatePluginServerRequest) mcp.PluginServerConfig {
+	effective := live
+	if persisted != nil {
+		effective.Enabled = persisted.Enabled
+		effective.ToolConfigs = persisted.ToolConfigs
+	}
+	if req.Enabled != nil {
+		effective.Enabled = *req.Enabled
+	}
+	if req.ToolConfigs != nil {
+		effective.ToolConfigs = *req.ToolConfigs
+	}
+	return effective
+}
+
 // handleUpdatePluginServer updates admin-owned fields (Enabled, ToolConfigs) on
 // a registered plugin MCP server; PluginID, Name, Path, and ExposeExternal
-// remain owned by the source plugin. The full registry snapshot is captured
-// before configUpdater.Update to avoid re-entrant pluginServersMu locking.
+// remain owned by the source plugin.
 func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	pluginID := c.Param("pluginID")
 	if pluginID == "" {
@@ -561,51 +576,49 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	updated := live
-	if req.Enabled != nil {
-		updated.Enabled = *req.Enabled
-	}
-	if req.ToolConfigs != nil {
-		updated.ToolConfigs = *req.ToolConfigs
-	}
+	// Give failure records the requested result when persistence cannot run.
+	// A successful atomic merge replaces this with the exact saved value below.
+	audit.AddParam(auditRec(c), "enabled", mergePluginServerUpdate(live, nil, req).Enabled)
 
-	// Effective final value after partial-update merge, not the raw request.
-	audit.AddParam(auditRec(c), "enabled", updated.Enabled)
-
-	existing, getErr := a.configStore.GetConfig()
-	if getErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
-		return
-	}
-	if existing == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-		return
-	}
-	// Clone to avoid mutating the store's cached pointer.
-	cfg := existing.Clone()
-
-	// Merge by PluginID against the persisted list rather than overwriting
-	// with the in-memory snapshot, which would silently drop entries for
-	// plugins that are persisted but currently inactive in memory.
-	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
-	mergedIdx := -1
-	for i := range merged {
-		if merged[i].PluginID == updated.PluginID {
-			mergedIdx = i
-			break
+	var effective mcp.PluginServerConfig
+	saved, err := a.configStore.UpdateConfig(func(existing *config.Config) (config.Config, error) {
+		if existing == nil {
+			return config.Config{}, errors.New("no plugin configuration available")
 		}
-	}
-	if mergedIdx >= 0 {
-		merged[mergedIdx] = updated
-	} else {
-		merged = append(merged, updated)
-	}
-	cfg.MCP.PluginServers = merged
 
-	if err := a.configStore.SaveConfig(*cfg); err != nil {
+		// Clone to avoid mutating the store's cached pointer.
+		cfg := existing.Clone()
+
+		// Merge by PluginID against the persisted list rather than overwriting
+		// with the in-memory snapshot, which would silently drop entries for
+		// plugins that are persisted but currently inactive in memory.
+		merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
+		mergedIdx := -1
+		for i := range merged {
+			if merged[i].PluginID == live.PluginID {
+				mergedIdx = i
+				break
+			}
+		}
+		if mergedIdx >= 0 {
+			effective = mergePluginServerUpdate(live, &merged[mergedIdx], req)
+			merged[mergedIdx] = effective
+		} else {
+			effective = mergePluginServerUpdate(live, nil, req)
+			merged = append(merged, effective)
+		}
+		cfg.MCP.PluginServers = merged
+
+		return *cfg, nil
+	})
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}
+
+	// Effective final value after the atomic partial-update merge, not the raw
+	// request or the pre-lock live snapshot.
+	audit.AddParam(auditRec(c), "enabled", effective.Enabled)
 
 	// The mutation is persisted from here on; a later cluster-notify failure
 	// yields a fail record for a change that actually landed — say so.
@@ -616,16 +629,14 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.UpdatePluginServer(updated)
-	a.configUpdater.Update(cfg)
+	a.mcpClientManager.UpdatePluginServer(effective)
+	a.configUpdater.Update(&saved)
 
-	// Rebuild when either old or new state was external so removed tools
-	// disappear from the aggregate server.
-	if updated.ExposeExternal || live.ExposeExternal {
+	if effective.ExposeExternal {
 		if rb := a.resolveExternalServerRebuilder(); rb != nil {
 			rb.RebuildExternalServer()
 		}
 	}
 
-	c.JSON(http.StatusOK, updated)
+	c.JSON(http.StatusOK, effective)
 }

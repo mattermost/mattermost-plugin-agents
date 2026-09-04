@@ -41,6 +41,7 @@ export const firstNewService = {
 type Props = {
     services: LLMService[]
     bots: LLMBotConfig[]
+    persistedServiceIDs: ReadonlySet<string>
     onChange: (services: LLMService[]) => void
 }
 
@@ -100,6 +101,7 @@ const Services = (props: Props) => {
                         key={service.id}
                         service={service}
                         services={props.services}
+                        isPersisted={props.persistedServiceIDs.has(service.id)}
                         onChange={onChange}
                         onDelete={() => onDelete(service.id)}
                     />
