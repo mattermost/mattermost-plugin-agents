@@ -144,6 +144,55 @@ func (c *Checker) TestExpression(ctx context.Context, actingUserID, resourceType
 	return result, nil
 }
 
+// requesterMatchQueryLimit is the page size for RequesterMatchesExpression.
+// Usernames are unique; a small page is enough to see whether the acting user
+// is in the username-filtered match set.
+const requesterMatchQueryLimit = 10
+
+// RequesterMatchesExpression is the plugin-API stand-in for core's
+// ValidateExpressionAgainstRequester. The pinned plugin surface exposes
+// QueryUsersForAccessControlExpression but not SubjectID or
+// ExcludeNativeAttributes, so this probes with the acting user's username.
+// Unlike Channel Settings, native-only rules (e.g. email verified) are not
+// skipped here and may fail self-inclusion where core would pass.
+func (c *Checker) RequesterMatchesExpression(ctx context.Context, actingUserID, resourceType, expression string) (bool, error) {
+	_, span := telemetry.Tracer().Start(ctx, "abac cel_test_self_match", trace.WithAttributes(
+		telemetry.UserID.String(actingUserID),
+		telemetry.ABACResourceType.String(resourceType),
+	))
+	defer span.End()
+
+	if c.papi == nil {
+		return false, errNoPluginAPI
+	}
+
+	user, appErr := c.papi.GetUser(actingUserID)
+	if appErr != nil {
+		span.RecordError(appErr)
+		span.SetStatus(codes.Error, "requester lookup failed")
+		return false, appErr
+	}
+	if user == nil || user.Username == "" {
+		return false, nil
+	}
+
+	result, appErr := c.papi.QueryUsersForAccessControlExpression(actingUserID, resourceType, expression, user.Username, "", requesterMatchQueryLimit)
+	if appErr != nil {
+		span.RecordError(appErr)
+		span.SetStatus(codes.Error, "requester match query failed")
+		return false, appErr
+	}
+	if result == nil {
+		return false, nil
+	}
+	for _, matched := range result.Users {
+		if matched != nil && matched.Id == actingUserID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (c *Checker) FieldsAutocomplete(ctx context.Context, actingUserID, after string, limit int) ([]*model.PropertyField, error) {
 	_, span := telemetry.Tracer().Start(ctx, "abac cel_fields", trace.WithAttributes(
 		telemetry.UserID.String(actingUserID),

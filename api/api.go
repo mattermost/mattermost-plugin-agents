@@ -442,9 +442,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	acRouter := router.Group("/access_control")
 	acRouter.GET("/status", a.handleABACStatus) // any authenticated user
 	celRouter := acRouter.Group("/cel")
+	// /test is resource-type gated (and self-inclusion for non-sysadmins)
+	// inside the handler: agent authors may test, service/MCP is manage_system.
+	celRouter.POST("/test", a.handleCELTest)
 	celRouter.Use(a.celRouteAuthzRequired)
 	celRouter.POST("/check", a.handleCELCheck)
-	celRouter.POST("/test", a.handleCELTest)
 	celRouter.GET("/autocomplete/fields", a.handleCELAutocompleteFields)
 	celRouter.POST("/visual_ast", a.handleCELVisualAST)
 

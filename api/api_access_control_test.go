@@ -643,15 +643,46 @@ func TestLegacyIDPolicyRoutes(t *testing.T) {
 	}
 }
 
+func mockCELPermissions(e *TestEnvironment, userID string, ownAgent, sysAdmin bool) {
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(ownAgent).Maybe()
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOwnAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(sysAdmin).Maybe()
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
+}
+
 func TestCELRouteAuthMatrix(t *testing.T) {
 	managerID := model.NewId()    // has ManageOwnAgent
 	agentAdminID := model.NewId() // manages one agent via AdminUserIDs only
 	plainID := model.NewId()
 	agentID := model.NewId()
 
-	body := map[string]any{
+	checkBody := map[string]any{
 		"resource_type": accesscontrol.ResourceTypeAgent,
 		"expression":    `user.attributes.department == "eng"`,
+	}
+
+	routes := []struct {
+		name   string
+		method string
+		path   string
+		body   any
+		setup  func(e *TestEnvironment, userID string)
+	}{
+		{
+			name: "check", method: http.MethodPost, path: "/access_control/cel/check", body: checkBody,
+			setup: func(e *TestEnvironment, userID string) {
+				e.mockAPI.On("CheckAccessControlExpression", userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string")).
+					Return([]model.CELExpressionError{}, nil).Maybe()
+			},
+		},
+		{
+			name: "autocomplete", method: http.MethodGet, path: "/access_control/cel/autocomplete/fields",
+			setup: func(e *TestEnvironment, userID string) {
+				e.mockAPI.On("GetAccessControlFieldsAutocomplete", userID, "", 0).
+					Return([]*model.PropertyField{}, nil).Maybe()
+			},
+		},
 	}
 
 	tests := []struct {
@@ -666,26 +697,27 @@ func TestCELRouteAuthMatrix(t *testing.T) {
 		{name: "plain user forbidden", userID: plainID, wantStatus: http.StatusForbidden},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := setupAccessControlTestEnvironment(t)
-			defer e.Cleanup(t)
+	for _, route := range routes {
+		for _, tt := range tests {
+			t.Run(route.name+"/"+tt.name, func(t *testing.T) {
+				e := setupAccessControlTestEnvironment(t)
+				defer e.Cleanup(t)
 
-			e.agentStore.agents[agentID] = &llm.BotConfig{
-				ID: agentID, Name: "celagent", DisplayName: "CEL Agent",
-				ServiceID: "svc-1", CreatorID: model.NewId(), AdminUserIDs: []string{agentAdminID},
-			}
+				e.agentStore.agents[agentID] = &llm.BotConfig{
+					ID: agentID, Name: "celagent", DisplayName: "CEL Agent",
+					ServiceID: "svc-1", CreatorID: model.NewId(), AdminUserIDs: []string{agentAdminID},
+				}
 
-			e.mockAPI.On("HasPermissionTo", managerID, model.PermissionManageOwnAgent).Return(true).Maybe()
-			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOwnAgent).Return(false).Maybe()
-			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
-			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
-			e.mockAPI.On("CheckAccessControlExpression", tt.userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string")).
-				Return([]model.CELExpressionError{}, nil).Maybe()
+				e.mockAPI.On("HasPermissionTo", managerID, model.PermissionManageOwnAgent).Return(true).Maybe()
+				e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOwnAgent).Return(false).Maybe()
+				e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+				e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
+				route.setup(e, tt.userID)
 
-			recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/check"+tt.query, body, tt.userID)
-			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
-		})
+				recorder := doRequest(e.api, route.method, route.path+tt.query, route.body, tt.userID)
+				require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+			})
+		}
 	}
 }
 
@@ -705,6 +737,181 @@ func TestCELCheckRejectsForeignResourceType(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+func TestCELTestAuthAndSelfInclusion(t *testing.T) {
+	const (
+		username         = "cel-tester"
+		sentinelEmail    = "sentinel-email@example.test"
+		sentinelAuthData = "uid=sentinel,dc=example,dc=com"
+	)
+	expression := `user.attributes.department == "eng"`
+
+	type setupKind int
+	const (
+		setupNone setupKind = iota
+		setupSysadminQuery
+		setupSelfCheckMiss
+		setupSelfCheckHit
+	)
+
+	tests := []struct {
+		name         string
+		ownAgent     bool
+		sysAdmin     bool
+		resourceType string
+		setup        setupKind
+		wantStatus   int
+		wantEmpty    bool
+		wantUserIDs  int // expected number of users when wantStatus is 200 and not empty
+	}{
+		{
+			name:         "sysadmin agent test returns the unrestricted list",
+			sysAdmin:     true,
+			resourceType: accesscontrol.ResourceTypeAgent,
+			setup:        setupSysadminQuery,
+			wantStatus:   http.StatusOK,
+			wantUserIDs:  2,
+		},
+		{
+			name:         "sysadmin service test is allowed",
+			sysAdmin:     true,
+			resourceType: accesscontrol.ResourceTypeService,
+			setup:        setupSysadminQuery,
+			wantStatus:   http.StatusOK,
+			wantUserIDs:  2,
+		},
+		{
+			name:         "sysadmin mcp test is allowed",
+			sysAdmin:     true,
+			resourceType: accesscontrol.ResourceTypeMCP,
+			setup:        setupSysadminQuery,
+			wantStatus:   http.StatusOK,
+			wantUserIDs:  2,
+		},
+		{
+			name:         "manage_own_agent service test is forbidden",
+			ownAgent:     true,
+			resourceType: accesscontrol.ResourceTypeService,
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:         "manage_own_agent mcp test is forbidden",
+			ownAgent:     true,
+			resourceType: accesscontrol.ResourceTypeMCP,
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:         "plain user agent test is forbidden",
+			resourceType: accesscontrol.ResourceTypeAgent,
+			wantStatus:   http.StatusForbidden,
+		},
+		{
+			name:         "manage_own_agent self-check miss returns empty not 403",
+			ownAgent:     true,
+			resourceType: accesscontrol.ResourceTypeAgent,
+			setup:        setupSelfCheckMiss,
+			wantStatus:   http.StatusOK,
+			wantEmpty:    true,
+		},
+		{
+			name:         "manage_own_agent self-check hit returns the full sanitized list",
+			ownAgent:     true,
+			resourceType: accesscontrol.ResourceTypeAgent,
+			setup:        setupSelfCheckHit,
+			wantStatus:   http.StatusOK,
+			wantUserIDs:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID := model.NewId()
+			otherID := model.NewId()
+			matchedSelf := &model.User{Id: userID, Username: username}
+			matchedOther := &model.User{
+				Id:       otherID,
+				Username: "other-user",
+				Email:    sentinelEmail,
+				AuthData: model.NewPointer(sentinelAuthData),
+			}
+
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockCELPermissions(e, userID, tt.ownAgent, tt.sysAdmin)
+
+			switch tt.setup {
+			case setupSysadminQuery:
+				e.mockAPI.On("QueryUsersForAccessControlExpression", userID, tt.resourceType, mock.AnythingOfType("string"), "", "", 0).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{matchedSelf, matchedOther},
+						Total: 2,
+					}, nil).Once()
+			case setupSelfCheckMiss:
+				e.mockAPI.On("GetUser", userID).Return(&model.User{Id: userID, Username: username}, nil).Once()
+				e.mockAPI.On("QueryUsersForAccessControlExpression", userID, tt.resourceType, mock.AnythingOfType("string"), username, "", 10).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{matchedOther},
+						Total: 1,
+					}, nil).Once()
+			case setupSelfCheckHit:
+				e.mockAPI.On("GetUser", userID).Return(&model.User{Id: userID, Username: username}, nil).Once()
+				e.mockAPI.On("QueryUsersForAccessControlExpression", userID, tt.resourceType, mock.AnythingOfType("string"), username, "", 10).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{matchedSelf},
+						Total: 1,
+					}, nil).Once()
+				e.mockAPI.On("QueryUsersForAccessControlExpression", userID, tt.resourceType, mock.AnythingOfType("string"), "", "", 0).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{matchedSelf, matchedOther},
+						Total: 2,
+					}, nil).Once()
+			}
+
+			records := e.CaptureAuditRecords()
+			body := map[string]any{
+				"resource_type": tt.resourceType,
+				"expression":    expression,
+				"term":          "",
+				"after":         "",
+				"limit":         0,
+			}
+			recorder := doRequest(e.api, http.MethodPost, "/access_control/cel/test", body, userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+			assert.Empty(t, *records, "CEL test is not a mutating route and must not emit an audit record")
+
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			raw := recorder.Body.String()
+			assert.NotContains(t, raw, sentinelAuthData)
+
+			var parsed model.AccessControlPolicyTestResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &parsed))
+			require.NotNil(t, parsed.Users)
+
+			if tt.wantEmpty {
+				assert.Empty(t, parsed.Users)
+				assert.Equal(t, int64(0), parsed.Total)
+				assert.NotContains(t, raw, otherID)
+				assert.NotContains(t, raw, sentinelEmail)
+				return
+			}
+
+			require.Len(t, parsed.Users, tt.wantUserIDs)
+			assert.Equal(t, int64(tt.wantUserIDs), parsed.Total)
+			gotIDs := make([]string, 0, len(parsed.Users))
+			for _, u := range parsed.Users {
+				gotIDs = append(gotIDs, u.Id)
+			}
+			assert.ElementsMatch(t, []string{userID, otherID}, gotIDs)
+			if !tt.sysAdmin {
+				assert.NotContains(t, raw, sentinelEmail)
+			}
+		})
+	}
+}
+
 // Empty matching sets come back from the PAP with Users == nil after gob RPC.
 // The JSON body must still emit "users": [] so the host TestResultsModal can
 // spread the list without throwing.
@@ -714,8 +921,7 @@ func TestCELTestNormalizesNilUsers(t *testing.T) {
 	e := setupAccessControlTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true).Maybe()
-	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
+	mockCELPermissions(e, userID, false, true)
 	e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeService, mock.AnythingOfType("string"), "", "", 0).
 		Return(&model.AccessControlPolicyTestResponse{Users: nil, Total: 0}, nil).Once()
 
@@ -742,6 +948,7 @@ func TestCELTestSanitizesReturnedUsers(t *testing.T) {
 		sentinelLast     = "SentinelLast"
 		sentinelAuthSvc  = "sentinel-authservice"
 		keepUsername     = "keep-username"
+		testerUsername   = "cel-tester"
 	)
 
 	tests := []struct {
@@ -804,9 +1011,15 @@ func TestCELTestSanitizesReturnedUsers(t *testing.T) {
 					ShowFullName:     model.NewPointer(tt.showFullName),
 				},
 			})
-			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(!tt.isAdmin).Maybe()
-			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOthersAgent).Return(false).Maybe()
-			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
+			mockCELPermissions(e, userID, !tt.isAdmin, tt.isAdmin)
+			if !tt.isAdmin {
+				e.mockAPI.On("GetUser", userID).Return(&model.User{Id: userID, Username: testerUsername}, nil).Once()
+				e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string"), testerUsername, "", 10).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{{Id: userID, Username: testerUsername}},
+						Total: 1,
+					}, nil).Once()
+			}
 			e.mockAPI.On("QueryUsersForAccessControlExpression", userID, accesscontrol.ResourceTypeAgent, mock.AnythingOfType("string"), "", "", 0).
 				Return(&model.AccessControlPolicyTestResponse{
 					Users: []*model.User{matched},

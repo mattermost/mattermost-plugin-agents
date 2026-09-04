@@ -141,6 +141,10 @@ func TestPAPWithoutPluginAPI(t *testing.T) {
 			_, err := c.TestExpression(ctx, userID, ResourceTypeAgent, "true", "", "", 10)
 			return err
 		}},
+		{name: "RequesterMatchesExpression reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
+			_, err := c.RequesterMatchesExpression(ctx, userID, ResourceTypeAgent, "true")
+			return err
+		}},
 		{name: "FieldsAutocomplete reports no plugin API", wantErr: errNoPluginAPI, call: func() error {
 			_, err := c.FieldsAutocomplete(ctx, userID, "", 10)
 			return err
@@ -154,6 +158,85 @@ func TestPAPWithoutPluginAPI(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.ErrorIs(t, tt.call(), tt.wantErr)
+		})
+	}
+}
+
+func TestRequesterMatchesExpression(t *testing.T) {
+	actingUserID := model.NewId()
+	username := "cel-tester"
+	expression := `user.attributes.department == "eng"`
+	lookupErr := model.NewAppError("GetUser", "not found", nil, "", http.StatusNotFound)
+	queryErr := model.NewAppError("QueryUsersForAccessControlExpression", "boom", nil, "", http.StatusInternalServerError)
+
+	tests := []struct {
+		name      string
+		setup     func(api *plugintest.API)
+		wantMatch bool
+		wantErr   bool
+	}{
+		{
+			name: "GetUser failure is an error",
+			setup: func(api *plugintest.API) {
+				api.On("GetUser", actingUserID).Return(nil, lookupErr).Once()
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty username fails closed without querying",
+			setup: func(api *plugintest.API) {
+				api.On("GetUser", actingUserID).Return(&model.User{Id: actingUserID}, nil).Once()
+			},
+		},
+		{
+			name: "other users in the username probe do not count as a self match",
+			setup: func(api *plugintest.API) {
+				api.On("GetUser", actingUserID).Return(&model.User{Id: actingUserID, Username: username}, nil).Once()
+				api.On("QueryUsersForAccessControlExpression", actingUserID, ResourceTypeAgent, expression, username, "", requesterMatchQueryLimit).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{{Id: model.NewId(), Username: username + "2"}},
+						Total: 1,
+					}, nil).Once()
+			},
+		},
+		{
+			name: "acting user in the username probe matches",
+			setup: func(api *plugintest.API) {
+				api.On("GetUser", actingUserID).Return(&model.User{Id: actingUserID, Username: username}, nil).Once()
+				api.On("QueryUsersForAccessControlExpression", actingUserID, ResourceTypeAgent, expression, username, "", requesterMatchQueryLimit).
+					Return(&model.AccessControlPolicyTestResponse{
+						Users: []*model.User{{Id: actingUserID, Username: username}},
+						Total: 1,
+					}, nil).Once()
+			},
+			wantMatch: true,
+		},
+		{
+			name: "query failure is an error",
+			setup: func(api *plugintest.API) {
+				api.On("GetUser", actingUserID).Return(&model.User{Id: actingUserID, Username: username}, nil).Once()
+				api.On("QueryUsersForAccessControlExpression", actingUserID, ResourceTypeAgent, expression, username, "", requesterMatchQueryLimit).
+					Return(nil, queryErr).Once()
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			defer api.AssertExpectations(t)
+			tt.setup(api)
+
+			c := New(PassthroughClient{}, api, NoMCPServerIDs, nil)
+			matched, err := c.RequesterMatchesExpression(context.Background(), actingUserID, ResourceTypeAgent, expression)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.False(t, matched)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantMatch, matched)
 		})
 	}
 }
