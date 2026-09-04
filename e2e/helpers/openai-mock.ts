@@ -259,8 +259,10 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
  * Create a streaming SSE text response (for after tool execution).
  */
 /**
- * Single Smocker rule for POST /chat/completions. Rules are evaluated in order — register
- * more specific body matchers before catch-all rules.
+ * Single Smocker rule for POST /chat/completions. Rules are evaluated in order —
+ * register more specific body matchers before first-turn / catch-all rules.
+ * Do not use times:1 to sequence user-visible turns: leftover title generation
+ * and extra tool-loop completions consume those slots and shift later responses.
  */
 export function buildChatCompletionMockRule(
     sseBody: string,
@@ -312,6 +314,16 @@ export function buildTextResponse(text: string): string {
 /** Matches GenerateTitle ChatCompletionNoStream requests so they do not consume turn mocks. */
 export const TITLE_GENERATION_BODY_MATCH =
 	'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:';
+
+/**
+ * First user turn of channels.AnalyzeChannel. Present in the analysis
+ * completion and in later follow-up history, so follow-up rules that match a
+ * unique user phrase must be registered before a rule that uses this string.
+ */
+export const CHANNEL_ANALYSIS_USER_PROMPT = 'Please summarize the channel activity as requested.';
+
+/** User-turn marker from prompts/thread_user.tmpl (thread summarization). */
+export const THREAD_SUMMARY_USER_MARKER = '---- Posts Start ----';
 
 export function titleGenerationMockRule(title = 'E2E title'): any {
 	return buildChatCompletionMockRule(buildTextResponse(title), {

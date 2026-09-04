@@ -5,7 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
-import { OpenAIMockContainer, RunOpenAIMocks, buildChatCompletionMockRule, titleGenerationMockRule, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, buildChatCompletionMockRule, titleGenerationMockRule, THREAD_SUMMARY_USER_MARKER, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
 const username = 'regularuser';
@@ -225,13 +225,14 @@ test.describe('Thread Analysis', () => {
     await page.getByTestId(`ai-actions-menu`).click();
 
     // Click on "Summarize Thread"
-    // Register both turns once. addMock resets Smocker and can hang an
-    // in-flight completion. Follow-up bodies may omit the new user text, so
-    // consume the first completion with times:1.
+    // Smocker first-match: title gen, then the follow-up user phrase
+    // (history still contains the thread posts marker), then the summary.
+    // Do not sequence turns with times:1 — extra /chat/completions steal those slots.
+    const followUpUserText = 'What is the total duration for both phases?';
     await openAIMock.addMocks([
       titleGenerationMockRule(),
-      buildChatCompletionMockRule(responseTest, { times: 1 }),
-      buildChatCompletionMockRule(responseTest2),
+      buildChatCompletionMockRule(responseTest2, { bodyContains: followUpUserText }),
+      buildChatCompletionMockRule(responseTest, { bodyContains: THREAD_SUMMARY_USER_MARKER }),
     ]);
     await page.getByRole('button', { name: 'Summarize Thread' }).click();
 
@@ -240,9 +241,10 @@ test.describe('Thread Analysis', () => {
     await expect(page.getByText(responseTestText)).toBeVisible();
     await aiPlugin.waitForThreadComposerIdle();
 
-    await aiPlugin.sendMessage('What is the total duration for both phases?');
+    await aiPlugin.sendMessage(followUpUserText);
 
     // Verify the follow-up response is received successfully
+    await expect(page.getByText(responseTestText)).toBeVisible();
     await aiPlugin.waitForBotResponse(responseTest2Text);
   });
 

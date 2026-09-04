@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, CHANNEL_ANALYSIS_USER_PROMPT } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -225,6 +225,8 @@ data: [DONE]
         const mockResponse1Text = 'The project status is currently in the Development phase.';
         const mockResponse2Text = 'The workstream ship date is 12 March 2099.';
         const mockResponse3Text = 'The team consists of 5 developers.';
+        const followUp1UserText = 'What is the ship date for this workstream?';
+        const followUp2UserText = 'How many developers are assigned to this workstream?';
         const sse = (id: string, content: string) => `
 data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
 data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
@@ -232,15 +234,14 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Register every turn once. addMock resets Smocker and can hang an
-        // in-flight completion. Title generation from this or earlier tests
-        // shares /chat/completions — match it first so times:1 turn rules
-        // stay aligned with user-visible streams.
+        // Smocker first-match: title gen, then the latest unique follow-up
+        // phrase (history accumulates prior turns), then analysis.
+        // Do not sequence turns with times:1 — extra /chat/completions steal those slots.
         await openAIMock.addMocks([
             titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { times: 1 }),
-            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { times: 1 }),
-            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text)),
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: followUp2UserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: followUp1UserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: CHANNEL_ANALYSIS_USER_PROMPT }),
         ]);
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
@@ -248,17 +249,19 @@ data: [DONE]
         await llmBotHelper.waitForStreamingComplete();
         const firstPostText = llmBotHelper.getPostText();
         await expect(firstPostText).toBeVisible();
-        expect(await firstPostText.textContent()).toContain('Development');
+        await expect(firstPostText).toContainText('Development');
 
         await aiPlugin.waitForThreadComposerIdle();
-        await aiPlugin.sendMessage('What is the ship date for this workstream?');
+        await aiPlugin.sendMessage(followUp1UserText);
+        await expect(page.getByText(mockResponse1Text)).toBeVisible();
         await expect(page.getByText(mockResponse2Text)).toBeVisible({ timeout: 30000 });
-        expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse2Text);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text);
 
         await aiPlugin.waitForThreadComposerIdle();
-        await aiPlugin.sendMessage('How many developers?');
+        await aiPlugin.sendMessage(followUp2UserText);
+        await expect(page.getByText(mockResponse2Text)).toBeVisible();
         await expect(page.getByText(mockResponse3Text)).toBeVisible({ timeout: 30000 });
-        expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse3Text);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text);
     });
 
     test('Channel analysis while RHS already open', async ({ page }) => {
