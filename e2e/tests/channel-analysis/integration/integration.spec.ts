@@ -264,9 +264,10 @@ data: [DONE]
         expect(analysisContent!.toLowerCase()).toMatch(/meeting|budget|kickoff|approval/);
 
         // Mock follow-up response
+        const followUpText = 'The first point was about the project kickoff meeting.';
         const mockResponse2 = `
 data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The first point was about the project kickoff meeting."},"finish_reason":null}]}
+data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${followUpText}"},"finish_reason":null}]}
 data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
@@ -276,18 +277,13 @@ data: [DONE]
         await aiPlugin.openRHS();
         await aiPlugin.sendMessage('Can you tell me more about the first point?');
 
-        // 9. Wait for streaming to complete
-        await llmBotHelper.waitForStreamingComplete();
+        await expect(page.getByText(followUpText)).toBeVisible({ timeout: 30000 });
 
-        // 10. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 11. Verify follow-up response is visible
+        // 10. Verify follow-up response is visible
         const followUpPostText = llmBotHelper.getPostText();
         await expect(followUpPostText).toBeVisible();
         const followUpContent = await followUpPostText.textContent();
-        expect(followUpContent).toBeTruthy();
-        expect(followUpContent!.length).toBeGreaterThan(10);
+        expect(followUpContent).toContain('kickoff meeting');
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {

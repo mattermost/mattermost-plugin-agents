@@ -12,11 +12,8 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    // Scope to the plugin RHS. #rhsContainer is Mattermost's shell and can
-    // also contain a channel-thread composer after channel analysis; the
-    // first textarea there is not the Agents input.
-    this.rhsPostTextarea = this.getRhsContainer().locator('textarea');
-    this.rhsSendButton = this.getRhsContainer().getByTestId('SendMessageButton');
+    this.rhsPostTextarea = page.locator('#rhsContainer').locator('textarea');
+    this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -98,10 +95,22 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    await expect(this.getRhsContainer()).toBeVisible({ timeout: 10000 });
-    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
+    // After channel analysis / thread summarize, the plugin RHS hosts
+    // Mattermost ThreadViewer. Follow-ups go through reply_textbox.
+    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
+    if (await threadReply.isVisible().catch(() => false)) {
+      await expect(threadReply).toBeEnabled({ timeout: 30000 });
+      await threadReply.fill(message);
+      const threadSend = this.getRhsContainer().getByTestId('SendMessageButton');
+      if (await threadSend.isEnabled().catch(() => false)) {
+        await threadSend.click();
+      } else {
+        await threadReply.press('Enter');
+      }
+      return;
+    }
+
     await this.rhsPostTextarea.fill(message);
-    await expect(this.rhsSendButton).toBeEnabled({ timeout: 10000 });
     await this.rhsSendButton.click();
   }
 
