@@ -50,6 +50,7 @@ func TestLanguageModelLoggingDoesNotLogFileAttachmentData(t *testing.T) {
 
 	require.NotEmpty(t, entries)
 	for _, entry := range entries {
+		t.Logf("captured log prompt: %q", entry)
 		assert.NotContains(t, entry, sensitiveFileName, "attachment names must never be written to logs")
 		assert.NotContains(t, entry, sensitiveContent, "attachment contents must never be written to logs")
 	}
