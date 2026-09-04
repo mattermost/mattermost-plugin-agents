@@ -67,7 +67,7 @@ func (c *Conversations) HandleRegenerate(ctx context.Context, userID string, pos
 		return fmt.Errorf("unable to get user to regen post: %w", err)
 	}
 
-	ctx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
+	streamCtx, err := c.streamingService.GetStreamingContext(context.Background(), post.Id)
 	if err != nil {
 		return fmt.Errorf("unable to get post streaming context: %w", err)
 	}
@@ -220,13 +220,13 @@ func (c *Conversations) HandleRegenerate(ctx context.Context, userID string, pos
 
 	if mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
 		if channel.Name == bot.GetMMBot().UserId+"__"+user.Id || channel.Name == user.Id+"__"+bot.GetMMBot().UserId {
-			c.streamingService.StreamToPost(ctx, result, post, user.Locale, user.Id)
+			c.streamingService.StreamToPost(streamCtx, result, post, user.Locale, user.Id)
 			return nil
 		}
 	}
 
 	config := c.mmClient.GetConfig()
-	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale, user.Id)
+	c.streamingService.StreamToPost(streamCtx, result, post, *config.LocalizationSettings.DefaultServerLocale, user.Id)
 
 	return nil
 }
