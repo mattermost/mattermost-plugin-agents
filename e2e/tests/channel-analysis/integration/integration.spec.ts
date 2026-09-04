@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -140,7 +140,10 @@ test.describe('Channel Analysis Integration (Mocked)', () => {
     });
 
     test.beforeEach(async () => {
-        await openAIMock.resetMocks();
+        // Keep a title-generation siphon registered. An empty reset leaves
+        // in-flight GenerateTitle calls hanging and can block the next test's
+        // follow-up ChatCompletion (empty bot placeholder).
+        await openAIMock.addMocks([titleGenerationMockRule()]);
     });
 
     test.afterAll(async () => {
@@ -175,7 +178,7 @@ data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse1);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse1));
 
         // 5. Have a regular conversation with the bot first
         await aiPlugin.sendMessage('Hello, how are you today?');
@@ -197,7 +200,7 @@ data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse2));
 
         // 8. Now use channel analysis feature via agents button
         await integrationHelper.openChannelAgentsPopover();
@@ -222,6 +225,8 @@ data: [DONE]
         expect(secondContent!.length).toBeGreaterThan(20);
         // Response should mention the feature implementation or deadline
         expect(secondContent!.toLowerCase()).toMatch(/feature|deadline|sprint/);
+
+        await aiPlugin.waitForThreadComposerIdle();
     });
 
     test('Regular chat after channel analysis', async ({ page }) => {
@@ -250,28 +255,22 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Register both turns once. Resetting Smocker after analysis can hang
-        // the follow-up completion (empty bot placeholder). Match the follow-up
-        // on the persisted assistant text so extra completions and missing
-        // user-phrase bodies cannot steal the first-turn mock.
-        await openAIMock.addMocks([
-            titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: analysisText }),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText)),
-        ]);
+        // Same sequencing as "Multiple questions sequentially": custom analysis
+        // (AnalyzeChannel), wait until the composer is idle, then replace mocks
+        // for the follow-up. last7days plus overlapping body matchers left an
+        // empty bot placeholder in CI.
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402a', analysisText)));
 
-        // 5. Submit channel analysis query using quick action
-        await integrationHelper.clickQuickAction('last7days');
+        await integrationHelper.submitChannelQuery('What was discussed in the last 7 days?');
 
-        // 6. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 7. Verify channel analysis response contains channel-specific content
         const analysisPostText = llmBotHelper.getPostText();
         await expect(analysisPostText).toBeVisible();
         await expect(analysisPostText).toContainText(analysisText);
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402b', followUpText)));
         await aiPlugin.sendMessage(followUpUserText);
 
         await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
