@@ -21,7 +21,7 @@ Complete every item before starting the upgrade. Do not skip the database backup
 1. **Confirm your current plugin version.** Go to **System Console > Plugin Management** and note the installed version of Mattermost AI / Mattermost Agents.
 2. **Confirm your Mattermost server version.** v2.0.0 requires Mattermost Server v10.0 or later. The optional external MCP HTTP server requires Mattermost Server v11.2 or later.
 3. **Back up the Mattermost database.** v2.0.0 runs schema migrations on first start (see [Section 4](#4-what-gets-migrated-automatically)). Some migrations are not safely reversible (see [Section 8](#8-rollback-considerations)). In particular, migration 000007 drops the legacy `LLM_PostMeta` table without migrating its contents into the new conversation-entities tables — v1.x conversation titles cannot be recovered after the upgrade except from this backup. See [Section 5](#5-breaking-changes) for the full list of v1.x data that does not survive the upgrade.
-4. **Back up `config.json`.** The legacy bot migration removes entries from stored plugin configuration after copying them into the database. Keeping a pre-upgrade copy of `config.json` is the simplest way to recover original bot definitions if you need to roll back.
+4. **Back up `config.json`.** Keep a pre-upgrade copy for rollback. The upgrade clears migrated `config.bots` entries from the database-backed configuration, but the Mattermost configuration file may retain its legacy `PluginSettings` blob for compatibility.
 5. **Verify your license is current.** Multi-agent configurations, fine-grained access controls, MCP support (remote and external MCP servers; the embedded Mattermost MCP server does not require a license), and embedding search require an Entry, Enterprise, or Enterprise Advanced license. See [License requirements](admin_guide.md#license-requirements).
 6. **Capture a list of currently configured bots.** From your existing System Console > Plugins > Agents (or AI Bots) page, note the username, display name, service binding, and access rules of each bot. After the upgrade, you can compare this list against the migrated agents on the new **Agents** product page.
 7. **Identify any external integrations that read the `LLM_PostMeta` table directly.** That table is dropped by migration 000007. To our knowledge, no documented integration depends on this table.
@@ -59,8 +59,10 @@ After the schema migrations run, the plugin performs a one-time migration of leg
     - `AdminUserIDs` cleared. Migrated agents are managed by system admins.
     - `AutoEnableNewMCPTools = true` so migrated agents preserve the v1.x behavior of having access to every MCP tool, including ones added later.
     - `MCPDynamicToolLoading = true` when the legacy bot did not explicitly store a value, so MCP tool schemas are loaded dynamically by default. Disable **Dynamic tool loading** on the agent's **MCPs** tab to expose the full MCP tool list up front.
-5. The plugin clears `config.bots` from stored configuration to prevent duplicate bot registration on subsequent restarts.
+5. The plugin clears `config.bots` from the active `Agents_ConfigHistory` configuration to prevent duplicate bot registration on subsequent restarts.
 6. The plugin sets `legacy_config_bots_migrated = true`.
+
+In v2, the active plugin-wide configuration is stored in the plugin database and is managed through `GET` and `PUT /plugins/mattermost-ai/admin/config`. An upgraded server may retain a legacy `PluginSettings` blob in the Mattermost configuration file. That blob is not the live configuration, and the Mattermost configuration API masks the plugin's `Config` value.
 
 ### 4.3 What changes in the System Console
 
@@ -80,7 +82,7 @@ The upgrade removes some v1.x data without migrating it forward. Confirm your da
 
 ### 5.1 `config.bots` is no longer the source of truth for agent definitions
 
-After the legacy bot migration runs, `config.bots` is cleared from stored plugin configuration. Editing `config.json` to add or modify agents will not have an effect — agent CRUD is now performed against `Agents_UserAgents` via the **Agents** page. Any tooling that drives agent definitions by writing to `config.bots` must be updated to call the agent API or use the **Agents** page.
+After the legacy bot migration runs, `config.bots` is cleared from the active database-backed configuration. A legacy Mattermost `PluginSettings` blob may still contain the previous value, but it is not current configuration. Editing `config.json` to add or modify agents will not have an effect — agent CRUD is now performed against `Agents_UserAgents` via the **Agents** page. Any tooling that drives agent definitions by writing to `config.bots` must be updated to call the agent API or use the **Agents** page.
 
 ### 5.2 The `LLM_PostMeta` table is dropped
 
@@ -173,7 +175,7 @@ Some v2.0.0 migrations cannot be cleanly reversed in production. Plan accordingl
 | Migration 000005 (`Agents_UserAgents` table) | Yes (drops table) | Down migration drops the table and supporting indexes. Any agents created or edited from the v2 UI between upgrade and rollback are lost. |
 | Migration 000006 (bot fields on `Agents_UserAgents`) | Yes (drops columns) | Down migration drops the added columns. |
 | Migration 000007 (`LLM_Conversations`, `LLM_Turns`, drop `LLM_PostMeta`) | **Partial** | Down migration drops `LLM_Conversations` and `LLM_Turns` and recreates an empty `LLM_PostMeta`. `LLM_PostMeta` content (v1.x conversation titles) cannot be recovered after migration 000007 drops the table — restore from backup if you need that data. |
-| Legacy bot migration (`config.bots` cleared) | **Manual** | The v2 plugin clears `config.bots` after migration. To roll back, restore the pre-upgrade `config.json` from your pre-flight backup. |
+| Legacy bot migration (`config.bots` cleared) | **Manual** | The v2 plugin clears `config.bots` from the active `Agents_ConfigHistory` configuration after migration. A legacy Mattermost `PluginSettings` blob may remain on disk. To roll back, restore the pre-upgrade database and `config.json` from your pre-flight backups. |
 
 The supported rollback path is therefore:
 

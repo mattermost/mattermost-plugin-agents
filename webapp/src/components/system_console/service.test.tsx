@@ -2,28 +2,31 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {ServiceFields, type LLMService} from './service';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
+    const intl = {
+        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
     return {
         ...actual,
-        useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
-        }),
+        useIntl: () => intl,
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
 });
 
 jest.mock('../../client', () => ({
     fetchModels: jest.fn(),
+    fetchModelsForAgentService: jest.fn(),
 }));
 
-const {fetchModels} = jest.requireMock('../../client') as {
+const {fetchModels, fetchModelsForAgentService} = jest.requireMock('../../client') as {
     fetchModels: jest.Mock;
+    fetchModelsForAgentService: jest.Mock;
 };
 
 const baseService: LLMService = {
@@ -60,8 +63,66 @@ function renderFields(service: LLMService = baseService) {
     return {...result, onChange};
 }
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((promiseResolve) => {
+        resolve = promiseResolve;
+    });
+    return {promise, resolve};
+}
+
 beforeEach(() => {
     fetchModels.mockReset();
+    fetchModelsForAgentService.mockReset();
+    fetchModelsForAgentService.mockResolvedValue([]);
+});
+
+describe('ServiceFields model fetching', () => {
+    it('ignores an earlier response after credentials change', async () => {
+        const firstResponse = deferred<unknown[]>();
+        const secondResponse = deferred<unknown[]>();
+        fetchModels.
+            mockReturnValueOnce(firstResponse.promise).
+            mockReturnValueOnce(secondResponse.promise);
+
+        const firstService = {...baseService, apiKey: 'first-key'};
+        const {rerender} = renderFields(firstService);
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalledTimes(1));
+        const firstSignal = fetchModels.mock.calls[0][5] as AbortSignal;
+
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...firstService, apiKey: 'second-key'}}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalledTimes(2));
+        expect(firstSignal.aborted).toBe(true);
+
+        await act(async () => {
+            secondResponse.resolve([{
+                id: baseService.defaultModel,
+                displayName: 'New response',
+                inputTokenLimit: 222,
+            }]);
+        });
+        await waitFor(() => expect(screen.getByDisplayValue('222')).toBeTruthy());
+
+        await act(async () => {
+            firstResponse.resolve([{
+                id: baseService.defaultModel,
+                displayName: 'Stale response',
+                inputTokenLimit: 111,
+            }]);
+        });
+
+        expect(screen.queryByDisplayValue('111')).toBeNull();
+        expect(screen.getByDisplayValue('222')).toBeTruthy();
+    });
 });
 
 describe('ServiceFields token-limit inputs', () => {

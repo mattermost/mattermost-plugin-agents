@@ -736,21 +736,24 @@ export type FetchModelsOptions = {
     vertexAuthCredentials?: string;
 }
 
-export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}) {
+export async function fetchModels(serviceType: string, apiKey: string, apiURL: string, orgID: string, options: FetchModelsOptions = {}, signal?: AbortSignal) {
     const url = `${baseRoute()}/admin/models/fetch`;
-    const response = await fetch(url, Client4.getOptions({
-        method: 'POST',
-        body: JSON.stringify({
-            serviceType,
-            apiKey,
-            apiURL,
-            orgID,
-            region: options.region || '',
-            vertexProjectID: options.vertexProjectID || '',
-            vertexProjectNumber: options.vertexProjectNumber || '',
-            vertexAuthCredentials: options.vertexAuthCredentials || '',
+    const response = await fetch(url, {
+        ...Client4.getOptions({
+            method: 'POST',
+            body: JSON.stringify({
+                serviceType,
+                apiKey,
+                apiURL,
+                orgID,
+                region: options.region || '',
+                vertexProjectID: options.vertexProjectID || '',
+                vertexProjectNumber: options.vertexProjectNumber || '',
+                vertexAuthCredentials: options.vertexAuthCredentials || '',
+            }),
         }),
-    }));
+        signal,
+    });
 
     if (response.ok) {
         return response.json();

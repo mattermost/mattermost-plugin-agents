@@ -63,7 +63,20 @@ func (m *mockConfigStore) GetConfig() (*config.Config, error) {
 }
 
 func (m *mockConfigStore) SaveConfig(cfg config.Config) error {
+	saved := cfg
+	m.cfg = &saved
 	return nil
+}
+
+func (m *mockConfigStore) UpdateConfig(update func(stored *config.Config) (config.Config, error)) (config.Config, error) {
+	saved, err := update(m.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if err := m.SaveConfig(saved); err != nil {
+		return config.Config{}, err
+	}
+	return saved, nil
 }
 
 // overrideLicenseMocks replaces any GetConfig/GetLicense expectations already

@@ -198,4 +198,16 @@ describe('MCPServers service account headers', () => {
         expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
         expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
     });
+
+    test('renders header names as text and header values as passwords', async () => {
+        await renderOneServer(makeRemoteServer({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+
+        expect((screen.getByPlaceholderText('Header name') as HTMLInputElement).type).toBe('text');
+        expect((baseHeaderValueInput() as HTMLInputElement).type).toBe('password');
+        expect((screen.getByPlaceholderText('Header name (e.g. Authorization)') as HTMLInputElement).type).toBe('text');
+        expect((serviceAccountHeaderValueInput() as HTMLInputElement).type).toBe('password');
+    });
 });

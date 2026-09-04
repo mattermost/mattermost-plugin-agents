@@ -44,6 +44,7 @@ export const firstNewBot = {
 type Props = {
     bots: LLMBotConfig[]
     services: LLMService[]
+    persistedServiceIDs?: ReadonlySet<string>
     onChange: (bots: LLMBotConfig[]) => void
     botChangedAvatar: (bot: LLMBotConfig, image: File) => void
 }
@@ -85,6 +86,7 @@ const Bots = (props: Props) => {
                         key={bot.id}
                         bot={bot}
                         services={props.services}
+                        persistedServiceIDs={props.persistedServiceIDs}
                         onChange={onChange}
                         onDelete={() => onDelete(bot.id)}
                         changedAvatar={(image: File) => props.botChangedAvatar(bot, image)}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/stretchr/testify/assert"
@@ -21,9 +22,12 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	cfg     *config.Config
-	getErr  error
-	saveErr error
+	cfg             *config.Config
+	getErr          error
+	saveErr         error
+	updateErr       error
+	saveCallCount   int
+	updateCallCount int
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
@@ -34,12 +38,35 @@ func (s *testConfigStore) GetConfig() (*config.Config, error) {
 }
 
 func (s *testConfigStore) SaveConfig(cfg config.Config) error {
+	s.saveCallCount++
 	if s.saveErr != nil {
 		return s.saveErr
 	}
 	clone := cfg
 	s.cfg = &clone
 	return nil
+}
+
+func (s *testConfigStore) UpdateConfig(update func(stored *config.Config) (config.Config, error)) (config.Config, error) {
+	s.updateCallCount++
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+
+	saved, err := update(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if s.updateErr != nil {
+		return config.Config{}, s.updateErr
+	}
+	if s.saveErr != nil {
+		return config.Config{}, s.saveErr
+	}
+
+	clone := saved
+	s.cfg = &clone
+	return saved, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.
@@ -137,9 +164,10 @@ func TestHandleGetConfig(t *testing.T) {
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
 					{
-						ID:   "svc-1",
-						Name: "OpenAI",
-						Type: "openai",
+						ID:     "svc-1",
+						Name:   "OpenAI",
+						Type:   "openai",
+						APIKey: "stored-service-value",
 					},
 				},
 				Bots: []llm.BotConfig{
@@ -159,6 +187,8 @@ func TestHandleGetConfig(t *testing.T) {
 				require.Len(t, cfg.Services, 1)
 				assert.Equal(t, "svc-1", cfg.Services[0].ID)
 				assert.Equal(t, "openai", cfg.Services[0].Type)
+				assert.Equal(t, config.FakeSetting, cfg.Services[0].APIKey)
+				assert.NotContains(t, string(body), "stored-service-value")
 				require.Len(t, cfg.Bots, 1)
 				assert.Equal(t, "bot-1", cfg.Bots[0].ID)
 				assert.Equal(t, "svc-1", cfg.Bots[0].ServiceID)
@@ -191,7 +221,7 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	stored := &config.Config{
 		Services: []llm.ServiceConfig{
-			{ID: "svc-1", Type: llm.ServiceTypeOpenAI, UseResponsesAPI: false},
+			{ID: "svc-1", Type: llm.ServiceTypeOpenAI, APIKey: "stored-service-value", UseResponsesAPI: false},
 		},
 	}
 	store := &testConfigStore{cfg: stored}
@@ -203,23 +233,64 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, store.cfg.Services[0].UseResponsesAPI, "GET must not mutate stored config backing array")
+	assert.Equal(t, "stored-service-value", store.cfg.Services[0].APIKey)
 
 	var out config.Config
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
 	require.Len(t, out.Services, 1)
 	assert.True(t, out.Services[0].UseResponsesAPI)
+	assert.Equal(t, config.FakeSetting, out.Services[0].APIKey)
+}
+
+func TestNormalizeAdminConfigCopiesMutatedServices(t *testing.T) {
+	input := config.Config{
+		Services: []llm.ServiceConfig{{ID: "service-1", Type: llm.ServiceTypeOpenAI}},
+		EmbeddingSearchConfig: embeddings.EmbeddingSearchConfig{
+			EmbeddingProvider: embeddings.UpstreamConfig{
+				Parameters: json.RawMessage(`{"apiKey":"stored-value`),
+			},
+		},
+	}
+
+	normalized := normalizeAdminConfig(input)
+	normalized.Services[0].ID = "changed"
+
+	assert.Equal(t, "service-1", input.Services[0].ID)
+	assert.False(t, input.Services[0].UseResponsesAPI)
+	assert.False(t, input.MCP.Enabled)
+	assert.False(t, input.MCP.EmbeddedServer.Enabled)
+	assert.True(t, normalized.MCP.Enabled)
+	assert.True(t, normalized.MCP.EmbeddedServer.Enabled)
+	assert.Equal(t, `{"apiKey":"stored-value`, string(normalized.EmbeddingSearchConfig.EmbeddingProvider.Parameters))
+	assert.Equal(t, `{"apiKey":"stored-value`, string(input.EmbeddingSearchConfig.EmbeddingProvider.Parameters))
 }
 
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
 		requestBody           any
+		storeUpdateErr        error
 		clusterErr            error
 		expectedStatus        int
 		validateStore         func(t *testing.T, store *testConfigStore)
 		validateUpdater       func(t *testing.T, updater *testConfigUpdater)
 		validateClusterNotify func(t *testing.T, notifier *testClusterNotifier)
 	}{
+		{
+			name:           "returns error when config update fails",
+			requestBody:    config.Config{},
+			storeUpdateErr: errors.New("update unavailable"),
+			expectedStatus: http.StatusInternalServerError,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Zero(t, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Zero(t, notifier.callCount)
+			},
+		},
 		{
 			name: "returns error when cluster notify fails after successful save",
 			requestBody: config.Config{
@@ -390,7 +461,7 @@ func TestHandleSaveConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &testConfigStore{}
+			store := &testConfigStore{updateErr: tt.storeUpdateErr}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{err: tt.clusterErr}
 
@@ -484,15 +555,17 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "ai", loadedCfg.DefaultBotName)
 	require.Len(t, loadedCfg.Services, 1)
-	assert.Equal(t, "sk-test", loadedCfg.Services[0].APIKey)
+	assert.Equal(t, config.FakeSetting, loadedCfg.Services[0].APIKey)
+	assert.NotContains(t, w.Body.String(), "sk-test")
+	assert.Equal(t, "sk-test", store.cfg.Services[0].APIKey)
 	assert.True(t, loadedCfg.Services[0].UseResponsesAPI)
 	require.Len(t, loadedCfg.Bots, 1)
 	assert.Equal(t, "bot-1", loadedCfg.Bots[0].ID)
 	assert.True(t, loadedCfg.MCP.Enabled)
 	assert.True(t, loadedCfg.MCP.EmbeddedServer.Enabled)
 	require.Len(t, loadedCfg.MCP.Servers, 1)
-	assert.Equal(t, map[string]string{"X-Trace": "on"}, loadedCfg.MCP.Servers[0].Headers)
-	assert.Equal(t, map[string]string{"Authorization": "Bearer service-pat"}, loadedCfg.MCP.Servers[0].ServiceAccountHeaders)
+	assert.Equal(t, map[string]string{"X-Trace": config.FakeSetting}, loadedCfg.MCP.Servers[0].Headers)
+	assert.Equal(t, map[string]string{"Authorization": config.FakeSetting}, loadedCfg.MCP.Servers[0].ServiceAccountHeaders)
 
 	// Step 4: Verify side effects
 	assert.Equal(t, 1, updater.callCount)

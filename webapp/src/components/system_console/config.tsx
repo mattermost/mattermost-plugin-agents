@@ -188,6 +188,7 @@ const Config = (props: Props) => {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
+    const [persistedServiceIDs, setPersistedServiceIDs] = useState<Set<string>>(() => new Set());
     const intl = useIntl();
 
     // Load config from plugin API on mount
@@ -196,6 +197,7 @@ const Config = (props: Props) => {
             try {
                 const cfg = await getPluginConfig();
                 setLocalConfig({...defaultConfig, ...cfg});
+                setPersistedServiceIDs(new Set((cfg.services ?? []).map((service) => service.id)));
                 setLoadError(null);
             } catch (e: any) {
                 setLoadError(intl.formatMessage({defaultMessage: 'Failed to load configuration.'}));
@@ -227,6 +229,7 @@ const Config = (props: Props) => {
         const save = async () => {
             try {
                 await savePluginConfig(localConfig);
+                setPersistedServiceIDs(new Set((localConfig.services ?? []).map((service) => service.id)));
                 return {};
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
@@ -297,6 +300,7 @@ const Config = (props: Props) => {
                 <Services
                     services={value.services ?? []}
                     bots={value.bots ?? []}
+                    persistedServiceIDs={persistedServiceIDs}
                     onChange={(services: LLMService[]) => {
                         updateConfig({services});
                     }}

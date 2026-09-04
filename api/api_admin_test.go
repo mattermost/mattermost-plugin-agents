@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 	gin.DefaultWriter = io.Discard
 
 	mockAPI := &plugintest.API{}
+	mockAPI.On("LogAuditRec", mock.Anything).Maybe()
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	cfg := &testConfigImpl{}
@@ -839,6 +841,41 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "partial update combines live source fields with persisted admin fields",
+			preRegistered: []mcp.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Current name", Path: "/current",
+					Enabled: false, ExposeExternal: true,
+				},
+			},
+			seededPersisted: []config.PluginServerConfig{
+				{
+					PluginID: "com.mattermost.demo", Name: "Old name", Path: "/old",
+					Enabled: true, ExposeExternal: false,
+					ToolConfigs: []config.MCPToolConfig{
+						{Name: "existing", Policy: config.MCPToolPolicyAsk, Enabled: true},
+					},
+				},
+			},
+			body:                  `{"tool_configs": [{"name": "replacement", "policy": "ask", "enabled": false}]}`,
+			expectStatus:          http.StatusOK,
+			expectSaveCalls:       1,
+			expectUpdateCalls:     1,
+			expectPublishCalls:    1,
+			expectRegistryCalls:   1,
+			expectUnregisterCalls: 0,
+			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
+				require.Len(t, savedCfg.MCP.PluginServers, 1)
+				updated := savedCfg.MCP.PluginServers[0]
+				assert.Equal(t, "Current name", updated.Name)
+				assert.Equal(t, "/current", updated.Path)
+				assert.True(t, updated.ExposeExternal)
+				assert.True(t, updated.Enabled)
+				require.Len(t, updated.ToolConfigs, 1)
+				assert.Equal(t, "replacement", updated.ToolConfigs[0].Name)
+			},
+		},
+		{
 			// Regression for MM-68980: admin updates one plugin while another
 			// plugin (with admin-customized config) is currently inactive in
 			// memory. The persisted entry for the inactive plugin must
@@ -896,7 +933,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			},
 		},
 		{
-			name: "GetConfig failure returns 500 and skips Save/Update/Publish",
+			name: "active config read failure returns 500 and skips side effects",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
@@ -910,7 +947,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectUnregisterCalls: 0,
 		},
 		{
-			name: "SaveConfig failure returns 500 and skips Update/Publish",
+			name: "config persistence failure returns 500 and skips side effects",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
@@ -924,7 +961,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectUnregisterCalls: 0,
 		},
 		{
-			name: "PublishConfigUpdate failure returns 500 after Save and skips Update",
+			name: "cluster notification failure returns 500 after persistence",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
@@ -941,7 +978,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			// A nil persisted config must not be silently replaced by a
 			// zero-value baseline; doing so would clobber unrelated settings
 			// (services, bots, MCP flags) on the next save.
-			name: "nil persisted config returns 500 and skips Save/Update/Publish/Register",
+			name: "nil persisted config returns 500 and skips side effects",
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
@@ -1001,6 +1038,9 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 
 			if tt.getErr != nil || tt.saveErr != nil {
 				require.Equal(t, tt.expectSaveCalls, failingStore.saveCallCount)
+				require.Equal(t, 1, failingStore.updateCallCount)
+			} else {
+				require.Equal(t, 1, stores.configStore.updateCallCount)
 			}
 			require.Equal(t, tt.expectUpdateCalls, stores.configUpdater.callCount)
 			require.Equal(t, tt.expectPublishCalls, stores.clusterNotifier.callCount)
@@ -1010,19 +1050,158 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			require.Len(t, mgr.unregisterCalls, tt.expectUnregisterCalls, "live plugin registry must not be mutated on failure paths")
 
 			if tt.assertPersistedState != nil {
-				require.NotNil(t, stores.configStore.cfg, "SaveConfig must have been called and persisted cfg")
+				require.NotNil(t, stores.configStore.cfg, "UpdateConfig must have persisted cfg")
 				tt.assertPersistedState(t, stores.configStore.cfg)
+			}
+			if tt.expectStatus == http.StatusOK {
+				require.Equal(t, stores.configStore.cfg, stores.configUpdater.lastUpdate)
 			}
 		})
 	}
 }
 
-// failingConfigStore is a testConfigStore variant with configurable error injection on Get/Save.
+func TestHandleUpdatePluginServer_ConcurrentPartialUpdates(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	initial := mcp.PluginServerConfig{
+		PluginID: "com.mattermost.demo",
+		Name:     "Demo",
+		Path:     "/mcp",
+		Enabled:  false,
+	}
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = []mcp.PluginServerConfig{initial}
+
+	store := newControlledPluginServerConfigStore(config.Config{
+		MCP: config.MCPConfig{PluginServers: []config.PluginServerConfig{initial}},
+	})
+	api.configStore = store
+
+	type result struct {
+		status int
+		body   []byte
+	}
+	send := func(body string) <-chan result {
+		results := make(chan result, 1)
+		go func() {
+			req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(body))
+			req.Header.Set("Mattermost-User-Id", "admin-user")
+			req.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			api.ServeHTTP(&plugin.Context{}, recorder, req)
+			results <- result{status: recorder.Code, body: recorder.Body.Bytes()}
+		}()
+		return results
+	}
+
+	enabledResult := send(`{"enabled": true}`)
+	store.waitEntered(t, 1)
+
+	toolResult := send(`{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`)
+	store.waitEntered(t, 2)
+
+	store.release(1)
+	first := <-enabledResult
+	require.Equal(t, http.StatusOK, first.status)
+
+	store.release(2)
+	second := <-toolResult
+	require.Equal(t, http.StatusOK, second.status)
+
+	var response mcp.PluginServerConfig
+	require.NoError(t, json.Unmarshal(second.body, &response))
+	assert.True(t, response.Enabled)
+	require.Len(t, response.ToolConfigs, 1)
+	assert.Equal(t, "echo", response.ToolConfigs[0].Name)
+
+	persisted := store.snapshot()
+	require.Len(t, persisted.MCP.PluginServers, 1)
+	assert.True(t, persisted.MCP.PluginServers[0].Enabled)
+	require.Len(t, persisted.MCP.PluginServers[0].ToolConfigs, 1)
+	assert.Equal(t, "echo", persisted.MCP.PluginServers[0].ToolConfigs[0].Name)
+
+	runtime, ok := mgr.GetPluginServer(initial.PluginID)
+	require.True(t, ok)
+	assert.Equal(t, persisted.MCP.PluginServers[0], runtime)
+}
+
+type controlledPluginServerConfigStore struct {
+	mu       sync.Mutex
+	cfg      config.Config
+	updates  int
+	entered  [2]chan struct{}
+	releases [2]chan struct{}
+}
+
+func newControlledPluginServerConfigStore(cfg config.Config) *controlledPluginServerConfigStore {
+	return &controlledPluginServerConfigStore{
+		cfg:      cfg,
+		entered:  [2]chan struct{}{make(chan struct{}, 1), make(chan struct{}, 1)},
+		releases: [2]chan struct{}{make(chan struct{}, 1), make(chan struct{}, 1)},
+	}
+}
+
+func (s *controlledPluginServerConfigStore) GetConfig() (*config.Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg.Clone(), nil
+}
+
+func (s *controlledPluginServerConfigStore) SaveConfig(cfg config.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg = *cfg.Clone()
+	return nil
+}
+
+func (s *controlledPluginServerConfigStore) UpdateConfig(update func(stored *config.Config) (config.Config, error)) (config.Config, error) {
+	s.mu.Lock()
+	stored := s.cfg.Clone()
+	saved, err := update(stored)
+	if err != nil {
+		s.mu.Unlock()
+		return config.Config{}, err
+	}
+	s.cfg = *saved.Clone()
+	s.updates++
+	call := s.updates
+	s.mu.Unlock()
+
+	s.entered[call-1] <- struct{}{}
+	<-s.releases[call-1]
+	return saved, nil
+}
+
+func (s *controlledPluginServerConfigStore) waitEntered(t *testing.T, call int) {
+	t.Helper()
+	select {
+	case <-s.entered[call-1]:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("UpdateConfig call %d did not start", call)
+	}
+}
+
+func (s *controlledPluginServerConfigStore) release(call int) {
+	s.releases[call-1] <- struct{}{}
+}
+
+func (s *controlledPluginServerConfigStore) snapshot() config.Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return *s.cfg.Clone()
+}
+
+// failingConfigStore supports active-read and persistence error injection.
 type failingConfigStore struct {
-	cfg           *config.Config
-	getErr        error
-	saveErr       error
-	saveCallCount int
+	cfg             *config.Config
+	getErr          error
+	saveErr         error
+	saveCallCount   int
+	updateCallCount int
 }
 
 func (s *failingConfigStore) GetConfig() (*config.Config, error) {
@@ -1037,6 +1216,21 @@ func (s *failingConfigStore) SaveConfig(cfg config.Config) error {
 	clone := cfg
 	s.cfg = &clone
 	return nil
+}
+
+func (s *failingConfigStore) UpdateConfig(update func(stored *config.Config) (config.Config, error)) (config.Config, error) {
+	s.updateCallCount++
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+	saved, err := update(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if err := s.SaveConfig(saved); err != nil {
+		return config.Config{}, err
+	}
+	return saved, nil
 }
 
 // setupAdminAuditTest wires the full-router environment with audit capture so

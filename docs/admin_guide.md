@@ -33,6 +33,8 @@ Install the plugin through the System Console by navigating to **System Console 
 
 Navigate to **System Console > Plugins > Agents** to configure plugin-wide settings such as AI services, the default bot, web search, embedding search, and MCP settings.
 
+Current plugin-wide configuration is stored in the plugin database and is read and updated through `GET` and `PUT /plugins/mattermost-ai/admin/config`. For configured credentials, `GET` returns the standard credential placeholder. In a subsequent `PUT`, the placeholder preserves the stored value, an empty string clears it, and any other value replaces it. An upgraded server may retain a legacy `PluginSettings` configuration blob in the Mattermost configuration file for compatibility. That blob is not the live configuration, and the Mattermost configuration API masks the plugin's `Config` value.
+
 Create and manage agents from the top-level **Agents** product page. If an agent selector dropdown is available in the Agents experience, use its **Manage** link to open the same page. The **AI Bots** section in the System Console links to the Agents page instead of hosting the full agent editor.
 
 ### Enable the plugin
@@ -509,47 +511,45 @@ There is no plugin-side toggle: records are always handed to the server, and per
 
 ### Backup and restore
 
-The plugin stores agent data across both plugin configuration and plugin database tables. To backup:
+The plugin stores current plugin-wide configuration and agent data in plugin-owned database tables. To back up:
 
-1. Ensure your regular Mattermost backup includes plugin configuration data.
-2. Include plugin database tables in your normal backup and restore process. In particular:
+1. Include plugin database tables in your normal backup and restore process. In particular:
+   - `Agents_ConfigHistory` for plugin-wide configuration
    - `Agents_UserAgents` for agents created or managed from the **Agents** page
    - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
-3. For larger deployments, consider backing up indexed vector data separately.
+2. For larger deployments, consider backing up indexed vector data separately.
 
-Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
+Restoring only the legacy Mattermost `PluginSettings` data isn't sufficient to restore current plugin configuration or agents managed from the **Agents** page.
 
 ### Configuration format
 
 The plugin uses a service-based architecture:
 
-- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotName`
+- The active `Agents_ConfigHistory` record stores plugin-wide settings and AI service configurations, including `defaultBotName`; authorized administrators read and update it through `GET` and `PUT /plugins/mattermost-ai/admin/config`
 - Agents are stored separately in the `Agents_UserAgents` table
 
 This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
 
-**Configuration structure:**
+**Configuration API structure:**
 ```json
 {
-  "config": {
-    "services": [
-      {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "name": "OpenAI Service",
-        "type": "openai",
-        "apiKey": "sk-...",
-        "defaultModel": "gpt-4o",
-        "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
-      }
-    ],
-    "defaultBotName": "ai"
-  }
+  "services": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "OpenAI Service",
+      "type": "openai",
+      "apiKey": "sk-...",
+      "defaultModel": "gpt-4o",
+      "fallbackServiceID": "550e8400-e29b-41d4-a716-446655440001"
+    }
+  ],
+  "defaultBotName": "ai"
 }
 ```
 
 **Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
 
-**Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
+**Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After migration completes, `config.bots` is cleared from the database-backed configuration to avoid duplicate bot registration. A legacy Mattermost `PluginSettings` blob may remain on disk for compatibility and may still contain the prior value; it is not the current configuration.
 
 ## Troubleshooting
 

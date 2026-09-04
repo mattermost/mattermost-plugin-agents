@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
@@ -12,12 +12,11 @@ import {DangerPill} from '../pill';
 
 import {ButtonIcon} from '../assets/buttons';
 
-import {fetchModels} from '../../client';
-
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
+import {fetchModelsForService, type ModelInfo, supportsModelFetching as serviceSupportsModelFetching} from './model_fetch';
 import ReasoningConfigItem from './reasoning_config';
 
 export enum ChannelAccessLevel {
@@ -185,14 +184,14 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
 type Props = {
     bot: LLMBotConfig
     services: LLMService[]
+
+    // IDs of services already saved on the server. Services whose credentials are
+    // redacted placeholders can only list models through the server-side
+    // credential endpoint, which requires the service to be persisted.
+    persistedServiceIDs?: ReadonlySet<string>
     onChange: (bot: LLMBotConfig) => void
     onDelete: () => void
     changedAvatar: (image: File) => void
-}
-
-type ModelInfo = {
-    id: string
-    displayName: string
 }
 
 const Bot = (props: Props) => {
@@ -201,6 +200,7 @@ const Bot = (props: Props) => {
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
+    const modelsRequestGeneration = useRef(0);
 
     const missingUsername = !props.bot.name || props.bot.name.trim() === '';
     const invalidUsername = props.bot.name !== '' && (!(/^[a-z0-9.\-_]+$/).test(props.bot.name) || !(/[a-z]/).test(props.bot.name.charAt(0)));
@@ -208,72 +208,54 @@ const Bot = (props: Props) => {
 
     // Find the selected service
     const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
-    const supportsModelFetching = selectedService &&
-        (selectedService.type === 'anthropic' ||
-         selectedService.type === 'openai' ||
-         selectedService.type === 'azure' ||
-         selectedService.type === 'openaicompatible' ||
-         selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+    const supportsModelFetching = Boolean(selectedService && serviceSupportsModelFetching(selectedService.type));
+    const isServicePersisted = Boolean(selectedService && props.persistedServiceIDs?.has(selectedService.id));
 
     // Fetch models when the service changes
     useEffect(() => {
-        if (!supportsModelFetching || !selectedService) {
-            setAvailableModels([]);
-            setModelsFetchError('');
-            return;
-        }
-
-        // Providers have different credential shapes for model listing:
-        // - openaicompatible: API key OR API URL
-        // - vertex: GCP project ID + region
-        // - others: API key
-        let hasRequiredCredentials: string | boolean = false;
-        switch (selectedService.type) {
-        case 'openaicompatible':
-            hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
-            break;
-        case 'vertex':
-            hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
-            break;
-        default:
-            hasRequiredCredentials = selectedService.apiKey;
-        }
-
-        if (!hasRequiredCredentials) {
-            setAvailableModels([]);
-            setModelsFetchError('');
-            return;
-        }
+        const abortController = new AbortController();
+        const generation = ++modelsRequestGeneration.current;
+        const isCurrentRequest = () => !abortController.signal.aborted && generation === modelsRequestGeneration.current;
 
         const loadModels = async () => {
+            if (!selectedService) {
+                setAvailableModels((models) => (models.length === 0 ? models : []));
+                setModelsFetchError('');
+                return;
+            }
+
             setLoadingModels(true);
             setModelsFetchError('');
 
             try {
-                const data: ModelInfo[] = await fetchModels(
-                    selectedService.type,
-                    selectedService.apiKey,
-                    selectedService.apiURL || '',
-                    selectedService.orgId || '',
-                    {
-                        region: selectedService.region || '',
-                        vertexProjectID: selectedService.vertexProjectID || '',
-                        vertexProjectNumber: selectedService.vertexProjectNumber || '',
-                        vertexAuthCredentials: selectedService.vertexAuthCredentials || '',
-                    },
-                );
+                const data = await fetchModelsForService(selectedService, isServicePersisted, abortController.signal);
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                if (data === null) {
+                    setAvailableModels((models) => (models.length === 0 ? models : []));
+                    return;
+                }
                 setAvailableModels(data);
             } catch (error) {
+                if (!isCurrentRequest()) {
+                    return;
+                }
                 setModelsFetchError(intl.formatMessage({defaultMessage: 'Failed to fetch models. Please check the service configuration.'}));
                 setAvailableModels([]);
             } finally {
-                setLoadingModels(false);
+                if (isCurrentRequest()) {
+                    setLoadingModels(false);
+                }
             }
         };
 
         loadModels();
-    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, selectedService?.region, selectedService?.vertexProjectID, selectedService?.vertexProjectNumber, selectedService?.vertexAuthCredentials, supportsModelFetching, intl]);
+
+        return () => {
+            abortController.abort();
+        };
+    }, [selectedService?.id, selectedService?.type, selectedService?.apiKey, selectedService?.apiURL, selectedService?.orgId, selectedService?.region, selectedService?.vertexProjectID, selectedService?.vertexProjectNumber, selectedService?.vertexAuthCredentials, isServicePersisted, intl]);
 
     return (
         <BotContainer>

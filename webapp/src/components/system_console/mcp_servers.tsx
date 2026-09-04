@@ -129,6 +129,7 @@ const HeaderMapEditor = ({
                             onChange={(e) => updateHeader(key, e.target.value, value)}
                         />
                         <HeaderInput
+                            type='password'
                             placeholder={headerValuePlaceholder}
                             value={value}
                             onChange={(e) => updateHeader(key, key, e.target.value)}

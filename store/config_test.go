@@ -4,6 +4,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -427,4 +428,125 @@ func TestSaveConfigWaitsForConfigLock(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, "bot-after-lock", cfg.DefaultBotName)
+}
+
+func TestUpdateConfigRollsBackCallbackError(t *testing.T) {
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+	require.NoError(t, s.SaveConfig(config.Config{DefaultBotName: "before"}))
+
+	expectedErr := errors.New("update rejected")
+	_, err := s.UpdateConfig(func(stored *config.Config) (config.Config, error) {
+		require.NotNil(t, stored)
+		return config.Config{DefaultBotName: "after"}, expectedErr
+	})
+	require.ErrorIs(t, err, expectedErr)
+
+	cfg, err := s.GetConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "before", cfg.DefaultBotName)
+
+	var totalCount int
+	require.NoError(t, s.db.Get(&totalCount, "SELECT COUNT(*) FROM Agents_ConfigHistory"))
+	assert.Equal(t, 1, totalCount)
+}
+
+func TestMalformedActiveConfigReplacement(t *testing.T) {
+	const malformedConfig = `{"defaultBotName":`
+
+	s := setupTestStore(t)
+	require.NoError(t, s.RunMigrations())
+	_, err := s.db.Exec(
+		"INSERT INTO Agents_ConfigHistory (ID, Config, CreateAt, Active) VALUES ($1, $2, $3, $4)",
+		"malformed-config",
+		malformedConfig,
+		time.Now().UnixMilli(),
+		true,
+	)
+	require.NoError(t, err)
+
+	callbackCalled := false
+	_, err = s.UpdateConfig(func(*config.Config) (config.Config, error) {
+		callbackCalled = true
+		return config.Config{DefaultBotName: "replacement"}, nil
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to unmarshal config")
+	assert.False(t, callbackCalled)
+
+	var activeConfig string
+	require.NoError(t, s.db.Get(&activeConfig, "SELECT Config FROM Agents_ConfigHistory WHERE Active = true"))
+	assert.Equal(t, malformedConfig, activeConfig)
+
+	replacement := config.Config{DefaultBotName: "replacement"}
+	require.NoError(t, s.SaveConfig(replacement))
+
+	cfg, err := s.GetConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, replacement.DefaultBotName, cfg.DefaultBotName)
+}
+
+func TestUpdateConfigRestoresAgainstLatestConfig(t *testing.T) {
+	baseStore := setupTestStore(t)
+	require.NoError(t, baseStore.RunMigrations())
+	require.NoError(t, baseStore.SaveConfig(config.Config{
+		Services: []llm.ServiceConfig{{ID: "service-1", APIKey: "initial-value"}},
+	}))
+
+	var schemaName string
+	require.NoError(t, baseStore.db.Get(&schemaName, "SELECT current_schema()"))
+	rotateStore := setupSchemaBoundStore(t, schemaName)
+	restoreStore := setupSchemaBoundStore(t, schemaName)
+
+	rotateEntered := make(chan struct{})
+	releaseRotate := make(chan struct{})
+	rotateDone := make(chan error, 1)
+	go func() {
+		_, updateErr := rotateStore.UpdateConfig(func(stored *config.Config) (config.Config, error) {
+			if stored == nil {
+				return config.Config{}, errors.New("stored config is missing")
+			}
+			rotated := *stored.Clone()
+			rotated.Services[0].APIKey = "rotated-value"
+			close(rotateEntered)
+			<-releaseRotate
+			return rotated, nil
+		})
+		rotateDone <- updateErr
+	}()
+
+	select {
+	case <-rotateEntered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("rotation update did not acquire the config lock")
+	}
+
+	seenStoredKey := make(chan string, 1)
+	restoreDone := make(chan error, 1)
+	go func() {
+		incoming := config.Config{
+			Services: []llm.ServiceConfig{{ID: "service-1", APIKey: config.FakeSetting}},
+		}
+		_, updateErr := restoreStore.UpdateConfig(func(stored *config.Config) (config.Config, error) {
+			if stored == nil {
+				return config.Config{}, errors.New("stored config is missing")
+			}
+			seenStoredKey <- stored.Services[0].APIKey
+			return config.RestoreSecrets(incoming, *stored), nil
+		})
+		restoreDone <- updateErr
+	}()
+
+	close(releaseRotate)
+	require.NoError(t, <-rotateDone)
+	require.NoError(t, <-restoreDone)
+	assert.Equal(t, "rotated-value", <-seenStoredKey)
+
+	cfg, err := baseStore.GetConfig()
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Len(t, cfg.Services, 1)
+	assert.Equal(t, "rotated-value", cfg.Services[0].APIKey)
 }
