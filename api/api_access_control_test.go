@@ -147,6 +147,119 @@ func TestAgentPolicyDelete(t *testing.T) {
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 }
 
+func TestAgentPolicyWriteRequiresAdminWhenServiceAccountOn(t *testing.T) {
+	const plantedCEL = `user.attributes.department == "planted-sa-policy-secret"`
+
+	managerID := model.NewId()
+	sysadminID := model.NewId()
+	agentID := model.NewId()
+
+	policyBody := map[string]any{
+		"rules": []map[string]any{{"actions": []string{"use"}, "expression": plantedCEL}},
+	}
+
+	tests := []struct {
+		name          string
+		userID        string
+		saOn          bool
+		method        string
+		body          any
+		wantStatus    int
+		wantEvent     string
+		wantAuditFail bool
+		expectSave    bool
+		expectDelete  bool
+		expectGet     bool
+	}{
+		{
+			name:   "SA on manager PUT is forbidden",
+			userID: managerID, saOn: true, method: http.MethodPut, body: policyBody,
+			wantStatus: http.StatusForbidden, wantEvent: AuditEventPutAgentPolicy, wantAuditFail: true,
+		},
+		{
+			name:   "SA on manager DELETE is forbidden",
+			userID: managerID, saOn: true, method: http.MethodDelete,
+			wantStatus: http.StatusForbidden, wantEvent: AuditEventDeleteAgentPolicy, wantAuditFail: true,
+		},
+		{
+			name:   "SA on manager GET still allowed",
+			userID: managerID, saOn: true, method: http.MethodGet,
+			wantStatus: http.StatusOK, expectGet: true,
+		},
+		{
+			name:   "SA on sysadmin PUT succeeds",
+			userID: sysadminID, saOn: true, method: http.MethodPut, body: policyBody,
+			wantStatus: http.StatusOK, wantEvent: AuditEventPutAgentPolicy, expectSave: true,
+		},
+		{
+			name:   "SA on sysadmin DELETE succeeds",
+			userID: sysadminID, saOn: true, method: http.MethodDelete,
+			wantStatus: http.StatusOK, wantEvent: AuditEventDeleteAgentPolicy, expectDelete: true,
+		},
+		{
+			name:   "SA off manager PUT still allowed",
+			userID: managerID, method: http.MethodPut, body: policyBody,
+			wantStatus: http.StatusOK, wantEvent: AuditEventPutAgentPolicy, expectSave: true,
+		},
+		{
+			name:   "SA off manager DELETE still allowed",
+			userID: managerID, method: http.MethodDelete,
+			wantStatus: http.StatusOK, wantEvent: AuditEventDeleteAgentPolicy, expectDelete: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAccessControlTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.agentStore.agents[agentID] = &llm.BotConfig{
+				ID: agentID, Name: "policyagent", DisplayName: "Policy Agent",
+				ServiceID: "svc-1", CreatorID: managerID, AdminUserIDs: []string{sysadminID},
+				UseServiceAccountAuth: tt.saOn,
+			}
+
+			e.mockAPI.On("HasPermissionTo", sysadminID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+
+			if tt.expectGet {
+				e.mockAPI.On("GetAccessControlPolicy", agentID).Return(&model.AccessControlPolicy{ID: agentID}, nil).Once()
+			}
+			if tt.expectSave {
+				e.mockAPI.On("SaveAccessControlPolicy", tt.userID, mock.AnythingOfType("*model.AccessControlPolicy")).
+					Return(&model.AccessControlPolicy{ID: agentID}, nil).Once()
+			}
+			if tt.expectDelete {
+				e.mockAPI.On("DeleteAccessControlPolicy", tt.userID, accesscontrol.ResourceTypeAgent, agentID).Return(nil).Once()
+			}
+
+			records := e.CaptureAuditRecords()
+			recorder := doRequest(e.api, tt.method, "/agents/"+agentID+"/access_policy", tt.body, tt.userID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode)
+
+			if tt.wantEvent == "" {
+				assert.Empty(t, *records, "read-only policy GET must not emit an audit record")
+				return
+			}
+
+			require.Len(t, *records, 1)
+			rec := (*records)[0]
+			assert.Equal(t, tt.wantEvent, rec.EventName)
+			if tt.wantAuditFail {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+			} else {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+			}
+
+			raw, err := json.Marshal(rec)
+			require.NoError(t, err)
+			assert.NotContains(t, string(raw), plantedCEL, "audit record must never carry policy expression content")
+		})
+	}
+}
+
 func TestAuditAccessPolicyMutations(t *testing.T) {
 	const plantedCEL = `user.attributes.department == "planted-secret-cel-expr"`
 
