@@ -458,7 +458,7 @@ func TestAutoReplyTriggerMatrix(t *testing.T) {
 			}
 
 			post := tc.buildPost(env)
-			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, post)
+			env.conversations.MessageHasBeenPosted(nil, post)
 
 			if tc.expectFired {
 				require.Len(t, env.mmClient.createdPosts, 1, "expected exactly one bot placeholder post")
@@ -647,7 +647,7 @@ func TestAutoReplySynthesizedMention(t *testing.T) {
 			})
 
 			post := tc.buildPost(env)
-			env.conversations.MessageHasBeenPosted(nil, post)
+			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, post)
 
 			require.Len(t, env.mmClient.createdPosts, 1, "expected the auto-reply to fire")
 			blocks := singleConversationUserBlocks(t, env)
