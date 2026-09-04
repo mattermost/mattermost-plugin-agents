@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -249,10 +249,10 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        await openAIMock.addMocks([
-            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: 'first point' }),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: 'last 7 days' }),
-        ]);
+        // Follow-up /chat/completions bodies still contain the analysis system
+        // prompt ("last 7 days"), so body matchers cannot tell turns apart.
+        // Swap the catch-all only after the first stream has fully settled.
+        await openAIMock.addCompletionMock(sse('chatcmpl-402a', analysisText));
 
         // 5. Submit channel analysis query using quick action
         await integrationHelper.clickQuickAction('last7days');
@@ -268,6 +268,7 @@ data: [DONE]
         expect(analysisContent!.toLowerCase()).toMatch(/meeting|budget|kickoff|approval/);
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addCompletionMock(sse('chatcmpl-402b', followUpText));
         await aiPlugin.sendMessage('Can you tell me more about the first point?');
 
         await expect(page.getByText(followUpText)).toBeVisible({ timeout: 30000 });

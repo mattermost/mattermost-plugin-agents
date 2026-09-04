@@ -231,11 +231,11 @@ test.describe('Thread Analysis', () => {
     // Wait for the AI RHS to open and show the summary
     await aiPlugin.expectRHSOpenWithPost();
     await expect(page.getByText(responseTestText)).toBeVisible();
+    await aiPlugin.waitForThreadComposerIdle();
 
-    // Now test the follow-up question functionality
+    // addMock resets Smocker; the first stream is idle so the replacement
+    // catch-all is the only rule the follow-up can hit.
     await openAIMock.addCompletionMock(responseTest2);
-
-    // Send a follow-up question
     await aiPlugin.sendMessage('What is the total duration for both phases?');
 
     // Verify the follow-up response is received successfully

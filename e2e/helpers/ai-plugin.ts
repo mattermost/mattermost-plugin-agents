@@ -97,16 +97,13 @@ export class AIPlugin {
   async sendMessage(message: string) {
     // After channel analysis / thread summarize, the plugin RHS hosts
     // Mattermost ThreadViewer. Follow-ups go through reply_textbox.
+    // Enter is the reliable submit: the split "Send Now" control is often
+    // disabled even when the composer has text.
     const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
     if (await threadReply.isVisible().catch(() => false)) {
       await expect(threadReply).toBeEnabled({ timeout: 30000 });
       await threadReply.fill(message);
-      const threadSend = this.getRhsContainer().getByTestId('SendMessageButton');
-      if (await threadSend.isEnabled().catch(() => false)) {
-        await threadSend.click();
-      } else {
-        await threadReply.press('Enter');
-      }
+      await threadReply.press('Enter');
       return;
     }
 
@@ -157,8 +154,12 @@ export class AIPlugin {
     const stopButton = this.page.getByRole('button', { name: /stop/i });
     await expect(stopButton).not.toBeVisible({ timeout: 30000 });
 
-    // 3. Ensure Send button is visible (it may be disabled if textarea is empty, but it should be present)
-    // The button being present means the UI has switched back from "generating" mode
+    // 3. ThreadViewer uses reply_textbox; new-chat uses the plugin composer.
+    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
+    if (await threadReply.isVisible().catch(() => false)) {
+      await expect(threadReply).toBeEnabled({ timeout: 30000 });
+      return;
+    }
     await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
   }
 

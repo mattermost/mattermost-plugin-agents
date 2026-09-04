@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -232,14 +232,10 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Register every turn once. addMock resets Smocker, so swapping rules
-        // between turns can drop an in-flight completion and leave an empty stub.
-        // Later-turn body matchers are listed first (Smocker first-match wins).
-        await openAIMock.addMocks([
-            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: 'How many developers' }),
-            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: 'ship date for this workstream' }),
-            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: 'project status' }),
-        ]);
+        // addMock resets Smocker. Swap the catch-all only after each stream
+        // has settled; later-turn requests still contain earlier prompt text,
+        // so body matchers cannot distinguish turns.
+        await openAIMock.addCompletionMock(sse('chatcmpl-104a', mockResponse1Text));
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
 
@@ -249,11 +245,13 @@ data: [DONE]
         expect(await firstPostText.textContent()).toContain('Development');
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addCompletionMock(sse('chatcmpl-104b', mockResponse2Text));
         await aiPlugin.sendMessage('What is the ship date for this workstream?');
         await expect(page.getByText(mockResponse2Text)).toBeVisible({ timeout: 30000 });
         expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse2Text);
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addCompletionMock(sse('chatcmpl-104c', mockResponse3Text));
         await aiPlugin.sendMessage('How many developers?');
         await expect(page.getByText(mockResponse3Text)).toBeVisible({ timeout: 30000 });
         expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse3Text);
