@@ -51,7 +51,7 @@ type httpFileContentResponse struct {
 }
 
 // GetContent reads a ranged slice of a file's text via the plugin's endpoint.
-func (s *HTTPFileContentService) GetContent(ctx context.Context, userID, fileID string, offset, limit int) (files.Content, error) {
+func (s *HTTPFileContentService) GetContent(ctx context.Context, userID, _ string, fileID string, offset, limit int) (files.Content, error) {
 	reqBody := httpFileContentRequest{FileID: fileID, Offset: offset, Limit: limit}
 	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/api/v1/files/content", reqBody, userID)
 	if err != nil {

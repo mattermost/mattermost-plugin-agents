@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
@@ -646,7 +647,7 @@ func TestAutoReplySynthesizedMention(t *testing.T) {
 			})
 
 			post := tc.buildPost(env)
-			env.conversations.MessageHasBeenPosted(nil, post)
+			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, post)
 
 			require.Len(t, env.mmClient.createdPosts, 1, "expected the auto-reply to fire")
 			blocks := singleConversationUserBlocks(t, env)

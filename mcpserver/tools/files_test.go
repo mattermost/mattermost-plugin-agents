@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -18,14 +19,16 @@ type fakeFileContentService struct {
 	content files.Content
 	err     error
 
-	gotUserID string
-	gotFileID string
-	gotOffset int
-	gotLimit  int
+	gotUserID    string
+	gotSessionID string
+	gotFileID    string
+	gotOffset    int
+	gotLimit     int
 }
 
-func (f *fakeFileContentService) GetContent(_ context.Context, userID, fileID string, offset, limit int) (files.Content, error) {
+func (f *fakeFileContentService) GetContent(_ context.Context, userID, sessionID, fileID string, offset, limit int) (files.Content, error) {
 	f.gotUserID = userID
+	f.gotSessionID = sessionID
 	f.gotFileID = fileID
 	f.gotOffset = offset
 	f.gotLimit = limit
@@ -128,21 +131,25 @@ func TestToolReadFile(t *testing.T) {
 	}
 }
 
-// TestToolReadFilePassesRequestingUser pins the permission-relevant contract:
-// the read flows the authenticated user's ID and the requested range through to
-// the content service, which is what enforces channel access.
-func TestToolReadFilePassesRequestingUser(t *testing.T) {
+// TestToolReadFilePassesRequestingSession pins the policy-relevant contract:
+// read_file must pass the authenticated session identity from the MCP request
+// context, not substitute the authenticated user's ID.
+func TestToolReadFilePassesRequestingSession(t *testing.T) {
 	fake := &fakeFileContentService{content: files.Content{Name: "a.txt", HasText: true, Text: "hi"}}
 	p := &MattermostToolProvider{fileContentService: fake}
 
+	sessionID := model.NewId()
 	userID := model.NewId()
 	fileID := model.NewId()
-	ctx := &MCPToolContext{Ctx: context.Background(), UserID: userID}
+	requestCtx := context.WithValue(t.Context(), auth.SessionIDContextKey, sessionID)
+	ctx := &MCPToolContext{Ctx: requestCtx, UserID: userID}
 
 	_, err := p.toolReadFile(ctx, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34})
 	require.NoError(t, err)
 
 	assert.Equal(t, userID, fake.gotUserID)
+	assert.Equal(t, sessionID, fake.gotSessionID)
+	assert.NotEqual(t, userID, fake.gotSessionID, "user ID must not replace the caller's session identity")
 	assert.Equal(t, fileID, fake.gotFileID)
 	assert.Equal(t, 12, fake.gotOffset)
 	assert.Equal(t, 34, fake.gotLimit)

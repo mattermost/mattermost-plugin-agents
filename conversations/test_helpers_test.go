@@ -241,6 +241,10 @@ func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission)
 	return true
 }
 
+func (c *fakeMMClient) HasPermissionToFileAction(sessionID, _, _ string) bool {
+	return sessionID != ""
+}
+
 func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	if c.fileInfos != nil {
 		if info, ok := c.fileInfos[fileID]; ok {

@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -56,7 +57,14 @@ func (a *API) handleRawFileContent(c *gin.Context) {
 		return
 	}
 
-	content, err := a.fileService.GetContent(c.Request.Context(), userID, req.FileID, req.Offset, req.Limit)
+	content, err := a.fileService.GetContent(
+		c.Request.Context(),
+		userID,
+		auth.SessionIDFromContext(c.Request.Context()),
+		req.FileID,
+		req.Offset,
+		req.Limit,
+	)
 	if err != nil {
 		if errors.Is(err, files.ErrForbidden) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "you do not have permission to access this file"})

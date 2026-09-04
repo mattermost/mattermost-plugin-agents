@@ -47,6 +47,26 @@ func TestEnsureEmbeddedSessionIDCreatedFlag(t *testing.T) {
 			wantCreated:   false,
 		},
 		{
+			name: "stored session belonging to another user is replaced",
+			setupMocks: func(api *plugintest.API) {
+				api.On("KVGet", sessionKey).Return([]byte(storedSessionID), (*model.AppError)(nil))
+				api.On("GetSession", storedSessionID).Return(&model.Session{
+					Id:        storedSessionID,
+					UserId:    "userdddddddddddddddddddddd",
+					ExpiresAt: time.Now().Add(time.Hour).UnixMilli(),
+				}, (*model.AppError)(nil))
+				api.On("KVSetWithOptions", sessionKey, ([]byte)(nil), mock.Anything).Return(true, (*model.AppError)(nil))
+				api.On("GetConfig").Return(&model.Config{})
+				api.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(&model.Session{
+					Id:     mintedSessionID,
+					UserId: userID,
+				}, (*model.AppError)(nil))
+				api.On("KVSetWithOptions", sessionKey, []byte(mintedSessionID), mock.Anything).Return(true, (*model.AppError)(nil))
+			},
+			wantSessionID: mintedSessionID,
+			wantCreated:   true,
+		},
+		{
 			name: "missing session is minted and reported as created",
 			setupMocks: func(api *plugintest.API) {
 				api.On("KVGet", sessionKey).Return(([]byte)(nil), (*model.AppError)(nil))

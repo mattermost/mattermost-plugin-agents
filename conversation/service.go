@@ -84,6 +84,7 @@ func NewService(
 // CreateConversationParams contains parameters for creating a new conversation.
 type CreateConversationParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    *string // nullable for non-channel conversations
 	RootPostID   *string // nullable for non-thread conversations
@@ -124,7 +125,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient))
+	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient, params.SessionID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -242,6 +243,7 @@ func (s *Service) UpdateConversationTitle(id, title string) error {
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
 type GetOrCreateParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    string
 	RootPostID   string // the thread root post ID
@@ -268,7 +270,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}
 
 	if existing != nil {
-		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -285,6 +287,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	rootPostID := params.RootPostID
 	createResult, err := s.CreateConversation(CreateConversationParams{
 		UserID:       params.UserID,
+		SessionID:    params.SessionID,
 		BotID:        params.BotID,
 		ChannelID:    &channelID,
 		RootPostID:   &rootPostID,
@@ -303,7 +306,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
 		}
-		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -330,8 +333,8 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 }
 
 // appendUserTurn creates a new user turn at the next available sequence number.
-func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string) (string, error) {
-	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient))
+func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string, sessionID string) (string, error) {
+	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient, sessionID))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -356,6 +359,7 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string,
 // BuildOptions controls optional behavior of BuildCompletionRequest.
 type BuildOptions struct {
 	ExcludeAfterPostID string
+	SessionID          string
 
 	// AllowUnsharedToolContent opts IN to sending tool_result content whose
 	// Shared flag is not true to the LLM. The default is to redact — any
@@ -367,6 +371,13 @@ type BuildOptions struct {
 	// requester (e.g. the DM follow-up stream), since DM tool_results are
 	// always shared=true anyway and nothing would be redacted in that case.
 	AllowUnsharedToolContent bool
+}
+
+func firstBuildOptions(opts []BuildOptions) BuildOptions {
+	if len(opts) == 0 {
+		return BuildOptions{}
+	}
+	return opts[0]
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
@@ -443,6 +454,7 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
+		SessionID:      firstBuildOptions(opts).SessionID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -768,6 +780,7 @@ func (s *Service) BuildChannelMentionRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       s.mmClient,
+		SessionID:      firstBuildOptions(opts).SessionID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -799,8 +812,9 @@ func (s *Service) BuildChannelMentionRequest(
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			sessionID := firstBuildOptions(opts).SessionID
+			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient, sessionID)
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, SessionID: sessionID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

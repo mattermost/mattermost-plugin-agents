@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -18,7 +19,7 @@ import (
 // implements it directly for embedded servers; HTTPFileContentService calls back
 // to the plugin endpoint for external servers.
 type FileContentService interface {
-	GetContent(ctx context.Context, userID, fileID string, offset, limit int) (files.Content, error)
+	GetContent(ctx context.Context, userID, sessionID, fileID string, offset, limit int) (files.Content, error)
 }
 
 // ReadFileArgs represents arguments for the read_file tool.
@@ -53,7 +54,14 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args R
 		return "file reading is not available", nil
 	}
 
-	content, err := p.fileContentService.GetContent(mcpContext.Ctx, mcpContext.UserID, args.FileID, args.Offset, args.Limit)
+	content, err := p.fileContentService.GetContent(
+		mcpContext.Ctx,
+		mcpContext.UserID,
+		auth.SessionIDFromContext(mcpContext.Ctx),
+		args.FileID,
+		args.Offset,
+		args.Limit,
+	)
 	if err != nil {
 		if errors.Is(err, files.ErrForbidden) {
 			return "you do not have permission to read this file", nil

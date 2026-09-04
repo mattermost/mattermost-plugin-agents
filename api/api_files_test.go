@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -16,8 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 )
 
 func TestHandleRawFileContent(t *testing.T) {
@@ -25,6 +28,7 @@ func TestHandleRawFileContent(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	userID := model.NewId()
+	sessionID := model.NewId()
 	channelID := model.NewId()
 	fileID := model.NewId()
 
@@ -95,6 +99,13 @@ func TestHandleRawFileContent(t *testing.T) {
 			a := &API{}
 			if !tt.nilService {
 				m := mocks.NewMockClient(t)
+				if model.IsValidId(tt.request.FileID) {
+					m.EXPECT().HasPermissionToFileAction(
+						sessionID,
+						tt.request.FileID,
+						model.AccessControlPolicyActionDownloadFileAttachment,
+					).Return(true)
+				}
 				if tt.setup != nil {
 					tt.setup(m)
 				}
@@ -107,6 +118,7 @@ func TestHandleRawFileContent(t *testing.T) {
 			rec := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(rec)
 			req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(body))
+			req = req.WithContext(auth.WithSessionID(req.Context(), sessionID))
 			req.Header.Set("Content-Type", "application/json")
 			if !tt.omitUserHeader {
 				req.Header.Set("Mattermost-User-Id", userID)
@@ -123,4 +135,47 @@ func TestHandleRawFileContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRawFileContentPreservesPluginSession(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	userID := model.NewId()
+	sessionID := model.NewId()
+	channelID := model.NewId()
+	fileID := model.NewId()
+
+	m := mocks.NewMockClient(t)
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false).Once()
+
+	adminMetadataReadCalled := false
+	m.EXPECT().GetFileInfo(fileID).
+		Run(func(string) { adminMetadataReadCalled = true }).
+		Return(&model.FileInfo{Id: fileID, ChannelId: channelID, MimeType: "text/plain"}, nil).
+		Maybe()
+	adminContentReadCalled := false
+	m.EXPECT().GetFile(fileID).
+		Run(func(string) { adminContentReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+		Maybe()
+	e.api.fileService = files.New(m)
+
+	body, err := json.Marshal(RawFileContentRequest{FileID: fileID})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/files/content", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Mattermost-User-Id", userID)
+	rec := httptest.NewRecorder()
+
+	e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.False(t, adminMetadataReadCalled, "admin GetFileInfo must not run after the caller's file policy denies access")
+	assert.False(t, adminContentReadCalled, "admin GetFile must not run after the caller's file policy denies access")
 }

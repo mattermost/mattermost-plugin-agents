@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const attachmentTestSessionID = "attachment-test-session"
+
 func TestBlocksToPost(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -706,11 +708,17 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			}
 
 			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On(
+				"HasPermissionToFileAction",
+				attachmentTestSessionID,
+				mock.Anything,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(true).Maybe()
 			if tt.setup != nil {
 				tt.setup(mmClient)
 			}
 
-			post := BlocksToPost(tt.blocks, role, PostConversionOptions{MMClient: mmClient, EnableVision: tt.enableVision})
+			post := BlocksToPost(tt.blocks, role, PostConversionOptions{MMClient: mmClient, SessionID: attachmentTestSessionID, EnableVision: tt.enableVision})
 			tt.assert(t, mmClient, post)
 		})
 	}

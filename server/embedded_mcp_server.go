@@ -82,7 +82,6 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		if err != nil {
 			e.logger.Debug("Failed to get session for token resolution",
 				"user_id", userID,
-				"session_id", sid,
 				"error", err)
 			return "", fmt.Errorf("failed to get session: %w", err)
 		}
@@ -107,8 +106,7 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 	}
 
 	e.logger.Debug("Created client transport for embedded MCP server",
-		"user_id", userID,
-		"session_id", sessionID)
+		"user_id", userID)
 
 	return clientTransport, nil
 }
