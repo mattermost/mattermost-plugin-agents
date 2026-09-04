@@ -250,12 +250,12 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
         // Register both turns once. addMock resets Smocker and can hang an
-        // in-flight completion. Later-turn matchers go first (first-match
-        // wins). Do not key the analysis rule on "last 7 days" — that system
-        // prompt is still in follow-up request bodies.
+        // in-flight completion. Follow-up request bodies still contain the
+        // analysis prompt and may omit the new user text, so body matchers
+        // cannot tell turns apart — consume the first completion with times:1.
         await openAIMock.addMocks([
-            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: 'first point' }),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText)),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { times: 1 }),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText)),
         ]);
 
         // 5. Submit channel analysis query using quick action
