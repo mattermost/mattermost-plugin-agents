@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -250,7 +250,15 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402a', analysisText)));
+        // Register both turns once. Resetting Smocker after analysis can hang
+        // the follow-up completion (empty bot placeholder). Match the follow-up
+        // on the persisted assistant text so extra completions and missing
+        // user-phrase bodies cannot steal the first-turn mock.
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: analysisText }),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText)),
+        ]);
 
         // 5. Submit channel analysis query using quick action
         await integrationHelper.clickQuickAction('last7days');
@@ -264,10 +272,9 @@ data: [DONE]
         await expect(analysisPostText).toContainText(analysisText);
 
         await aiPlugin.waitForThreadComposerIdle();
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402b', followUpText)));
         await aiPlugin.sendMessage(followUpUserText);
 
-        await expect(llmBotHelper.getPostText()).toContainText(followUpText, { timeout: 30000 });
+        await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {
