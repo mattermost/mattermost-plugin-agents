@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -233,9 +233,11 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
         // Register every turn once. addMock resets Smocker and can hang an
-        // in-flight completion. Follow-up bodies still contain earlier prompt
-        // text, so consume one completion per turn with times:1.
+        // in-flight completion. Title generation from this or earlier tests
+        // shares /chat/completions — match it first so times:1 turn rules
+        // stay aligned with user-visible streams.
         await openAIMock.addMocks([
+            titleGenerationMockRule(),
             buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { times: 1 }),
             buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { times: 1 }),
             buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text)),
