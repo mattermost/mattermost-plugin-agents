@@ -337,6 +337,8 @@ github.com/mattermost/logr/v2 v2.0.22 h1:npFkXlkAWR9J8payh8ftPcCZvLbHSI125mAM5/r
 github.com/mattermost/logr/v2 v2.0.22/go.mod h1:0sUKpO+XNMZApeumaid7PYaUZPBIydfuWZ0dqixXo+s=
 github.com/mattermost/mattermost/server/public v0.4.3 h1:vxdrD5j3+oVfrSCiSaX/lY6N0eKyvIH66wu4DTGgPx4=
 github.com/mattermost/mattermost/server/public v0.4.3/go.mod h1:2z08gasPXqIIbzl/xf2/2Sfn5ITFLGC6tplhOklyAAQ=
+github.com/mattermost/mattermost/server/public v0.4.4-0.20260904012228-254f5338aa9d h1:b7Gj47iUV/dz4rxPCrrRq65lnIXMLwUOCqvVT4Rb8zw=
+github.com/mattermost/mattermost/server/public v0.4.4-0.20260904012228-254f5338aa9d/go.mod h1:zW0LL+/wOKxlCsJwQg6+N47NvUOugtOfx4tL7xxRaKo=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
 github.com/mattermost/morph v1.1.0/go.mod h1:gD+EaqX2UMyyuzmF4PFh4r33XneQ8Nzi+0E8nXjMa3A=
 github.com/mattermost/testcontainers-mattermost-go v0.1.0 h1:oWNqnU2mua2PYMSornWjjiFQUZqPNeODSQSsWjFcuMw=

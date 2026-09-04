@@ -19,6 +19,7 @@ import (
 
 func TestGetContent(t *testing.T) {
 	userID := model.NewId()
+	sessionID := model.NewId()
 	channelID := model.NewId()
 	fileID := model.NewId()
 
@@ -265,10 +266,17 @@ func TestGetContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := mocks.NewMockClient(t)
+			if model.IsValidId(tt.fileID) {
+				m.EXPECT().HasPermissionToFileAction(
+					sessionID,
+					tt.fileID,
+					model.AccessControlPolicyActionDownloadFileAttachment,
+				).Return(true)
+			}
 			tt.setup(m)
 			svc := New(m)
 
-			c, err := svc.GetContent(context.Background(), userID, tt.fileID, tt.offset, tt.limit)
+			c, err := svc.GetContent(context.Background(), userID, sessionID, tt.fileID, tt.offset, tt.limit)
 
 			switch {
 			case tt.name == "invalid file id is rejected before any lookup":
@@ -285,7 +293,6 @@ func TestGetContent(t *testing.T) {
 
 func TestGetContentDeniedByFilePolicy(t *testing.T) {
 	userID := model.NewId()
-	channelID := model.NewId()
 	fileID := model.NewId()
 
 	tests := []struct {
@@ -300,10 +307,6 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := mocks.NewMockClient(t)
-			m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
-				Id: fileID, ChannelId: channelID, MimeType: "text/plain",
-			}, nil)
-			m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
 			m.On(
 				"HasPermissionToFileAction",
 				tt.sessionID,
@@ -318,7 +321,7 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 				Maybe()
 
 			ctx := context.WithValue(t.Context(), auth.SessionIDContextKey, tt.sessionID)
-			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+			_, err := New(m).GetContent(ctx, userID, tt.sessionID, fileID, 0, DefaultReadRunes)
 
 			assert.ErrorIs(t, err, ErrForbidden)
 			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")

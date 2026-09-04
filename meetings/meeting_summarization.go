@@ -15,6 +15,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -52,17 +54,20 @@ func (s *Service) GetCaptionsFileIDFromProps(post *model.Post) (fileID string, e
 	return GetCaptionsFileIDFromProps(post)
 }
 
-func (s *Service) createTranscription(recordingFileID string) (*subtitles.Subtitles, error) {
+func (s *Service) createTranscription(sessionID, recordingFileID string) (*subtitles.Subtitles, error) {
 	if s.ffmpegPath == "" {
 		return nil, errors.New("ffmpeg not installed")
 	}
 
-	recordingFileInfo, err := s.pluginAPI.File.GetInfo(recordingFileID)
+	if err := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, recordingFileID); err != nil {
+		return nil, err
+	}
+	recordingFileInfo, err := s.mmClient.GetFileInfo(recordingFileID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get calls file info: %w", err)
 	}
 
-	fileReader, err := s.pluginAPI.File.Get(recordingFileID)
+	fileReader, err := s.mmClient.GetFile(recordingFileID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read calls file: %w", err)
 	}
@@ -110,7 +115,7 @@ func (s *Service) createTranscription(recordingFileID string) (*subtitles.Subtit
 	return transcription, nil
 }
 
-func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string) (*model.Post, error) {
+func (s *Service) newCallRecordingThread(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string) (*model.Post, error) {
 	siteURL := s.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 	surePost := &model.Post{
@@ -121,14 +126,14 @@ func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.Us
 		return nil, err
 	}
 
-	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel); err != nil {
+	if err := s.summarizeCallRecording(ctx, bot, surePost.Id, requestingUser, fileID, channel); err != nil {
 		return nil, err
 	}
 
 	return surePost, nil
 }
 
-func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel) (*model.Post, error) {
+func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel) (*model.Post, error) {
 	if len(transcriptionPost.FileIds) != 1 {
 		return nil, errors.New("unexpected number of files in calls post")
 	}
@@ -144,6 +149,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		return nil, err
 	}
 
+	sessionID := auth.SessionIDFromContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -165,7 +171,10 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", err)
 		}
-		transcriptionFileInfo, err := s.pluginAPI.File.GetInfo(transcriptionFileID)
+		if err := mmapi.CheckFileDownloadPermission(s.mmClient, sessionID, transcriptionFileID); err != nil {
+			return err
+		}
+		transcriptionFileInfo, err := s.mmClient.GetFileInfo(transcriptionFileID)
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file info: %w", err)
 		}
@@ -176,7 +185,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		if transcriptionFilePost.ChannelId != channel.Id {
 			return errors.New("strange configuration of calls transcription file")
 		}
-		transcriptionFileReader, err := s.pluginAPI.File.Get(transcriptionFileID)
+		transcriptionFileReader, err := s.mmClient.GetFile(transcriptionFileID)
 		if err != nil {
 			return fmt.Errorf("unable to read calls file: %w", err)
 		}
@@ -221,7 +230,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 	return surePost, nil
 }
 
-func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel) error {
+func (s *Service) summarizeCallRecording(ctx stdcontext.Context, bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel) error {
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 
 	transcriptPost := &model.Post{
@@ -233,6 +242,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		return err
 	}
 
+	sessionID := auth.SessionIDFromContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -250,7 +260,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			}
 		}()
 
-		transcription, err := s.createTranscription(recordingFileID)
+		transcription, err := s.createTranscription(sessionID, recordingFileID)
 		if err != nil {
 			return fmt.Errorf("failed to create transcription: %w", err)
 		}

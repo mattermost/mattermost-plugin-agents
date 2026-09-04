@@ -151,7 +151,7 @@ func TestHTTPFileContentService_GetContent(t *testing.T) {
 			}
 
 			fileID := "file-123"
-			c, err := svc.GetContent(ctx, tc.userID, fileID, 12, 34)
+			c, err := svc.GetContent(ctx, tc.userID, "", fileID, 12, 34)
 
 			if tc.expectError {
 				require.Error(t, err)

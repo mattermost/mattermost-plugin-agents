@@ -4,11 +4,14 @@
 package meetings
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -29,13 +32,16 @@ var (
 )
 
 // HandleTranscribeFile handles file transcription requests
-func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel, fileID string) (map[string]string, error) {
+func (s *Service) HandleTranscribeFile(ctx context.Context, userID string, bot *bots.Bot, post *model.Post, channel *model.Channel, fileID string) (map[string]string, error) {
 	user, err := s.pluginAPI.User.Get(userID)
 	if err != nil {
 		return nil, err
 	}
 
-	recordingFileInfo, err := s.pluginAPI.File.GetInfo(fileID)
+	if err := mmapi.CheckFileDownloadPermission(s.mmClient, auth.SessionIDFromContext(ctx), fileID); err != nil {
+		return nil, err
+	}
+	recordingFileInfo, err := s.mmClient.GetFileInfo(fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +50,7 @@ func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model
 		return nil, errors.New("file not attached to specified post")
 	}
 
-	createdPost, err := s.newCallRecordingThread(bot, user, post, channel, fileID)
+	createdPost, err := s.newCallRecordingThread(ctx, bot, user, post, channel, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +66,7 @@ func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model
 }
 
 // HandleSummarizeTranscription handles transcription summarization requests
-func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel) (map[string]string, error) {
+func (s *Service) HandleSummarizeTranscription(ctx context.Context, userID string, bot *bots.Bot, post *model.Post, channel *model.Channel) (map[string]string, error) {
 	user, err := s.pluginAPI.User.Get(userID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get user: %w", err)
@@ -75,7 +81,7 @@ func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, pos
 		return nil, ErrNotMeetingBotPost
 	}
 
-	createdPost, err := s.newCallTranscriptionSummaryThread(bot, user, post, channel)
+	createdPost, err := s.newCallTranscriptionSummaryThread(ctx, bot, user, post, channel)
 	if err != nil {
 		return nil, fmt.Errorf("unable to summarize transcription: %w", err)
 	}

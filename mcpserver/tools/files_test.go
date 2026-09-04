@@ -19,14 +19,16 @@ type fakeFileContentService struct {
 	content files.Content
 	err     error
 
-	gotUserID string
-	gotFileID string
-	gotOffset int
-	gotLimit  int
+	gotUserID    string
+	gotSessionID string
+	gotFileID    string
+	gotOffset    int
+	gotLimit     int
 }
 
-func (f *fakeFileContentService) GetContent(_ context.Context, userID, fileID string, offset, limit int) (files.Content, error) {
+func (f *fakeFileContentService) GetContent(_ context.Context, userID, sessionID, fileID string, offset, limit int) (files.Content, error) {
 	f.gotUserID = userID
+	f.gotSessionID = sessionID
 	f.gotFileID = fileID
 	f.gotOffset = offset
 	f.gotLimit = limit
@@ -145,8 +147,9 @@ func TestToolReadFilePassesRequestingSession(t *testing.T) {
 	_, err := p.toolReadFile(ctx, ReadFileArgs{FileID: fileID, Offset: 12, Limit: 34})
 	require.NoError(t, err)
 
-	assert.Equal(t, sessionID, fake.gotUserID)
-	assert.NotEqual(t, userID, fake.gotUserID, "user ID must not replace the caller's session identity")
+	assert.Equal(t, userID, fake.gotUserID)
+	assert.Equal(t, sessionID, fake.gotSessionID)
+	assert.NotEqual(t, userID, fake.gotSessionID, "user ID must not replace the caller's session identity")
 	assert.Equal(t, fileID, fake.gotFileID)
 	assert.Equal(t, 12, fake.gotOffset)
 	assert.Equal(t, 34, fake.gotLimit)

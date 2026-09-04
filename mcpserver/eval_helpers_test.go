@@ -646,7 +646,7 @@ type client4FileContentService struct {
 	token     string
 }
 
-func (s *client4FileContentService) GetContent(ctx context.Context, _ string, fileID string, offset, limit int) (files.Content, error) {
+func (s *client4FileContentService) GetContent(ctx context.Context, _, _ string, fileID string, offset, limit int) (files.Content, error) {
 	client := model.NewAPIv4Client(s.serverURL)
 	client.SetToken(s.token)
 

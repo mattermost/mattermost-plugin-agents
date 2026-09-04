@@ -61,11 +61,16 @@ func New(mm mmapi.Client) *Service {
 }
 
 // GetContent returns the [offset, offset+limit) rune window of a file's text for
-// userID, after verifying that user may read the file's channel. Documents use
-// the server-extracted text; plain text files fall back to the raw bytes.
-func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset, limit int) (Content, error) {
+// userID, after verifying the requesting session's file policy and the user's
+// channel permission. Documents use the server-extracted text; plain text files
+// fall back to the raw bytes.
+func (s *Service) GetContent(ctx context.Context, userID, sessionID, fileID string, offset, limit int) (Content, error) {
 	if !model.IsValidId(fileID) {
 		return Content{}, fmt.Errorf("invalid file id")
+	}
+
+	if err := mmapi.CheckFileDownloadPermission(s.mm, sessionID, fileID); err != nil {
+		return Content{}, ErrForbidden
 	}
 
 	fileInfo, err := s.mm.GetFileInfo(fileID)

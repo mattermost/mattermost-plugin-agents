@@ -26,6 +26,20 @@ const (
 	UserIDContextKey ContextKey = "user_id"
 )
 
+// WithSessionID returns a context carrying the authenticated Mattermost
+// session used for policy checks.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, SessionIDContextKey, sessionID)
+}
+
+// SessionIDFromContext returns the authenticated Mattermost session ID, or an
+// empty string when the request has no session. Callers must fail closed when
+// the result is empty.
+func SessionIDFromContext(ctx context.Context) string {
+	sessionID, _ := ctx.Value(SessionIDContextKey).(string)
+	return sessionID
+}
+
 // TokenResolver is a function that resolves a sessionID to a token
 type TokenResolver func(sessionID string) (string, error)
 

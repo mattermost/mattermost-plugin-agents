@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -127,13 +128,21 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
 		referencedRecordingFileID := referenceRecordingFileIDProp.(string)
+		sessionID := auth.SessionIDFromContext(ctx)
 
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, referencedRecordingFileID); permissionErr != nil {
+			return errors.New("not permitted to read recording file on regen")
+		}
 		fileInfo, getErr := c.mmClient.GetFileInfo(referencedRecordingFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
-		reader, getErr := c.mmClient.GetFile(post.FileIds[0])
+		transcriptionFileID := post.FileIds[0]
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, transcriptionFileID); permissionErr != nil {
+			return errors.New("not permitted to read transcription file on regen")
+		}
+		reader, getErr := c.mmClient.GetFile(transcriptionFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -173,6 +182,9 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		transcriptionFileID, fileIDErr := c.meetingsService.GetCaptionsFileIDFromProps(referencedTranscriptionPost)
 		if fileIDErr != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", fileIDErr)
+		}
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, auth.SessionIDFromContext(ctx), transcriptionFileID); permissionErr != nil {
+			return errors.New("not permitted to read transcription file")
 		}
 		transcriptionFileReader, fileErr := c.mmClient.GetFile(transcriptionFileID)
 		if fileErr != nil {
@@ -267,6 +279,7 @@ func (c *Conversations) regenerateViaConversation(
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
 		ExcludeAfterPostID:       post.Id,
 		AllowUnsharedToolContent: isDM,
+		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)

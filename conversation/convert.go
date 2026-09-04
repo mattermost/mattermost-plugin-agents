@@ -36,6 +36,7 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 type PostConversionOptions struct {
 	RedactUnshared bool
 	MMClient       mmapi.Client
+	SessionID      string
 	EnableVision   bool
 	MaxFileSize    int64
 	ToolStore      *llm.ToolStore
@@ -144,6 +145,9 @@ func BlocksToPost(
 			if opts.MMClient == nil {
 				continue
 			}
+			if err := mmapi.CheckFileDownloadPermission(opts.MMClient, opts.SessionID, block.FileID); err != nil {
+				continue
+			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
 				opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
@@ -178,6 +182,9 @@ func BlocksToPost(
 
 		case BlockTypeFile:
 			if opts.MMClient == nil {
+				continue
+			}
+			if err := mmapi.CheckFileDownloadPermission(opts.MMClient, opts.SessionID, block.FileID); err != nil {
 				continue
 			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)

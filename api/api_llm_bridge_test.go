@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -69,6 +70,13 @@ func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, 
 
 func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	sessionID := model.NewId()
+	mmClient.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		"svg1",
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(true)
 	mmClient.On("GetFileInfo", "svg1").Return(&model.FileInfo{
 		Id:       "svg1",
 		Name:     "vector.svg",
@@ -77,7 +85,8 @@ func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.
 	}, nil)
 
 	api := &API{mmClient: mmClient}
-	posts, err := api.convertBridgePostsToInternal(bridgeclient.CompletionRequest{
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	posts, err := api.convertBridgePostsToInternal(ctx, bridgeclient.CompletionRequest{
 		Posts: []bridgeclient.Post{{
 			Role:    "user",
 			Message: "see attached",
