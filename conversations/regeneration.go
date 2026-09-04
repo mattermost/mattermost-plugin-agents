@@ -12,6 +12,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/subtitles"
@@ -26,7 +27,7 @@ const (
 )
 
 // HandleRegenerate handles post regeneration requests
-func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channel *model.Channel) error {
+func (c *Conversations) HandleRegenerate(ctx context.Context, userID string, post *model.Post, channel *model.Channel) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -117,13 +118,21 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
 		referencedRecordingFileID := referenceRecordingFileIDProp.(string)
+		sessionID := auth.SessionIDFromContext(ctx)
 
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, referencedRecordingFileID); permissionErr != nil {
+			return errors.New("not permitted to read recording file on regen")
+		}
 		fileInfo, getErr := c.mmClient.GetFileInfo(referencedRecordingFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
-		reader, getErr := c.mmClient.GetFile(post.FileIds[0])
+		transcriptionFileID := post.FileIds[0]
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, transcriptionFileID); permissionErr != nil {
+			return errors.New("not permitted to read transcription file on regen")
+		}
+		reader, getErr := c.mmClient.GetFile(transcriptionFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -164,6 +173,9 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 		if fileIDErr != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", fileIDErr)
 		}
+		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, auth.SessionIDFromContext(ctx), transcriptionFileID); permissionErr != nil {
+			return errors.New("not permitted to read transcription file")
+		}
 		transcriptionFileReader, fileErr := c.mmClient.GetFile(transcriptionFileID)
 		if fileErr != nil {
 			return fmt.Errorf("unable to read calls file: %w", fileErr)
@@ -196,7 +208,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 
 		// Use the conversation entity path for regeneration.
 		if c.convService != nil {
-			regenResult, regenErr := c.regenerateViaConversation(bot, user, channel, post, respondingToPostID)
+			regenResult, regenErr := c.regenerateViaConversation(ctx, bot, user, channel, post, respondingToPostID)
 			if regenErr != nil {
 				return fmt.Errorf("could not regenerate via conversation: %w", regenErr)
 			}
@@ -222,6 +234,7 @@ func (c *Conversations) HandleRegenerate(userID string, post *model.Post, channe
 // regenerateViaConversation rebuilds the completion request from the conversation entity
 // and runs the ToolRunner to produce a new response stream.
 func (c *Conversations) regenerateViaConversation(
+	ctx context.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
@@ -274,6 +287,7 @@ func (c *Conversations) regenerateViaConversation(
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
 		ExcludeAfterPostID:       post.Id,
 		AllowUnsharedToolContent: isDM,
+		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)

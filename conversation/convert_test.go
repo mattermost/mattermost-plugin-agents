@@ -169,7 +169,7 @@ func TestBlocksToPost(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0)
+			result := BlocksToPost(tt.blocks, tt.role, false, nil, false, 0, "")
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -186,7 +186,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	}
 
 	t.Run("redactUnshared=false", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", false, nil, false, 0, "")
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -203,7 +203,7 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 
 	t.Run("redactUnshared=true", func(t *testing.T) {
-		got := BlocksToPost(blocks, "assistant", true, nil, false, 0)
+		got := BlocksToPost(blocks, "assistant", true, nil, false, 0, "")
 		require.Len(t, got.ToolUse, 3)
 		results := map[string]string{}
 		args := map[string]string{}
@@ -443,7 +443,7 @@ func TestPostToBlocksToPostRoundTrip(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			blocks := PostToBlocks(tt.post, tt.shared)
 			role := RoleToString(tt.post.Role)
-			roundTripped := BlocksToPost(blocks, role, false, nil, false, 0)
+			roundTripped := BlocksToPost(blocks, role, false, nil, false, 0, "")
 
 			assert.Equal(t, tt.post.Role, roundTripped.Role)
 			assert.Equal(t, tt.post.Message, roundTripped.Message)
@@ -474,13 +474,26 @@ func newFakeReadCloser(s string) io.ReadCloser {
 	return fakeReadCloser{Reader: strings.NewReader(s)}
 }
 
+const testFilePolicySessionID = "authorized-file-session"
+
+func newAuthorizedFileMock(t *testing.T) *mmapimocks.MockClient {
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On(
+		"HasPermissionToFileAction",
+		testFilePolicySessionID,
+		mock.Anything,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(true).Maybe()
+	return mmClient
+}
+
 // TestBlocksToPost_LazyResolvesAttachments encodes the new desired behavior:
 // file and image content blocks are lazy-resolved through mmClient at the
 // moment we build the LLM request, instead of being inlined when the user
 // turn was first written.
 func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	t.Run("image block with EnableVision=true populates Files", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id:       "img1",
 			Name:     "shot.png",
@@ -493,7 +506,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		require.Len(t, post.Files, 1, "an image block with vision enabled must produce exactly one entry in Post.Files")
 		assert.Equal(t, "image/png", post.Files[0].MimeType)
@@ -510,7 +523,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("image block with EnableVision=false is skipped", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		// No expectations: GetFile/GetFileInfo must NOT be called when
 		// vision is off. mockery will fail the test if either runs.
 
@@ -518,13 +531,13 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "shot.png", MimeType: "image/png"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, false, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, false, 0, testFilePolicySessionID)
 
 		assert.Empty(t, post.Files, "image block must be silently dropped when vision is disabled")
 	})
 
 	t.Run("text/plain file block reads content via GetFile and appends Attached File Contents", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id:       "doc1",
 			Name:     "foo.txt",
@@ -538,7 +551,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Empty(t, post.Files, "non-image text file must NOT go through Post.Files")
 		assert.Contains(t, post.Message, "look at this")
@@ -546,7 +559,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("file block uses pre-extracted FileInfo.Content without GetFile", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id:       "doc1",
 			Name:     "doc.pdf",
@@ -559,7 +572,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "doc.pdf", MimeType: "application/pdf"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Contains(t, post.Message, "File Name: doc.pdf")
 		assert.Contains(t, post.Message, "Content: pre-extracted content")
@@ -569,7 +582,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		const maxBytes = int64(8)
 		body := "ABCDEFGH" // exactly 8 bytes
 
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id:       "doc1",
 			Name:     "big.txt",
@@ -582,14 +595,14 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "big.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes, testFilePolicySessionID)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"reading exactly maxFileSize bytes must append the truncation marker so the LLM knows the content was cut")
 	})
 
 	t.Run("non-text non-image MIME with empty Content is skipped without GetFile", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id:       "doc1",
 			Name:     "binary.pdf",
@@ -602,14 +615,14 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "binary.pdf", MimeType: "application/pdf"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Equal(t, "see attached", post.Message,
 			"non-text non-image attachments without pre-extracted Content must be silently skipped")
 	})
 
 	t.Run("multiple mixed blocks: text + image + text/plain file", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id:       "img1",
 			Name:     "shot.png",
@@ -631,7 +644,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "foo.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		require.Len(t, post.Files, 1, "exactly the image attachment should populate Post.Files")
 		assert.Equal(t, "image/png", post.Files[0].MimeType)
@@ -653,7 +666,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("multiple text/plain files appear in input order in the message", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc-a").Return(&model.FileInfo{
 			Id: "doc-a", Name: "a.txt", MimeType: "text/plain", Size: 5,
 		}, nil)
@@ -669,7 +682,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc-b", Filename: "b.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		idxA := strings.Index(post.Message, "File Name: a.txt")
 		idxB := strings.Index(post.Message, "File Name: b.txt")
@@ -680,7 +693,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("GetFile error on image is logged and skipped, conversation continues", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id:       "img1",
 			Name:     "broken.png",
@@ -696,7 +709,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeImage, FileID: "img1", Filename: "broken.png", MimeType: "image/png"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		// Pin that GetFile was actually attempted — production simply
 		// dropping the image without trying to fetch it would still leave
@@ -714,7 +727,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize-1 bytes has no truncation marker", func(t *testing.T) {
 		body := strings.Repeat("A", int(DefaultMaxFileSize-1))
 
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "under.txt", MimeType: "text/plain", Size: int64(len(body)),
 		}, nil)
@@ -724,7 +737,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "under.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Contains(t, post.Message, "File Name: under.txt")
 		assert.NotContains(t, post.Message, "content truncated",
@@ -734,7 +747,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	t.Run("maxFileSize=0 default: payload of exactly DefaultMaxFileSize bytes gets truncation marker", func(t *testing.T) {
 		body := strings.Repeat("A", int(DefaultMaxFileSize))
 
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "boundary.txt", MimeType: "text/plain", Size: int64(len(body)),
 		}, nil)
@@ -744,7 +757,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "boundary.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"reading exactly DefaultMaxFileSize bytes must append the truncation marker (LimitReader saw the cap)")
@@ -753,7 +766,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	t.Run("maxFileSize=0 default: payload of DefaultMaxFileSize+1 bytes gets truncation marker", func(t *testing.T) {
 		body := strings.Repeat("A", int(DefaultMaxFileSize+1))
 
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "over.txt", MimeType: "text/plain", Size: int64(len(body)),
 		}, nil)
@@ -763,7 +776,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "over.txt", MimeType: "text/plain"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		assert.Contains(t, post.Message, "... (content truncated due to size limit)",
 			"a payload above DefaultMaxFileSize must be truncated with the marker")
@@ -779,7 +792,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		}
 
 		require.NotPanics(t, func() {
-			post := BlocksToPost(blocks, "assistant", false, nil, false, 0)
+			post := BlocksToPost(blocks, "assistant", false, nil, false, 0, "")
 			assert.Equal(t, "hello", post.Message)
 			assert.Equal(t, "reason", post.Reasoning)
 			require.Len(t, post.ToolUse, 1)
@@ -793,7 +806,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		// the LLM as an image. With empty FileInfo.Content and a
 		// non-text MIME, the file-text path skips the block, so GetFile
 		// must NOT be called.
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "weird.png", MimeType: "image/png",
 		}, nil)
@@ -806,7 +819,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "weird.png", MimeType: "image/png"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1")
 		assert.Empty(t, post.Files,
@@ -816,7 +829,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 	})
 
 	t.Run("FileInfo.Content non-empty wins over GetFile (explicit AssertNotCalled)", func(t *testing.T) {
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "extracted.pdf", MimeType: "application/pdf",
 			Content: "server-extracted text",
@@ -828,7 +841,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "extracted.pdf", MimeType: "application/pdf"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, 0)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, 0, testFilePolicySessionID)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"pre-extracted FileInfo.Content must short-circuit GetFile to avoid a redundant blob read")
@@ -843,7 +856,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 		const maxBytes = int64(8)
 		oversized := strings.Repeat("X", int(maxBytes)+1) // 9 bytes vs maxBytes=8
 
-		mmClient := mmapimocks.NewMockClient(t)
+		mmClient := newAuthorizedFileMock(t)
 		mmClient.On("GetFileInfo", "doc1").Return(&model.FileInfo{
 			Id: "doc1", Name: "huge.pdf", MimeType: "application/pdf",
 			Content: oversized,
@@ -855,7 +868,7 @@ func TestBlocksToPost_LazyResolvesAttachments(t *testing.T) {
 			{Type: BlockTypeFile, FileID: "doc1", Filename: "huge.pdf", MimeType: "application/pdf"},
 		}
 
-		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes)
+		post := BlocksToPost(blocks, "user", false, mmClient, true, maxBytes, testFilePolicySessionID)
 
 		mmClient.AssertNotCalled(t, "GetFile", "doc1",
 			"the pre-extracted-content cap must not trigger a GetFile fetch")

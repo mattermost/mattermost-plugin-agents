@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -389,7 +390,7 @@ func TestHandleToolCallLicenseGate(t *testing.T) {
 				acceptedIDs = []string{"tool-use-1"}
 			}
 
-			err = c.HandleToolCall("user-id", approvalPost, channel, acceptedIDs)
+			err = c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, acceptedIDs)
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)
@@ -522,7 +523,7 @@ func TestHandleToolResultLicenseGate(t *testing.T) {
 				acceptedIDs = []string{"tool-use-1"}
 			}
 
-			err = c.HandleToolResult("user-id", resultPost, channel, acceptedIDs)
+			err = c.HandleToolResult(context.Background(), "user-id", resultPost, channel, acceptedIDs)
 
 			turns, turnsErr := convStore.GetTurnsForConversation(conv.ID)
 			require.NoError(t, turnsErr)

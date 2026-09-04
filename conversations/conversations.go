@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/mattermost/mattermost-plugin-agents/bots"
@@ -13,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/prompts"
@@ -101,10 +103,22 @@ type DMConversationResult struct {
 	IsNew          bool
 }
 
-// CreateOrGetDMConversation creates or retrieves a conversation for a DM.
-// This is separated from ProcessDMRequest so the conversation_id can be
-// set on the response post before it is created.
+// CreateOrGetDMConversation creates or retrieves a conversation for a DM
+// without an authenticated session. Attachments therefore fail closed.
 func (c *Conversations) CreateOrGetDMConversation(
+	botID string,
+	postingUser *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	llmCtx *llm.Context,
+) (*DMConversationResult, error) {
+	return c.CreateOrGetDMConversationWithContext(context.Background(), botID, postingUser, channel, post, llmCtx)
+}
+
+// CreateOrGetDMConversationWithContext creates or retrieves a conversation for
+// a DM while retaining the request session used for attachment policy checks.
+func (c *Conversations) CreateOrGetDMConversationWithContext(
+	ctx context.Context,
 	botID string,
 	postingUser *model.User,
 	channel *model.Channel,
@@ -139,6 +153,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		channelID := channel.Id
 		result, err := c.convService.CreateConversation(conversation.CreateConversationParams{
 			UserID:       postingUser.Id,
+			SessionID:    auth.SessionIDFromContext(ctx),
 			BotID:        botID,
 			ChannelID:    &channelID,
 			RootPostID:   &postID,
@@ -156,6 +171,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
+		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        botID,
 		ChannelID:    channel.Id,
 		RootPostID:   post.RootId,
@@ -184,6 +200,17 @@ func (c *Conversations) ProcessDMRequest(
 	lm llm.LanguageModel,
 	llmCtx *llm.Context,
 ) (*DMStreamResult, error) {
+	return c.ProcessDMRequestWithContext(context.Background(), convID, lm, llmCtx)
+}
+
+// ProcessDMRequestWithContext retains the request session while resolving any
+// attachments referenced by stored turns.
+func (c *Conversations) ProcessDMRequestWithContext(
+	ctx context.Context,
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+) (*DMStreamResult, error) {
 	if c.convService == nil {
 		return nil, fmt.Errorf("conversation service not configured")
 	}
@@ -195,7 +222,11 @@ func (c *Conversations) ProcessDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
+	completionReq, err := c.convService.BuildCompletionRequest(
+		conv,
+		llmCtx,
+		conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
