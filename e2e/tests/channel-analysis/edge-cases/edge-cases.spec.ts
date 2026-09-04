@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -222,71 +222,41 @@ data: [DONE]
         // 4. Open channel analysis popover and send first question
         await aiPlugin.openChannelAnalysisPopover();
 
-        // Mock response 1
-        const mockResponse1 = `
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The project status is currently in the Development phase."},"finish_reason":null}]}
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        const mockResponse1Text = 'The project status is currently in the Development phase.';
+        const mockResponse2Text = 'The workstream ship date is 12 March 2099.';
+        const mockResponse3Text = 'The team consists of 5 developers.';
+        const sse = (id: string, content: string) => `
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse1, "project status");
+
+        // Register every turn once. addMock resets Smocker, so swapping rules
+        // between turns can drop an in-flight completion and leave an empty stub.
+        // Later-turn body matchers are listed first (Smocker first-match wins).
+        await openAIMock.addMocks([
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: 'How many developers' }),
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: 'ship date for this workstream' }),
+            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: 'project status' }),
+        ]);
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
 
-        // 5. Wait for first response to complete
         await llmBotHelper.waitForStreamingComplete();
-
-        // 6. Verify first response is visible
         const firstPostText = llmBotHelper.getPostText();
         await expect(firstPostText).toBeVisible();
-        const firstContent = await firstPostText.textContent();
-        expect(firstContent).toBeTruthy();
-        expect(firstContent!.length).toBeGreaterThan(10);
-        expect(firstContent).toContain('Development');
+        expect(await firstPostText.textContent()).toContain('Development');
 
-        // Mock response 2. addCompletionMock replaces prior rules (reset=true).
-        // Avoid a "timeline" body filter: that word is already in the channel posts.
-        const mockResponse2Text = 'The workstream ship date is 12 March 2099.';
-        const mockResponse2 = `
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${mockResponse2Text}"},"finish_reason":null}]}
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
-
-        // 7. Send second question in the same RHS conversation
+        await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.sendMessage('What is the ship date for this workstream?');
-
         await expect(page.getByText(mockResponse2Text)).toBeVisible({ timeout: 30000 });
+        expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse2Text);
 
-        // 9. Verify second response is the latest bot post
-        const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
-        const secondContent = await secondPostText.textContent();
-        expect(secondContent).toContain(mockResponse2Text);
-
-        // Mock response 3
-        const mockResponse3Text = 'The team consists of 5 developers.';
-        const mockResponse3 = `
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${mockResponse3Text}"},"finish_reason":null}]}
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse3);
-
-        // 10. Send third question in the same RHS conversation
+        await aiPlugin.waitForThreadComposerIdle();
         await aiPlugin.sendMessage('How many developers?');
-
-        // 11. Wait for third response
         await expect(page.getByText(mockResponse3Text)).toBeVisible({ timeout: 30000 });
-
-        // 12. Verify third response is visible and system handled multiple questions without crashes
-        const thirdPostText = llmBotHelper.getPostText();
-        await expect(thirdPostText).toBeVisible();
-        const thirdContent = await thirdPostText.textContent();
-        expect(thirdContent).toContain(mockResponse3Text);
+        expect(await llmBotHelper.getPostText().textContent()).toContain(mockResponse3Text);
     });
 
     test('Channel analysis while RHS already open', async ({ page }) => {

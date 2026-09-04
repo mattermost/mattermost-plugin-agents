@@ -114,6 +114,13 @@ export class AIPlugin {
     await this.rhsSendButton.click();
   }
 
+  /** Wait until ThreadViewer is not generating and the reply box accepts input. */
+  async waitForThreadComposerIdle() {
+    await expect(this.page.getByRole('button', { name: /stop/i })).not.toBeVisible({ timeout: 30000 });
+    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
+    await expect(threadReply).toBeEnabled({ timeout: 30000 });
+  }
+
   async regenerateResponse() {
     await this.regenerateButton.click();
   }
