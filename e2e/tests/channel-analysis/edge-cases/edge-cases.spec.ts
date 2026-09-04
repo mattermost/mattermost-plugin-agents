@@ -233,11 +233,12 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
         // Register every turn once. addMock resets Smocker and can hang an
-        // in-flight completion. Later-turn body matchers are listed first.
+        // in-flight completion. Follow-up bodies still contain earlier prompt
+        // text, so consume one completion per turn with times:1.
         await openAIMock.addMocks([
-            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: 'How many developers' }),
-            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: 'ship date for this workstream' }),
-            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text)),
+            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { times: 1 }),
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { times: 1 }),
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text)),
         ]);
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');

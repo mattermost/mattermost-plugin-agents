@@ -97,17 +97,23 @@ export class AIPlugin {
   async sendMessage(message: string) {
     // Both the new-chat tab (AdvancedTextEditor, location RHS_COMMENT) and
     // ThreadViewer (after analysis / summarize) use reply_textbox inside the
-    // plugin RHS. Enter submits ThreadViewer replies but does not submit the
-    // new-chat composer — click Send Now when it is enabled.
+    // plugin RHS. New-chat does not submit on Enter — click Send Now.
+    // ThreadViewer's split Send Now is often disabled; Enter submits replies.
     const rhs = this.getRhsContainer();
     const composer = rhs.getByTestId('reply_textbox');
     if (await composer.isVisible().catch(() => false)) {
       await expect(composer).toBeEnabled({ timeout: 30000 });
       await composer.fill(message);
       const send = rhs.getByTestId('SendMessageButton');
-      try {
-        await send.click({ timeout: 2000 });
-      } catch {
+      const newChat = rhs.getByTestId('rhs-new-tab-create-post');
+      if (await newChat.isVisible().catch(() => false)) {
+        await expect(send).toBeEnabled({ timeout: 10000 });
+        await send.click();
+        return;
+      }
+      if (await send.isEnabled().catch(() => false)) {
+        await send.click();
+      } else {
         await composer.press('Enter');
       }
       return;
@@ -117,9 +123,14 @@ export class AIPlugin {
     await this.rhsSendButton.click();
   }
 
+  /** Wait until no in-progress generation remains in the plugin RHS. */
+  async waitForGeneratingToStop() {
+    await expect(this.getRhsContainer().getByTestId('stop-generating-button').filter({ visible: true })).toHaveCount(0, { timeout: 30000 });
+  }
+
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
-    await expect(this.page.getByRole('button', { name: /stop/i })).not.toBeVisible({ timeout: 30000 });
+    await this.waitForGeneratingToStop();
     const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
     await expect(threadReply).toBeEnabled({ timeout: 30000 });
   }
@@ -155,10 +166,9 @@ export class AIPlugin {
     // Increased timeout to 30s for CI
     await expect(rhsContainer.getByText(expectedText).last()).toBeVisible({timeout: 30000});
 
-    // 2. CRITICAL: Wait for streaming to finish (Stop button to disappear)
-    // This ensures the UI is completely ready for the next interaction
-    const stopButton = this.page.getByRole('button', { name: /stop/i });
-    await expect(stopButton).not.toBeVisible({ timeout: 30000 });
+    // 2. Wait for streaming to finish. There can be more than one stop
+    // control (one per generating post); require all of them to be gone.
+    await this.waitForGeneratingToStop();
 
     // 3. ThreadViewer uses reply_textbox; new-chat uses the plugin composer.
     const threadReply = this.getRhsContainer().getByTestId('reply_textbox');

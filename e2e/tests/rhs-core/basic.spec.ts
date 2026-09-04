@@ -226,10 +226,11 @@ test.describe('Thread Analysis', () => {
 
     // Click on "Summarize Thread"
     // Register both turns once. addMock resets Smocker and can hang an
-    // in-flight completion. The follow-up matcher is listed first.
+    // in-flight completion. Follow-up bodies may omit the new user text, so
+    // consume the first completion with times:1.
     await openAIMock.addMocks([
-      buildChatCompletionMockRule(responseTest2, { bodyContains: 'total duration for both phases' }),
-      buildChatCompletionMockRule(responseTest),
+      buildChatCompletionMockRule(responseTest, { times: 1 }),
+      buildChatCompletionMockRule(responseTest2),
     ]);
     await page.getByRole('button', { name: 'Summarize Thread' }).click();
 
