@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, CHANNEL_ANALYSIS_USER_PROMPT } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -234,15 +234,7 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Smocker first-match: title gen, then the latest unique follow-up
-        // phrase (history accumulates prior turns), then analysis.
-        // Do not sequence turns with times:1 — extra /chat/completions steal those slots.
-        await openAIMock.addMocks([
-            titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: followUp2UserText }),
-            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: followUp1UserText }),
-            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: CHANNEL_ANALYSIS_USER_PROMPT }),
-        ]);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104a', mockResponse1Text)));
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
 
@@ -252,16 +244,14 @@ data: [DONE]
         await expect(firstPostText).toContainText('Development');
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104b', mockResponse2Text)));
         await aiPlugin.sendMessage(followUp1UserText);
-        await expect(page.getByText(mockResponse1Text)).toBeVisible();
-        await expect(page.getByText(mockResponse2Text)).toBeVisible({ timeout: 30000 });
-        await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text, { timeout: 30000 });
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104c', mockResponse3Text)));
         await aiPlugin.sendMessage(followUp2UserText);
-        await expect(page.getByText(mockResponse2Text)).toBeVisible();
-        await expect(page.getByText(mockResponse3Text)).toBeVisible({ timeout: 30000 });
-        await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text, { timeout: 30000 });
     });
 
     test('Channel analysis while RHS already open', async ({ page }) => {

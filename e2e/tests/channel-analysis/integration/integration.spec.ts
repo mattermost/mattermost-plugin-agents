@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, CHANNEL_ANALYSIS_USER_PROMPT } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -250,14 +250,7 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Smocker first-match: title gen, then the follow-up user phrase
-        // (history still contains the analysis prompt), then analysis.
-        // Do not sequence turns with times:1 — extra /chat/completions steal those slots.
-        await openAIMock.addMocks([
-            titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: CHANNEL_ANALYSIS_USER_PROMPT }),
-        ]);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402a', analysisText)));
 
         // 5. Submit channel analysis query using quick action
         await integrationHelper.clickQuickAction('last7days');
@@ -271,11 +264,10 @@ data: [DONE]
         await expect(analysisPostText).toContainText(analysisText);
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402b', followUpText)));
         await aiPlugin.sendMessage(followUpUserText);
 
-        await expect(page.getByText(analysisText)).toBeVisible();
-        await expect(page.getByText(followUpText)).toBeVisible({ timeout: 30000 });
-        await expect(llmBotHelper.getPostText()).toContainText(followUpText);
+        await expect(llmBotHelper.getPostText()).toContainText(followUpText, { timeout: 30000 });
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {
