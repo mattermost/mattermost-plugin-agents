@@ -12,8 +12,11 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    this.rhsPostTextarea = page.locator("#rhsContainer").locator('textarea');
-    this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
+    // Scope to the plugin RHS. #rhsContainer is Mattermost's shell and can
+    // also contain a channel-thread composer after channel analysis; the
+    // first textarea there is not the Agents input.
+    this.rhsPostTextarea = this.getRhsContainer().locator('textarea');
+    this.rhsSendButton = this.getRhsContainer().getByTestId('SendMessageButton');
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -95,7 +98,10 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
+    await expect(this.getRhsContainer()).toBeVisible({ timeout: 10000 });
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
     await this.rhsPostTextarea.fill(message);
+    await expect(this.rhsSendButton).toBeEnabled({ timeout: 10000 });
     await this.rhsSendButton.click();
   }
 
