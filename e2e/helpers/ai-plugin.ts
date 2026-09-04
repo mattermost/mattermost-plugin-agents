@@ -95,15 +95,21 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    // After channel analysis / thread summarize, the plugin RHS hosts
-    // Mattermost ThreadViewer. Follow-ups go through reply_textbox.
-    // Enter is the reliable submit: the split "Send Now" control is often
-    // disabled even when the composer has text.
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    if (await threadReply.isVisible().catch(() => false)) {
-      await expect(threadReply).toBeEnabled({ timeout: 30000 });
-      await threadReply.fill(message);
-      await threadReply.press('Enter');
+    // Both the new-chat tab (AdvancedTextEditor, location RHS_COMMENT) and
+    // ThreadViewer (after analysis / summarize) use reply_textbox inside the
+    // plugin RHS. Enter submits ThreadViewer replies but does not submit the
+    // new-chat composer — click Send Now when it is enabled.
+    const rhs = this.getRhsContainer();
+    const composer = rhs.getByTestId('reply_textbox');
+    if (await composer.isVisible().catch(() => false)) {
+      await expect(composer).toBeEnabled({ timeout: 30000 });
+      await composer.fill(message);
+      const send = rhs.getByTestId('SendMessageButton');
+      try {
+        await send.click({ timeout: 2000 });
+      } catch {
+        await composer.press('Enter');
+      }
       return;
     }
 

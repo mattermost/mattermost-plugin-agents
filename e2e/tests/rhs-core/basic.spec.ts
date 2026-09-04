@@ -5,7 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
-import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, buildChatCompletionMockRule, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
 const username = 'regularuser';
@@ -225,7 +225,12 @@ test.describe('Thread Analysis', () => {
     await page.getByTestId(`ai-actions-menu`).click();
 
     // Click on "Summarize Thread"
-    await openAIMock.addCompletionMock(responseTest);
+    // Register both turns once. addMock resets Smocker and can hang an
+    // in-flight completion. The follow-up matcher is listed first.
+    await openAIMock.addMocks([
+      buildChatCompletionMockRule(responseTest2, { bodyContains: 'total duration for both phases' }),
+      buildChatCompletionMockRule(responseTest),
+    ]);
     await page.getByRole('button', { name: 'Summarize Thread' }).click();
 
     // Wait for the AI RHS to open and show the summary
@@ -233,9 +238,6 @@ test.describe('Thread Analysis', () => {
     await expect(page.getByText(responseTestText)).toBeVisible();
     await aiPlugin.waitForThreadComposerIdle();
 
-    // addMock resets Smocker; the first stream is idle so the replacement
-    // catch-all is the only rule the follow-up can hit.
-    await openAIMock.addCompletionMock(responseTest2);
     await aiPlugin.sendMessage('What is the total duration for both phases?');
 
     // Verify the follow-up response is received successfully
