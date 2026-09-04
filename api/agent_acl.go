@@ -34,7 +34,7 @@ func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string)
 // serviceAccountPolicyWriteNeedsAdmin reports whether mutating cfg's access
 // policy requires manage_system. Policy PUT/DELETE are access grants, which
 // serviceAccountChangeNeedsAdmin already treats as admin-only while SA stays
-// on; the policy lives outside BotConfig so this is the analogue.
+// on; the policy lives outside BotConfig so this is the equivalent.
 func serviceAccountPolicyWriteNeedsAdmin(cfg *llm.BotConfig) bool {
 	return cfg != nil && cfg.UseServiceAccountAuth
 }
