@@ -234,15 +234,14 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Register every turn once. Resetting Smocker between follow-ups hangs
-        // the next ChatCompletion (empty bot placeholder, no posttext). Later
-        // turns still contain the AnalyzeChannel user prompt, so more specific
-        // follow-up phrases are listed first.
+        // Follow-ups stay in the analysis thread, so they still contain the
+        // AnalyzeChannel user prompt and often omit the typed follow-up phrase.
+        // Smocker last-in-list wins: do not register overlapping follow-up
+        // matchers up front (the analysis rule would steal them). Resetting
+        // between turns hangs the next ChatCompletion; append after idle instead.
         const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
         await openAIMock.addMocks([
             titleGenerationMockRule(),
-            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: followUp2UserText }),
-            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: followUp1UserText }),
             buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: analyzeChannelUserPrompt }),
         ]);
 
@@ -254,10 +253,16 @@ data: [DONE]
         await expect(firstPostText).toContainText('Development');
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
         await aiPlugin.sendMessage(followUp1UserText);
         await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text, { timeout: 30000 });
 
         await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
         await aiPlugin.sendMessage(followUp2UserText);
         await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text, { timeout: 30000 });
     });
