@@ -49,9 +49,7 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // MCPEmbeddedServerConfig contains configuration for the embedded MCP server
 type MCPEmbeddedServerConfig struct {
-	// ID is the immutable plugin-assigned ABAC policy identity. It survives
-	// enablement/tool-config edits and is never reused. Runtime tool origin
-	// is MCPEmbeddedServerOrigin.
+	// ID is the ABAC policy identity; runtime tool origin is MCPEmbeddedServerOrigin.
 	ID          string          `json:"id,omitempty"`
 	Enabled     bool            `json:"enabled"`
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
@@ -69,9 +67,8 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	// ID is the immutable plugin-assigned ABAC policy identity: it survives
-	// Name/BaseURL edits and is never reused. OAuth keying (Name) and runtime
-	// tool origin (BaseURL) are separate identity systems.
+	// ID is the immutable, never-reused ABAC policy identity; it survives Name/BaseURL
+	// edits. OAuth keying (Name) and tool origin (BaseURL) are separate identity systems.
 	ID      string            `json:"id,omitempty"`
 	Name    string            `json:"name"`
 	Enabled bool              `json:"enabled"`
@@ -199,7 +196,7 @@ func (c *MCPConfig) ServerIDByOrigin() map[string]string {
 	return out
 }
 
-// OriginByServerID is the inverse of ServerIDByOrigin: stable ID -> current origin.
+// OriginByServerID is the inverse of ServerIDByOrigin.
 func (c *MCPConfig) OriginByServerID() map[string]string {
 	out := make(map[string]string, len(c.Servers)+len(c.PluginServers)+1)
 	for i := range c.Servers {
@@ -225,18 +222,9 @@ func (c *MCPConfig) OriginByServerID() map[string]string {
 // differs from the stored ID.
 var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
 
-// ReconcileMCPConfigIDs is the single entry point for MCP identity on config
-// save. It:
-//
-//  1. Treats PluginServers as server-owned: prev is carried forward
-//     unconditionally. Full config save never accepts client-provided plugin
-//     rows (bridge register/unregister and PUT /admin/mcp/plugin-servers/:id
-//     are the only writers).
-//  2. Copies the embedded server ID from prev when next is empty. A
-//     non-empty next ID that differs from a non-empty prev ID is a conflict.
-//     Empty remote IDs stay empty for the caller to mint.
-//  3. Rejects any ID shared by two MCP resources of any kind on the config
-//     being written. Duplicate IDs in prev alone are not a conflict.
+// ReconcileMCPConfigIDs reconciles MCP identity on config save. PluginServers are
+// server-owned and always carried forward from prev, never accepted from the client.
+// Only the config being written is checked for duplicate IDs; duplicates in prev alone are not a conflict.
 func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
 	next.PluginServers = append([]PluginServerConfig(nil), prev.PluginServers...)
 
@@ -252,8 +240,7 @@ func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
 	return next, nil
 }
 
-// ValidateMCPServerIDUniqueness returns ErrMCPServerIDConflict when any two
-// MCP resources (remote, embedded, or plugin) share the same non-empty ID.
+// ValidateMCPServerIDUniqueness returns ErrMCPServerIDConflict when any two MCP resources share a non-empty ID.
 func ValidateMCPServerIDUniqueness(cfg MCPConfig) error {
 	seen := make(map[string]string, len(cfg.Servers)+len(cfg.PluginServers)+1)
 	claim := func(id, label string) error {
@@ -302,9 +289,8 @@ func ReconcileEmbeddedMCPServerID(next, prev MCPEmbeddedServerConfig) (MCPEmbedd
 
 // PluginServerConfig describes an MCP server registered by another plugin.
 type PluginServerConfig struct {
-	// ID is the immutable plugin-assigned ABAC policy identity. Identity is
-	// keyed by PluginID: it survives re-registration and Path changes and is
-	// never reused. Runtime tool origin is PluginServerOrigin(PluginID).
+	// ID is the ABAC policy identity, keyed by PluginID so it survives re-registration
+	// and Path changes. Runtime tool origin is PluginServerOrigin(PluginID).
 	ID             string          `json:"id,omitempty"`
 	PluginID       string          `json:"plugin_id"`
 	Name           string          `json:"name"`

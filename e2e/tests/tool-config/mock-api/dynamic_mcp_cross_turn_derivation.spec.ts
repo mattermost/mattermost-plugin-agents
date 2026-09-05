@@ -6,6 +6,8 @@ import {
     RunOpenAIMocks,
     buildToolCallResponse,
     buildTextResponse,
+    buildChatCompletionMockRule,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithDynamicPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -24,6 +26,7 @@ const businessTool = 'mattermost__get_channel_info';
 const businessToolLabel = 'Get Channel Info';
 const searchToolsLabel = 'Search Tools';
 const loadToolLabel = 'Load Tool';
+const toolBotSystemPrompt = 'You are called Tool Test Bot with the username toolbot';
 
 async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
     const post = page.locator('.post').filter({
@@ -70,6 +73,11 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const businessCallID2 = `call_xtd_business2_${Date.now()}`;
         const finalMarker1 = `XTD_FINAL_TURN1_${Date.now()}`;
         const finalMarker2 = `XTD_FINAL_TURN2_${Date.now()}`;
+        const business2ToolCall = buildToolCallResponse(
+            businessCallID2,
+            businessTool,
+            '{"channel_name":"Town Square"}',
+        );
 
         await openAIMock.addMocks([
             {
@@ -82,7 +90,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                             'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
                     },
                 },
-                context: {times: 1},
+                context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
@@ -95,7 +103,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'You are called Tool Test Bot with the username toolbot',
+                        value: toolBotSystemPrompt,
                     },
                 },
                 context: {times: 1},
@@ -171,30 +179,10 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: turn2User,
-                    },
-                },
-                context: {times: 1},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildToolCallResponse(
-                        businessCallID2,
-                        businessTool,
-                        '{"channel_name":"Town Square"}',
-                    ),
-                },
-            },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
                         value: businessCallID2,
                     },
                 },
-                context: {times: 1},
+                context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
@@ -233,6 +221,20 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
         await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+
+        // Turn 2's ChatCompletion often omits the personality system prompt
+        // (and the typed follow-up phrase). Exhausted times:1 prelude rules are
+        // skipped, then Smocker 666s if nothing else matches — empty bot post.
+        // Append a catch-all after the first turn is idle (no reset: resetting
+        // hangs in-flight GenerateTitle). Re-register the title siphon after
+        // the catch-all so an in-flight GenerateTitle is not stolen.
+        // businessCallID2 last so the post-accept completion still returns
+        // finalMarker2.
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(business2ToolCall),
+            titleGenerationMockRule('Cross-turn derivation'),
+            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {bodyContains: businessCallID2}),
+        ]);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});

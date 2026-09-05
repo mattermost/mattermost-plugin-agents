@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -140,7 +140,10 @@ test.describe('Channel Analysis Integration (Mocked)', () => {
     });
 
     test.beforeEach(async () => {
-        await openAIMock.resetMocks();
+        // Keep a title-generation siphon registered. An empty reset leaves
+        // in-flight GenerateTitle calls hanging and can block the next test's
+        // follow-up ChatCompletion (empty bot placeholder).
+        await openAIMock.addMocks([titleGenerationMockRule()]);
     });
 
     test.afterAll(async () => {
@@ -175,7 +178,7 @@ data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse1);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse1));
 
         // 5. Have a regular conversation with the bot first
         await aiPlugin.sendMessage('Hello, how are you today?');
@@ -197,7 +200,7 @@ data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":169426819
 data: {"id":"chatcmpl-401b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
+        await openAIMock.addMocks(turnMocksWithTitleSiphon(mockResponse2));
 
         // 8. Now use channel analysis feature via agents button
         await integrationHelper.openChannelAgentsPopover();
@@ -222,6 +225,8 @@ data: [DONE]
         expect(secondContent!.length).toBeGreaterThan(20);
         // Response should mention the feature implementation or deadline
         expect(secondContent!.toLowerCase()).toMatch(/feature|deadline|sprint/);
+
+        await aiPlugin.waitForThreadComposerIdle();
     });
 
     test('Regular chat after channel analysis', async ({ page }) => {
@@ -240,54 +245,42 @@ data: [DONE]
         // 4. Use channel analysis feature via agents button
         await integrationHelper.openChannelAgentsPopover();
 
-        // Mock channel analysis response
-        const mockResponse1 = `
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The channel discussed the project kickoff meeting and budget approval."},"finish_reason":null}]}
-data: {"id":"chatcmpl-402a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        const analysisText = 'The channel discussed the project kickoff meeting and budget approval.';
+        const followUpText = 'The first point was about the project kickoff meeting.';
+        const followUpUserText = 'Can you tell me more about the first point?';
+        const sse = (id: string, content: string) => `
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse1);
 
-        // 5. Submit channel analysis query using quick action
-        await integrationHelper.clickQuickAction('last7days');
+        // Register both turns once. Resetting Smocker after analysis hangs the
+        // next ChatCompletion (empty bot placeholder). Do not use a no-body
+        // catch-all here: it served the analysis SSE for the new-chat turn in
+        // CI. AnalyzeChannel always sends this user prompt (channels/channels.go);
+        // new-chat does not, so the follow-up matcher can key off the user phrase.
+        const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
 
-        // 6. Wait for streaming to complete
+        await integrationHelper.submitChannelQuery('What was discussed in the last 7 days?');
+
         await llmBotHelper.waitForStreamingComplete();
 
-        // 7. Verify channel analysis response contains channel-specific content
         const analysisPostText = llmBotHelper.getPostText();
         await expect(analysisPostText).toBeVisible();
-        const analysisContent = await analysisPostText.textContent();
-        expect(analysisContent).toBeTruthy();
-        // Should mention the meeting or budget
-        expect(analysisContent!.toLowerCase()).toMatch(/meeting|budget|kickoff|approval/);
+        await expect(analysisPostText).toContainText(analysisText);
 
-        // Mock follow-up response
-        const mockResponse2 = `
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The first point was about the project kickoff meeting."},"finish_reason":null}]}
-data: {"id":"chatcmpl-402b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMock(mockResponse2);
+        await aiPlugin.waitForThreadComposerIdle();
+        await aiPlugin.ensureRhsNewChatTab();
+        await expect(aiPlugin.getRhsContainer().getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 10000 });
+        await aiPlugin.sendMessage(followUpUserText);
 
-        // 8. Now open regular RHS and send a follow-up question
-        await aiPlugin.openRHS();
-        await aiPlugin.sendMessage('Can you tell me more about the first point?');
-
-        // 9. Wait for streaming to complete
-        await llmBotHelper.waitForStreamingComplete();
-
-        // 10. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 11. Verify follow-up response is visible
-        const followUpPostText = llmBotHelper.getPostText();
-        await expect(followUpPostText).toBeVisible();
-        const followUpContent = await followUpPostText.textContent();
-        expect(followUpContent).toBeTruthy();
-        expect(followUpContent!.length).toBeGreaterThan(10);
+        await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
     });
 
     test('Chat history navigation with channel analysis', async ({ page }) => {

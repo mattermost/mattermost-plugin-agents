@@ -67,7 +67,7 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 	if bot == nil {
 		return fmt.Errorf("auto-reply bot no longer exists: %w", ErrNoResponse)
 	}
-	if err := c.bots.CheckUsageRestrictions(post.UserId, bot, channel); err != nil {
+	if err := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); err != nil {
 		return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", err, ErrNoResponse)
 	}
 

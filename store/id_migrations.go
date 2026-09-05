@@ -18,8 +18,7 @@ import (
 // Agents_System marker for the one-time ABAC ID migration (value "1").
 const abacIDMigrationKey = "abac_id_migration_done"
 
-// isLegacyUUID reports whether s is a canonical dashed UUID, the legacy
-// service-ID format that predates model.NewId()-style IDs.
+// isLegacyUUID matches the legacy service-ID format predating model.NewId().
 func isLegacyUUID(s string) bool {
 	return len(s) == 36 && uuid.Validate(s) == nil
 }
@@ -38,21 +37,9 @@ type ABACIDMigrationReport struct {
 	DanglingServiceRefs             []string
 }
 
-// MigrateABACIDs runs the one-time ABAC ID migration in a single transaction
-// that writes at most one new active config row and sets the Agents_System
-// marker atomically:
-//
-//   - service IDs: legacy UUID service IDs in the active config and in
-//     Agents_UserAgents.ServiceID are rewritten to model.NewId() values.
-//     Dangling UUID references are left unchanged and reported.
-//   - MCP server IDs: every external MCP server entry with no ID gets a
-//     stable model.NewId().
-//   - embedded/plugin MCP server IDs: EmbeddedServer.ID and every
-//     PluginServers entry with no ID get a stable model.NewId().
-//
-// Idempotent: the marker short-circuits re-runs, and the rewrite is content-based
-// (only UUID service IDs / empty MCP IDs are touched). Config and marker writes
-// share one Postgres transaction; on failure the transaction is rolled back.
+// MigrateABACIDs runs the one-time ABAC ID migration: at most one new active config
+// row and the Agents_System marker are written in a single transaction. Idempotent:
+// the marker short-circuits re-runs, and only UUID service IDs / empty MCP IDs are touched.
 func (s *Store) MigrateABACIDs() (ABACIDMigrationReport, error) {
 	report := ABACIDMigrationReport{}
 
@@ -219,7 +206,6 @@ func migrateServiceIDsTx(tx *sqlx.Tx, cfg *config.Config, report *ABACIDMigratio
 	return nil
 }
 
-// getSystemValueTx reads an Agents_System value on the transaction.
 func getSystemValueTx(tx *sqlx.Tx, key string) (string, error) {
 	var value string
 	err := tx.Get(&value, "SELECT SValue FROM Agents_System WHERE SKey = $1", key)
@@ -232,7 +218,6 @@ func getSystemValueTx(tx *sqlx.Tx, key string) (string, error) {
 	return value, nil
 }
 
-// setSystemValueTx upserts an Agents_System value on the transaction.
 func setSystemValueTx(tx *sqlx.Tx, key, value string) error {
 	_, err := tx.Exec(
 		`INSERT INTO Agents_System (SKey, SValue) VALUES ($1, $2)

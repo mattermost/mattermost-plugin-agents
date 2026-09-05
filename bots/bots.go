@@ -13,6 +13,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/assets"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -54,6 +55,7 @@ type MMBots struct {
 	licenseChecker         *enterprise.LicenseChecker
 	config                 Config
 	agentStore             AgentStore
+	accessChecker          *accesscontrol.Checker
 	llmUpstreamHTTPClient  *http.Client
 	tokenUsageSinks        *llm.TokenUsageSinks
 	metrics                llm.MetricsObserver
@@ -74,7 +76,13 @@ type MMBots struct {
 	forceRefresh bool
 }
 
-func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+// New builds the bot registry. accessChecker must be non-nil; tests that want
+// no-policies-anywhere pass accesscontrol.New with PassthroughClient.
+func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, licenseChecker *enterprise.LicenseChecker, config Config, agentStore AgentStore, accessChecker *accesscontrol.Checker, llmUpstreamHTTPClient *http.Client, metrics llm.MetricsObserver) *MMBots {
+	// A nil checker would panic later inside a live permission check.
+	if accessChecker == nil {
+		panic("bots: New requires a non-nil access checker")
+	}
 	var pluginTokenLogger llm.TokenUsagePluginLogger
 	if pluginAPI != nil {
 		pluginTokenLogger = &pluginAPI.Log
@@ -86,6 +94,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		licenseChecker:         licenseChecker,
 		config:                 config,
 		agentStore:             agentStore,
+		accessChecker:          accessChecker,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
 		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
 		metrics:                metrics,
@@ -472,6 +481,10 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 	// Structured output fallback
 	result = llm.NewStructuredOutputFallbackWrapper(result, botConfig.StructuredOutputEnabled)
+
+	// Outermost so the per-user fallback prefix is resolved once per request
+	// and flows down through truncation's repeated CountTokens calls.
+	result = newFallbackAccessLLM(result, b, serviceConfig.ID)
 
 	return result, providerServices, nil
 }

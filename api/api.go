@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -65,8 +66,8 @@ type MCPClientManager interface {
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
-	GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors)
-	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
+	GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess
+	RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error)
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
@@ -180,6 +181,7 @@ type API struct {
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 	autoReplyStore        ChannelAutoReplyStore
+	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
 
 	// auditEvents maps gin handler names to audit event names for routes
@@ -227,7 +229,12 @@ func New(
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
 	autoReplyStore ChannelAutoReplyStore,
+	accessChecker *accesscontrol.Checker,
 ) *API {
+	// A nil checker would silently disable authorization gates (e.g. MCP listing).
+	if accessChecker == nil {
+		panic("api: New requires a non-nil access checker")
+	}
 	a := &API{
 		mcpRequestLimiter:     newMCPRequestLimiter(),
 		bots:                  bots,
@@ -262,6 +269,7 @@ func New(
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
 		autoReplyStore:        autoReplyStore,
+		accessChecker:         accessChecker,
 	}
 	a.auditEvents = buildAuditEventRegistry(a)
 	return a
@@ -348,6 +356,10 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	// Access policy authoring: agent managers.
+	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
+	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
+	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
 
@@ -416,6 +428,27 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
+	// Service / MCP-server access policy authoring: system admins only. The
+	// :serverid wildcard coexists with the static /admin/mcp/* routes above
+	// (pinned by a route test).
+	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
+	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
+	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
+	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
+	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
+	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
+
+	// ABAC availability + CEL editor proxies.
+	acRouter := router.Group("/access_control")
+	acRouter.GET("/status", a.handleABACStatus) // any authenticated user
+	celRouter := acRouter.Group("/cel")
+	// /test is resource-type gated (and self-inclusion for non-sysadmins)
+	// inside the handler: agent authors may test, service/MCP is manage_system.
+	celRouter.POST("/test", a.handleCELTest)
+	celRouter.Use(a.celRouteAuthzRequired)
+	celRouter.POST("/check", a.handleCELCheck)
+	celRouter.GET("/autocomplete/fields", a.handleCELAutocompleteFields)
+	celRouter.POST("/visual_ast", a.handleCELVisualAST)
 
 	searchRouter := botRequiredRouter.Group("/search")
 	// Only returns search results
@@ -570,7 +603,7 @@ func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
 }
 
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
@@ -579,7 +612,7 @@ func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
 	defaultBotName := a.config.GetDefaultBotName()
 	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
-		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
+		if a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID) != nil {
 			continue
 		}
 
@@ -619,7 +652,7 @@ func (a *API) getAIBotsForUser(userID string) []AIBotInfo {
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots := a.getAIBotsForUser(userID)
+	bots := a.getAIBotsForUser(c.Request.Context(), userID)
 
 	// Check if search is enabled
 	searchEnabled := a.searchService.Enabled()

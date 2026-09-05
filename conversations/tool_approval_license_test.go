@@ -114,7 +114,7 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := toolLicenseChecker(t, licensed)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot()})
 
 	mmClient := mocks.NewMockClient(t)

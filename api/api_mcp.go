@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -59,8 +60,8 @@ func (a *API) handleGetUserMCPTools(c *gin.Context) {
 		return
 	}
 
-	tools, mcpErrors := a.mcpClientManager.GetTools(c.Request.Context(), req)
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, req.ServiceAccount))
+	access := a.mcpClientManager.GetCatalogAccess(c.Request.Context(), req)
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access, req.ServiceAccount))
 }
 
 // resolveMCPToolsCatalog decides whose tools to list. ok is false when the
@@ -118,37 +119,42 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 	}
 
 	userID := c.GetHeader("Mattermost-User-Id")
-	tools, mcpErrors, err := a.mcpClientManager.RefreshToolsForUser(c.Request.Context(), userID)
+	req := mcp.UserCatalogRequest(userID)
+	access, err := a.mcpClientManager.RefreshCatalogAccess(c.Request.Context(), req)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to refresh MCP tools: %w", err))
 		return
 	}
 
-	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, tools, mcpErrors, false))
+	c.JSON(http.StatusOK, a.buildUserMCPToolsResponse(userID, access, req.ServiceAccount))
 }
 
-func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErrors *mcp.Errors, serviceAccount bool) UserMCPToolsResponse {
+func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess, serviceAccount bool) UserMCPToolsResponse {
 	mcpCfg := a.config.MCP()
 
 	// Group tools by ServerOrigin
-	toolsByOrigin := make(map[string][]llm.Tool, len(tools))
-	for _, t := range tools {
+	toolsByOrigin := make(map[string][]llm.Tool, len(access.Tools))
+	for _, t := range access.Tools {
 		toolsByOrigin[t.ServerOrigin] = append(toolsByOrigin[t.ServerOrigin], t)
 	}
 
 	authErrorsByOrigin := make(map[string]llm.ToolAuthError)
-	if mcpErrors != nil {
-		for _, authErr := range mcpErrors.ToolAuthErrors {
+	if access.Errors != nil {
+		for _, authErr := range access.Errors.ToolAuthErrors {
 			authErrorsByOrigin[authErr.ServerOrigin] = authErr
 		}
 	}
 
 	oauthManager := a.mcpClientManager.GetOAuthManager()
 	servers := make([]UserMCPServerInfo, 0, len(mcpCfg.Servers)+1)
+	denied := access.DeniedOrigins
 
 	for i := range mcpCfg.Servers {
 		serverConfig := &mcpCfg.Servers[i]
 		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
+			continue
+		}
+		if denied[llm.NormalizeMCPServerOrigin(serverConfig.BaseURL)] {
 			continue
 		}
 
@@ -162,7 +168,7 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
-	if a.mcpClientManager.GetEmbeddedServer() != nil {
+	if a.mcpClientManager.GetEmbeddedServer() != nil && !denied[mcp.EmbeddedClientKey] {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
@@ -185,13 +191,18 @@ func (a *API) buildUserMCPToolsResponse(userID string, tools []llm.Tool, mcpErro
 		))
 	}
 
-	// Plugin rows use the same synthetic origin key as filterToolsByConfig.
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+	// Reuse the request-scoped plugin snapshot used by policy evaluation,
+	// connection planning, and tool filtering.
+	for _, cfg := range access.PluginServers {
 		if !cfg.Enabled {
 			continue
 		}
 
-		origin := "plugin://" + cfg.PluginID
+		origin := config.PluginServerOrigin(cfg.PluginID)
+		if denied[origin] {
+			continue
+		}
+
 		pluginConfig := &mcp.ServerConfig{
 			Name:        cfg.Name,
 			Enabled:     true,

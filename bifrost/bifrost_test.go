@@ -427,7 +427,7 @@ func TestPromptCaching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider, fallbacks: tt.fallbacks}
+			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
 			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
 
 			chatReq := b.convertToBifrostRequest(request, cfg)
@@ -1795,7 +1795,7 @@ func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
 				provider:        schemas.OpenAI,
 				defaultModel:    "gpt-4o",
 				useResponsesAPI: tt.useResponsesAPI,
-				fallbacks:       tt.fallbacks,
+				fallbacks:       testHops(tt.fallbacks, nil),
 			}
 
 			var got []schemas.Fallback
@@ -1809,6 +1809,67 @@ func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
 
 			// The request must carry exactly the configured chain (nil when none).
 			assert.Equal(t, tt.fallbacks, got)
+		})
+	}
+}
+
+// testHops pairs fallbacks with service IDs; a nil ids leaves serviceID empty.
+func testHops(fallbacks []schemas.Fallback, ids []string) []fallbackHop {
+	var hops []fallbackHop
+	for i, fb := range fallbacks {
+		hop := fallbackHop{fallback: fb}
+		if ids != nil {
+			hop.serviceID = ids[i]
+		}
+		hops = append(hops, hop)
+	}
+	return hops
+}
+
+func TestConvertToBifrostRequest_RestrictedFallbacks(t *testing.T) {
+	configured := []schemas.Fallback{
+		{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+		{Provider: schemas.Bedrock, Model: "anthropic.claude-3-sonnet-20240229-v1:0"},
+		{Provider: schemas.Gemini, Model: "gemini-2.5-pro"},
+	}
+	ids := []string{"svc-b", "svc-c", "svc-d"}
+	tests := []struct {
+		name      string
+		allowed   []string
+		want      []schemas.Fallback
+		responses bool
+	}{
+		{name: "chat, prefix of one", allowed: []string{"svc-b"}, want: configured[:1]},
+		{name: "chat, full prefix", allowed: ids, want: configured},
+		{name: "chat, empty prefix", allowed: nil, want: nil},
+		{name: "chat, skip-over denied hop drops later", allowed: []string{"svc-c"}, want: nil},
+		{name: "chat, denied middle hop truncates rather than skips", allowed: []string{"svc-b", "svc-d"}, want: configured[:1]},
+		{name: "responses, prefix of one", allowed: []string{"svc-b"}, want: configured[:1], responses: true},
+		{name: "responses, empty prefix", allowed: nil, want: nil, responses: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:        schemas.OpenAI,
+				defaultModel:    "gpt-4o",
+				useResponsesAPI: tt.responses,
+				fallbacks:       testHops(configured, ids),
+			}
+			request := llm.CompletionRequest{
+				RestrictFallbacks:         true,
+				AllowedFallbackServiceIDs: tt.allowed,
+			}
+
+			var got []schemas.Fallback
+			if tt.responses {
+				req, err := b.convertToBifrostResponsesRequest(request, b.GetDefaultConfig())
+				require.NoError(t, err)
+				got = req.Fallbacks
+			} else {
+				got = b.convertToBifrostRequest(request, b.GetDefaultConfig()).Fallbacks
+			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -1865,8 +1926,9 @@ func TestNewFromServiceConfig_WithFallbackServices(t *testing.T) {
 	defer llmInstance.Shutdown()
 
 	require.Len(t, llmInstance.fallbacks, 1)
-	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].fallback.Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
+	assert.Equal(t, "svc-anthropic", llmInstance.fallbacks[0].serviceID)
 }
 
 func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
@@ -1902,19 +1964,19 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 
 	require.Len(t, llmInstance.fallbacks, 2)
 	// The Anthropic fallback has its own base provider type, so it keeps it.
-	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].fallback.Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
 	// The local OpenAI-compatible fallback maps to the OpenAI provider, which the
 	// primary already occupies. It must therefore be registered under a slot
 	// DISTINCT from the primary's base OpenAI slot so it keeps its own base
 	// URL/key at fallback time (proven end to end by
 	// TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint). We
 	// assert distinctness rather than the internal custom-provider name string.
-	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider,
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].fallback.Provider,
 		"a same-base fallback must not collide on the primary's provider slot")
-	assert.NotEqual(t, llmInstance.fallbacks[0].Provider, llmInstance.fallbacks[1].Provider,
+	assert.NotEqual(t, llmInstance.fallbacks[0].fallback.Provider, llmInstance.fallbacks[1].fallback.Provider,
 		"each fallback must occupy a distinct slot")
-	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
+	assert.Equal(t, "llama3", llmInstance.fallbacks[1].fallback.Model)
 }
 
 // TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain pins the contract
@@ -1983,7 +2045,7 @@ func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T
 
 	// Fallback model uses the fallback service's DefaultModel, not the bot override
 	require.Len(t, llmInstance.fallbacks, 1)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
 }
 
 func TestNewFromServiceConfig_BotModelOverrideCapsOutputTokens(t *testing.T) {
@@ -2616,7 +2678,7 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 	// bare OpenAI provider so the chat-only AllowedRequests gate can be attached
 	// (see TestProviderAccount_ChatOnlyCustomConfig). Assert distinctness, not the
 	// internal custom-provider name string.
-	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].Provider,
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].fallback.Provider,
 		"a chat-only fallback must get its own custom-provider slot to carry the downgrade gate")
 }
 

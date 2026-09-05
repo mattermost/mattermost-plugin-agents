@@ -35,6 +35,13 @@ func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, user
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
+	// Search triggers a full LLM completion, so the agent+service usage gate
+	// applies (user-level only: search requests are not channel-scoped here).
+	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
+		c.AbortWithError(http.StatusForbidden, err)
+		return
+	}
+
 	if !a.searchService.Enabled() {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
 		return

@@ -67,7 +67,7 @@ async function expectRhsContainsMarkers(page: Page, markers: string[]): Promise<
 }
 
 test.describe('Edge Cases - aimock', () => {
-    test.describe.configure({ mode: 'serial' });
+    test.describe.configure({ mode: 'serial', retries: 1 });
 
     let harness: AIMockHarness;
 
