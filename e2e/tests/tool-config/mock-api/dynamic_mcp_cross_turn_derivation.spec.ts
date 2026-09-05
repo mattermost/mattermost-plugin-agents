@@ -70,6 +70,11 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const businessCallID2 = `call_xtd_business2_${Date.now()}`;
         const finalMarker1 = `XTD_FINAL_TURN1_${Date.now()}`;
         const finalMarker2 = `XTD_FINAL_TURN2_${Date.now()}`;
+        const business2ToolCall = buildToolCallResponse(
+            businessCallID2,
+            businessTool,
+            '{"channel_name":"Town Square"}',
+        );
 
         await openAIMock.addMocks([
             {
@@ -181,20 +186,39 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     body: buildTextResponse(finalMarker2),
                 },
             },
+            // Turn 2 first completion (no-body catch-alls steal Search Tools on
+            // turn 1). Match the new user phrase or persisted turn-1 assistant
+            // text; both are unique to the follow-up request.
             {
                 request: {
                     method: 'POST',
                     path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: turn2User,
+                    },
                 },
                 context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
-                    body: buildToolCallResponse(
-                        businessCallID2,
-                        businessTool,
-                        '{"channel_name":"Town Square"}',
-                    ),
+                    body: business2ToolCall,
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: finalMarker1,
+                    },
+                },
+                context: {times: 100},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: business2ToolCall,
                 },
             },
         ]);
