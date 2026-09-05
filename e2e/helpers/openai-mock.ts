@@ -165,6 +165,8 @@ export class OpenAIMockContainer {
 	 * Add Smocker mocks without replacing existing ones. Use this to sequence a
 	 * later turn after the first turn is idle: addMocks(?reset=true) while a
 	 * ChatCompletion is in flight hangs the next request (empty bot placeholder).
+	 * Each mock is prepended; the last rule in `bodies` has the highest priority
+	 * and outranks mocks already registered in the session.
 	 */
 	appendMocks = async (bodies: any[], attempt = 0): Promise<Response> => {
 		const maxAttempts = 5;
@@ -290,11 +292,13 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
 }
 
 /**
- * Single Smocker rule for POST /chat/completions. Rules are evaluated in order.
+ * Single Smocker rule for POST /chat/completions. Smocker prepends each mock, so
+ * the last rule in an addMocks/appendMocks array has the highest priority.
+ * Exhausted times:N rules are skipped (the next matching rule is used). If every
+ * matching rule is exhausted, Smocker returns 666 and the bot post stays empty.
  * Do not register a no-body catch-all in the same addMocks list as body matchers:
- * the catch-all steals later (and sometimes first) completions even when listed last.
- * Sequence turns with unique bodyContains strings, or replace the whole mock set
- * with turnMocksWithTitleSiphon after the composer is idle.
+ * listed last, the catch-all steals every completion. Sequence later turns with
+ * unique bodyContains strings, or appendMocks after the composer is idle.
  * Do not use times:1 to sequence user-visible turns unless every rule has a unique
  * bodyContains: leftover title generation and extra tool-loop completions consume
  * those slots and shift later responses.

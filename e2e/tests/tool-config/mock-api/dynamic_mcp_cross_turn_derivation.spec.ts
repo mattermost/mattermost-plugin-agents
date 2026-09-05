@@ -6,6 +6,8 @@ import {
     RunOpenAIMocks,
     buildToolCallResponse,
     buildTextResponse,
+    buildChatCompletionMockRule,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithDynamicPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -220,43 +222,18 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(botPosts).toHaveCount(1);
         await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
 
-        // Turn 2's ChatCompletion still contains the system prompt after the
-        // times:1 prelude is exhausted. Appending (no reset) avoids hanging an
-        // in-flight GenerateTitle the way addMocks(?reset=true) did. Register
-        // businessCallID2 last so the post-accept completion still returns finalMarker2.
+        // Turn 2's ChatCompletion often omits the personality system prompt
+        // (and the typed follow-up phrase). Exhausted times:1 prelude rules are
+        // skipped, then Smocker 666s if nothing else matches — empty bot post.
+        // Append a catch-all after the first turn is idle (no reset: resetting
+        // hangs in-flight GenerateTitle). Re-register the title siphon after
+        // the catch-all so an in-flight GenerateTitle is not stolen.
+        // businessCallID2 last so the post-accept completion still returns
+        // finalMarker2.
         await openAIMock.appendMocks([
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: toolBotSystemPrompt,
-                    },
-                },
-                context: {times: 100},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: business2ToolCall,
-                },
-            },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: businessCallID2,
-                    },
-                },
-                context: {times: 100},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildTextResponse(finalMarker2),
-                },
-            },
+            buildChatCompletionMockRule(business2ToolCall),
+            titleGenerationMockRule('Cross-turn derivation'),
+            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {bodyContains: businessCallID2}),
         ]);
 
         const replyTextbox = rhs.locator('textarea').first();
