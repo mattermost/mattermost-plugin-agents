@@ -4,10 +4,8 @@ import { MattermostPage } from 'helpers/mm';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
-    buildChatCompletionMockRule,
     buildToolCallResponse,
     buildTextResponse,
-    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithDynamicPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -84,7 +82,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                             'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
                     },
                 },
-                context: {times: 1},
+                context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
@@ -167,6 +165,38 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     body: buildTextResponse(finalMarker1),
                 },
             },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: businessCallID2,
+                    },
+                },
+                context: {times: 100},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(finalMarker2),
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                },
+                context: {times: 100},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildToolCallResponse(
+                        businessCallID2,
+                        businessTool,
+                        '{"channel_name":"Town Square"}',
+                    ),
+                },
+            },
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -199,23 +229,6 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
         await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
-
-        // Replace mocks only after turn 1 is idle. Registering a catch-all
-        // alongside the times:1 prelude left turn 1 unmatched; keeping those
-        // prelude rules for turn 2 left an empty follow-up placeholder.
-        await openAIMock.addMocks([
-            titleGenerationMockRule(),
-            buildChatCompletionMockRule(
-                buildToolCallResponse(
-                    businessCallID2,
-                    businessTool,
-                    '{"channel_name":"Town Square"}',
-                ),
-            ),
-            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {
-                bodyContains: businessCallID2,
-            }),
-        ]);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});
