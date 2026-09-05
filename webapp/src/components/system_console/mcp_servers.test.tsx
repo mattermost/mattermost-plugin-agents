@@ -61,6 +61,13 @@ jest.mock('./mcp_tools_viewer', () => ({
     default: () => null,
 }));
 
+jest.mock('../access_control/console_policy_section', () => ({
+    __esModule: true,
+    default: ({resourceId}: {resourceId: string}) => (
+        <div data-testid='console-policy-section'>{resourceId}</div>
+    ),
+}));
+
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 
@@ -174,43 +181,6 @@ describe('MCPServers stable ID handling', () => {
         expect(servers).toHaveLength(2);
         expect(servers[1].id).toBeUndefined();
         expect(servers[0].id).toBe(STABLE_ID);
-    });
-
-    it('preserves embeddedServer.id through enablePluginServer toggle', () => {
-        const {onChange} = renderServers(makeMCPConfig([], STABLE_ID));
-
-        // BooleanItem exposes true/false radios under the enablePluginServer row.
-        const trueRadios = screen.getAllByDisplayValue('true');
-        fireEvent.click(trueRadios[0]);
-
-        expect(onChange).toHaveBeenCalled();
-        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-        expect(config.embeddedServer.id).toBe(STABLE_ID);
-        expect(config.embeddedServer.enabled).toBe(true);
-    });
-
-    it('preserves plugin_servers through enablePluginServer toggle', () => {
-        const pluginServers: PluginServerConfig[] = [{
-            id: 'pluginstableidabcdefghijklm',
-            plugin_id: 'com.example.demo',
-            name: 'Demo Plugin',
-            path: '/mcp',
-            enabled: true,
-            expose_external: false,
-            tool_configs: [{name: 'echo', policy: 'ask', enabled: true}],
-        }];
-        const {onChange} = renderServers({
-            ...makeMCPConfig([], STABLE_ID),
-            plugin_servers: pluginServers,
-        });
-
-        const trueRadios = screen.getAllByDisplayValue('true');
-        fireEvent.click(trueRadios[0]);
-
-        expect(onChange).toHaveBeenCalled();
-        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
-        expect(config.plugin_servers).toEqual(pluginServers);
-        expect(config.enablePluginServer).toBe(true);
     });
 });
 
@@ -326,5 +296,160 @@ describe('MCPServers license gating', () => {
         await waitFor(() => {
             expect(screen.queryByText('Use remote MCP servers on qualifying Mattermost plans')).toBeNull();
         });
+    });
+});
+
+describe('MCPServers built-in & plugin section', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+        mockGetMCPTools.mockResolvedValue({servers: []});
+    });
+
+    test('always renders the embedded Mattermost card', async () => {
+        renderServers(makeMCPConfig());
+
+        expect(screen.getByTestId('built-in-plugin-servers-section')).not.toBeNull();
+        expect(screen.getByText('Built-in & plugin servers')).not.toBeNull();
+        expect(screen.getByText('Mattermost')).not.toBeNull();
+        expect(screen.getByText('Built-in')).not.toBeNull();
+        await waitFor(() => {
+            expect(mockGetMCPTools).toHaveBeenCalled();
+        });
+    });
+
+    test('renders ConsolePolicySection for embedded only when id is present', () => {
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig()}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const section = screen.getByTestId('built-in-plugin-servers-section');
+        expect(section.querySelector('[data-testid="console-policy-section"]')).toBeNull();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig([], STABLE_ID)}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByTestId('console-policy-section').textContent).toBe(STABLE_ID);
+    });
+
+    test('renders plugin cards from getMCPTools with policy sections when ids are present', async () => {
+        const pluginID = 'abcdefghijklmnopqrstuvwxpl';
+        mockGetMCPTools.mockResolvedValue({
+            servers: [
+                {
+                    name: 'Demo Plugin',
+                    url: 'plugin://com.mattermost.demo/mcp',
+                    tools: [],
+                    needsOAuth: false,
+                    error: null,
+                    serverType: 'plugin',
+                    enabled: true,
+                    id: pluginID,
+                },
+                {
+                    name: 'Remote',
+                    url: 'https://mcp.example.com',
+                    tools: [],
+                    needsOAuth: false,
+                    error: null,
+                    serverType: 'remote',
+                    enabled: true,
+                    id: 'abcdefghijklmnopqrstuvwxrm',
+                },
+            ],
+        });
+
+        renderServers(makeMCPConfig([], STABLE_ID));
+
+        await waitFor(() => {
+            expect(screen.getByText('Demo Plugin')).not.toBeNull();
+        });
+        expect(screen.getByText('Plugin ID: com.mattermost.demo')).not.toBeNull();
+        expect(screen.getAllByText('Plugin').length).toBeGreaterThanOrEqual(1);
+
+        const policySections = screen.getAllByTestId('console-policy-section');
+        const policyIds = policySections.map((el) => el.textContent);
+        expect(policyIds).toContain(STABLE_ID);
+        expect(policyIds).toContain(pluginID);
+
+        // Remote tools rows must not appear in the built-in section.
+        const builtInSection = screen.getByTestId('built-in-plugin-servers-section');
+        expect(builtInSection.textContent).not.toContain('https://mcp.example.com');
+    });
+
+    test('built-in section is read-only: no delete or URL inputs', async () => {
+        mockGetMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Demo Plugin',
+                url: 'plugin://com.mattermost.demo/mcp',
+                tools: [],
+                needsOAuth: false,
+                error: null,
+                serverType: 'plugin',
+                enabled: true,
+                id: 'abcdefghijklmnopqrstuvwxpl',
+            }],
+        });
+
+        // Unlicensed so remote editable cards are hidden.
+        mockUseIsBasicsLicensed.mockReturnValue(false);
+        renderServers(makeMCPConfig());
+
+        await waitFor(() => {
+            expect(screen.getByText('Demo Plugin')).not.toBeNull();
+        });
+
+        const section = screen.getByTestId('built-in-plugin-servers-section');
+        expect(section.querySelector('input')).toBeNull();
+        expect(screen.queryByText('Delete Server')).toBeNull();
+        expect(screen.queryByPlaceholderText('https://mcp.example.com')).toBeNull();
+    });
+
+    test('preserves embeddedServer.id through enablePluginServer toggle', () => {
+        const {onChange} = renderServers(makeMCPConfig([], STABLE_ID));
+
+        // BooleanItem exposes true/false radios under the enablePluginServer row.
+        const trueRadios = screen.getAllByDisplayValue('true');
+        fireEvent.click(trueRadios[0]);
+
+        expect(onChange).toHaveBeenCalled();
+        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+        expect(config.embeddedServer.id).toBe(STABLE_ID);
+        expect(config.embeddedServer.enabled).toBe(true);
+    });
+
+    test('preserves plugin_servers through enablePluginServer toggle', () => {
+        const pluginServers: PluginServerConfig[] = [{
+            id: 'pluginstableidabcdefghijklm',
+            plugin_id: 'com.example.demo',
+            name: 'Demo Plugin',
+            path: '/mcp',
+            enabled: true,
+            expose_external: false,
+            tool_configs: [{name: 'echo', policy: 'ask', enabled: true}],
+        }];
+        const {onChange} = renderServers({
+            ...makeMCPConfig([], STABLE_ID),
+            plugin_servers: pluginServers,
+        });
+
+        const trueRadios = screen.getAllByDisplayValue('true');
+        fireEvent.click(trueRadios[0]);
+
+        expect(onChange).toHaveBeenCalled();
+        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+        expect(config.plugin_servers).toEqual(pluginServers);
+        expect(config.enablePluginServer).toBe(true);
     });
 });

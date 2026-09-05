@@ -15,7 +15,10 @@ import manifest from '@/manifest';
 
 import {useIsBasicsLicensed} from '@/license';
 
+import ConsolePolicySection from '../access_control/console_policy_section';
+
 import {CopyableTextItem} from './copyable_text_item';
+import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
 import MCPToolsViewer from './mcp_tools_viewer';
 import type {
     MCPConfig as BaseMCPConfig,
@@ -153,6 +156,10 @@ const MCPServer = ({
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
+    const unnamedServerLabel = intl.formatMessage(
+        {defaultMessage: 'Server {number}'},
+        {number: serverIndex + 1},
+    );
 
     // Ensure server config has all required properties.
     // id must be carried through: dropping it here would rotate the server's
@@ -260,7 +267,7 @@ const MCPServer = ({
                     </ServerNameEditContainer>
                 ) : (
                     <ServerTitle onClick={() => setIsEditingName(true)}>
-                        {config.name || `Server ${serverIndex + 1}`}
+                        {config.name || unnamedServerLabel}
                     </ServerTitle>
                 )}
                 <DeleteButton onClick={onDelete}>
@@ -363,6 +370,16 @@ const MCPServer = ({
                     </OAuthSectionContent>
                 )}
             </OAuthSection>
+
+            {/* IDs are minted server-side on save, so any id-bearing entry is
+                persisted and policy authoring is safe. */}
+            {config.id && (
+                <ConsolePolicySection
+                    resourceType='mcp'
+                    resourceId={config.id}
+                    resourceDisplayName={config.name || unnamedServerLabel}
+                />
+            )}
         </ServerContainer>
     );
 };
@@ -452,6 +469,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         },
         idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
     };
+
+    const pluginServers = (preloadedToolsData?.servers ?? []).filter(
+        (server) => server.serverType === 'plugin',
+    );
 
     // Generate a server name
     const generateServerName = () => {
@@ -581,6 +602,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 />
                             )}
                         </ItemList>
+                        <BuiltInPluginServersSection
+                            embeddedServerId={config.embeddedServer.id}
+                            pluginServers={pluginServers}
+                        />
                         {isBasicsLicensed ? (
                             <>
                                 <ServersList>
