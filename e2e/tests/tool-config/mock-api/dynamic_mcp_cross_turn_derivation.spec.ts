@@ -24,6 +24,7 @@ const businessTool = 'mattermost__get_channel_info';
 const businessToolLabel = 'Get Channel Info';
 const searchToolsLabel = 'Search Tools';
 const loadToolLabel = 'Load Tool';
+const toolBotSystemPrompt = 'You are called Tool Test Bot with the username toolbot';
 
 async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
     const post = page.locator('.post').filter({
@@ -100,7 +101,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'You are called Tool Test Bot with the username toolbot',
+                        value: toolBotSystemPrompt,
                     },
                 },
                 context: {times: 1},
@@ -186,41 +187,6 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     body: buildTextResponse(finalMarker2),
                 },
             },
-            // Turn 2 first completion (no-body catch-alls steal Search Tools on
-            // turn 1). Match the new user phrase or persisted turn-1 assistant
-            // text; both are unique to the follow-up request.
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: turn2User,
-                    },
-                },
-                context: {times: 100},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: business2ToolCall,
-                },
-            },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
-                        value: finalMarker1,
-                    },
-                },
-                context: {times: 100},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: business2ToolCall,
-                },
-            },
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -253,6 +219,45 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
         await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+
+        // Turn 2's ChatCompletion still contains the system prompt after the
+        // times:1 prelude is exhausted. Appending (no reset) avoids hanging an
+        // in-flight GenerateTitle the way addMocks(?reset=true) did. Register
+        // businessCallID2 last so the post-accept completion still returns finalMarker2.
+        await openAIMock.appendMocks([
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: toolBotSystemPrompt,
+                    },
+                },
+                context: {times: 100},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: business2ToolCall,
+                },
+            },
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value: businessCallID2,
+                    },
+                },
+                context: {times: 100},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse(finalMarker2),
+                },
+            },
+        ]);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});

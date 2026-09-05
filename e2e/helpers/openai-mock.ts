@@ -161,6 +161,40 @@ export class OpenAIMockContainer {
 		}
 	}
 
+	/**
+	 * Add Smocker mocks without replacing existing ones. Use this to sequence a
+	 * later turn after the first turn is idle: addMocks(?reset=true) while a
+	 * ChatCompletion is in flight hangs the next request (empty bot placeholder).
+	 */
+	appendMocks = async (bodies: any[], attempt = 0): Promise<Response> => {
+		const maxAttempts = 5;
+
+		try {
+			const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/mocks`, {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify(bodies.map(normalizeChatCompletionMockPath)),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to append mocks: ${response.status} ${response.statusText}`);
+			}
+
+			return response;
+		} catch (error) {
+			if (attempt >= maxAttempts - 1) {
+				throw error;
+			}
+
+			const backoffMs = Math.min(2000, 250 * Math.pow(2, attempt));
+			await new Promise(resolve => setTimeout(resolve, backoffMs));
+
+			return this.appendMocks(bodies, attempt + 1);
+		}
+	}
+
 	addCompletionMock = async (response: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
 		return this.addMock({
