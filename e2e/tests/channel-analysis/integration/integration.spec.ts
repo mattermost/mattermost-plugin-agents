@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -255,11 +255,15 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        // Same sequencing as "Multiple questions sequentially": custom analysis
-        // (AnalyzeChannel), wait until the composer is idle, then replace mocks
-        // for the follow-up. last7days plus overlapping body matchers left an
-        // empty bot placeholder in CI.
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402a', analysisText)));
+        // Register both turns once. Resetting Smocker after analysis hangs the
+        // next ChatCompletion (empty bot placeholder). Start a new-chat turn
+        // so the follow-up body contains the unique user phrase and does not
+        // share history with the analysis completion.
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText)),
+        ]);
 
         await integrationHelper.submitChannelQuery('What was discussed in the last 7 days?');
 
@@ -270,7 +274,8 @@ data: [DONE]
         await expect(analysisPostText).toContainText(analysisText);
 
         await aiPlugin.waitForThreadComposerIdle();
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-402b', followUpText)));
+        await aiPlugin.ensureRhsNewChatTab();
+        await expect(aiPlugin.getRhsContainer().getByTestId('rhs-new-tab-create-post')).toBeVisible({ timeout: 10000 });
         await aiPlugin.sendMessage(followUpUserText);
 
         await expect(aiPlugin.getRhsContainer().getByText(followUpText)).toBeVisible({ timeout: 30000 });
