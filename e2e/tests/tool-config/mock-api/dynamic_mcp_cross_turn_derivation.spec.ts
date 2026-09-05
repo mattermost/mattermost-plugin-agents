@@ -74,7 +74,23 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const finalMarker2 = `XTD_FINAL_TURN2_${Date.now()}`;
 
         await openAIMock.addMocks([
-            titleGenerationMockRule('Cross-turn derivation'),
+            {
+                request: {
+                    method: 'POST',
+                    path: '/v1/chat/completions',
+                    body: {
+                        matcher: 'ShouldContainSubstring',
+                        value:
+                            'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
+                    },
+                },
+                context: {times: 1},
+                response: {
+                    status: 200,
+                    headers: {'Content-Type': 'text/event-stream'},
+                    body: buildTextResponse('Cross-turn derivation'),
+                },
+            },
             {
                 request: {
                     method: 'POST',
@@ -151,34 +167,6 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     body: buildTextResponse(finalMarker1),
                 },
             },
-            buildChatCompletionMockRule(
-                buildToolCallResponse(
-                    businessCallID2,
-                    businessTool,
-                    '{"channel_name":"Town Square"}',
-                ),
-                {bodyContains: turn2User},
-            ),
-            buildChatCompletionMockRule(
-                buildToolCallResponse(
-                    businessCallID2,
-                    businessTool,
-                    '{"channel_name":"Town Square"}',
-                ),
-                {bodyContains: finalMarker1},
-            ),
-            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {
-                bodyContains: businessCallID2,
-            }),
-            // Follow-up ChatCompletion bodies sometimes omit the new user phrase
-            // after times:1 rules are exhausted, which left an empty bot post.
-            buildChatCompletionMockRule(
-                buildToolCallResponse(
-                    businessCallID2,
-                    businessTool,
-                    '{"channel_name":"Town Square"}',
-                ),
-            ),
         ]);
 
         const mmPage = new MattermostPage(page);
@@ -211,6 +199,23 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
         await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+
+        // Replace mocks only after turn 1 is idle. Registering a catch-all
+        // alongside the times:1 prelude left turn 1 unmatched; keeping those
+        // prelude rules for turn 2 left an empty follow-up placeholder.
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(
+                buildToolCallResponse(
+                    businessCallID2,
+                    businessTool,
+                    '{"channel_name":"Town Square"}',
+                ),
+            ),
+            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {
+                bodyContains: businessCallID2,
+            }),
+        ]);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});
