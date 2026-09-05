@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer, turnMocksWithTitleSiphon } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -234,7 +234,17 @@ data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104a', mockResponse1Text)));
+        // Register every turn once. Resetting Smocker between follow-ups hangs
+        // the next ChatCompletion (empty bot placeholder, no posttext). Later
+        // turns still contain the AnalyzeChannel user prompt, so more specific
+        // follow-up phrases are listed first.
+        const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: followUp2UserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: followUp1UserText }),
+            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
 
@@ -244,12 +254,10 @@ data: [DONE]
         await expect(firstPostText).toContainText('Development');
 
         await aiPlugin.waitForThreadComposerIdle();
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104b', mockResponse2Text)));
         await aiPlugin.sendMessage(followUp1UserText);
         await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text, { timeout: 30000 });
 
         await aiPlugin.waitForThreadComposerIdle();
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(sse('chatcmpl-104c', mockResponse3Text)));
         await aiPlugin.sendMessage(followUp2UserText);
         await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text, { timeout: 30000 });
     });
