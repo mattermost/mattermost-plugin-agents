@@ -256,13 +256,15 @@ data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
 
         // Register both turns once. Resetting Smocker after analysis hangs the
-        // next ChatCompletion (empty bot placeholder). Start a new-chat turn
-        // so the follow-up body contains the unique user phrase and does not
-        // share history with the analysis completion.
+        // next ChatCompletion (empty bot placeholder). Do not use a no-body
+        // catch-all here: it served the analysis SSE for the new-chat turn in
+        // CI. AnalyzeChannel always sends this user prompt (channels/channels.go);
+        // new-chat does not, so the follow-up matcher can key off the user phrase.
+        const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
         await openAIMock.addMocks([
             titleGenerationMockRule(),
             buildChatCompletionMockRule(sse('chatcmpl-402b', followUpText), { bodyContains: followUpUserText }),
-            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText)),
+            buildChatCompletionMockRule(sse('chatcmpl-402a', analysisText), { bodyContains: analyzeChannelUserPrompt }),
         ]);
 
         await integrationHelper.submitChannelQuery('What was discussed in the last 7 days?');
