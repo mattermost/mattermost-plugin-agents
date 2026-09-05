@@ -217,7 +217,14 @@ test.describe('Per-channel agent auto-reply', () => {
             client, channel.id, botUser.id, rootPost.id, responseTestText,
         );
 
-        await page.getByText('1 reply').click();
+        // The root post was created via API, so the channel view may not have
+        // the websocket thread footer yet. Reload, then wait for the indicator
+        // instead of clicking '1 reply' against the remaining test timeout.
+        await page.goto(`${mattermost.url()}/test/channels/${channel.name}`);
+        await page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: 30000 });
+        const mixedCaseReplyIndicator = page.getByText(/\d+ repl/i);
+        await expect(mixedCaseReplyIndicator).toBeVisible({ timeout: 30000 });
+        await mixedCaseReplyIndicator.click();
         const replyBox = page.getByTestId('reply_textbox');
         await replyBox.waitFor({ state: 'visible', timeout: 15000 });
         await waitOutSkewWindow(firstReply);
@@ -268,7 +275,9 @@ test.describe('Per-channel agent auto-reply', () => {
 
         // Reply in the thread through the UI without a mention — ephemeral posts are
         // only rendered for the posting user's live session, so this must be UI-driven.
-        await page.getByText('1 reply').click();
+        const offReplyIndicator = page.getByText(/\d+ repl/i);
+        await expect(offReplyIndicator).toBeVisible({ timeout: 30000 });
+        await offReplyIndicator.click();
         const replyBox = page.getByTestId('reply_textbox');
         await replyBox.waitFor({ state: 'visible', timeout: 15000 });
         await waitOutSkewWindow(botReply);
