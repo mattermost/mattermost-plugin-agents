@@ -50,10 +50,10 @@ const (
 // getBookmarkTools returns the channel bookmark tools.
 func (p *MattermostToolProvider) getBookmarkTools() []MCPTool {
 	return []MCPTool{
-		{Name: "list_channel_bookmarks", Description: listChannelBookmarksDescription, Schema: NewJSONSchemaForAccessMode[ListChannelBookmarksArgs](string(p.accessMode)), Resolver: typed("list_channel_bookmarks", p.toolListChannelBookmarks)},
-		{Name: "create_channel_bookmark", Description: createChannelBookmarkDescription, Schema: NewJSONSchemaForAccessMode[CreateChannelBookmarkArgs](string(p.accessMode)), Resolver: typed("create_channel_bookmark", p.toolCreateChannelBookmark)},
-		{Name: "update_channel_bookmark", Description: updateChannelBookmarkDescription, Schema: NewJSONSchemaForAccessMode[UpdateChannelBookmarkArgs](string(p.accessMode)), Resolver: typed("update_channel_bookmark", p.toolUpdateChannelBookmark)},
-		{Name: "delete_channel_bookmark", Description: deleteChannelBookmarkDescription, Schema: NewJSONSchemaForAccessMode[DeleteChannelBookmarkArgs](string(p.accessMode)), Resolver: typed("delete_channel_bookmark", p.toolDeleteChannelBookmark)},
+		mcpTool(p, "list_channel_bookmarks", listChannelBookmarksDescription, p.toolListChannelBookmarks),
+		mcpTool(p, "create_channel_bookmark", createChannelBookmarkDescription, p.toolCreateChannelBookmark),
+		mcpTool(p, "update_channel_bookmark", updateChannelBookmarkDescription, p.toolUpdateChannelBookmark),
+		mcpTool(p, "delete_channel_bookmark", deleteChannelBookmarkDescription, p.toolDeleteChannelBookmark),
 	}
 }
 
@@ -72,7 +72,7 @@ func (p *MattermostToolProvider) toolListChannelBookmarks(mcpContext *MCPToolCon
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d bookmark(s):\n\n", len(bookmarks)))
+	fmt.Fprintf(&result, "Found %d bookmark(s):\n\n", len(bookmarks))
 	for i, bookmark := range bookmarks {
 		format.WriteBookmark(&result, format.BookmarkEntry{
 			HeaderLabel: fmt.Sprintf("Bookmark %d", i+1),

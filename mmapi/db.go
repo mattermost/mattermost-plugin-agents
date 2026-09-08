@@ -33,8 +33,7 @@ func NewDBClient(pluginAPI *pluginapi.Client) *DBClient {
 		panic(fmt.Sprintf("failed to get master db: %v", err))
 	}
 
-	builder := sq.StatementBuilder.PlaceholderFormat(sq.Question)
-	builder = builder.PlaceholderFormat(sq.Dollar)
+	builder := sq.StatementBuilder.PlaceholderFormat(sq.Dollar)
 
 	return &DBClient{
 		DB:      sqlx.NewDb(origDB, driverName),

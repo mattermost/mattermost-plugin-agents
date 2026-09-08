@@ -30,7 +30,7 @@ type statefulKV struct {
 
 // encode marshals a value the way pluginapi does: raw []byte is stored
 // verbatim, everything else is JSON-encoded.
-func encode(value interface{}) ([]byte, error) {
+func encode(value any) ([]byte, error) {
 	if raw, ok := value.([]byte); ok {
 		return raw, nil
 	}
@@ -54,7 +54,7 @@ func (kv *statefulKV) mockClient(t *testing.T) *mocks.MockClient {
 	client := mocks.NewMockClient(t)
 
 	client.On("KVGet", mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			kv.mu.Lock()
 			defer kv.mu.Unlock()
 			raw, ok := kv.data[key]
@@ -68,7 +68,7 @@ func (kv *statefulKV) mockClient(t *testing.T) *mocks.MockClient {
 			return json.Unmarshal(raw, value)
 		})
 	client.On("KVSet", mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			raw, err := encode(value)
 			if err != nil {
 				return err
@@ -79,7 +79,7 @@ func (kv *statefulKV) mockClient(t *testing.T) *mocks.MockClient {
 			return nil
 		})
 	client.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, value interface{}, _ time.Duration) error {
+		Return(func(key string, value any, _ time.Duration) error {
 			raw, err := encode(value)
 			if err != nil {
 				return err
@@ -96,7 +96,7 @@ func (kv *statefulKV) mockClient(t *testing.T) *mocks.MockClient {
 			delete(kv.data, key)
 			return nil
 		})
-	cas := func(key string, oldValue, newValue interface{}) (bool, error) {
+	cas := func(key string, oldValue, newValue any) (bool, error) {
 		kv.mu.Lock()
 		defer kv.mu.Unlock()
 		current, exists := kv.data[key]
@@ -127,7 +127,7 @@ func (kv *statefulKV) mockClient(t *testing.T) *mocks.MockClient {
 	client.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().
 		Return(cas)
 	client.On("KVCompareAndSetWithExpiry", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().
-		Return(func(key string, oldValue, newValue interface{}, _ time.Duration) (bool, error) {
+		Return(func(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
 			return cas(key, oldValue, newValue)
 		})
 	for _, logMethod := range []string{"LogDebug", "LogInfo", "LogWarn", "LogError"} {

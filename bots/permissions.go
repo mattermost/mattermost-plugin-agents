@@ -4,10 +4,9 @@
 package bots
 
 import (
+	"errors"
 	"fmt"
 	"slices"
-
-	"errors"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -21,7 +20,7 @@ func (m *MMBots) CheckUsageRestrictions(requestingUserID string, bot *Bot, chann
 		return err
 	}
 
-	if err := m.checkUsageRestrictionsForChannel(bot, channel); err != nil {
+	if err := m.CheckUsageRestrictionsForChannel(bot, channel); err != nil {
 		return err
 	}
 
@@ -34,10 +33,6 @@ func (m *MMBots) CheckUsageRestrictions(requestingUserID string, bot *Bot, chann
 // not consider user-scope restrictions, so callers can validate channel-level
 // settings (e.g. auto-reply) independent of any requesting user.
 func (m *MMBots) CheckUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
-	return m.checkUsageRestrictionsForChannel(bot, channel)
-}
-
-func (m *MMBots) checkUsageRestrictionsForChannel(bot *Bot, channel *model.Channel) error {
 	switch bot.GetConfig().ChannelAccessLevel {
 	case llm.ChannelAccessLevelAll:
 		return nil
@@ -74,7 +69,8 @@ func teamMemberActive(client *pluginapi.Client, teamID, userID string) (bool, er
 
 // UsageRestrictionsForUserConfig returns nil if userID is allowed by cfg's
 // UserAccessLevel / UserIDs / TeamIDs, otherwise an error wrapping ErrUsageRestriction.
-// Callers without an MMBots instance (e.g. API code when bots may be nil) should use this
+// This is the shared source of truth for user-scope access checks. Callers
+// without an MMBots instance (e.g. API code when bots may be nil) should use this
 // with the plugin client; MMBots.CheckUsageRestrictionsForUserConfig delegates here.
 func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig, requestingUserID string) error {
 	switch cfg.UserAccessLevel {
@@ -116,13 +112,10 @@ func UsageRestrictionsForUserConfig(client *pluginapi.Client, cfg llm.BotConfig,
 
 // CheckUsageRestrictionsForUserConfig returns nil if userID is allowed by cfg's
 // UserAccessLevel / UserIDs / TeamIDs, otherwise an error wrapping ErrUsageRestriction.
-// This is the shared source of truth for user-scope access checks; both config-bot
-// Bot-based callers (CheckUsageRestrictionsForUser) and DB-agent BotConfig-based
-// callers (api.canUserAccessAgent) use it.
 func (m *MMBots) CheckUsageRestrictionsForUserConfig(cfg llm.BotConfig, requestingUserID string) error {
 	return UsageRestrictionsForUserConfig(m.pluginAPI, cfg, requestingUserID)
 }
 
 func (m *MMBots) CheckUsageRestrictionsForUser(bot *Bot, requestingUserID string) error {
-	return m.CheckUsageRestrictionsForUserConfig(bot.GetConfig(), requestingUserID)
+	return UsageRestrictionsForUserConfig(m.pluginAPI, bot.GetConfig(), requestingUserID)
 }

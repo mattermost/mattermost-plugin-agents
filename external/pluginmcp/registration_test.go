@@ -90,7 +90,7 @@ func TestRegisterOnce_URLAndPayload(t *testing.T) {
 		Version:        "0.5.0",
 	})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.NoError(t, err)
 	assert.False(t, retriable)
 
@@ -113,7 +113,7 @@ func TestRegisterOnce_PayloadIncludesExposeExternalFalse(t *testing.T) {
 		ExposeExternal: false, Version: "0.5.0",
 	})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.NoError(t, err)
 	assert.False(t, retriable)
 
@@ -128,7 +128,7 @@ func TestRegisterOnce_PayloadIncludesExposeExternalFalse(t *testing.T) {
 func TestRegisterOnce_Retries5xx(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(500, "boom")}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.True(t, retriable)
 	assert.Contains(t, err.Error(), "status 500")
@@ -137,7 +137,7 @@ func TestRegisterOnce_Retries5xx(t *testing.T) {
 func TestRegisterOnce_Retries404(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(404, "not ready")}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.True(t, retriable)
 }
@@ -145,7 +145,7 @@ func TestRegisterOnce_Retries404(t *testing.T) {
 func TestRegisterOnce_Retries429(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(429, "slow down")}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.True(t, retriable)
 }
@@ -153,7 +153,7 @@ func TestRegisterOnce_Retries429(t *testing.T) {
 func TestRegisterOnce_GiveUpOn4xx(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(400, "bad")}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.False(t, retriable)
 }
@@ -161,7 +161,7 @@ func TestRegisterOnce_GiveUpOn4xx(t *testing.T) {
 func TestRegisterOnce_GiveUpOn403(t *testing.T) {
 	api := &mockPluginAPI{responses: []*http.Response{newJSONResponse(403, "forbidden")}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.False(t, retriable)
 }
@@ -171,7 +171,7 @@ func TestRegisterOnce_GiveUpOn403(t *testing.T) {
 func TestRegisterOnce_NilResponse(t *testing.T) {
 	api := &mockPluginAPI{fn: func(_ *http.Request) *http.Response { return nil }}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.True(t, retriable)
 	assert.Contains(t, err.Error(), "PluginHTTP returned nil response")
@@ -335,7 +335,7 @@ func TestUnregister_NilResponse(t *testing.T) {
 func TestPostRegistration_NilPluginAPI(t *testing.T) {
 	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.False(t, retriable)
 	assert.Contains(t, err.Error(), "PluginAPI is required")
@@ -370,7 +370,7 @@ func TestPostRegistration_SurfacesDrainError(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.False(t, retriable)
 	assert.Contains(t, err.Error(), "drain response body")
@@ -382,7 +382,7 @@ func TestPostRegistration_SurfacesReadErrorOnRetriable(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.True(t, retriable)
 	assert.Contains(t, err.Error(), "read error response body")
@@ -394,7 +394,7 @@ func TestPostRegistration_SurfacesReadErrorOnPermanent(t *testing.T) {
 	}}
 	s := NewServer(api, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.Error(t, err)
 	assert.False(t, retriable)
 	assert.Contains(t, err.Error(), "read error response body")
@@ -578,7 +578,7 @@ func TestPostRegistration_BodyCloseErrorIsLoggedNotReturned(t *testing.T) {
 		log.SetFlags(prevFlags)
 	})
 
-	retriable, err := s.registerOnce(context.Background())
+	retriable, err := s.postRegistration(context.Background(), registerPath, s.config)
 	require.NoError(t, err, "Close() error must not break the OK path")
 	assert.False(t, retriable)
 	assert.True(t, body.closed, "Body should have been closed")

@@ -43,32 +43,34 @@ func (c *SimulController) RunHook(hookType ltplugins.HookType, u ltuser.User, pa
 	case ltplugins.HookLogin:
 		return c.HookLogin(u)
 	case ltplugins.HookSwitchTeam:
-		switch p := payload.(type) {
-		case ltplugins.HookPayloadSwitchTeam:
-			return c.HookSwitchTeam(u, p.TeamId)
-		case *ltplugins.HookPayloadSwitchTeam:
-			if p == nil {
-				return fmt.Errorf("hookSwitchTeam: expected plugins.HookPayloadSwitchTeam, got %T", payload)
-			}
-			return c.HookSwitchTeam(u, p.TeamId)
-		default:
-			return fmt.Errorf("hookSwitchTeam: expected plugins.HookPayloadSwitchTeam, got %T", payload)
+		p, err := hookPayload[ltplugins.HookPayloadSwitchTeam](payload, "hookSwitchTeam")
+		if err != nil {
+			return err
 		}
+		return c.HookSwitchTeam(u, p.TeamId)
 	case ltplugins.HookSwitchChannel:
-		switch p := payload.(type) {
-		case ltplugins.HookPayloadSwitchChannel:
-			return c.HookSwitchChannel(u, p.ChannelId)
-		case *ltplugins.HookPayloadSwitchChannel:
-			if p == nil {
-				return fmt.Errorf("hookSwitchChannel: expected plugins.HookPayloadSwitchChannel, got %T", payload)
-			}
-			return c.HookSwitchChannel(u, p.ChannelId)
-		default:
-			return fmt.Errorf("hookSwitchChannel: expected plugins.HookPayloadSwitchChannel, got %T", payload)
+		p, err := hookPayload[ltplugins.HookPayloadSwitchChannel](payload, "hookSwitchChannel")
+		if err != nil {
+			return err
 		}
+		return c.HookSwitchChannel(u, p.ChannelId)
 	default:
 		return nil
 	}
+}
+
+// hookPayload extracts a hook payload delivered either by value or by non-nil pointer.
+func hookPayload[T any](payload any, hookName string) (T, error) {
+	switch p := payload.(type) {
+	case *T:
+		if p != nil {
+			return *p, nil
+		}
+	case T:
+		return p, nil
+	}
+	var zero T
+	return zero, fmt.Errorf("%s: expected %T, got %T", hookName, zero, payload)
 }
 
 func resolveAgentTargetFromConfig(u simulAPI, cfg Config) (AgentTarget, error) {

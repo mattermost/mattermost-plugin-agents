@@ -62,6 +62,7 @@ export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
     provider?: 'openai' | 'anthropic' | 'google'
+    disabled?: boolean
 }
 
 const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
@@ -169,6 +170,7 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                                 testId={`native-tool-${tool.id}`}
                                 label={tool.label}
                                 checked={(props.enabledTools || []).includes(tool.id)}
+                                disabled={props.disabled}
                                 onChange={(checked) => setToolEnabled(tool.id, checked)}
                             />
                         </FieldControlRow>

@@ -88,13 +88,13 @@ func TestDelegateToMCPHandler_ConcurrencyLimit(t *testing.T) {
 	}
 
 	done := make(chan struct{})
-	for i := 0; i < mcpMaxConcurrentRequestsPerUser; i++ {
+	for range mcpMaxConcurrentRequestsPerUser {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			run(blocking)
 		}()
 	}
-	for i := 0; i < mcpMaxConcurrentRequestsPerUser; i++ {
+	for range mcpMaxConcurrentRequestsPerUser {
 		<-started
 	}
 
@@ -119,7 +119,7 @@ func TestDelegateToMCPHandler_ConcurrencyLimit(t *testing.T) {
 
 	// Releasing the in-flight requests frees the slots.
 	close(release)
-	for i := 0; i < mcpMaxConcurrentRequestsPerUser; i++ {
+	for range mcpMaxConcurrentRequestsPerUser {
 		<-done
 	}
 	rec = run(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

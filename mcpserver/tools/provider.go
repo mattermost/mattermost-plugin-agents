@@ -14,7 +14,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/types"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -60,6 +59,19 @@ func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPT
 	}
 }
 
+// mcpTool builds an MCPTool from a name, description, and typed resolver. The
+// input schema is derived from the resolver's argument type and the provider's
+// access mode, and the name is wired into the resolver once, so registration
+// sites state each fact a single time.
+func mcpTool[T any](p *MattermostToolProvider, name, description string, handler func(*MCPToolContext, T) (string, error)) MCPTool {
+	return MCPTool{
+		Name:        name,
+		Description: description,
+		Schema:      NewJSONSchemaForAccessMode[T](string(p.accessMode)),
+		Resolver:    typed(name, handler),
+	}
+}
+
 // MCPTool represents a tool specifically for MCP use with our custom context
 type MCPTool struct {
 	Name        string
@@ -75,6 +87,15 @@ type MCPTool struct {
 
 type ToolProvider interface {
 	ProvideTools(*mcp.Server)
+}
+
+// ServerConfig defines the common configuration methods every MCP server type
+// provides to the tool provider.
+type ServerConfig interface {
+	GetMMServerURL() string
+	GetMMInternalServerURL() string
+	GetDevMode() bool
+	GetTrackAIGenerated() bool
 }
 
 // SemanticSearchService provides semantic search capabilities for the MCP server.
@@ -97,10 +118,9 @@ type MattermostToolProvider struct {
 	fileContentService FileContentService    // Optional file content service for read_file, can be nil
 }
 
-// NewMattermostToolProvider creates a new tool provider
-// Now accepts a ServerConfig interface to avoid circular dependencies
+// NewMattermostToolProvider creates a new tool provider.
 // searchService is optional and can be nil if semantic search is not available
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config types.ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -439,7 +459,7 @@ func NewJSONSchemaForAccessMode[T any](accessMode string) *jsonschema.Schema {
 // t that the given access mode is not allowed to use, per each field's `access:`
 // tag. Returns nil when nothing is restricted.
 func excludedFieldsForAccessMode(t reflect.Type, accessMode string) map[string]bool {
-	for t != nil && t.Kind() == reflect.Ptr {
+	for t != nil && t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 	if t == nil || t.Kind() != reflect.Struct {
@@ -503,7 +523,7 @@ func validateAccessRestrictions(jsonData []byte, target interface{}, currentAcce
 	}
 	// Get the struct type to inspect field tags
 	targetType := reflect.TypeOf(target)
-	if targetType.Kind() == reflect.Ptr {
+	if targetType.Kind() == reflect.Pointer {
 		targetType = targetType.Elem()
 	}
 

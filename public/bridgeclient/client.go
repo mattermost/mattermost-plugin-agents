@@ -44,9 +44,9 @@ type Post struct {
 
 // CompletionRequest represents a completion request
 type CompletionRequest struct {
-	Posts              []Post                 `json:"posts"`
-	MaxGeneratedTokens int                    `json:"max_generated_tokens,omitempty"`
-	JSONOutputFormat   map[string]interface{} `json:"json_output_format,omitempty"`
+	Posts              []Post         `json:"posts"`
+	MaxGeneratedTokens int            `json:"max_generated_tokens,omitempty"`
+	JSONOutputFormat   map[string]any `json:"json_output_format,omitempty"`
 	// AllowedTools is an optional allowlist for agent completions. Each entry is a tool
 	// name as returned by GET .../agents/{id}/tools (MCP and embedded tools only; built-in
 	// tools are not discoverable or allowlistable via the bridge).

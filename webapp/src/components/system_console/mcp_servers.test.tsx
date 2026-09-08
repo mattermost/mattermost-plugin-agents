@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, waitFor} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
 jest.mock('react-intl', () => {
@@ -61,12 +61,13 @@ function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
     };
 }
 
-function makeRemoteServer(): MCPServerConfig {
+function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerConfig {
     return {
         name: 'Jira',
         enabled: true,
         baseURL: 'https://mcp.example.com',
         headers: {},
+        ...overrides,
     };
 }
 
@@ -127,5 +128,74 @@ describe('MCPServers license gating', () => {
         await waitFor(() => {
             expect(screen.queryByText('Use remote MCP servers on qualifying Mattermost plans')).toBeNull();
         });
+    });
+});
+
+describe('MCPServers service account headers', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+    });
+
+    // Rows render in DOM order: base Headers first, then Service Account headers.
+    const baseHeaderValueInput = () => screen.getAllByPlaceholderText('Value')[0];
+    const serviceAccountHeaderValueInput = () => screen.getByPlaceholderText('Header value (e.g. Bearer token)');
+
+    async function renderOneServer(server: MCPServerConfig) {
+        const rendered = renderServers(makeMCPConfig([server]));
+        await screen.findByText('Service Account Authentication');
+        return rendered;
+    }
+
+    function savedServer(onChange: jest.Mock): MCPServerConfig {
+        expect(onChange).toHaveBeenCalledTimes(1);
+        const saved = (onChange.mock.calls[0][0] as MCPConfig).servers;
+        expect(saved).not.toBeNull();
+        return saved![0];
+    }
+
+    // Editing either map must leave the other intact; the base-header half is
+    // also the regression pin for the config rebuild dropping serviceAccountHeaders.
+    test('editing one header map leaves the other map untouched', async () => {
+        const server = makeRemoteServer({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        });
+
+        const base = await renderOneServer(server);
+        fireEvent.change(baseHeaderValueInput(), {target: {value: 'base-value-2'}});
+        expect(savedServer(base.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value-2'},
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+        base.unmount();
+
+        const serviceAccount = await renderOneServer(server);
+        fireEvent.change(serviceAccountHeaderValueInput(), {target: {value: 'Bearer rotated'}});
+        expect(savedServer(serviceAccount.onChange)).toEqual(expect.objectContaining({
+            headers: {'X-Base': 'base-value'},
+            serviceAccountHeaders: {Authorization: 'Bearer rotated'},
+        }));
+    });
+
+    // Rows render by index, so a rename that appends would swap rows under the cursor.
+    test('renaming a header keeps its position in the emitted map', async () => {
+        const {onChange} = await renderOneServer(makeRemoteServer({
+            headers: {'X-First': 'one', 'X-Second': 'two'},
+        }));
+
+        fireEvent.change(screen.getAllByPlaceholderText('Header name')[0], {target: {value: 'X-Renamed'}});
+
+        expect(Object.keys(savedServer(onChange).headers)).toEqual(['X-Renamed', 'X-Second']);
+    });
+
+    test('service account header editor explains name and value are separate fields', async () => {
+        await renderOneServer(makeRemoteServer({
+            serviceAccountHeaders: {Authorization: 'Bearer pat'},
+        }));
+
+        expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
+        expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
+        expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
     });
 });

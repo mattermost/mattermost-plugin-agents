@@ -88,40 +88,41 @@ func recordBifrostError(span trace.Span, bifrostErr *schemas.BifrostError) {
 // recordReasoningSent attaches the outbound request's reasoning configuration
 // to the current span. Pass nil when no reasoning block is attached.
 func recordReasoningSent(span trace.Span, reasoning *schemas.ChatReasoning) {
-	if span == nil {
-		return
-	}
 	if reasoning == nil {
-		span.SetAttributes(telemetry.LLMReasoningSent.Bool(false))
+		recordReasoningSentAttrs(span, false, nil, nil)
 		return
 	}
-	attrs := []attribute.KeyValue{telemetry.LLMReasoningSent.Bool(true)}
-	if reasoning.Effort != nil {
-		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*reasoning.Effort))
-	}
-	if reasoning.MaxTokens != nil {
-		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*reasoning.MaxTokens))
-	}
-	span.SetAttributes(attrs...)
+	recordReasoningSentAttrs(span, true, reasoning.Effort, reasoning.MaxTokens)
 }
 
 // recordResponsesReasoningSent is the Responses-API counterpart to
 // recordReasoningSent. The Responses parameter type is distinct from
 // ChatReasoning so we need a sibling overload.
 func recordResponsesReasoningSent(span trace.Span, reasoning *schemas.ResponsesParametersReasoning) {
+	if reasoning == nil {
+		recordReasoningSentAttrs(span, false, nil, nil)
+		return
+	}
+	recordReasoningSentAttrs(span, true, reasoning.Effort, reasoning.MaxTokens)
+}
+
+// recordReasoningSentAttrs is the shared core of recordReasoningSent and
+// recordResponsesReasoningSent; sent is false when no reasoning block is
+// attached to the request.
+func recordReasoningSentAttrs(span trace.Span, sent bool, effort *string, maxTokens *int) {
 	if span == nil {
 		return
 	}
-	if reasoning == nil {
+	if !sent {
 		span.SetAttributes(telemetry.LLMReasoningSent.Bool(false))
 		return
 	}
 	attrs := []attribute.KeyValue{telemetry.LLMReasoningSent.Bool(true)}
-	if reasoning.Effort != nil {
-		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*reasoning.Effort))
+	if effort != nil {
+		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*effort))
 	}
-	if reasoning.MaxTokens != nil {
-		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*reasoning.MaxTokens))
+	if maxTokens != nil {
+		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*maxTokens))
 	}
 	span.SetAttributes(attrs...)
 }

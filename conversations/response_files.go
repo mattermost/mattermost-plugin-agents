@@ -4,7 +4,10 @@
 package conversations
 
 import (
-	"encoding/json"
+	"context"
+	"slices"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -15,14 +18,11 @@ import (
 
 const maxResponseAttachments = llm.MaxPostAttachments
 
-// decorateStreamWithCreatedFiles wraps stream so that, on a clean end, the
-// files created during the turn (recorded on the given contexts via
-// CreateFile, plus extraFileIDs recovered from persisted turns) are announced
-// with an EventTypeFiles event immediately before EventTypeEnd. The streaming
-// layer merges the IDs into post.FileIds and the server's UpdatePost performs
-// the attach, only touching still-unattached files and stripping the rest —
-// which makes over-collection (e.g. from the turn-scan fallback) safe.
-func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, contexts ...*llm.Context) *llm.TextStreamResult {
+// decorateStreamWithCreatedFiles emits EventTypeFiles immediately before End
+// so the streaming layer can merge IDs into post.FileIds. Over-collection is
+// safe: UpdatePost only attaches still-unattached files. bot may be nil; then
+// only tool-created files attach.
+func (c *Conversations) decorateStreamWithCreatedFiles(ctx context.Context, bot *bots.Bot, stream *llm.TextStreamResult, post *model.Post, extraFileIDs []string, sandboxContext *llm.Context, createdFileContexts ...*llm.Context) *llm.TextStreamResult {
 	if stream == nil {
 		return nil
 	}
@@ -30,10 +30,9 @@ func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamRes
 	go func() {
 		defer close(output)
 		for event := range stream.Stream {
-			// Errors and a close without End pass through untouched; the
-			// files stay unattached until a later follow-up's turn scan.
 			if event.Type == llm.EventTypeEnd {
-				if ids := c.collectAttachableFileIDs(post, extraFileIDs, contexts); len(ids) > 0 {
+				c.attachSandboxOutputFiles(ctx, bot, sandboxContext)
+				if ids := c.collectAttachableFileIDs(post, extraFileIDs, createdFileContexts); len(ids) > 0 {
 					output <- llm.TextStreamEvent{Type: llm.EventTypeFiles, Value: ids}
 				}
 			}
@@ -43,10 +42,14 @@ func (c *Conversations) decorateStreamWithCreatedFiles(stream *llm.TextStreamRes
 	return &llm.TextStreamResult{Stream: output}
 }
 
-// collectAttachableFileIDs merges the created-file registries of the given
-// contexts (nil contexts are skipped) with extraFileIDs, dropping duplicates
-// and IDs already attached to post, and truncating so the post stays within
-// maxResponseAttachments.
+func (c *Conversations) attachSandboxOutputFiles(ctx context.Context, bot *bots.Bot, llmCtx *llm.Context) {
+	if llmCtx == nil || !bot.SandboxFileAttachmentAvailable() {
+		return
+	}
+	downloader := bot.ProviderServices().FileDownloader
+	mmtools.AttachSandboxOutputFiles(ctx, c.mmClient, downloader, llmCtx)
+}
+
 func (c *Conversations) collectAttachableFileIDs(post *model.Post, extraFileIDs []string, contexts []*llm.Context) []string {
 	seen := make(map[string]bool, len(post.FileIds))
 	for _, id := range post.FileIds {
@@ -116,14 +119,14 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 	// Exclusive lower bound of the scan: the initiating user turn's sequence.
 	// When no user turn qualifies, the whole conversation is scanned.
 	windowStart, windowFound := 0, false
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role != "user" {
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role != "user" {
 			continue
 		}
-		if anchorFound && turns[i].Sequence >= anchorSeq {
+		if anchorFound && turn.Sequence >= anchorSeq {
 			continue
 		}
-		windowStart, windowFound = turns[i].Sequence, true
+		windowStart, windowFound = turn.Sequence, true
 		break
 	}
 
@@ -137,8 +140,8 @@ func createdFileIDsFromTurnWindow(turns []store.Turn, postID string) []string {
 		if turns[i].Role != "assistant" && turns[i].Role != "tool_result" {
 			continue
 		}
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
+		blocks, err := conversation.UnmarshalBlocks(turns[i].Content)
+		if err != nil {
 			continue
 		}
 		for _, b := range blocks {

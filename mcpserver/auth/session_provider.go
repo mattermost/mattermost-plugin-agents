@@ -15,54 +15,62 @@ import (
 // This provider uses existing Mattermost session tokens passed through context,
 // eliminating the need for separate OAuth flows for embedded MCP servers
 type SessionAuthenticationProvider struct {
-	mmServerURL         string // Mattermost server URL for API communication
-	mmInternalServerURL string // Internal server URL (may be different for containerized deployments)
-	logger              logger.Logger
+	providerBase
 }
 
 // NewSessionAuthenticationProvider creates a new session authentication provider for in-memory transport
 // Uses internalURL for API communication if provided, otherwise falls back to externalURL
 func NewSessionAuthenticationProvider(externalURL, internalURL string, logger logger.Logger) *SessionAuthenticationProvider {
-	// Use internal URL for API communication if provided, otherwise fallback to external URL
-	mmServerURL := internalURL
-	if mmServerURL == "" {
-		mmServerURL = externalURL
-	}
-
 	return &SessionAuthenticationProvider{
-		mmServerURL:         mmServerURL,
-		mmInternalServerURL: internalURL,
-		logger:              logger,
+		providerBase: newProviderBase(externalURL, internalURL, logger),
 	}
 }
 
 // ValidateAuth validates session authentication from context
 // The session token must be present in the context and be valid
 func (p *SessionAuthenticationProvider) ValidateAuth(ctx context.Context) error {
-	// Get authenticated client, which handles all validation
-	_, err := p.GetAuthenticatedMattermostClient(ctx)
-	return err
+	return validateAuth(ctx, p)
 }
 
 // GetAuthenticatedMattermostClient returns a session-authenticated Mattermost client
 // Uses token resolver to get tokens from session IDs for the embedded server
 func (p *SessionAuthenticationProvider) GetAuthenticatedMattermostClient(ctx context.Context) (*model.Client4, error) {
+	client, _, err := p.authenticatedClientAndUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// GetAuthenticatedUser returns the authenticated Mattermost user for the session token in context.
+// Uses token resolver to get tokens from session IDs for the embedded server
+func (p *SessionAuthenticationProvider) GetAuthenticatedUser(ctx context.Context) (*model.User, error) {
+	_, user, err := p.authenticatedClientAndUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// authenticatedClientAndUser resolves the session token from context, builds a
+// client with it, and validates the session by fetching the current user.
+func (p *SessionAuthenticationProvider) authenticatedClientAndUser(ctx context.Context) (*model.Client4, *model.User, error) {
 	// Get token resolver from context (required for embedded server authentication)
 	resolver, ok := ctx.Value(TokenResolverContextKey).(TokenResolver)
 	if !ok {
-		return nil, fmt.Errorf("session authentication provider requires token resolver in context")
+		return nil, nil, fmt.Errorf("session authentication provider requires token resolver in context")
 	}
 
 	// Get session ID from context
 	sessionID, ok := ctx.Value(SessionIDContextKey).(string)
 	if !ok || sessionID == "" {
-		return nil, fmt.Errorf("session authentication provider requires valid session ID in context")
+		return nil, nil, fmt.Errorf("session authentication provider requires valid session ID in context")
 	}
 
 	// Resolve token from session ID
 	token, err := resolver(sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve token from session: %w", err)
+		return nil, nil, fmt.Errorf("failed to resolve token from session: %w", err)
 	}
 
 	// Create client and set session token
@@ -72,42 +80,12 @@ func (p *SessionAuthenticationProvider) GetAuthenticatedMattermostClient(ctx con
 
 	// Validate the token by attempting to get current user information
 	// This ensures the session is still valid and not expired
-	if _, err := p.fetchAuthenticatedUser(ctx, client); err != nil {
-		return nil, err
-	}
-
-	return client, nil
-}
-
-// GetAuthenticatedUser returns the authenticated Mattermost user for the session token in context.
-// Uses token resolver to get tokens from session IDs for the embedded server
-func (p *SessionAuthenticationProvider) GetAuthenticatedUser(ctx context.Context) (*model.User, error) {
-	// Get token resolver from context (required for embedded server authentication)
-	resolver, ok := ctx.Value(TokenResolverContextKey).(TokenResolver)
-	if !ok {
-		return nil, fmt.Errorf("session authentication provider requires token resolver in context")
-	}
-
-	// Get session ID from context
-	sessionID, ok := ctx.Value(SessionIDContextKey).(string)
-	if !ok || sessionID == "" {
-		return nil, fmt.Errorf("session authentication provider requires valid session ID in context")
-	}
-
-	// Resolve token from session ID
-	token, err := resolver(sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve token from session: %w", err)
-	}
-
-	client := model.NewAPIv4Client(p.mmServerURL)
-	client.SetToken(token)
-
 	user, err := p.fetchAuthenticatedUser(ctx, client)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return user, nil
+
+	return client, user, nil
 }
 
 func (p *SessionAuthenticationProvider) fetchAuthenticatedUser(ctx context.Context, client *model.Client4) (*model.User, error) {

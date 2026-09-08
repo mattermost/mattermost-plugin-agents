@@ -692,9 +692,11 @@ func TestBotConfigMCPDynamicToolLoadingDefaulting(t *testing.T) {
 		})
 	}
 
-	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false})
+	// The webapp relies on both flags being present even when false.
+	raw, err := json.Marshal(BotConfig{MCPDynamicToolLoading: false, UseServiceAccountAuth: false})
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"mcpDynamicToolLoading":false`)
+	assert.Contains(t, string(raw), `"useServiceAccountAuth":false`)
 }
 
 func TestServiceConfig_JSONRoundTrip_FallbackServiceID(t *testing.T) {

@@ -112,7 +112,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 				Input:           questionInput,
 				Status:          conversation.StatusPending,
 				UserInteraction: llm.UserInteractionSelect,
-				Shared:          conversation.BoolPtr(false),
+				Shared:          new(false),
 			}}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -225,7 +225,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 			Name:   "jira__get_issue",
 			Input:  json.RawMessage(`{}`),
 			Status: conversation.StatusPending,
-			Shared: conversation.BoolPtr(false),
+			Shared: new(false),
 		},
 		{
 			Type: conversation.BlockTypeToolUse,
@@ -237,7 +237,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 			}`),
 			Status:          conversation.StatusPending,
 			UserInteraction: llm.UserInteractionSelect,
-			Shared:          conversation.BoolPtr(false),
+			Shared:          new(false),
 		},
 	}
 	content, err := json.Marshal(blocks)
@@ -515,7 +515,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				Name:             "jira__get_issue",
 				Input:            json.RawMessage(`{}`),
 				Status:           conversation.StatusPending,
-				Shared:           conversation.BoolPtr(false),
+				Shared:           new(false),
 				WouldAutoExecute: tc.wouldAutoExecute,
 			}}
 			if tc.includeQuestion {
@@ -529,7 +529,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 					}`),
 					Status:          conversation.StatusPending,
 					UserInteraction: llm.UserInteractionSelect,
-					Shared:          conversation.BoolPtr(false),
+					Shared:          new(false),
 				})
 			}
 			content, err := json.Marshal(blocks)

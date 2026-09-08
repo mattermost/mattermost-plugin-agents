@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -148,7 +149,7 @@ func MigrateSeparateServicesFromBots(cfg Config) (Config, bool, error) {
 		}
 
 		// Generate service ID
-		serviceID := generateServiceID()
+		serviceID := uuid.New().String()
 
 		// Check if similar service already exists (deduplication)
 		existingID := findIdenticalService(serviceMap, bot.Service)
@@ -208,10 +209,6 @@ func RunAllLegacyMigrations(cfg Config, loadLegacyConfig func() (LegacyServiceCo
 	}
 
 	return cfg, changed, nil
-}
-
-func generateServiceID() string {
-	return uuid.New().String()
 }
 
 // findIdenticalService checks if a service with identical configuration already exists.

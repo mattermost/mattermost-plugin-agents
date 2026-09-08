@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package loadtest
+package profile
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseProfileNilAndEmpty(t *testing.T) {
+func TestParseNilAndEmpty(t *testing.T) {
 	t.Parallel()
 	d := DefaultReadSearchHeavyProfile()
 	tests := []struct {
@@ -43,10 +43,9 @@ func TestParseProfileNilAndEmpty(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			p, err := ParseProfile(tt.raw)
+			p, err := Parse(tt.raw)
 			require.NoError(t, err)
 			tt.assert(t, p)
 		})
@@ -124,15 +123,15 @@ func TestSummaryDeterministic(t *testing.T) {
 	require.Equal(t, a, b)
 }
 
-func TestParseProfileUnknownLatencyNameRejected(t *testing.T) {
+func TestParseUnknownLatencyNameRejected(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"profile_weights":{"does_not_exist":1}}`)
-	_, err := ParseProfile(raw)
+	_, err := Parse(raw)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown latency profile")
 }
 
-func TestParseProfileInvalidWeights(t *testing.T) {
+func TestParseInvalidWeights(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -153,25 +152,24 @@ func TestParseProfileInvalidWeights(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := ParseProfile(tt.raw)
+			_, err := Parse(tt.raw)
 			require.Error(t, err)
 		})
 	}
 }
 
-func TestParseProfileInvalidLatencyRange(t *testing.T) {
+func TestParseInvalidLatencyRange(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"latency_profiles":{"realistic_default":{"ttft_ms":[500,100]}}}`))
+	_, err := Parse(json.RawMessage(`{"latency_profiles":{"realistic_default":{"ttft_ms":[500,100]}}}`))
 	require.Error(t, err)
 }
 
-func TestParseProfilePartialLatencyProfileInheritsDefaults(t *testing.T) {
+func TestParsePartialLatencyProfileInheritsDefaults(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"latency_profiles":{"realistic_default":{"ttft_ms":[42,84]}}}`)
-	p, err := ParseProfile(raw)
+	p, err := Parse(raw)
 	require.NoError(t, err)
 
 	lp := p.LatencyProfiles["realistic_default"]
@@ -181,33 +179,33 @@ func TestParseProfilePartialLatencyProfileInheritsDefaults(t *testing.T) {
 	require.Equal(t, [2]int{15000, 25000}, lp.TotalWallTimeMsPerRequest)
 }
 
-func TestParseProfileNewLatencyProfileRequiresAllFields(t *testing.T) {
+func TestParseNewLatencyProfileRequiresAllFields(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"latency_profiles":{"custom":{"ttft_ms":[1,2]}}}`))
+	_, err := Parse(json.RawMessage(`{"latency_profiles":{"custom":{"ttft_ms":[1,2]}}}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must define all latency fields")
 }
 
-func TestParseProfileDisallowUnknownTopLevel(t *testing.T) {
+func TestParseDisallowUnknownTopLevel(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"name":"x","extra_field":true}`))
+	_, err := Parse(json.RawMessage(`{"name":"x","extra_field":true}`))
 	require.Error(t, err)
 }
 
-func TestParseProfileRejectsTrailingTopLevelJSON(t *testing.T) {
+func TestParseRejectsTrailingTopLevelJSON(t *testing.T) {
 	t.Parallel()
-	_, err := ParseProfile(json.RawMessage(`{"name":"x"} {"seed":2}`))
+	_, err := Parse(json.RawMessage(`{"name":"x"} {"seed":2}`))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unexpected trailing JSON value")
 }
 
-func TestParseProfileMergeOverrides(t *testing.T) {
+func TestParseMergeOverrides(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{
 		"profile_weights":{"realistic_default":1.0,"realistic_fast":0,"realistic_slow":0},
 		"tool_argument_profiles":{"read_channel":{"post_limits":[99]}}
 	}`)
-	p, err := ParseProfile(raw)
+	p, err := Parse(raw)
 	require.NoError(t, err)
 	require.InDelta(t, 1.0, p.ProfileWeights["realistic_default"], 1e-9)
 	arg := p.ToolArgumentProfiles["read_channel"]

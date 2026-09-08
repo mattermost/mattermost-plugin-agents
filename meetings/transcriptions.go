@@ -19,6 +19,15 @@ const (
 	TitleMeetingSummary = "Meeting Summary"
 )
 
+var (
+	// ErrNotMeetingBotPost is returned when the target post was not created
+	// by a recognized meeting bot.
+	ErrNotMeetingBotPost = errors.New("not a meeting bot post")
+	// ErrNoTranscriptionPostReference is returned when a summary post lacks
+	// the prop referencing its transcription post.
+	ErrNoTranscriptionPostReference = errors.New("post missing reference to transcription post ID")
+)
+
 // HandleTranscribeFile handles file transcription requests
 func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel, fileID string) (map[string]string, error) {
 	user, err := s.pluginAPI.User.Get(userID)
@@ -63,7 +72,7 @@ func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, pos
 	}
 
 	if !targetPostUser.IsBot || !slices.Contains(MeetingBotUsernames, targetPostUser.Username) {
-		return nil, errors.New("not a meeting bot post")
+		return nil, ErrNotMeetingBotPost
 	}
 
 	createdPost, err := s.newCallTranscriptionSummaryThread(bot, user, post, channel)
@@ -97,7 +106,7 @@ func (s *Service) HandlePostbackSummary(userID string, post *model.Post) (map[st
 
 	originalTranscriptPostID, ok := transcriptThreadRootPost.GetProp(ReferencedTranscriptPostID).(string)
 	if !ok || originalTranscriptPostID == "" {
-		return nil, errors.New("post missing reference to transcription post ID")
+		return nil, ErrNoTranscriptionPostReference
 	}
 
 	transcriptionPost, err := s.pluginAPI.Post.GetPost(originalTranscriptPostID)

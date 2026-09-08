@@ -105,10 +105,7 @@ func Slice(name, mimeType, text string, offset, limit int) Content {
 	if limit > MaxReadRunes {
 		limit = MaxReadRunes
 	}
-	end := offset + limit
-	if end > total {
-		end = total
-	}
+	end := min(offset+limit, total)
 
 	return Content{
 		Name:       name,

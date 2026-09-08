@@ -42,15 +42,9 @@ func (staticMCPConfigService) Config() *model.Config {
 // maxMCPFetchBytes matches the default model.FileSettings.MaxFileSize (100 MiB) for local attachment reads.
 const maxMCPFetchBytes = 100 * 1024 * 1024
 
-var mcpLocalURLHTTPClientInstance *http.Client
-var mcpLocalURLHTTPClientOnce sync.Once
-
-func getMCPLocalURLHTTPClient() *http.Client {
-	mcpLocalURLHTTPClientOnce.Do(func() {
-		mcpLocalURLHTTPClientInstance = httpservice.MakeHTTPService(staticMCPConfigService{}).MakeClient(false)
-	})
-	return mcpLocalURLHTTPClientInstance
-}
+var getMCPLocalURLHTTPClient = sync.OnceValue(func() *http.Client {
+	return httpservice.MakeHTTPService(staticMCPConfigService{}).MakeClient(false)
+})
 
 // errMCPFileUploadFailed is returned to tool output when an attachment URL fetch fails.
 // The underlying error is logged; do not wrap with %w from low-level clients to avoid leaking details to users.

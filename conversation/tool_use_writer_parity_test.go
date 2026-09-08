@@ -26,19 +26,21 @@ var persistedToolUseFields = []string{
 	"title",
 	"description",
 	"user_interaction",
+	"would_auto_execute",
 }
 
 func parityToolCall() llm.ToolCall {
 	return llm.ToolCall{
-		ID:              "tc-1",
-		Name:            "mattermost__create_post",
-		Description:     "Create a post",
-		Title:           "Create Post",
-		Arguments:       json.RawMessage(`{"channel_id":"c1"}`),
-		Status:          llm.ToolCallStatusSuccess,
-		MCPBareName:     "create_post",
-		UserInteraction: llm.UserInteractionSelect,
-		ServerOrigin:    "embedded://mattermost",
+		ID:               "tc-1",
+		Name:             "mattermost__create_post",
+		Description:      "Create a post",
+		Title:            "Create Post",
+		Arguments:        json.RawMessage(`{"channel_id":"c1"}`),
+		Status:           llm.ToolCallStatusSuccess,
+		MCPBareName:      "create_post",
+		UserInteraction:  llm.UserInteractionSelect,
+		WouldAutoExecute: true,
+		ServerOrigin:     "embedded://mattermost",
 	}
 }
 
@@ -55,7 +57,7 @@ func toolUseBlockJSONMap(t *testing.T, block ContentBlock) map[string]any {
 // (toolUseBlocks) emits every persisted tool_use identity/metadata field for a
 // fully-populated call, so an auto-run round renders the same as a live one.
 func TestToolUseBlocksPersistsPolicyFields(t *testing.T) {
-	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, []llm.ToolCall{parityToolCall()}, true)
+	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, nil, []llm.ToolCall{parityToolCall()}, true)
 	require.Len(t, blocks, 1)
 	require.Equal(t, BlockTypeToolUse, blocks[0].Type)
 
@@ -64,28 +66,6 @@ func TestToolUseBlocksPersistsPolicyFields(t *testing.T) {
 		t.Run(field, func(t *testing.T) {
 			require.Contains(t, m, field, "toolUseBlocks dropped the field")
 			require.NotEmpty(t, m[field], "toolUseBlocks emitted an empty field")
-		})
-	}
-}
-
-// TestPostToBlocksPersistsPolicyFields asserts the generic Post->blocks
-// converter carries the same tool identity/metadata. It intentionally omits
-// user_interaction: PostToBlocks converts completed posts, where the pending
-// interaction kind is not meaningful (it is set by the approval-path writers).
-func TestPostToBlocksPersistsPolicyFields(t *testing.T) {
-	post := llm.Post{Role: llm.PostRoleBot, ToolUse: []llm.ToolCall{parityToolCall()}}
-	blocks := PostToBlocks(post, true)
-	require.GreaterOrEqual(t, len(blocks), 1)
-	require.Equal(t, BlockTypeToolUse, blocks[0].Type)
-
-	m := toolUseBlockJSONMap(t, blocks[0])
-	for _, field := range persistedToolUseFields {
-		if field == "user_interaction" {
-			continue
-		}
-		t.Run(field, func(t *testing.T) {
-			require.Contains(t, m, field, "PostToBlocks dropped the field")
-			require.NotEmpty(t, m[field], "PostToBlocks emitted an empty field")
 		})
 	}
 }

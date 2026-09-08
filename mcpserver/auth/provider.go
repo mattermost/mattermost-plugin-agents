@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -46,4 +47,31 @@ type UserIdentityProvider interface {
 
 	// GetAuthenticatedUser returns the authenticated Mattermost user for the current context
 	GetAuthenticatedUser(ctx context.Context) (*model.User, error)
+}
+
+// providerBase holds what every authentication provider needs: the Mattermost
+// server URL for API communication and a logger.
+type providerBase struct {
+	mmServerURL string
+	logger      logger.Logger
+}
+
+// newProviderBase uses internalURL for API communication if provided,
+// otherwise falls back to externalURL.
+func newProviderBase(externalURL, internalURL string, logger logger.Logger) providerBase {
+	mmServerURL := internalURL
+	if mmServerURL == "" {
+		mmServerURL = externalURL
+	}
+	return providerBase{
+		mmServerURL: mmServerURL,
+		logger:      logger,
+	}
+}
+
+// validateAuth implements AuthenticationProvider.ValidateAuth for providers
+// whose GetAuthenticatedMattermostClient performs all validation.
+func validateAuth(ctx context.Context, p AuthenticationProvider) error {
+	_, err := p.GetAuthenticatedMattermostClient(ctx)
+	return err
 }

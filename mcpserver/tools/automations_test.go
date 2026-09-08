@@ -45,6 +45,20 @@ func validateAutomationTriggerForTest(tr AutomationTrigger) string {
 	return ""
 }
 
+// triggerChannelID extracts the channel ID from any trigger variant.
+func triggerChannelID(t AutomationTrigger) string {
+	if t.MessagePosted != nil {
+		return t.MessagePosted.ChannelID
+	}
+	if t.Schedule != nil {
+		return t.Schedule.ChannelID
+	}
+	if t.MembershipChanged != nil {
+		return t.MembershipChanged.ChannelID
+	}
+	return ""
+}
+
 // newTestAutomationServer creates an httptest server that mimics the channel-automation plugin API.
 func newTestAutomationServer(t *testing.T, automations []Automation) *httptest.Server {
 	t.Helper()

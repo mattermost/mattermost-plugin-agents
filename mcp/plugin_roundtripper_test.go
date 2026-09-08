@@ -5,15 +5,32 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+type closeTrackingBody struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (b *closeTrackingBody) Read([]byte) (int, error) {
+	return 0, io.EOF
+}
+
+func (b *closeTrackingBody) Close() error {
+	b.once.Do(func() { close(b.closed) })
+	return nil
+}
 
 func TestPluginHTTPRoundTripper_RewritesURLPath(t *testing.T) {
 	tests := []struct {
@@ -143,4 +160,40 @@ func TestPluginHTTPRoundTripper_NilPluginAPI(t *testing.T) {
 
 	_, err = rt.RoundTrip(req)
 	assert.Error(t, err)
+}
+
+func TestPluginHTTPRoundTripper_ReturnsWhenContextExpires(t *testing.T) {
+	release := make(chan struct{})
+	bodyClosed := make(chan struct{})
+	mockAPI := mocks.NewMockClient(t)
+	mockAPI.On("PluginHTTP", mock.Anything).
+		Run(func(mock.Arguments) {
+			<-release
+		}).
+		Return(&http.Response{
+			StatusCode: http.StatusOK,
+			Body:       &closeTrackingBody{closed: bodyClosed},
+			Header:     http.Header{},
+		}).
+		Once()
+
+	rt := NewPluginHTTPRoundTripper("com.example.slow", "/mcp", mockAPI)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://placeholder/mcp", nil)
+	require.NoError(t, err)
+
+	start := time.Now()
+	resp, err := rt.RoundTrip(req)
+
+	require.Nil(t, resp)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(start), time.Second)
+
+	close(release)
+	select {
+	case <-bodyClosed:
+	case <-time.After(time.Second):
+		t.Fatal("response body was not closed after cancellation")
+	}
 }

@@ -25,7 +25,7 @@ const SIZES = {
     },
 };
 
-const ToggleSwitchContainer = styled.label<{$size: ToggleSwitchSize}>`
+const ToggleSwitchContainer = styled.label<{$size: ToggleSwitchSize; $disabled?: boolean}>`
     position: relative;
     display: block;
     width: ${(props) => SIZES[props.$size].width}px;
@@ -35,7 +35,8 @@ const ToggleSwitchContainer = styled.label<{$size: ToggleSwitchSize}>`
     border: none;
     line-height: 0;
     font-size: 0;
-    cursor: pointer;
+    cursor: ${(props) => (props.$disabled ? 'not-allowed' : 'pointer')};
+    opacity: ${(props) => (props.$disabled ? 0.5 : 1)};
     flex-shrink: 0;
     align-self: center;
 `;
@@ -103,7 +104,10 @@ type ToggleSwitchProps = {
 };
 
 export const ToggleSwitch = ({checked, onChange, disabled, size = 'medium', ariaLabel}: ToggleSwitchProps) => (
-    <ToggleSwitchContainer $size={size}>
+    <ToggleSwitchContainer
+        $size={size}
+        $disabled={disabled}
+    >
         <ToggleSwitchInput
             $size={size}
             type='checkbox'

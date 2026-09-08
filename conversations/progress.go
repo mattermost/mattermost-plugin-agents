@@ -57,7 +57,7 @@ func (r *responseProgressReporter) Advance(phase responseProgressPhase) {
 			telemetry.PostID.String(r.post.Id),
 		),
 	)
-	r.client.PublishWebSocketEvent("postupdate", map[string]interface{}{
+	r.client.PublishWebSocketEvent("postupdate", map[string]any{
 		"post_id":        r.post.Id,
 		"control":        "progress",
 		"progress_phase": string(phase),

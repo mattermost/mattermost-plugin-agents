@@ -180,7 +180,7 @@ func TestCreateFileResolverValidation(t *testing.T) {
 			name: "per-reply cap reached",
 			llmCtx: func() *llm.Context {
 				ctx := validChannelCtx()
-				for i := 0; i < maxCreatedFilesPerTurn; i++ {
+				for i := range maxCreatedFilesPerTurn {
 					ctx.AddCreatedFile(llm.CreatedFile{ID: model.NewId(), Name: fmt.Sprintf("f%d.txt", i)})
 				}
 				return ctx
@@ -244,6 +244,12 @@ func TestCreateFileResolverValidation(t *testing.T) {
 				if tt.setup != nil {
 					tt.setup(client)
 				}
+				// Default upload-policy answers so each case exercises only
+				// its own failure; expectations from setup take precedence.
+				client.On("GetConfig").Return(&model.Config{
+					FileSettings: model.FileSettings{EnableFileAttachments: model.NewPointer(true)},
+				}).Maybe()
+				client.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionUploadFile).Return(true).Maybe()
 				tool = NewCreateFileTool(client)
 			}
 

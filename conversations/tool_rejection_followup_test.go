@@ -40,7 +40,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			Name:   "jira__get_issue",
 			Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
 			Status: conversation.StatusPending,
-			Shared: conversation.BoolPtr(shared),
+			Shared: new(shared),
 		}
 	}
 
@@ -92,7 +92,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 					Name:   "jira__transition_issue",
 					Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
 					Status: conversation.StatusPending,
-					Shared: conversation.BoolPtr(true),
+					Shared: new(true),
 				},
 			},
 			acceptedIDs:        []string{"tool-use-1"},
@@ -127,7 +127,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				Input:            json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
 				Status:           conversation.StatusPending,
 				WouldAutoExecute: true,
-				Shared:           conversation.BoolPtr(true),
+				Shared:           new(true),
 			}},
 			wantFollowUp:       true,
 			wantGuidance:       false,
@@ -150,7 +150,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				}`),
 				Status:          conversation.StatusPending,
 				UserInteraction: llm.UserInteractionSelect,
-				Shared:          conversation.BoolPtr(true),
+				Shared:          new(true),
 			}},
 			wantFollowUp:       true,
 			wantGuidance:       false,
@@ -246,7 +246,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 			Name:   "jira__get_issue",
 			Input:  json.RawMessage(`{"issue_key":"MM-1"}`),
 			Status: conversation.StatusPending,
-			Shared: conversation.BoolPtr(false),
+			Shared: new(false),
 		},
 		{
 			Type:   conversation.BlockTypeToolUse,
@@ -254,7 +254,7 @@ func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
 			Name:   "jira__transition_issue",
 			Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
 			Status: conversation.StatusPending,
-			Shared: conversation.BoolPtr(false),
+			Shared: new(false),
 		},
 	}
 	content, err := json.Marshal(blocks)
@@ -312,14 +312,14 @@ func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
 		Name:   "jira__get_issue",
 		Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
 		Status: conversation.StatusRejected,
-		Shared: conversation.BoolPtr(false),
+		Shared: new(false),
 	}}
 	resultBlocks := []conversation.ContentBlock{{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "tool-use-1",
 		Content:   toolCallRejectedByUserResult,
 		Status:    conversation.StatusError,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}}
 	assistantContent, err := json.Marshal(assistantBlocks)
 	require.NoError(t, err)
@@ -360,14 +360,14 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 		Name:   "jira__get_issue",
 		Input:  json.RawMessage(`{}`),
 		Status: conversation.StatusRejected,
-		Shared: conversation.BoolPtr(true),
+		Shared: new(true),
 	}
 	humanRejectResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "human-1",
 		Content:   toolCallRejectedByUserResult,
 		Status:    conversation.StatusError,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}
 	success := conversation.ContentBlock{
 		Type:   conversation.BlockTypeToolUse,
@@ -375,14 +375,14 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 		Name:   "jira__get_issue",
 		Input:  json.RawMessage(`{}`),
 		Status: conversation.StatusSuccess,
-		Shared: conversation.BoolPtr(true),
+		Shared: new(true),
 	}
 	successResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "ok-1",
 		Content:   "restored-result",
 		Status:    conversation.StatusSuccess,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}
 	execError := conversation.ContentBlock{
 		Type:   conversation.BlockTypeToolUse,
@@ -390,14 +390,14 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 		Name:   "jira__get_issue",
 		Input:  json.RawMessage(`{}`),
 		Status: conversation.StatusError,
-		Shared: conversation.BoolPtr(true),
+		Shared: new(true),
 	}
 	execErrorResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "err-1",
 		Content:   "jira unavailable",
 		Status:    conversation.StatusError,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}
 	skip := conversation.ContentBlock{
 		Type:            conversation.BlockTypeToolUse,
@@ -405,14 +405,14 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 		Name:            "AskUserQuestion",
 		Status:          conversation.StatusRejected,
 		UserInteraction: llm.UserInteractionSelect,
-		Shared:          conversation.BoolPtr(true),
+		Shared:          new(true),
 	}
 	skipResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "q-1",
 		Content:   "User skipped the question",
 		Status:    conversation.StatusError,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}
 	policyDenied := conversation.ContentBlock{
 		Type:             conversation.BlockTypeToolUse,
@@ -421,14 +421,14 @@ func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
 		Input:            json.RawMessage(`{}`),
 		Status:           conversation.StatusRejected,
 		WouldAutoExecute: true,
-		Shared:           conversation.BoolPtr(true),
+		Shared:           new(true),
 	}
 	policyDeniedResult := conversation.ContentBlock{
 		Type:      conversation.BlockTypeToolResult,
 		ToolUseID: "auto-1",
 		Content:   toolCallPolicyDeniedResult,
 		Status:    conversation.StatusError,
-		Shared:    conversation.BoolPtr(true),
+		Shared:    new(true),
 	}
 
 	cases := []struct {

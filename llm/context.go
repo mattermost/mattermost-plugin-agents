@@ -5,6 +5,7 @@ package llm
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,9 +45,13 @@ type Context struct {
 	BotServiceType     string
 	CustomInstructions string
 
+	// ToolAuthMode records the identity mode the tool catalog was built with
+	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
+	ToolAuthMode string
+
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
-	Parameters        map[string]interface{}
+	Parameters        map[string]any
 
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
@@ -83,6 +88,11 @@ type ToolCatalogContext struct {
 	// file-creating response tools (CreateFile) may be cataloged. Only
 	// conversation entry points that stream a response post set this.
 	ResponseFilesSupported bool
+
+	// SandboxFilesAttached is true when this turn's sandbox output will be
+	// attached automatically. The model cannot see provider file ids, so the
+	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
+	SandboxFilesAttached bool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for
@@ -104,6 +114,11 @@ type ToolRuntimeContext struct {
 	// CreatedFiles collects files created by tools during this turn for
 	// attachment to the response post.
 	CreatedFiles []CreatedFile
+
+	// SandboxFiles are provider files observed this request, in order, with
+	// the route that produced them. Populated only from server-tool activity,
+	// never from model input.
+	SandboxFiles []ProviderFileReference
 
 	// ResponseAttachmentBudget caps how many files response tools may create
 	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
@@ -166,7 +181,7 @@ func (c *Context) CustomPromptVars() map[string]string {
 }
 
 func (c *Context) ObserveMCPDynamicToolEvent(event, result string) {
-	if c == nil {
+	if c == nil || c.ToolRuntime.MCPDynamicToolTelemetry == nil {
 		return
 	}
 
@@ -178,83 +193,81 @@ func (c *Context) ObserveMCPDynamicToolEvent(event, result string) {
 		botName = "unknown"
 	}
 
-	c.ToolRuntime.ObserveMCPDynamicToolEvent(botName, event, result)
-}
-
-func (t *ToolRuntimeContext) ObserveMCPDynamicToolEvent(botName, event, result string) {
-	if t == nil || t.MCPDynamicToolTelemetry == nil {
-		return
-	}
-
-	t.MCPDynamicToolTelemetry.ObserveMCPDynamicToolEvent(botName, event, result)
+	c.ToolRuntime.MCPDynamicToolTelemetry.ObserveMCPDynamicToolEvent(botName, event, result)
 }
 
 func (c *Context) MarkMCPDynamicToolSearch() {
 	if c == nil {
 		return
 	}
-	c.ToolRuntime.MarkMCPDynamicToolSearch()
-}
-
-func (t *ToolRuntimeContext) MarkMCPDynamicToolSearch() {
-	if t == nil {
-		return
-	}
-	t.MCPDynamicToolSearchUsed = true
+	c.ToolRuntime.MCPDynamicToolSearchUsed = true
 }
 
 func (c *Context) MarkMCPDynamicToolLoaded(name string) {
-	if c == nil {
+	if c == nil || name == "" {
 		return
 	}
-	c.ToolRuntime.MarkMCPDynamicToolLoaded(name)
-}
-
-func (t *ToolRuntimeContext) MarkMCPDynamicToolLoaded(name string) {
-	if t == nil || name == "" {
-		return
+	if c.ToolRuntime.MCPDynamicLoadedToolNames == nil {
+		c.ToolRuntime.MCPDynamicLoadedToolNames = make(map[string]bool)
 	}
-	if t.MCPDynamicLoadedToolNames == nil {
-		t.MCPDynamicLoadedToolNames = make(map[string]bool)
-	}
-	t.MCPDynamicLoadedToolNames[name] = true
+	c.ToolRuntime.MCPDynamicLoadedToolNames[name] = true
 }
 
 func (c *Context) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {
-	if c == nil {
+	if c == nil || name == "" || !c.ToolRuntime.MCPDynamicToolSearchUsed || !c.ToolRuntime.MCPDynamicLoadedToolNames[name] {
 		return false
 	}
-	return c.ToolRuntime.ShouldRecordMCPDynamicSearchLoadCallSuccess(name)
-}
-
-func (t *ToolRuntimeContext) ShouldRecordMCPDynamicSearchLoadCallSuccess(name string) bool {
-	if t == nil || name == "" || !t.MCPDynamicToolSearchUsed || !t.MCPDynamicLoadedToolNames[name] {
+	if c.ToolRuntime.MCPDynamicSearchLoadCallSuccessRecorded == nil {
+		c.ToolRuntime.MCPDynamicSearchLoadCallSuccessRecorded = make(map[string]bool)
+	}
+	if c.ToolRuntime.MCPDynamicSearchLoadCallSuccessRecorded[name] {
 		return false
 	}
-	if t.MCPDynamicSearchLoadCallSuccessRecorded == nil {
-		t.MCPDynamicSearchLoadCallSuccessRecorded = make(map[string]bool)
-	}
-	if t.MCPDynamicSearchLoadCallSuccessRecorded[name] {
-		return false
-	}
-	t.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
+	c.ToolRuntime.MCPDynamicSearchLoadCallSuccessRecorded[name] = true
 	return true
 }
 
 // AddCreatedFile records a file created by a tool during this turn so it can
 // be attached to the response post. Files with an empty ID are skipped.
 func (c *Context) AddCreatedFile(f CreatedFile) {
+	if c == nil || f.ID == "" {
+		return
+	}
+	c.ToolRuntime.CreatedFiles = append(c.ToolRuntime.CreatedFiles, f)
+}
+
+// AddSandboxFiles records observed sandbox files in arrival order. Empty
+// references and repeated route/id pairs are skipped because snapshots are cumulative.
+func (c *Context) AddSandboxFiles(refs ...ProviderFileReference) {
 	if c == nil {
 		return
 	}
-	c.ToolRuntime.AddCreatedFile(f)
+	c.ToolRuntime.AddSandboxFiles(refs...)
 }
 
-func (t *ToolRuntimeContext) AddCreatedFile(f CreatedFile) {
-	if t == nil || f.ID == "" {
+func (t *ToolRuntimeContext) AddSandboxFiles(refs ...ProviderFileReference) {
+	if t == nil {
 		return
 	}
-	t.CreatedFiles = append(t.CreatedFiles, f)
+	for _, ref := range refs {
+		if ref.ID == "" || slices.ContainsFunc(t.SandboxFiles, func(existing ProviderFileReference) bool {
+			return existing.ID == ref.ID && existing.ProviderRoute == ref.ProviderRoute
+		}) {
+			continue
+		}
+		t.SandboxFiles = append(t.SandboxFiles, ref)
+	}
+}
+
+// ConsumeSandboxFiles returns observed files and clears them so a stream that
+// ends twice cannot attach the same provider file again.
+func (c *Context) ConsumeSandboxFiles() []ProviderFileReference {
+	if c == nil {
+		return nil
+	}
+	refs := c.ToolRuntime.SandboxFiles
+	c.ToolRuntime.SandboxFiles = nil
+	return refs
 }
 
 // CreatedFilesList returns the files created by tools during this turn.
@@ -262,14 +275,7 @@ func (c *Context) CreatedFilesList() []CreatedFile {
 	if c == nil {
 		return nil
 	}
-	return c.ToolRuntime.CreatedFilesList()
-}
-
-func (t *ToolRuntimeContext) CreatedFilesList() []CreatedFile {
-	if t == nil {
-		return nil
-	}
-	return t.CreatedFiles
+	return c.ToolRuntime.CreatedFiles
 }
 
 // SetResponseAttachmentBudget records how many more files the response post
@@ -278,58 +284,44 @@ func (c *Context) SetResponseAttachmentBudget(remaining int) {
 	if c == nil {
 		return
 	}
-	c.ToolRuntime.SetResponseAttachmentBudget(remaining)
-}
-
-func (t *ToolRuntimeContext) SetResponseAttachmentBudget(remaining int) {
-	if t == nil {
-		return
-	}
 	if remaining <= 0 {
 		remaining = -1
 	}
-	t.ResponseAttachmentBudget = remaining
+	c.ToolRuntime.ResponseAttachmentBudget = remaining
 }
 
 // ResponseAttachmentSlots returns how many more files response tools may
 // create this turn: the recorded budget, or the full MaxPostAttachments
 // budget when none was set.
 func (c *Context) ResponseAttachmentSlots() int {
-	if c == nil {
-		return 0
-	}
-	return c.ToolRuntime.ResponseAttachmentSlots()
-}
-
-func (t *ToolRuntimeContext) ResponseAttachmentSlots() int {
 	switch {
-	case t == nil:
+	case c == nil:
 		return 0
-	case t.ResponseAttachmentBudget == 0:
+	case c.ToolRuntime.ResponseAttachmentBudget == 0:
 		return MaxPostAttachments
-	case t.ResponseAttachmentBudget < 0:
+	case c.ToolRuntime.ResponseAttachmentBudget < 0:
 		return 0
 	default:
-		return t.ResponseAttachmentBudget
+		return c.ToolRuntime.ResponseAttachmentBudget
 	}
 }
 
 func (c Context) String() string {
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName))
+	fmt.Fprintf(&result, "Time: %v\nServerName: %v\nCompanyName: %v", c.Time, c.ServerName, c.CompanyName)
 	if c.RequestingUser != nil {
-		result.WriteString(fmt.Sprintf("\nRequestingUser: %v", c.RequestingUser.Username))
+		fmt.Fprintf(&result, "\nRequestingUser: %v", c.RequestingUser.Username)
 	}
 	if c.Channel != nil {
-		result.WriteString(fmt.Sprintf("\nChannel: %v", c.Channel.Name))
+		fmt.Fprintf(&result, "\nChannel: %v", c.Channel.Name)
 	}
 	if c.Team != nil {
-		result.WriteString(fmt.Sprintf("\nTeam: %v", c.Team.Name))
+		fmt.Fprintf(&result, "\nTeam: %v", c.Team.Name)
 	}
 
 	result.WriteString("\n--- Parameters ---\n")
 	for key := range c.Parameters {
-		result.WriteString(fmt.Sprintf(" %v", key))
+		fmt.Fprintf(&result, " %v", key)
 	}
 
 	if c.Tools != nil {

@@ -28,7 +28,7 @@ func TestCallTool_PluginServerDisconnects_RecoversViaReconnect(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	uc := NewUserClients("alice", client.Log, nil, nil, nil)
+	uc := newLocalClients("alice", client.Log, nil, nil)
 
 	cfg := PluginServerConfig{
 		PluginID: "com.example.disconnect-test",
@@ -37,7 +37,7 @@ func TestCallTool_PluginServerDisconnects_RecoversViaReconnect(t *testing.T) {
 		Enabled:  true,
 	}
 
-	require.NoError(t, uc.ConnectToPluginServer(context.Background(), cfg, mockAPI))
+	require.Nil(t, connectPluginServer(uc, cfg, mockAPI))
 
 	originKey := pluginServerOriginKey(cfg.PluginID)
 	c, ok := uc.clients[originKey]

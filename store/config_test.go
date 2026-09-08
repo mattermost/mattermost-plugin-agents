@@ -343,7 +343,7 @@ func TestSaveConfigConcurrent(t *testing.T) {
 
 	const workerCount = 8
 	workerStores := make([]*Store, workerCount)
-	for i := 0; i < workerCount; i++ {
+	for i := range workerCount {
 		workerStores[i] = setupSchemaBoundStore(t, schemaName)
 	}
 
@@ -351,7 +351,7 @@ func TestSaveConfigConcurrent(t *testing.T) {
 	errCh := make(chan error, workerCount)
 	var wg sync.WaitGroup
 
-	for i := 0; i < workerCount; i++ {
+	for i := range workerCount {
 		wg.Add(1)
 		go func(index int, workerStore *Store) {
 			defer wg.Done()

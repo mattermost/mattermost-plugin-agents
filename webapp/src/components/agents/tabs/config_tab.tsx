@@ -57,7 +57,14 @@ const openAIStructuredOutputServiceTypes = ['openai', 'openaicompatible', 'azure
 const CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD = MaxCustomInstructionsRunes * 0.9;
 
 const ConfigTab = (props: Props) => {
-    const {draft, onChange, onAvatarChange, services, errors = {}, usernameLocked = false} = props;
+    const {
+        draft,
+        onChange,
+        onAvatarChange,
+        services,
+        errors = {},
+        usernameLocked = false,
+    } = props;
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);

@@ -47,7 +47,7 @@ func generateDeterministicEmbedding(text string, dims int) []float32 {
 	embedding := make([]float32, dims)
 	hasher := fnv.New32a()
 
-	for i := 0; i < dims; i++ {
+	for i := range dims {
 		_, _ = hasher.Write([]byte(text))
 		_, _ = hasher.Write([]byte{byte(i), byte(i >> 8)})
 		hash := hasher.Sum32()

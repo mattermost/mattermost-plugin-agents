@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -61,11 +60,5 @@ func (c *Conversations) HandleLoopInAgent(ctx context.Context, userID string, bo
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	loopInPost := post.Clone()
-	loopInPost.Message = "@" + requestedMMBot.Username
-	if message := strings.TrimSpace(post.Message); message != "" {
-		loopInPost.Message += " " + message
-	}
-
-	return c.handleMentions(ctx, bot, loopInPost, postingUser, channel)
+	return c.handleMentions(ctx, bot, cloneWithAgentMention(post, requestedMMBot.Username), postingUser, channel)
 }

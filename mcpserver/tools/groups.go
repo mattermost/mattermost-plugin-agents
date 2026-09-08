@@ -59,12 +59,12 @@ const (
 // getGroupTools returns the group tools.
 func (p *MattermostToolProvider) getGroupTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_group_info", Description: getGroupInfoDescription, Schema: NewJSONSchemaForAccessMode[GetGroupInfoArgs](string(p.accessMode)), Resolver: typed("get_group_info", p.toolGetGroupInfo)},
-		{Name: "list_groups", Description: listGroupsDescription, Schema: NewJSONSchemaForAccessMode[ListGroupsArgs](string(p.accessMode)), Resolver: typed("list_groups", p.toolListGroups)},
-		{Name: "get_user_groups", Description: getUserGroupsDescription, Schema: NewJSONSchemaForAccessMode[GetUserGroupsArgs](string(p.accessMode)), Resolver: typed("get_user_groups", p.toolGetUserGroups)},
-		{Name: "get_channel_groups", Description: getChannelGroupsDescription, Schema: NewJSONSchemaForAccessMode[GetChannelGroupsArgs](string(p.accessMode)), Resolver: typed("get_channel_groups", p.toolGetChannelGroups)},
-		{Name: "get_team_groups", Description: getTeamGroupsDescription, Schema: NewJSONSchemaForAccessMode[GetTeamGroupsArgs](string(p.accessMode)), Resolver: typed("get_team_groups", p.toolGetTeamGroups)},
-		{Name: "get_users_in_group_channels", Description: getUsersInGroupChannelsDescription, Schema: NewJSONSchemaForAccessMode[GetUsersInGroupChannelsArgs](string(p.accessMode)), Resolver: typed("get_users_in_group_channels", p.toolGetUsersInGroupChannels)},
+		mcpTool(p, "get_group_info", getGroupInfoDescription, p.toolGetGroupInfo),
+		mcpTool(p, "list_groups", listGroupsDescription, p.toolListGroups),
+		mcpTool(p, "get_user_groups", getUserGroupsDescription, p.toolGetUserGroups),
+		mcpTool(p, "get_channel_groups", getChannelGroupsDescription, p.toolGetChannelGroups),
+		mcpTool(p, "get_team_groups", getTeamGroupsDescription, p.toolGetTeamGroups),
+		mcpTool(p, "get_users_in_group_channels", getUsersInGroupChannelsDescription, p.toolGetUsersInGroupChannels),
 	}
 }
 
@@ -98,13 +98,9 @@ func (p *MattermostToolProvider) toolGetUserGroups(mcpContext *MCPToolContext, a
 	if err := optionalID("user_id", args.UserID); err != nil {
 		return "", err
 	}
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 	groups, _, err := mcpContext.Client.GetGroupsByUserId(mcpContext.Ctx, userID)
 	if err != nil {
@@ -141,13 +137,8 @@ func (p *MattermostToolProvider) toolGetTeamGroups(mcpContext *MCPToolContext, a
 
 // toolGetUsersInGroupChannels implements the get_users_in_group_channels tool.
 func (p *MattermostToolProvider) toolGetUsersInGroupChannels(mcpContext *MCPToolContext, args GetUsersInGroupChannelsArgs) (string, error) {
-	if len(args.ChannelIDs) == 0 {
-		return "", fmt.Errorf("channel_ids cannot be empty")
-	}
-	for _, id := range args.ChannelIDs {
-		if err := requireID("channel_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("channel_ids", args.ChannelIDs); err != nil {
+		return "", err
 	}
 
 	byChannel, _, err := mcpContext.Client.GetUsersByGroupChannelIds(mcpContext.Ctx, args.ChannelIDs)
@@ -161,7 +152,7 @@ func (p *MattermostToolProvider) toolGetUsersInGroupChannels(mcpContext *MCPTool
 	var result strings.Builder
 	for _, channelID := range args.ChannelIDs {
 		users := byChannel[channelID]
-		result.WriteString(fmt.Sprintf("Group message %s (%d members):\n", channelID, len(users)))
+		fmt.Fprintf(&result, "Group message %s (%d members):\n", channelID, len(users))
 		for _, user := range users {
 			format.WriteUser(&result, format.UserEntry{User: user})
 		}
@@ -176,7 +167,7 @@ func formatGroupList(groups []*model.Group) string {
 		return "no groups found"
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d group(s):\n\n", len(groups)))
+	fmt.Fprintf(&result, "Found %d group(s):\n\n", len(groups))
 	for i, group := range groups {
 		format.WriteGroup(&result, format.GroupEntry{HeaderLabel: fmt.Sprintf("Group %d", i+1), Group: group})
 	}
@@ -189,7 +180,7 @@ func formatGroupListWithSchemeAdmin(groups []*model.GroupWithSchemeAdmin) string
 		return "no groups found"
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d group(s):\n\n", len(groups)))
+	fmt.Fprintf(&result, "Found %d group(s):\n\n", len(groups))
 	for i, group := range groups {
 		format.WriteGroup(&result, format.GroupEntry{HeaderLabel: fmt.Sprintf("Group %d", i+1), Group: &group.Group})
 	}

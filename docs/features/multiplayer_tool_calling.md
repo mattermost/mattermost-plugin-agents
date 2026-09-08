@@ -22,7 +22,7 @@ Every tool call in a channel involves up to four distinct roles. These terms are
 |---|---|
 | **Initiator** | The human user who triggered the Agent — for example, by `@`-mentioning the bot or by sending a message in an Agents-pane thread. The initiator is recorded as `UserID` on the conversation row in the `LLM_Conversations` DB table. |
 | **Approver** | The user permitted to click **Accept** or **Reject** on a pending tool-call card. In multiplayer tool calling, **the approver is always the initiator** — never another channel member, never an admin. |
-| **Executor** | The identity Mattermost uses when actually running the tool — opening the HTTP request, hitting the MCP server, reading channel posts, etc. The executor inherits the initiator's user identity and the initiator's per-user OAuth tokens for OAuth-backed MCP servers. |
+| **Executor** | The identity Mattermost uses when actually running the tool — opening the HTTP request, hitting the MCP server, reading channel posts, etc. For agents using per-user authentication (the default), the executor inherits the initiator's user identity and the initiator's per-user OAuth tokens for OAuth-backed MCP servers. For agents configured with **service account authentication**, external MCP servers use admin-configured service account credentials and Mattermost (embedded) and plugin tools still run as the initiator (§3). |
 | **Observer** (or **onlooker**) | Any other channel member who can read the channel post containing the Agent's response, but who did not trigger it. Observers are read-only with respect to the tool call: they cannot approve, cannot reject, and (by default) cannot see tool arguments or private results. |
 
 Concrete example: Maya `@`-mentions `@copilot` in `~team-eng` and asks it to look up a Jira ticket. Raj is also in `~team-eng` and watches the conversation unfold.
@@ -36,20 +36,35 @@ These roles do not change mid-conversation. If Maya hands the keyboard to a team
 
 ## 3. The credential model
 
+Every agent runs its tools in one of two authentication modes. The mode is a property of the agent — set by whoever manages the agent, on its **MCPs** tab — not a per-call choice.
+
+### Per-user authentication (the default)
+
 When a tool runs after approval, Mattermost executes it **as the initiator**. Two specific things this means:
 
 1. **Mattermost-side identity:** the user context passed into tool execution is built from the initiator's user record, channel membership, and team membership. Tools that read channel posts, search users, or call back into Mattermost see only what the initiator is permitted to see.
 2. **OAuth-backed MCP servers:** for any MCP server that requires per-user OAuth, the OAuth token loaded for the call is the initiator's token, looked up by the initiator's user ID and the server name.
 
-The Agent bot's own credentials are **not** used to run third-party tools. The bot is a delivery surface — it posts the response and the tool cards — but the side effects of tool execution belong to the initiator. This is intentional: it keeps audit trails meaningful, it prevents privilege escalation through the bot, and it makes per-user OAuth scopes the right place to enforce who can do what.
+The Agent bot's own credentials are **not** used to run third-party tools in this mode. The bot is a delivery surface — it posts the response and the tool cards — but the side effects of tool execution belong to the initiator. This is intentional: it keeps audit trails meaningful, it prevents privilege escalation through the bot, and it makes per-user OAuth scopes the right place to enforce who can do what.
 
-A few consequences fall out of this model:
+A few consequences fall out of this mode:
 
 - Two different users in the same channel running the same tool against the same MCP server may get different results, because they have different OAuth scopes. That is correct behavior, not a bug.
 - A tool call that succeeds for one initiator may fail for another with a 401 or 403. OAuth 401 responses from MCP servers are caught and wrapped as `OAuthNeededError` in the client, surfacing as a tool auth error that prompts the initiator to re-authenticate.
-- Service accounts are not a concept in this model. There is no "run this tool as the bot" path for OAuth-backed MCP servers.
 
 For MCP servers that do not use OAuth (for example, a server fronted by a shared API key configured by an admin), the credential is whatever the server itself was configured with. The initiator-as-executor rule still controls **whether** the call happens; the server's static credentials control **what** the call can do.
+
+### Service account authentication
+
+An agent can instead be switched to **service account authentication** — the **Use service accounts for authentication** setting on the agent's MCPs tab. The setting is all-or-nothing for that agent's **external** MCP servers and changes who the executor is there:
+
+- **External MCP servers:** tool calls are sent with the admin-configured **Service Account Authentication** headers from the server's System Console configuration (for example, a personal access token) instead of the initiator's OAuth token. Servers with no service account headers configured are **excluded from the agent's tool catalog entirely** — the agent fails closed rather than falling back to anyone's personal credentials.
+- **Embedded Mattermost tools and plugin-registered MCP servers:** tool calls run as the **initiator**, the same as in per-user mode. The initiator's channel membership and permissions are the access boundary inside Mattermost.
+- **No per-user OAuth anywhere:** users are never prompted to connect accounts for these agents, per-user tool provider preferences don't apply, and the per-user **Tools** menu is not shown.
+
+**The approval contract does not change: the human approves; external MCP servers execute as the service account and Mattermost/plugin tools execute as the initiator.** The initiator is still the only person who can accept or reject a pending tool call (§4), per-tool policies (§5) still decide which calls need approval, and the Share / Keep Private flow (§6) still belongs to the initiator. What changes is whose credentials perform the side effect on external MCP servers once consent is given.
+
+This mode deliberately flattens permissions on external MCP servers: every user who can use the agent acts with the same service account access there. Mattermost and plugin tools still see only what the initiator can see. The external system's audit log shows the service account, not the human; Mattermost's token usage logs record the triggering user alongside the acting identity (`acting_user_id`, `tool_auth_mode`) so the two can be correlated. Only system administrators can enable the setting. While it is enabled, managers may edit non-sensitive config; sensitive fields stay system-admin-only — see [What's editable vs locked](managing_agents.md#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. It requires the same license as remote MCP servers; without that license the agent's tool calls keep using per-user credentials. Configuration and hardening guidance live in the [admin guide](../admin_guide.md#service-account-authentication).
 
 ## 4. Approval ownership
 
@@ -59,9 +74,11 @@ This is enforced server-side, not just visually. When the **Accept** or **Reject
 
 The reasoning behind initiator-only approval:
 
-- **Side effects belong to the requester.** Because tools run with the initiator's credentials and OAuth scopes (see §3), only the initiator has the standing to consent to side effects executed under their identity.
+- **Side effects belong to the requester.** In per-user authentication mode, tools run with the initiator's credentials and OAuth scopes (see §3), so only the initiator has the standing to consent to side effects executed under their identity. In service account mode, initiator-only approval remains the consent contract even though the service account performs the action.
 - **Multiplayer approval would be confusing under partial trust.** If three members of a channel could each approve the same tool call, the question "whose Jira token did this run with?" becomes ambiguous and the audit trail becomes harder to reason about.
 - **Admins are not implicit approvers.** A workspace admin watching the channel does not automatically gain the ability to consent on the initiator's behalf. Admin authority lives in the per-tool policy (§5), not in the per-call approval.
+
+Initiator-only approval applies in both credential modes (§3). For a service account agent, the initiator is still the person asking for the side effect, so their consent is still the one that matters; the admin consented to the credential itself when they enabled it on the agent.
 
 ### What if the initiator is offline or never returns?
 
@@ -111,7 +128,7 @@ In a DM, when a tool runs, its arguments and results are visible to the only hum
 
 Multiplayer tool calling handles this with a two-step flow:
 
-1. **Step 1: approve the call.** The initiator clicks **Accept** (or the policy auto-approves). The tool runs with the initiator's credentials.
+1. **Step 1: approve the call.** The initiator clicks **Accept** (or the policy auto-approves). The tool runs with the executor's credentials — the initiator's by default, or the agent's service account on external MCP servers (§3).
 2. **Step 2: share the result.** Once the tool returns, the initiator sees a follow-up control with **Share** and **Keep Private** options.
    - **Share** marks the tool result as visible to the channel. Other channel members see the arguments and the result, and the Agent's follow-up response incorporates the result openly.
    - **Keep Private** marks the result as private to the initiator. Other channel members do not see the arguments or the result, and the Agent's follow-up response is generated without leaking that content into the channel-visible reply.
@@ -176,7 +193,7 @@ Configuring the per-tool policy list is the main lever admins have over multipla
 - **Default new tools to `ask`.** It is the conservative choice and the easiest to relax later. Going the other direction — discovering a tool you wanted to require approval for has been auto-running in channels — is much worse.
 - **Reserve `auto_run_everywhere` for read-only tools with built-in permission enforcement.** The embedded Mattermost search tools ship at `auto_run_in_dm` by default. They fit the `auto_run_everywhere` profile in principle — Mattermost server enforces per-user permissions on every result — but the choice to promote them is left to the admin so that channel privacy expectations are explicit. Tools that hit external APIs almost never belong in this category unless you have a strong reason.
 - **Treat `auto_run_in_dm` as the "convenience in private, friction in public" mode.** Use it for tools that are safe for the initiator to see results from privately but where you don't want results splashed into a channel without explicit consent.
-- **Don't use policy as a substitute for OAuth scope.** Policy controls the prompt; the underlying tool still runs as the initiator. Lock down scopes in the OAuth provider, not in the Agents policy.
+- **Don't use policy as a substitute for credential scope.** Policy controls the prompt; the underlying tool still runs as the initiator — or, for service account agents, as the service account on external MCP servers and as the initiator for Mattermost and plugin tools. Lock down scopes in the OAuth provider (and scope service account tokens minimally), not in the Agents policy.
 - **Audit which tools are seeded by default.** PR #520 adds vetted-provider seeding so that built-in MCP tools come pre-configured. Review the seeded list when you upgrade to v2 to make sure the defaults match your risk tolerance.
 
 The channel tool-calling capability itself is gated by the workspace setting **Enable Channel Mention Tool Calling**, which is experimental at the time of the v2 launch. Until that setting is enabled, multiplayer tool calling is effectively limited to `auto_run_*` policies in DMs and admins do not need to think about channel privacy at all.
@@ -185,15 +202,15 @@ The channel tool-calling capability itself is gated by the workspace setting **E
 
 To make the model auditable, several things are deliberately **not** supported. These are not oversights; they are design choices.
 
-- **No "any channel member can approve" mode.** Allowing onlookers to approve would mean a tool runs with the initiator's credentials but at someone else's request. That is a confused-deputy pattern. We do not offer it.
+- **No "any channel member can approve" mode.** Allowing onlookers to approve would mean a side effect is committed against the initiator's request by someone who has no standing to consent to it — with the initiator's own credentials in the default mode, or with the agent's service account in the other. That is a confused-deputy pattern. We do not offer it.
 - **No per-channel admin override of the initiator-only rule.** Channel admins do not gain the ability to approve other people's pending tool calls just because they administer the channel.
 - **No timeout-based auto-approval.** A pending tool call left untouched does not silently fire. It just sits there until cleared.
-- **No tool execution as the bot.** As noted in §3 and §9, tools always run as the initiator. There is no "service account" path for OAuth-backed MCP tools.
+- **No implicit tool execution as the bot.** For per-user-authentication agents (§3), tools always run as the initiator; the bot never silently substitutes its own identity, and there is no fallback to a shared credential when the initiator's OAuth token is missing or rejected. Service account execution exists only as an explicit, admin-configured, per-agent opt-in — and even there, servers without service account credentials drop out of the agent's catalog rather than borrowing anyone else's.
 - **No retroactive privacy.** Once the initiator chooses **Share**, the result is visible to channel members and the Agent's follow-up response incorporates it openly. There is no "unshare" button. The same is true for `auto_run_everywhere` tools, which are auto-shared at the moment they execute — there is no Share / Keep Private prompt to retract. (Channel-level moderation tools — deleting posts, etc. — are still available but live outside Agents.)
 
 ## 12. Related docs
 
 - [User guide — Use tools](../user_guide.md#use-tools): the end-user-facing instructions for Accept / Reject and the Tools menu.
-- [Admin guide](../admin_guide.md): per-tool policy configuration, agent management, and the **Enable Channel Mention Tool Calling** setting.
+- [Admin guide](../admin_guide.md): per-tool policy configuration, agent management, [service account authentication](../admin_guide.md#service-account-authentication), and the **Enable Channel Mention Tool Calling** setting.
 - [Channel summaries](channel_summaries.md): a related channel-aware feature with its own privacy story.
 - [Providers](../providers.md): provider-side tool support, OAuth setup for MCP servers.

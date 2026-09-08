@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -319,6 +320,72 @@ func TestHandleSaveConfig(t *testing.T) {
 				assert.Equal(t, 0, notifier.callCount, "cluster notify should not be called on bad request")
 			},
 		},
+		{
+			// Server names key the per-user client map, the shared tools cache,
+			// and stored OAuth grants, so a duplicate silently shadows a server.
+			name: "rejects duplicate MCP server names",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Jira", BaseURL: "https://a.example.com/mcp", Enabled: true},
+						{Name: "Jira", BaseURL: "https://b.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "duplicate MCP servers must be rejected before persistence")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "rejects canonically equivalent MCP server URLs",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://MCP.Example.com:443/mcp/", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "accepts distinct MCP servers on the same host",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://mcp.example.com/alpha", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/beta?tenant=b", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Len(t, store.cfg.MCP.Servers, 2)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 1, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -385,6 +452,17 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 		Bots: []llm.BotConfig{
 			{ID: "bot-1", Name: "ai", ServiceID: "svc-1"},
 		},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{
+					Name:                  "Jira",
+					Enabled:               true,
+					BaseURL:               "https://jira.example.com",
+					Headers:               map[string]string{"X-Trace": "on"},
+					ServiceAccountHeaders: map[string]string{"Authorization": "Bearer service-pat"},
+				},
+			},
+		},
 	}
 	body, err := json.Marshal(saveCfg)
 	require.NoError(t, err)
@@ -412,6 +490,9 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, "bot-1", loadedCfg.Bots[0].ID)
 	assert.True(t, loadedCfg.MCP.Enabled)
 	assert.True(t, loadedCfg.MCP.EmbeddedServer.Enabled)
+	require.Len(t, loadedCfg.MCP.Servers, 1)
+	assert.Equal(t, map[string]string{"X-Trace": "on"}, loadedCfg.MCP.Servers[0].Headers)
+	assert.Equal(t, map[string]string{"Authorization": "Bearer service-pat"}, loadedCfg.MCP.Servers[0].ServiceAccountHeaders)
 
 	// Step 4: Verify side effects
 	assert.Equal(t, 1, updater.callCount)

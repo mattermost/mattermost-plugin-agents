@@ -46,10 +46,10 @@ const (
 // getIntegrationTools returns the bot and webhook tools.
 func (p *MattermostToolProvider) getIntegrationTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_bot", Description: getBotDescription, Schema: NewJSONSchemaForAccessMode[GetBotArgs](string(p.accessMode)), Resolver: typed("get_bot", p.toolGetBot)},
-		{Name: "list_bots", Description: listBotsDescription, Schema: NewJSONSchemaForAccessMode[ListBotsArgs](string(p.accessMode)), Resolver: typed("list_bots", p.toolListBots)},
-		{Name: "list_incoming_webhooks", Description: listIncomingWebhooksDescription, Schema: NewJSONSchemaForAccessMode[ListIncomingWebhooksArgs](string(p.accessMode)), Resolver: typed("list_incoming_webhooks", p.toolListIncomingWebhooks)},
-		{Name: "list_outgoing_webhooks", Description: listOutgoingWebhooksDescription, Schema: NewJSONSchemaForAccessMode[ListOutgoingWebhooksArgs](string(p.accessMode)), Resolver: typed("list_outgoing_webhooks", p.toolListOutgoingWebhooks)},
+		mcpTool(p, "get_bot", getBotDescription, p.toolGetBot),
+		mcpTool(p, "list_bots", listBotsDescription, p.toolListBots),
+		mcpTool(p, "list_incoming_webhooks", listIncomingWebhooksDescription, p.toolListIncomingWebhooks),
+		mcpTool(p, "list_outgoing_webhooks", listOutgoingWebhooksDescription, p.toolListOutgoingWebhooks),
 	}
 }
 
@@ -78,7 +78,7 @@ func (p *MattermostToolProvider) toolListBots(mcpContext *MCPToolContext, args L
 		return "no bots found", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d bot(s):\n\n", len(bots)))
+	fmt.Fprintf(&result, "Found %d bot(s):\n\n", len(bots))
 	for i, bot := range bots {
 		format.WriteBot(&result, format.BotEntry{HeaderLabel: fmt.Sprintf("Bot %d", i+1), Bot: bot})
 	}
@@ -96,7 +96,7 @@ func (p *MattermostToolProvider) toolListIncomingWebhooks(mcpContext *MCPToolCon
 		return "no incoming webhooks found", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d incoming webhook(s):\n\n", len(hooks)))
+	fmt.Fprintf(&result, "Found %d incoming webhook(s):\n\n", len(hooks))
 	for i, hook := range hooks {
 		format.WriteIncomingWebhook(&result, format.IncomingWebhookEntry{HeaderLabel: fmt.Sprintf("Webhook %d", i+1), Webhook: hook})
 	}
@@ -133,7 +133,7 @@ func (p *MattermostToolProvider) toolListOutgoingWebhooks(mcpContext *MCPToolCon
 		return "no outgoing webhooks found", nil
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d outgoing webhook(s):\n\n", len(hooks)))
+	fmt.Fprintf(&result, "Found %d outgoing webhook(s):\n\n", len(hooks))
 	for i, hook := range hooks {
 		format.WriteOutgoingWebhook(&result, format.OutgoingWebhookEntry{HeaderLabel: fmt.Sprintf("Webhook %d", i+1), Webhook: hook})
 	}

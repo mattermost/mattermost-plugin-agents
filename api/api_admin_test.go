@@ -503,7 +503,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			} else {
 				require.Nil(t, pluginRow.Error)
 			}
-			require.Equal(t, tt.expectProbeCalls, mgr.discoverPluginToolsCallCount)
+			require.Equal(t, tt.expectProbeCalls, mgr.pluginDiscoveryCallCount())
 			if tt.expectToolConfigs != nil {
 				require.Equal(t, tt.expectToolConfigs, pluginRow.ToolConfigs, "plugin row must surface ToolConfigs verbatim")
 			}
@@ -567,7 +567,7 @@ func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
 	require.Len(t, pluginRows, 1, "orphan plugin must be omitted from admin tools listing")
 	require.Equal(t, "Live", pluginRows[0].Name)
 
-	require.Equal(t, 1, mgr.discoverPluginToolsCallCount,
+	require.Equal(t, 1, mgr.pluginDiscoveryCallCount(),
 		"orphan plugin must not be probed; probing would surface a misleading session-not-found error")
 }
 

@@ -19,6 +19,20 @@ func requireID(field, id string) error {
 	return nil
 }
 
+// requireIDs validates a required list argument of Mattermost IDs: the list must
+// be non-empty and every element must be a valid ID.
+func requireIDs(field string, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("%s cannot be empty", field)
+	}
+	for _, id := range ids {
+		if err := requireID(field, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // optionalID is like requireID but treats an empty value as valid, for arguments
 // that may be omitted.
 func optionalID(field, id string) error {

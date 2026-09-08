@@ -18,11 +18,8 @@ const (
 	BlockTypeFile        = "file"
 	BlockTypeImage       = "image"
 	BlockTypeAnnotations = "annotations"
-	// BlockTypeServerToolUse records provider-executed (server) tool activity —
-	// e.g. Anthropic web_search / web_fetch / code_execution. The payload lives
-	// in ServerTool and matches the llm.ServerToolUse shape streamed over the
-	// "server_tool" websocket control event, so persisted rounds render
-	// identically to live ones.
+	// BlockTypeServerToolUse is provider-executed activity. Payload matches
+	// the live websocket event so persisted rounds render the same way.
 	BlockTypeServerToolUse = "server_tool_use"
 )
 
@@ -92,10 +89,8 @@ type ContentBlock struct {
 	// Annotations fields
 	WebSearchContext *WebSearchContext `json:"web_search_context,omitempty"`
 
-	// ServerTool is the payload of server_tool_use blocks: the full activity
-	// record exactly as streamed. Server tools run on the provider's
-	// infrastructure with no approval flow; their activity shares the post
-	// text's visibility, so FilterForNonRequester does not redact it.
+	// ServerTool is streamed activity. No approval flow; shares post-text
+	// visibility, so FilterForNonRequester does not redact it.
 	ServerTool *llm.ServerToolUse `json:"server_tool,omitempty"`
 }
 
@@ -114,12 +109,6 @@ type WebSearchContext struct {
 	ExecutedQueries json.RawMessage `json:"executed_queries"`
 	Count           int             `json:"count"`
 }
-
-// BoolPtr returns a pointer to the given bool value.
-func BoolPtr(b bool) *bool { return &b }
-
-// Int64Ptr returns a pointer to the given int64 value.
-func Int64Ptr(v int64) *int64 { return &v }
 
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have Input and
@@ -181,7 +170,8 @@ func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 			}
 		case BlockTypeServerToolUse:
 			if block.ServerTool != nil {
-				st := *block.ServerTool
+				st := block.ServerTool.Clone()
+				st.ProviderRoute = ""
 				st.Sanitize()
 				result[i].ServerTool = &st
 			}

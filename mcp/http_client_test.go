@@ -162,3 +162,76 @@ func TestOAuthRoundTripperOriginPinSkipsTokenForOtherHost(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, "", gotAuth.Load(), "token must not be attached for a non-pinned origin")
 }
+
+// TestHTTPClientForMCPServiceAccountRedirectPolicy ensures service-account
+// credential headers survive same-origin redirects and never reach a
+// cross-origin redirect target (CheckRedirect fails closed first).
+func TestHTTPClientForMCPServiceAccountRedirectPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		crossOrigin     bool
+		wantErrContains string
+	}{
+		{
+			name: "same-origin redirect is followed and keeps credential headers",
+		},
+		{
+			name:            "cross-origin redirect is rejected before any request reaches the target",
+			crossOrigin:     true,
+			wantErrContains: "refusing cross-origin redirect",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			otherRecorder := &requestHeaderRecorder{}
+			other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				otherRecorder.record(r.Header.Clone())
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(other.Close)
+
+			finalRecorder := &requestHeaderRecorder{}
+			mux := http.NewServeMux()
+			mux.HandleFunc("/start", func(w http.ResponseWriter, r *http.Request) {
+				if tt.crossOrigin {
+					http.Redirect(w, r, other.URL+"/final", http.StatusFound)
+					return
+				}
+				http.Redirect(w, r, "/final", http.StatusFound)
+			})
+			mux.HandleFunc("/final", func(w http.ResponseWriter, r *http.Request) {
+				finalRecorder.record(r.Header.Clone())
+				w.WriteHeader(http.StatusOK)
+			})
+			server := httptest.NewServer(mux)
+			t.Cleanup(server.Close)
+
+			client := &Client{httpClient: &http.Client{}}
+			httpClient := client.httpClientForMCP(server.URL, testServiceAccountHeaders())
+
+			req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+			require.NoError(t, err)
+
+			resp, err := httpClient.Do(req)
+			if tt.wantErrContains != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErrContains)
+				require.Empty(t, otherRecorder.snapshot(), "cross-origin redirect target must not receive the follow-up request")
+				return
+			}
+
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			_ = resp.Body.Close()
+
+			finals := finalRecorder.snapshot()
+			require.Len(t, finals, 1)
+			require.Equal(t, testSAHeaderValue, finals[0].Get(testSAHeaderName))
+		})
+	}
+}

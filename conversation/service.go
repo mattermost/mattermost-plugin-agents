@@ -21,17 +21,29 @@ import (
 // Store is the subset of store.Store that the conversation service needs.
 type Store interface {
 	CreateConversation(conv *store.Conversation) error
+	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
+	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
+	// UpdateConversationRootPostID sets the RootPostID on a conversation.
+	// Used when the post ID is only known after post creation (e.g., thread analysis DM posts).
 	UpdateConversationRootPostID(id string, rootPostID string) error
+	// CreateTurn persists a new turn in the store with an explicit sequence.
 	CreateTurn(turn *store.Turn) error
+	// CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnsForConversation(conversationID string) ([]store.Turn, error)
+	// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
 	GetTurnByPostID(postID string) (*store.Turn, error)
+	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
+	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
+	// DeleteResponseTurns removes the post's anchor and any assistant/tool_result
+	// turns between it and the originating user turn. Callers must build any
+	// completion request before calling this — ExcludeAfterPostID needs the anchor.
 	DeleteResponseTurns(conversationID, postID string) error
 	GetMaxSequenceForConversation(conversationID string) (int, error)
 }
@@ -204,24 +216,9 @@ func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) erro
 	return s.store.UpdateTurnContent(turnID, content)
 }
 
-// CreateTurn persists a new turn in the store with an explicit sequence.
-func (s *Service) CreateTurn(turn *store.Turn) error {
-	return s.store.CreateTurn(turn)
-}
-
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
 func (s *Service) CreateTurnAutoSequence(turn *store.Turn) error {
 	return s.store.CreateTurnAutoSequence(turn)
-}
-
-// GetTurnByPostID returns the assistant turn anchored to postID, or nil.
-func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
-	return s.store.GetTurnByPostID(postID)
-}
-
-// UpdateTurnPostID sets or clears the PostID on a turn.
-func (s *Service) UpdateTurnPostID(id string, postID *string) error {
-	return s.store.UpdateTurnPostID(id, postID)
 }
 
 // DeleteResponseTurns removes the post's anchor and any assistant/tool_result
@@ -491,12 +488,12 @@ func turnsToLLMPosts(
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
 		turn := turns[i]
-		blocks, err := unmarshalBlocks(turn.Content)
+		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
 		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			nextBlocks, err := unmarshalBlocks(turns[i+1].Content)
+			nextBlocks, err := UnmarshalBlocks(turns[i+1].Content)
 			if err != nil {
 				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
 			}
@@ -588,6 +585,7 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		tt.AssistantMessage,
 		tt.AssistantReasoning,
 		tt.AssistantServerTools,
+		tt.AssistantSegments,
 		tt.AssistantToolCalls,
 		shared,
 	)

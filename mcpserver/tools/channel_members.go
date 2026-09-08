@@ -108,18 +108,18 @@ const (
 // getChannelMemberTools returns the channel membership and per-channel settings tools.
 func (p *MattermostToolProvider) getChannelMemberTools() []MCPTool {
 	return []MCPTool{
-		{Name: "get_channel_member", Description: getChannelMemberDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMemberArgs](string(p.accessMode)), Resolver: typed("get_channel_member", p.toolGetChannelMember)},
-		{Name: "get_channel_members_by_ids", Description: getChannelMembersByIDsDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMembersByIDsArgs](string(p.accessMode)), Resolver: typed("get_channel_members_by_ids", p.toolGetChannelMembersByIDs)},
-		{Name: "get_channel_members_by_status", Description: getChannelMembersByStatusDescription, Schema: NewJSONSchemaForAccessMode[GetChannelMembersByStatusArgs](string(p.accessMode)), Resolver: typed("get_channel_members_by_status", p.toolGetChannelMembersByStatus)},
-		{Name: "get_user_channel_memberships", Description: getUserChannelMembershipsDescription, Schema: NewJSONSchemaForAccessMode[GetUserChannelMembershipsArgs](string(p.accessMode)), Resolver: typed("get_user_channel_memberships", p.toolGetUserChannelMemberships)},
-		{Name: "get_users_not_in_channel", Description: getUsersNotInChannelDescription, Schema: NewJSONSchemaForAccessMode[GetUsersNotInChannelArgs](string(p.accessMode)), Resolver: typed("get_users_not_in_channel", p.toolGetUsersNotInChannel)},
-		{Name: "search_users_in_channel", Description: searchUsersInChannelDescription, Schema: NewJSONSchemaForAccessMode[SearchUsersInChannelArgs](string(p.accessMode)), Resolver: typed("search_users_in_channel", p.toolSearchUsersInChannel)},
-		{Name: "list_sidebar_categories", Description: listSidebarCategoriesDescription, Schema: NewJSONSchemaForAccessMode[ListSidebarCategoriesArgs](string(p.accessMode)), Resolver: typed("list_sidebar_categories", p.toolListSidebarCategories)},
-		{Name: "add_channel_members", Description: addChannelMembersDescription, Schema: NewJSONSchemaForAccessMode[AddChannelMembersArgs](string(p.accessMode)), Resolver: typed("add_channel_members", p.toolAddChannelMembers)},
-		{Name: "remove_channel_member", Description: removeChannelMemberDescription, Schema: NewJSONSchemaForAccessMode[RemoveChannelMemberArgs](string(p.accessMode)), Resolver: typed("remove_channel_member", p.toolRemoveChannelMember)},
-		{Name: "set_channel_mute", Description: setChannelMuteDescription, Schema: NewJSONSchemaForAccessMode[SetChannelMuteArgs](string(p.accessMode)), Resolver: typed("set_channel_mute", p.toolSetChannelMute)},
-		{Name: "set_channel_favorite", Description: setChannelFavoriteDescription, Schema: NewJSONSchemaForAccessMode[SetChannelFavoriteArgs](string(p.accessMode)), Resolver: typed("set_channel_favorite", p.toolSetChannelFavorite)},
-		{Name: "update_channel_notify_props", Description: updateChannelNotifyPropsDescription, Schema: NewJSONSchemaForAccessMode[UpdateChannelNotifyPropsArgs](string(p.accessMode)), Resolver: typed("update_channel_notify_props", p.toolUpdateChannelNotifyProps)},
+		mcpTool(p, "get_channel_member", getChannelMemberDescription, p.toolGetChannelMember),
+		mcpTool(p, "get_channel_members_by_ids", getChannelMembersByIDsDescription, p.toolGetChannelMembersByIDs),
+		mcpTool(p, "get_channel_members_by_status", getChannelMembersByStatusDescription, p.toolGetChannelMembersByStatus),
+		mcpTool(p, "get_user_channel_memberships", getUserChannelMembershipsDescription, p.toolGetUserChannelMemberships),
+		mcpTool(p, "get_users_not_in_channel", getUsersNotInChannelDescription, p.toolGetUsersNotInChannel),
+		mcpTool(p, "search_users_in_channel", searchUsersInChannelDescription, p.toolSearchUsersInChannel),
+		mcpTool(p, "list_sidebar_categories", listSidebarCategoriesDescription, p.toolListSidebarCategories),
+		mcpTool(p, "add_channel_members", addChannelMembersDescription, p.toolAddChannelMembers),
+		mcpTool(p, "remove_channel_member", removeChannelMemberDescription, p.toolRemoveChannelMember),
+		mcpTool(p, "set_channel_mute", setChannelMuteDescription, p.toolSetChannelMute),
+		mcpTool(p, "set_channel_favorite", setChannelFavoriteDescription, p.toolSetChannelFavorite),
+		mcpTool(p, "update_channel_notify_props", updateChannelNotifyPropsDescription, p.toolUpdateChannelNotifyProps),
 	}
 }
 
@@ -132,13 +132,9 @@ func (p *MattermostToolProvider) toolGetChannelMember(mcpContext *MCPToolContext
 		return "", err
 	}
 
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	member, _, err := mcpContext.Client.GetChannelMember(mcpContext.Ctx, args.ChannelID, userID, "")
@@ -159,13 +155,8 @@ func (p *MattermostToolProvider) toolGetChannelMembersByIDs(mcpContext *MCPToolC
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 
 	members, _, err := mcpContext.Client.GetChannelMembersByIds(mcpContext.Ctx, args.ChannelID, args.UserIDs)
@@ -176,14 +167,7 @@ func (p *MattermostToolProvider) toolGetChannelMembersByIDs(mcpContext *MCPToolC
 		return "no matching channel members found", nil
 	}
 
-	rendered := make([]renderMember, len(members))
-	for i, member := range members {
-		rendered[i] = renderMember{
-			userID: member.UserId,
-			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
-		}
-	}
-	return p.renderMembers(mcpContext.Ctx, mcpContext.Client, "Channel Members", 0, rendered, false), nil
+	return p.renderMembers(mcpContext.Ctx, mcpContext.Client, "Channel Members", 0, channelRenderMembers(members), false), nil
 }
 
 // toolGetChannelMembersByStatus implements the get_channel_members_by_status tool.
@@ -211,13 +195,9 @@ func (p *MattermostToolProvider) toolGetUserChannelMemberships(mcpContext *MCPTo
 		return "", err
 	}
 
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	members, _, err := mcpContext.Client.GetChannelMembersForUser(mcpContext.Ctx, userID, args.TeamID, "")
@@ -229,7 +209,7 @@ func (p *MattermostToolProvider) toolGetUserChannelMemberships(mcpContext *MCPTo
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Channel memberships (%d):\n\n", len(members)))
+	fmt.Fprintf(&result, "Channel memberships (%d):\n\n", len(members))
 	for i := range members {
 		format.WriteChannelMember(&result, format.ChannelMemberEntry{
 			HeaderLabel: fmt.Sprintf("Membership %d", i+1),
@@ -308,7 +288,7 @@ func (p *MattermostToolProvider) toolListSidebarCategories(mcpContext *MCPToolCo
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Sidebar categories (%d):\n\n", len(categories.Categories)))
+	fmt.Fprintf(&result, "Sidebar categories (%d):\n\n", len(categories.Categories))
 	for i := range categories.Categories {
 		format.WriteSidebarCategory(&result, format.SidebarCategoryEntry{
 			HeaderLabel: fmt.Sprintf("Category %d", i+1),
@@ -323,13 +303,8 @@ func (p *MattermostToolProvider) toolAddChannelMembers(mcpContext *MCPToolContex
 	if err := requireID("channel_id", args.ChannelID); err != nil {
 		return "", err
 	}
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 
 	if _, _, err := mcpContext.Client.AddChannelMembers(mcpContext.Ctx, args.ChannelID, "", args.UserIDs); err != nil {
@@ -474,10 +449,10 @@ func (p *MattermostToolProvider) formatUserList(users []*model.User, noun string
 		format.WriteUser(&body, format.UserEntry{HeaderLabel: fmt.Sprintf("User %d", written), User: user})
 	}
 
-	result.WriteString(fmt.Sprintf("Found %d %s:\n\n", written, noun))
+	fmt.Fprintf(&result, "Found %d %s:\n\n", written, noun)
 	result.WriteString(body.String())
 	if botsExcluded > 0 {
-		result.WriteString(fmt.Sprintf("\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded))
+		fmt.Fprintf(&result, "\n(%d bot account(s) excluded — set exclude_bots=false to include them)\n", botsExcluded)
 	}
 	return result.String()
 }

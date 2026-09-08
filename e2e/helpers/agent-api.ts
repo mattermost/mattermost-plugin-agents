@@ -28,6 +28,7 @@ export interface CreateAgentRequest {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    useServiceAccountAuth?: boolean;
     enabledNativeTools?: string[];
     model?: string;
     enableVision?: boolean;
@@ -63,6 +64,7 @@ export interface AgentResponse {
     enabledNativeTools: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -97,6 +99,7 @@ export function mergeAgentIntoUpdate(
         adminUserIDs: agent.adminUserIDs ?? [],
         enabledMCPTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
+        useServiceAccountAuth: agent.useServiceAccountAuth,
         enabledNativeTools: agent.enabledNativeTools,
         model: agent.model,
         enableVision: agent.enableVision,

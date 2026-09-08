@@ -19,25 +19,25 @@ import (
 // instruction, and markdown code fencing is stripped from non-streaming
 // responses.
 type StructuredOutputFallbackWrapper struct {
-	wrapped                 LanguageModel
+	LanguageModel
 	structuredOutputEnabled bool
 }
 
 func NewStructuredOutputFallbackWrapper(llm LanguageModel, structuredOutputEnabled bool) *StructuredOutputFallbackWrapper {
 	return &StructuredOutputFallbackWrapper{
-		wrapped:                 llm,
+		LanguageModel:           llm,
 		structuredOutputEnabled: structuredOutputEnabled,
 	}
 }
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletion(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (*TextStreamResult, error) {
 	request, opts, _ = w.applyFallback(request, opts)
-	return w.wrapped.ChatCompletion(ctx, request, opts...)
+	return w.LanguageModel.ChatCompletion(ctx, request, opts...)
 }
 
 func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (string, error) {
 	downstreamRequest, downstreamOpts, fallbackApplied := w.applyFallback(request, opts)
-	response, err := w.wrapped.ChatCompletionNoStream(ctx, downstreamRequest, downstreamOpts...)
+	response, err := w.LanguageModel.ChatCompletionNoStream(ctx, downstreamRequest, downstreamOpts...)
 	if err != nil {
 		return response, err
 	}
@@ -52,15 +52,7 @@ func (w *StructuredOutputFallbackWrapper) ChatCompletionNoStream(ctx context.Con
 // CountTokens applies the fallback so counts reflect the request actually sent.
 func (w *StructuredOutputFallbackWrapper) CountTokens(ctx context.Context, request CompletionRequest, opts ...LanguageModelOption) (int, error) {
 	request, opts, _ = w.applyFallback(request, opts)
-	return w.wrapped.CountTokens(ctx, request, opts...)
-}
-
-func (w *StructuredOutputFallbackWrapper) InputTokenLimit() int {
-	return w.wrapped.InputTokenLimit()
-}
-
-func (w *StructuredOutputFallbackWrapper) OutputTokenLimit() int {
-	return w.wrapped.OutputTokenLimit()
+	return w.LanguageModel.CountTokens(ctx, request, opts...)
 }
 
 // applyFallback strips the JSON output schema from the downstream request and

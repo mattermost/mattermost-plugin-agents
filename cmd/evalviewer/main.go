@@ -6,6 +6,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -122,26 +123,25 @@ All arguments after 'comment' are passed directly to 'go test'.`,
 	}
 }
 
-func runCommand(args []string) {
-	// Clean up old results
+// runEvals cleans up stale results, then runs `go test` with GOEVALS=1 set,
+// streaming output to the terminal. It returns the `go test` error so each
+// command can apply its own exit-code policy.
+func runEvals(args []string) error {
 	if err := cleanupOldResults(); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: Failed to clean old results: %v\n", err)
 	}
 
-	// Execute go test with GOEVALS=1
 	fmt.Println("Running evaluations...")
 
-	// Prepare go test command
-	cmdArgs := []string{"test"}
-	cmdArgs = append(cmdArgs, args...)
-
-	cmd := exec.Command("go", cmdArgs...)
+	cmd := exec.Command("go", append([]string{"test"}, args...)...)
 	cmd.Env = append(os.Environ(), "GOEVALS=1")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
-	// Run command and show output
-	if err := cmd.Run(); err != nil {
+func runCommand(args []string) {
+	if err := runEvals(args); err != nil {
 		fmt.Printf("\nTests completed with errors: %v\n", err)
 	} else {
 		fmt.Println("\nTests completed successfully.")
@@ -184,25 +184,7 @@ func viewCommandWithFlags() {
 }
 
 func checkCommand(args []string) {
-	// Clean up old results
-	if err := cleanupOldResults(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to clean old results: %v\n", err)
-	}
-
-	// Execute go test with GOEVALS=1
-	fmt.Println("Running evaluations...")
-
-	// Prepare go test command
-	cmdArgs := []string{"test"}
-	cmdArgs = append(cmdArgs, args...)
-
-	cmd := exec.Command("go", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GOEVALS=1")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Run command and show output
-	testErr := cmd.Run()
+	testErr := runEvals(args)
 	if testErr != nil {
 		fmt.Printf("\nTests completed with errors: %v\n", testErr)
 	} else {
@@ -246,25 +228,7 @@ func checkCommand(args []string) {
 }
 
 func commentCommand(args []string) {
-	// Clean up old results
-	if err := cleanupOldResults(); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: Failed to clean old results: %v\n", err)
-	}
-
-	// Execute go test with GOEVALS=1
-	fmt.Println("Running evaluations...")
-
-	// Prepare go test command
-	cmdArgs := []string{"test"}
-	cmdArgs = append(cmdArgs, args...)
-
-	cmd := exec.Command("go", cmdArgs...)
-	cmd.Env = append(os.Environ(), "GOEVALS=1")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	// Run command and show output
-	_ = cmd.Run() // Ignore test errors - we want to generate comment regardless
+	_ = runEvals(args) // Ignore test errors - we want to generate comment regardless
 
 	// Find and check results
 	evalFile, err := findEvalsFile()
@@ -308,32 +272,26 @@ func commentCommand(args []string) {
 	os.Exit(0)
 }
 
-func generateGitHubComment(results []EvalLogLine) string {
-	if len(results) == 0 {
-		return "⚠️ No evaluation results found."
-	}
+// providerStat accumulates per-provider pass/fail counts and failed results.
+type providerStat struct {
+	passed   int
+	failed   int
+	failures []EvalLogLine
+}
 
-	var sb strings.Builder
-
-	// Group results by provider
-	providerStats := make(map[string]struct {
-		passed   int
-		failed   int
-		failures []EvalLogLine
-	})
-
+// groupByProvider buckets results by the "[provider]" tag in the test name
+// (format: "ParentTest/[provider] test name") and returns per-provider stats
+// along with the overall passed and failed totals.
+func groupByProvider(results []EvalLogLine) (map[string]providerStat, int, int) {
+	providerStats := make(map[string]providerStat)
 	totalPassed := 0
 	totalFailed := 0
 
 	for _, result := range results {
-		// Extract provider from test name (format: "ParentTest/[provider] test name")
 		provider := "unknown"
-		// Look for [provider] pattern anywhere in the name
-		startIdx := strings.Index(result.Name, "[")
-		if startIdx >= 0 {
-			endIdx := strings.Index(result.Name[startIdx:], "]")
-			if endIdx > 0 {
-				provider = result.Name[startIdx+1 : startIdx+endIdx]
+		if _, after, ok := strings.Cut(result.Name, "["); ok {
+			if p, _, found := strings.Cut(after, "]"); found {
+				provider = p
 			}
 		}
 
@@ -348,6 +306,18 @@ func generateGitHubComment(results []EvalLogLine) string {
 		}
 		providerStats[provider] = stats
 	}
+
+	return providerStats, totalPassed, totalFailed
+}
+
+func generateGitHubComment(results []EvalLogLine) string {
+	if len(results) == 0 {
+		return "⚠️ No evaluation results found."
+	}
+
+	var sb strings.Builder
+
+	providerStats, totalPassed, totalFailed := groupByProvider(results)
 
 	// Overall summary
 	total := totalPassed + totalFailed
@@ -417,39 +387,7 @@ func printSummary(results []EvalLogLine) {
 	fmt.Println("EVALUATION RESULTS SUMMARY")
 	fmt.Println(strings.Repeat("=", 80))
 
-	// Group results by provider
-	providerStats := make(map[string]struct {
-		passed   int
-		failed   int
-		failures []EvalLogLine
-	})
-
-	totalPassed := 0
-	totalFailed := 0
-
-	for _, result := range results {
-		// Extract provider from test name (format: "ParentTest/[provider] test name")
-		provider := "unknown"
-		// Look for [provider] pattern anywhere in the name
-		startIdx := strings.Index(result.Name, "[")
-		if startIdx >= 0 {
-			endIdx := strings.Index(result.Name[startIdx:], "]")
-			if endIdx > 0 {
-				provider = result.Name[startIdx+1 : startIdx+endIdx]
-			}
-		}
-
-		stats := providerStats[provider]
-		if result.Pass {
-			stats.passed++
-			totalPassed++
-		} else {
-			stats.failed++
-			totalFailed++
-			stats.failures = append(stats.failures, result)
-		}
-		providerStats[provider] = stats
-	}
+	providerStats, totalPassed, totalFailed := groupByProvider(results)
 
 	// Print per-provider statistics
 	fmt.Println("\nResults by Provider:")
@@ -500,35 +438,25 @@ func truncateString(s string, maxLen int) string {
 	return s[:maxLen-3] + "..."
 }
 
+var errEvalsFileNotFound = errors.New("evals.jsonl not found in current directory or parent directories")
+
 func cleanupOldResults() error {
-	// Look for evals.jsonl in current directory and parent directories
-	dir, err := os.Getwd()
+	evalFile, err := findEvalsFile()
+	if errors.Is(err, errEvalsFileNotFound) {
+		// No file found, nothing to clean up
+		return nil
+	}
 	if err != nil {
 		return err
 	}
 
-	for {
-		evalFile := filepath.Join(dir, "evals.jsonl")
-		if _, err := os.Stat(evalFile); err == nil {
-			// File exists, remove it
-			fmt.Printf("Cleaning up old results: %s\n", evalFile)
-			return os.Remove(evalFile)
-		}
-
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root, no file found
-			break
-		}
-		dir = parent
-	}
-
-	// No file found, nothing to clean up
-	return nil
+	fmt.Printf("Cleaning up old results: %s\n", evalFile)
+	return os.Remove(evalFile)
 }
 
+// findEvalsFile looks for evals.jsonl in the current directory and parent
+// directories, returning errEvalsFileNotFound if the walk reaches the root.
 func findEvalsFile() (string, error) {
-	// Look for evals.jsonl in current directory and parent directories
 	dir, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -543,12 +471,10 @@ func findEvalsFile() (string, error) {
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			// Reached filesystem root
-			break
+			return "", errEvalsFileNotFound
 		}
 		dir = parent
 	}
-
-	return "", fmt.Errorf("evals.jsonl not found in current directory or parent directories")
 }
 
 func loadResults(filename string, showOnlyFailures bool) ([]EvalLogLine, error) {
