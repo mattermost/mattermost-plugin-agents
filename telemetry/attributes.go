@@ -69,6 +69,17 @@ var (
 	MCPTool   = attribute.Key("agents.mcp.tool")
 )
 
+// Attribute keys for web search operations
+var (
+	WebSearchProvider    = attribute.Key("agents.websearch.provider")
+	WebSearchResultLimit = attribute.Key("agents.websearch.result_limit")
+
+	// Failure surface: which early return a search bailed out on, plus the
+	// upstream HTTP status when there was one. The query is never attached.
+	WebSearchFailStage  = attribute.Key("agents.websearch.fail_stage")
+	WebSearchStatusCode = attribute.Key("agents.websearch.status_code")
+)
+
 // Attribute keys for Mattermost entities
 var (
 	UserID           = attribute.Key("agents.user.id")

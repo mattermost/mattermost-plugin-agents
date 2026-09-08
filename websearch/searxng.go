@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -42,9 +41,9 @@ func NewSearXNGProvider(baseURL string, httpClient *http.Client, logger Logger) 
 // return is visible in traces. Only safe metadata is attached: the failure
 // stage and HTTP status code, never the query.
 func failSpan(span trace.Span, stage string, statusCode int, err error) {
-	span.SetAttributes(attribute.String("agents.websearch.fail_stage", stage))
+	span.SetAttributes(telemetry.WebSearchFailStage.String(stage))
 	if statusCode > 0 {
-		span.SetAttributes(attribute.Int("http.response.status_code", statusCode))
+		span.SetAttributes(telemetry.WebSearchStatusCode.Int(statusCode))
 	}
 	span.RecordError(err)
 	span.SetStatus(codes.Error, err.Error())
@@ -52,12 +51,17 @@ func failSpan(span trace.Span, stage string, statusCode int, err error) {
 
 // Search performs a SearXNG search and returns the results.
 func (s *SearXNGProvider) Search(ctx context.Context, query string, limit int) (*SearchResponse, error) {
-	ctx, span := telemetry.Tracer().Start(ctx, "searxng web search")
-	defer span.End()
-
 	if limit <= 0 {
 		limit = 5
 	}
+
+	ctx, span := telemetry.Tracer().Start(ctx, "searxng web search",
+		trace.WithAttributes(
+			telemetry.WebSearchProvider.String("searxng"),
+			telemetry.WebSearchResultLimit.Int(limit),
+		),
+	)
+	defer span.End()
 
 	endpoint := s.baseURL + "/search"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
