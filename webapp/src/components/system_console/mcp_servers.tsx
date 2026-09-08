@@ -345,7 +345,7 @@ const MCPServer = ({
                     <OAuthConfiguredBadge>
                         <FormattedMessage defaultMessage='Configured'/>
                     </OAuthConfiguredBadge>
-                ) : undefined}
+                ) : null}
             >
                 <SectionHelpText>
                     {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
