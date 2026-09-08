@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 jest.mock('react-intl', () => {
     const React = require('react'); // eslint-disable-line @typescript-eslint/no-shadow, no-shadow, global-require
@@ -98,5 +98,27 @@ describe('BuiltInPluginServersSection', () => {
         );
 
         expect(screen.queryByTestId('console-policy-section')).toBeNull();
+    });
+
+    it('collapses a server accordion and hides its details', () => {
+        render(
+            <IntlProvider locale='en'>
+                <BuiltInPluginServersSection
+                    embeddedServerId={EMBEDDED_ID}
+                    pluginServers={[makePluginServer()]}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Plugin ID: com.example.demo')).not.toBeNull();
+        expect(screen.getByText(EMBEDDED_ID)).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: /Demo Plugin/}));
+        expect(screen.queryByText('Plugin ID: com.example.demo')).toBeNull();
+        expect(screen.getByText('Demo Plugin')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: /Mattermost/}));
+        expect(screen.queryByText(EMBEDDED_ID)).toBeNull();
+        expect(screen.getByText('Mattermost')).not.toBeNull();
     });
 });

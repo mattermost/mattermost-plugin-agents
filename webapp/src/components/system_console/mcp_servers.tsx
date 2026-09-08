@@ -3,7 +3,7 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, TrashCanOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
@@ -17,6 +17,7 @@ import {useIsBasicsLicensed} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
+import Accordion from './accordion';
 import {CopyableTextItem} from './copyable_text_item';
 import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
 import MCPToolsViewer from './mcp_tools_viewer';
@@ -155,6 +156,7 @@ const MCPServer = ({
     const intl = useIntl();
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
+    const [isExpanded, setIsExpanded] = useState(true);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
     const unnamedServerLabel = intl.formatMessage(
         {defaultMessage: 'Server {number}'},
@@ -251,31 +253,48 @@ const MCPServer = ({
         }
     };
 
+    const displayName = config.name || unnamedServerLabel;
+
     return (
-        <ServerContainer>
-            <ServerHeader>
-                {isEditingName ? (
-                    <ServerNameEditContainer>
-                        <ServerNameInput
-                            value={serverName}
-                            onChange={(e) => setServerName(e.target.value)}
-                            onBlur={handleRename}
-                            onKeyDown={handleKeyDown}
-                            autoFocus={true}
-                            placeholder={intl.formatMessage({defaultMessage: 'Server name'})}
-                        />
-                    </ServerNameEditContainer>
-                ) : (
-                    <ServerTitle onClick={() => setIsEditingName(true)}>
-                        {config.name || unnamedServerLabel}
-                    </ServerTitle>
-                )}
-                <DeleteButton onClick={onDelete}>
+        <Accordion
+            variant='card'
+            title={isEditingName ? (
+                <ServerNameInput
+                    value={serverName}
+                    onChange={(e) => setServerName(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={handleRename}
+                    onKeyDown={handleKeyDown}
+                    autoFocus={true}
+                    placeholder={intl.formatMessage({defaultMessage: 'Server name'})}
+                />
+            ) : (
+                <ServerTitle
+                    onClick={(e) => {
+                        if (!isExpanded) {
+                            return;
+                        }
+                        e.stopPropagation();
+                        setIsEditingName(true);
+                    }}
+                >
+                    {displayName}
+                </ServerTitle>
+            )}
+            expanded={isExpanded}
+            onToggle={() => setIsExpanded(!isExpanded)}
+            headerExtra={(
+                <DeleteButton
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete();
+                    }}
+                >
                     <TrashCanOutlineIcon size={16}/>
                     <FormattedMessage defaultMessage='Delete Server'/>
                 </DeleteButton>
-            </ServerHeader>
-
+            )}
+        >
             <BooleanItem
                 label={intl.formatMessage({defaultMessage: 'Enable Server'})}
                 value={config.enabled}
@@ -317,59 +336,40 @@ const MCPServer = ({
                 />
             </HeadersSection>
 
-            <OAuthSection>
-                <OAuthSectionHeader
-                    role='button'
-                    tabIndex={0}
-                    aria-expanded={isOAuthExpanded}
-                    aria-controls={`oauth-section-content-${serverIndex}`}
-                    onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setIsOAuthExpanded(!isOAuthExpanded);
-                        }
-                    }}
-                >
-                    <OAuthSectionHeaderLeft>
-                        {isOAuthExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                        <OAuthSectionTitle>
-                            {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
-                        </OAuthSectionTitle>
-                    </OAuthSectionHeaderLeft>
-                    {!isOAuthExpanded && config.clientID && (
-                        <OAuthConfiguredBadge>
-                            <FormattedMessage defaultMessage='Configured'/>
-                        </OAuthConfiguredBadge>
-                    )}
-                </OAuthSectionHeader>
-                {isOAuthExpanded && (
-                    <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
-                        <SectionHelpText>
-                            {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
-                        </SectionHelpText>
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Client ID'})}
-                            value={config.clientID}
-                            onChange={(e) => onChange(serverIndex, {
-                                ...config,
-                                clientID: e.target.value,
-                            })}
-                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
-                        />
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Client Secret'})}
-                            value={config.clientSecret}
-                            type='password'
-                            onChange={(e) => onChange(serverIndex, {
-                                ...config,
-                                clientSecret: e.target.value,
-                            })}
-                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
-                        />
-                    </OAuthSectionContent>
-                )}
-            </OAuthSection>
+            <Accordion
+                title={intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
+                expanded={isOAuthExpanded}
+                onToggle={() => setIsOAuthExpanded(!isOAuthExpanded)}
+                contentId={`oauth-section-content-${serverIndex}`}
+                badge={!isOAuthExpanded && config.clientID ? (
+                    <OAuthConfiguredBadge>
+                        <FormattedMessage defaultMessage='Configured'/>
+                    </OAuthConfiguredBadge>
+                ) : undefined}
+            >
+                <SectionHelpText>
+                    {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
+                </SectionHelpText>
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'Client ID'})}
+                    value={config.clientID}
+                    onChange={(e) => onChange(serverIndex, {
+                        ...config,
+                        clientID: e.target.value,
+                    })}
+                    helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
+                />
+                <TextItem
+                    label={intl.formatMessage({defaultMessage: 'Client Secret'})}
+                    value={config.clientSecret}
+                    type='password'
+                    onChange={(e) => onChange(serverIndex, {
+                        ...config,
+                        clientSecret: e.target.value,
+                    })}
+                    helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
+                />
+            </Accordion>
 
             {/* IDs are minted server-side on save, so any id-bearing entry is
                 persisted and policy authoring is safe. */}
@@ -377,10 +377,10 @@ const MCPServer = ({
                 <ConsolePolicySection
                     resourceType='mcp'
                     resourceId={config.id}
-                    resourceDisplayName={config.name || unnamedServerLabel}
+                    resourceDisplayName={displayName}
                 />
             )}
-        </ServerContainer>
+        </Accordion>
     );
 };
 
@@ -663,31 +663,14 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: 16px;
     margin-top: 16px;
     margin-bottom: 16px;
+    text-align: left;
 `;
 
-const ServerContainer = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 16px;
-    background-color: var(--center-channel-bg);
-`;
-
-const ServerHeader = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-`;
-
-const ServerTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
-    color: var(--center-channel-color);
+const ServerTitle = styled.span`
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 4px;
@@ -730,7 +713,9 @@ const DeleteButton = styled.button`
 const HeadersSection = styled.div`
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: 12px;
+    text-align: left;
 `;
 
 const HeadersSectionTitle = styled.div`
@@ -740,40 +725,6 @@ const HeadersSectionTitle = styled.div`
     margin-bottom: 4px;
 `;
 
-const OAuthSection = styled.div`
-    display: flex;
-    flex-direction: column;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    overflow: hidden;
-`;
-
-const OAuthSectionHeader = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    cursor: pointer;
-    background-color: rgba(var(--center-channel-color-rgb), 0.02);
-
-    &:hover {
-        background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    }
-`;
-
-const OAuthSectionHeaderLeft = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const OAuthSectionTitle = styled.div`
-    font-weight: 600;
-    font-size: 13px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-`;
-
 const OAuthConfiguredBadge = styled.div`
     font-size: 11px;
     font-weight: 600;
@@ -781,14 +732,6 @@ const OAuthConfiguredBadge = styled.div`
     padding: 2px 8px;
     background-color: rgba(var(--online-indicator-rgb), 0.08);
     border-radius: 10px;
-`;
-
-const OAuthSectionContent = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 12px;
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const SectionHelpText = styled.div`
@@ -876,7 +819,7 @@ const PlusServerIcon = styled(PlusIcon)`
 
 const EmptyState = styled.div`
     padding: 24px;
-    text-align: center;
+    text-align: left;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
     border-radius: 4px;
@@ -904,13 +847,6 @@ const ServerNameInput = styled.input`
         border-color: var(--button-bg);
         outline: none;
     }
-`;
-
-const ServerNameEditContainer = styled.div`
-    display: flex;
-    align-items: center;
-    width: 100%;
-    max-width: 300px;
 `;
 
 const TabsContainer = styled.div`

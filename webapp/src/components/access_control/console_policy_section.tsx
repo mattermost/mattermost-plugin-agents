@@ -4,10 +4,11 @@
 import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {PolicyResourceType} from '@/types/access_control';
 import {isValidMattermostId, useABACSupport} from '@/utils/access_control';
+
+import Accordion from '../system_console/accordion';
 
 import PolicyEditor from './policy_editor';
 
@@ -58,93 +59,32 @@ const ConsolePolicySection = (props: Props) => {
     };
 
     return (
-        <SectionContainer $collapsed={hasOpened && !expanded}>
-            <SectionHeader
-                role='button'
-                tabIndex={0}
-                aria-expanded={expanded}
-                onClick={toggleExpanded}
-                onKeyDown={(e: React.KeyboardEvent) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        toggleExpanded();
-                    }
-                }}
-            >
-                {expanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                <SectionTitle>
-                    <FormattedMessage defaultMessage='Access policy'/>
-                </SectionTitle>
-            </SectionHeader>
-            {(expanded || hasOpened) && (
-                <SectionContent
-                    $collapsed={!expanded}
-                    {...collapsedInert(expanded)}
-                >
-                    {isValidMattermostId(resourceId) ? (
-                        <PolicyEditor
-                            resourceType={resourceType}
-                            resourceId={resourceId}
-                            resourceDisplayName={resourceDisplayName}
-                            allowSimplified={true}
-                            allowAdvanced={true}
-                        />
-                    ) : (
-                        <LegacyIDNote>{legacyIDNote(resourceType)}</LegacyIDNote>
-                    )}
-                </SectionContent>
+        <Accordion
+            title={<FormattedMessage defaultMessage='Access policy'/>}
+            expanded={expanded}
+            onToggle={toggleExpanded}
+            keepMounted={hasOpened}
+            contentCollapsed={!expanded}
+        >
+            {isValidMattermostId(resourceId) ? (
+                <PolicyEditor
+                    resourceType={resourceType}
+                    resourceId={resourceId}
+                    resourceDisplayName={resourceDisplayName}
+                    allowSimplified={true}
+                    allowAdvanced={true}
+                />
+            ) : (
+                <LegacyIDNote>{legacyIDNote(resourceType)}</LegacyIDNote>
             )}
-        </SectionContainer>
+        </Accordion>
     );
 };
-
-// Omit inert when expanded: React 18 serializes inert={false} as inert="false",
-// which browsers still treat as inert.
-function collapsedInert(expanded: boolean): {inert?: ''} {
-    return expanded ? {} : {inert: ''};
-}
-
-// --- Styled Components ---
-
-const SectionContainer = styled.div<{$collapsed: boolean}>`
-    margin-top: 16px;
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    padding-top: 12px;
-    ${({$collapsed}) => $collapsed && `
-        position: relative;
-        overflow: hidden;
-    `}
-`;
-
-const SectionHeader = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    cursor: pointer;
-    user-select: none;
-`;
-
-const SectionTitle = styled.div`
-    font-size: 14px;
-    font-weight: 600;
-`;
-
-const SectionContent = styled.div<{$collapsed: boolean; inert?: ''}>`
-    margin-top: 12px;
-    ${({$collapsed}) => $collapsed && `
-        visibility: hidden;
-        position: absolute;
-        left: 0;
-        right: 0;
-        overflow: hidden;
-        clip-path: inset(50%);
-        pointer-events: none;
-    `}
-`;
 
 const LegacyIDNote = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
+    text-align: left;
 `;
 
 export default ConsolePolicySection;

@@ -253,6 +253,46 @@ describe('MCPServers service account headers', () => {
     });
 });
 
+describe('MCPServers accordions', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsBasicsLicensed.mockReturnValue(true);
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
+    });
+
+    test('remote servers start expanded and collapse to a header', () => {
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        expect(screen.getByText('Enable Server')).not.toBeNull();
+        expect(screen.getByText('OAuth Credentials (Optional)')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: /Jira/}));
+
+        expect(screen.queryByText('Enable Server')).toBeNull();
+        expect(screen.queryByText('OAuth Credentials (Optional)')).toBeNull();
+        expect(screen.getByText('Jira')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: /Jira/}));
+        expect(screen.getByText('Enable Server')).not.toBeNull();
+        expect(screen.getByText('OAuth Credentials (Optional)')).not.toBeNull();
+    });
+
+    test('Access policy sits beside OAuth as its own accordion on persisted servers', () => {
+        renderServers(makeMCPConfig([existingServer]));
+
+        expect(screen.getByText('OAuth Credentials (Optional)')).not.toBeNull();
+        expect(screen.getByTestId('console-policy-section').textContent).toBe(STABLE_ID);
+    });
+
+    test('OAuth credentials stay collapsed until opened', () => {
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        expect(screen.queryByText('Client ID')).toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: /OAuth Credentials/}));
+        expect(screen.getByText('Client ID')).not.toBeNull();
+    });
+});
+
 describe('MCPServers license gating', () => {
     beforeEach(() => {
         jest.clearAllMocks();

@@ -98,6 +98,14 @@ afterEach(() => {
 });
 
 describe('ConsolePolicySection', () => {
+    test('renders a collapsed accordion header matching other console sections', () => {
+        renderSection('serviceidaaaaaaaaaaaaaaaaa');
+
+        const header = screen.getByRole('button', {name: 'Access policy'});
+        expect(header.getAttribute('aria-expanded')).toBe('false');
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+    });
+
     test('the editor mounts on first expand and stays mounted when collapsed', async () => {
         renderSection('serviceidaaaaaaaaaaaaaaaaa');
 
