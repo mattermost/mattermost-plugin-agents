@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 // Minimal react-intl shim: ts-jest bypasses babel, so FormattedMessage needs an id at runtime.
@@ -194,6 +194,45 @@ describe('MCPServers stable ID handling', () => {
         expect(screen.getByText('OAuth Credentials (Optional)')).toBeTruthy();
         expect(screen.getByTestId('console-policy-section')).toBeTruthy();
         expect(screen.getByText('Delete Server')).toBeTruthy();
+    });
+
+    it('keeps accordion state on the remaining server after a delete', () => {
+        const initial = makeMCPConfig([
+            existingServer,
+            {
+                name: 'GitHub',
+                enabled: true,
+                baseURL: 'https://gh.example.com',
+                headers: {},
+            },
+        ]);
+
+        const Harness = () => {
+            const [config, setConfig] = useState(initial);
+            return (
+                <MCPServers
+                    mcpConfig={config}
+                    onChange={setConfig}
+                />
+            );
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <Harness/>
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'GitHub settings'}));
+        expect(screen.queryByDisplayValue('https://gh.example.com')).toBeNull();
+        expect(screen.getByDisplayValue('https://jira.example.com')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('Delete Server'));
+
+        expect(screen.getByText('GitHub')).toBeTruthy();
+        expect(screen.queryByText('Jira')).toBeNull();
+        expect(screen.queryByDisplayValue('https://gh.example.com')).toBeNull();
+        expect(screen.queryByText('Delete Server')).toBeNull();
     });
 
     it('adds a new server without an id so the backend mints the stable ID on save', () => {

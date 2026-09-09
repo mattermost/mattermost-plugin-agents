@@ -89,6 +89,12 @@ const TabButton = styled.button<{$active: boolean}>`
     }
 `;
 
+const TabPanel = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+`;
+
 const Horizontal = styled.div`
     display: flex;
     flex-direction: row;
@@ -315,28 +321,37 @@ const Config = (props: Props) => {
             <BetaMessage/>
             <TabsContainer role='tablist'>
                 <TabButton
+                    id='console-tab-services'
                     role='tab'
                     type='button'
                     $active={activeTab === 'services'}
                     aria-selected={activeTab === 'services'}
+                    aria-controls='console-tabpanel-services'
+                    tabIndex={activeTab === 'services' ? 0 : -1}
                     onClick={() => setActiveTab('services')}
                 >
                     <FormattedMessage defaultMessage='Services'/>
                 </TabButton>
                 <TabButton
+                    id='console-tab-mcps'
                     role='tab'
                     type='button'
                     $active={activeTab === 'mcps'}
                     aria-selected={activeTab === 'mcps'}
+                    aria-controls='console-tabpanel-mcps'
+                    tabIndex={activeTab === 'mcps' ? 0 : -1}
                     onClick={() => setActiveTab('mcps')}
                 >
                     <FormattedMessage defaultMessage='MCPs'/>
                 </TabButton>
                 <TabButton
+                    id='console-tab-settings'
                     role='tab'
                     type='button'
                     $active={activeTab === 'settings'}
                     aria-selected={activeTab === 'settings'}
+                    aria-controls='console-tabpanel-settings'
+                    tabIndex={activeTab === 'settings' ? 0 : -1}
                     onClick={() => setActiveTab('settings')}
                 >
                     <FormattedMessage defaultMessage='Settings'/>
@@ -344,59 +359,75 @@ const Config = (props: Props) => {
             </TabsContainer>
 
             {activeTab === 'services' && (
-                hasServiceConfigured ? (
-                    <>
-                        <Panel
-                            title={intl.formatMessage({defaultMessage: 'AI Services'})}
-                            subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
-                        >
-                            <Services
-                                services={value.services ?? []}
-                                bots={value.bots ?? []}
-                                onChange={(services: LLMService[]) => {
-                                    updateConfig({services});
-                                }}
-                            />
-                            <PanelFooterText>
-                                <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
-                            </PanelFooterText>
-                        </Panel>
-                        <Panel
-                            title={intl.formatMessage({defaultMessage: 'AI Bots'})}
-                            subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
-                        >
-                            <BotsMovedNotice/>
-                        </Panel>
-                    </>
-                ) : (
-                    <NoServicesPage onAddServicePressed={addFirstService}/>
-                )
+                <TabPanel
+                    id='console-tabpanel-services'
+                    role='tabpanel'
+                    aria-labelledby='console-tab-services'
+                >
+                    {hasServiceConfigured ? (
+                        <>
+                            <Panel
+                                title={intl.formatMessage({defaultMessage: 'AI Services'})}
+                                subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
+                            >
+                                <Services
+                                    services={value.services ?? []}
+                                    bots={value.bots ?? []}
+                                    onChange={(services: LLMService[]) => {
+                                        updateConfig({services});
+                                    }}
+                                />
+                                <PanelFooterText>
+                                    <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
+                                </PanelFooterText>
+                            </Panel>
+                            <Panel
+                                title={intl.formatMessage({defaultMessage: 'AI Bots'})}
+                                subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
+                            >
+                                <BotsMovedNotice/>
+                            </Panel>
+                        </>
+                    ) : (
+                        <NoServicesPage onAddServicePressed={addFirstService}/>
+                    )}
+                </TabPanel>
             )}
 
             {activeTab === 'mcps' && (
-                <Panel
-                    title={
-                        <Horizontal>
-                            <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                        </Horizontal>
-                    }
-                    subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
+                <TabPanel
+                    id='console-tabpanel-mcps'
+                    role='tabpanel'
+                    aria-labelledby='console-tab-mcps'
                 >
-                    <MCPServers
-                        mcpConfig={mcpConfig}
-                        onChange={(config) => {
-                            const updatedConfig = {
-                                ...config,
-                                servers: config.servers || [],
-                            };
-                            updateConfig({mcp: updatedConfig});
-                        }}
-                    />
-                </Panel>
+                    <Panel
+                        title={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
+                            </Horizontal>
+                        }
+                        subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
+                    >
+                        <MCPServers
+                            mcpConfig={mcpConfig}
+                            onChange={(config) => {
+                                const updatedConfig = {
+                                    ...config,
+                                    servers: config.servers || [],
+                                };
+                                updateConfig({mcp: updatedConfig});
+                            }}
+                        />
+                    </Panel>
+                </TabPanel>
             )}
 
             {activeTab === 'settings' && (
-                <>
+                <TabPanel
+                    id='console-tabpanel-settings'
+                    role='tabpanel'
+                    aria-labelledby='console-tab-settings'
+                >
                     <Panel
                         title={intl.formatMessage({defaultMessage: 'AI Functions'})}
                         subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
@@ -502,7 +533,7 @@ const Config = (props: Props) => {
                             updateConfig({webSearch: config});
                         }}
                     />
-                </>
+                </TabPanel>
             )}
         </ConfigContainer>
     );

@@ -654,7 +654,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                     ) : (
                                         normalizedServers.map((serverConfig, index) => (
                                             <MCPServer
-                                                key={index}
+                                                key={serverConfig.id || serverConfig.name || `unsaved-${index}`}
                                                 serverIndex={index}
                                                 serverConfig={serverConfig}
                                                 onChange={updateServer}

@@ -187,17 +187,26 @@ describe('Config tabs', () => {
         renderConfig();
         await screen.findByText('service:My Service:unsaved');
 
-        expect(screen.getByRole('tab', {name: 'Services'}).getAttribute('aria-selected')).toBe('true');
+        const servicesTab = screen.getByRole('tab', {name: 'Services'});
+        expect(servicesTab.getAttribute('aria-selected')).toBe('true');
+        expect(servicesTab.getAttribute('aria-controls')).toBe('console-tabpanel-services');
+        expect(screen.getByRole('tabpanel', {name: 'Services'})).toBeTruthy();
         expect(screen.queryByText('mcp:Jira:unsaved')).toBeNull();
         expect(screen.queryByText('Default bot')).toBeNull();
 
         openTab('MCPs');
-        expect(screen.getByRole('tab', {name: 'MCPs'}).getAttribute('aria-selected')).toBe('true');
+        const mcpsTab = screen.getByRole('tab', {name: 'MCPs'});
+        expect(mcpsTab.getAttribute('aria-selected')).toBe('true');
+        expect(mcpsTab.getAttribute('aria-controls')).toBe('console-tabpanel-mcps');
+        expect(screen.getByRole('tabpanel', {name: 'MCPs'})).toBeTruthy();
         expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
         expect(screen.queryByText('service:My Service:unsaved')).toBeNull();
 
         openTab('Settings');
-        expect(screen.getByRole('tab', {name: 'Settings'}).getAttribute('aria-selected')).toBe('true');
+        const settingsTab = screen.getByRole('tab', {name: 'Settings'});
+        expect(settingsTab.getAttribute('aria-selected')).toBe('true');
+        expect(settingsTab.getAttribute('aria-controls')).toBe('console-tabpanel-settings');
+        expect(screen.getByRole('tabpanel', {name: 'Settings'})).toBeTruthy();
         expect(screen.getByText('AI Functions')).toBeTruthy();
         expect(screen.getByText('Debug')).toBeTruthy();
         expect(screen.queryByText('service:My Service:unsaved')).toBeNull();
