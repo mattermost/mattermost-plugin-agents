@@ -33,6 +33,20 @@ type fakePluginHTTPClient struct {
 	pluginHTTP func(*http.Request) *http.Response
 }
 
+type serverAccessCall struct {
+	userID   string
+	serverID string
+}
+
+type recordingServerAccessChecker struct {
+	calls []serverAccessCall
+}
+
+func (c *recordingServerAccessChecker) CanUseMCPServer(_ context.Context, userID, serverID string) error {
+	c.calls = append(c.calls, serverAccessCall{userID: userID, serverID: serverID})
+	return assert.AnError
+}
+
 func (f *fakePluginHTTPClient) PluginHTTP(req *http.Request) *http.Response {
 	return f.pluginHTTP(req)
 }
@@ -163,11 +177,39 @@ func TestClientManagerReInitIdleTimeoutDefaulting(t *testing.T) {
 	}
 }
 
+func TestClientManagerServiceAccountAccessUsesInvokingUser(t *testing.T) {
+	pluginTestAPI := &plugintest.API{}
+	setupClientManagerTestAPI(t, pluginTestAPI)
+	client := pluginapi.NewClient(pluginTestAPI, nil)
+	checker := &recordingServerAccessChecker{}
+
+	manager := NewClientManager(Config{
+		IdleTimeoutMinutes: 30,
+		Servers: []ServerConfig{{
+			ID:                    "abcdefghijklmnopqrstuvwxyz",
+			Name:                  "Denied",
+			Enabled:               true,
+			BaseURL:               "https://must-not-connect.invalid",
+			ServiceAccountHeaders: map[string]string{"Authorization": "Bearer secret"},
+		}},
+	}, client.Log, client, nil, nil, nil, nil, checker)
+	t.Cleanup(manager.Close)
+
+	tools, mcpErrors := manager.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-user", "invoking-user"))
+
+	require.Empty(t, tools)
+	require.Nil(t, mcpErrors, "policy denial is silent and must prevent dialing")
+	require.Equal(t, []serverAccessCall{{
+		userID:   "invoking-user",
+		serverID: "abcdefghijklmnopqrstuvwxyz",
+	}}, checker.calls)
+}
+
 func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
@@ -203,13 +245,77 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	require.Len(t, m.ListPluginServers(), 1)
 }
 
+func TestClientManager_UpdatePluginServerAdminFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		pluginID    string
+		enabled     bool
+		toolConfigs []ToolConfig
+		expectFound bool
+	}{
+		{
+			name:        "patches admin fields on a registered entry",
+			pluginID:    "com.example.mcp",
+			enabled:     false,
+			toolConfigs: []ToolConfig{{Name: "echo", Policy: "ask", Enabled: false}},
+			expectFound: true,
+		},
+		{
+			name:        "unregistered plugin reports not found",
+			pluginID:    "com.example.missing",
+			enabled:     true,
+			expectFound: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pluginTestAPI := &plugintest.API{}
+			setupClientManagerTestAPI(t, pluginTestAPI)
+			client := pluginapi.NewClient(pluginTestAPI, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+			t.Cleanup(m.Close)
+
+			registered := PluginServerConfig{
+				PluginID:       "com.example.mcp",
+				Name:           "Example v2",
+				Path:           "/mcp/v2",
+				Enabled:        true,
+				ExposeExternal: true,
+			}
+			m.RegisterPluginServer(registered)
+
+			got, ok := m.UpdatePluginServerAdminFields(tc.pluginID, tc.enabled, tc.toolConfigs)
+			require.Equal(t, tc.expectFound, ok)
+			if !tc.expectFound {
+				require.Equal(t, PluginServerConfig{}, got)
+				stored, stillOK := m.GetPluginServer("com.example.mcp")
+				require.True(t, stillOK)
+				require.Equal(t, registered, stored, "a miss must not disturb other entries")
+				return
+			}
+
+			// Plugin-owned fields survive; admin-owned fields are patched.
+			require.Equal(t, "Example v2", got.Name)
+			require.Equal(t, "/mcp/v2", got.Path)
+			require.True(t, got.ExposeExternal)
+			require.Equal(t, tc.enabled, got.Enabled)
+			require.Equal(t, tc.toolConfigs, got.ToolConfigs)
+
+			stored, stillOK := m.GetPluginServer(tc.pluginID)
+			require.True(t, stillOK)
+			require.Equal(t, got, stored, "the patched entry must be stored back")
+		})
+	}
+}
+
 func TestClientManager_PluginRegistrationPersistence(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupTestLogger(pluginTestAPI)
 	fixture := setupPluginRegistrationKV(t, pluginTestAPI, nil)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	first := PluginServerConfig{PluginID: "com.example.first", Name: "First", Path: "/mcp", Enabled: true}
@@ -267,20 +373,21 @@ func TestClientManager_HydratesLivePluginRegistrations(t *testing.T) {
 			ExposeExternal: false,
 			ToolConfigs:    []ToolConfig{adminToolConfig},
 		}},
-	}, client.Log, client, nil, nil, nil, nil)
+	}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	got, ok := m.GetPluginServer(live.PluginID)
 	require.True(t, ok)
-	require.True(t, m.IsPluginRegistered(live.PluginID))
 	require.Equal(t, live.Name, got.Name)
 	require.Equal(t, live.Path, got.Path)
 	require.True(t, got.ExposeExternal)
 	require.True(t, got.Enabled)
 	require.Equal(t, []ToolConfig{adminToolConfig}, got.ToolConfigs)
 
-	require.False(t, m.IsPluginRegistered(disabled.PluginID))
-	require.False(t, m.IsPluginRegistered(absent.PluginID))
+	_, ok = m.GetPluginServer(disabled.PluginID)
+	require.False(t, ok)
+	_, ok = m.GetPluginServer(absent.PluginID)
+	require.False(t, ok)
 	require.Equal(t, map[string]PluginServerConfig{
 		live.PluginID: live,
 	}, fixture.registrations(t))
@@ -300,32 +407,14 @@ func TestClientManager_HydrationKeepsRegistrationsWhenServerConfigUnavailable(t 
 	pluginTestAPI.On("GetConfig").Return((*model.Config)(nil))
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
-	require.True(t, m.IsPluginRegistered(first.PluginID))
-	require.True(t, m.IsPluginRegistered(second.PluginID))
-	require.Equal(t, persisted, fixture.registrations(t))
-	require.Zero(t, fixture.writeCount())
-}
-
-func TestClientManager_UpdatePluginServerPreservesRegistrationStateAndKV(t *testing.T) {
-	pluginTestAPI := &plugintest.API{}
-	setupTestLogger(pluginTestAPI)
-	fixture := setupPluginRegistrationKV(t, pluginTestAPI, nil)
-	client := pluginapi.NewClient(pluginTestAPI, nil)
-
-	orphan := PluginServerConfig{PluginID: "com.example.orphan", Name: "Orphan", Path: "/mcp", Enabled: true}
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30, PluginServers: []PluginServerConfig{orphan}}, client.Log, client, nil, nil, nil, nil)
-	t.Cleanup(m.Close)
-
-	orphan.Enabled = false
-	m.UpdatePluginServer(orphan)
-
-	got, ok := m.GetPluginServer(orphan.PluginID)
+	_, ok := m.GetPluginServer(first.PluginID)
 	require.True(t, ok)
-	require.Equal(t, orphan, got)
-	require.False(t, m.IsPluginRegistered(orphan.PluginID))
+	_, ok = m.GetPluginServer(second.PluginID)
+	require.True(t, ok)
+	require.Equal(t, persisted, fixture.registrations(t))
 	require.Zero(t, fixture.writeCount())
 }
 
@@ -333,7 +422,7 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	cfg, ok := m.GetPluginServer("missing")
@@ -361,31 +450,23 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	require.Equal(t, stored, again, "GetPluginServer must return an independent value copy")
 }
 
-func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
+func TestClientManager_ConfigOnlyPluginServersAreNotRuntimeMembers(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	persisted := []PluginServerConfig{
-		{
-			PluginID:       "com.example.a",
-			Name:           "A",
-			Path:           "/mcp",
-			Enabled:        true,
-			ExposeExternal: false,
-			ToolConfigs: []ToolConfig{
-				{Name: "tool_a1", Policy: ToolPolicyAsk, Enabled: true},
-				{Name: "tool_a2", Policy: ToolPolicyAsk, Enabled: false},
-			},
+	const orphanID = "abcdefghijklmnopqrstuvwx0o"
+	persisted := []PluginServerConfig{{
+		ID:             orphanID,
+		PluginID:       "com.example.orphan",
+		Name:           "Orphan",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+		ToolConfigs: []ToolConfig{
+			{Name: "tool_a1", Policy: ToolPolicyAsk, Enabled: true},
 		},
-		{
-			PluginID:       "com.example.b",
-			Name:           "B",
-			Path:           "/mcp",
-			Enabled:        false,
-			ExposeExternal: true,
-		},
-	}
+	}}
 
 	m := NewClientManager(
 		Config{IdleTimeoutMinutes: 30, PluginServers: persisted},
@@ -395,32 +476,15 @@ func TestClientManager_HydratesPluginServersFromConfig(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	t.Cleanup(m.Close)
 
-	got := m.ListPluginServers()
-	require.Len(t, got, 2, "both persisted entries must be hydrated synchronously")
-
-	byID := map[string]PluginServerConfig{}
-	for _, c := range got {
-		byID[c.PluginID] = c
-	}
-
-	a := byID["com.example.a"]
-	require.Equal(t, "A", a.Name)
-	require.Equal(t, "/mcp", a.Path)
-	require.True(t, a.Enabled)
-	require.False(t, a.ExposeExternal)
-	require.Len(t, a.ToolConfigs, 2)
-	require.Equal(t, "tool_a1", a.ToolConfigs[0].Name)
-	require.True(t, a.ToolConfigs[0].Enabled)
-	require.False(t, a.ToolConfigs[1].Enabled)
-
-	b := byID["com.example.b"]
-	require.Equal(t, "B", b.Name)
-	require.False(t, b.Enabled)
-	require.True(t, b.ExposeExternal)
-	require.Empty(t, b.ToolConfigs)
+	require.Empty(t, m.ListPluginServers(), "config-only rows must not appear in the live registry")
+	_, ok := m.GetPluginServer("com.example.orphan")
+	require.False(t, ok)
+	require.Empty(t, m.snapshotEnabledPluginServers())
+	require.Equal(t, orphanID, m.GetConfig().PluginServers[0].ID, "identity must survive in config")
 }
 
 // A config broadcast must merge persisted admin-owned fields (Enabled,
@@ -432,7 +496,7 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{
@@ -443,9 +507,11 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 		ExposeExternal: false,
 	})
 
+	const persistedID = "abcdefghijklmnopqrstuvwx0p"
 	newCfg := Config{
 		IdleTimeoutMinutes: 30,
 		PluginServers: []PluginServerConfig{{
+			ID:             persistedID,
 			PluginID:       "com.example.mcp",
 			Name:           "Stale Name From Config", // must be ignored on merge
 			Path:           "/stale-from-config",     // must be ignored on merge
@@ -467,39 +533,83 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	require.Len(t, got.ToolConfigs, 1, "ToolConfigs merged from config")
 	require.Equal(t, "echo", got.ToolConfigs[0].Name)
 	require.False(t, got.ToolConfigs[0].Enabled)
+	require.Equal(t, persistedID, got.ID, "stable ABAC ID synced from config onto live entry")
 
 	require.Equal(t, "Live Name", got.Name)
 	require.Equal(t, "/live-mcp", got.Path)
 }
 
-func TestClientManager_ReInitInsertsConfigOnlyEntries(t *testing.T) {
+func TestApplyPersistedPluginServerFields(t *testing.T) {
+	tests := []struct {
+		name        string
+		live        PluginServerConfig
+		persisted   PluginServerConfig
+		wantID      string
+		wantEnabled bool
+	}{
+		{
+			name: "persisted ID overlays empty live ID",
+			live: PluginServerConfig{PluginID: "com.example.a", Name: "Live", Path: "/mcp", Enabled: false},
+			persisted: PluginServerConfig{
+				ID: "config-id", PluginID: "com.example.a", Enabled: true,
+				ToolConfigs: []ToolConfig{{Name: "t", Enabled: true}},
+			},
+			wantID: "config-id", wantEnabled: true,
+		},
+		{
+			name:      "persisted ID replaces stale live ID",
+			live:      PluginServerConfig{ID: "stale", PluginID: "com.example.a", Enabled: true},
+			persisted: PluginServerConfig{ID: "config-id", PluginID: "com.example.a", Enabled: false},
+			wantID:    "config-id", wantEnabled: false,
+		},
+		{
+			name:      "empty persisted ID keeps live ID",
+			live:      PluginServerConfig{ID: "live-id", PluginID: "com.example.a", Enabled: true},
+			persisted: PluginServerConfig{PluginID: "com.example.a", Enabled: false},
+			wantID:    "live-id", wantEnabled: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ApplyPersistedPluginServerFields(tt.live, tt.persisted)
+			assert.Equal(t, tt.wantID, got.ID)
+			assert.Equal(t, tt.wantEnabled, got.Enabled)
+			assert.Equal(t, tt.live.Name, got.Name)
+			assert.Equal(t, tt.live.Path, got.Path)
+			assert.Equal(t, tt.live.ExposeExternal, got.ExposeExternal)
+		})
+	}
+}
+
+func TestClientManager_ReInitDoesNotInsertConfigOnlyEntries(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	require.Empty(t, m.ListPluginServers(), "precondition: empty registry")
 
+	const orphanID = "abcdefghijklmnopqrstuvwx0o"
 	cfg := Config{
 		IdleTimeoutMinutes: 30,
 		PluginServers: []PluginServerConfig{{
+			ID:             orphanID,
 			PluginID:       "com.example.mcp",
 			Name:           "From Config",
 			Path:           "/from-config",
 			Enabled:        true,
-			ExposeExternal: false,
+			ExposeExternal: true,
 		}},
 	}
 
 	m.ReInit(cfg, nil)
 
-	got, ok := m.GetPluginServer("com.example.mcp")
-	require.True(t, ok)
-	require.Equal(t, "From Config", got.Name)
-	require.Equal(t, "/from-config", got.Path)
-	require.True(t, got.Enabled)
+	require.Empty(t, m.ListPluginServers())
+	_, ok := m.GetPluginServer("com.example.mcp")
+	require.False(t, ok, "ReInit must not fabricate registry entries from config")
+	require.Equal(t, orphanID, m.GetConfig().PluginServers[0].ID)
 }
 
 // Live registrations absent from config must survive config broadcasts.
@@ -508,7 +618,7 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	live := PluginServerConfig{
@@ -530,52 +640,10 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	}
 	m.ReInit(cfg, nil)
 
-	require.Len(t, m.ListPluginServers(), 2)
+	require.Len(t, m.ListPluginServers(), 1, "config-only other must not join the registry")
 	stillLive, ok := m.GetPluginServer("com.example.live")
 	require.True(t, ok, "runtime registration must survive ReInit")
 	require.Equal(t, live, stillLive)
-}
-
-func TestClientManager_IsPluginRegistered(t *testing.T) {
-	pluginTestAPI := &plugintest.API{}
-	setupClientManagerTestAPI(t, pluginTestAPI)
-	client := pluginapi.NewClient(pluginTestAPI, nil)
-
-	cfg := Config{
-		IdleTimeoutMinutes: 30,
-		PluginServers: []PluginServerConfig{{
-			PluginID: "com.example.orphan",
-			Name:     "Orphan",
-			Path:     "/mcp",
-			Enabled:  true,
-		}},
-	}
-	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
-	t.Cleanup(m.Close)
-
-	require.False(t, m.IsPluginRegistered("com.example.orphan"),
-		"entry hydrated only from persisted config must not be reported as registered")
-	require.False(t, m.IsPluginRegistered("com.example.missing"))
-
-	m.RegisterPluginServer(PluginServerConfig{
-		PluginID: "com.example.live",
-		Name:     "Live",
-		Path:     "/live",
-		Enabled:  true,
-	})
-	require.True(t, m.IsPluginRegistered("com.example.live"))
-
-	m.RegisterPluginServer(PluginServerConfig{
-		PluginID: "com.example.orphan",
-		Name:     "Orphan",
-		Path:     "/mcp",
-		Enabled:  true,
-	})
-	require.True(t, m.IsPluginRegistered("com.example.orphan"),
-		"an explicit Register must mark a previously-orphan entry as registered")
-
-	m.UnregisterPluginServer("com.example.live")
-	require.False(t, m.IsPluginRegistered("com.example.live"))
 }
 
 func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing.T) {
@@ -583,20 +651,27 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	cfg := Config{
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	t.Cleanup(m.Close)
+
+	m.RegisterPluginServer(PluginServerConfig{
+		PluginID: "com.example.valid", Name: "Valid", Path: "/mcp", Enabled: true,
+	})
+
+	m.ReInit(Config{
 		IdleTimeoutMinutes: 30,
 		PluginServers: []PluginServerConfig{
 			{PluginID: "", Name: "Empty ID", Path: "/x", Enabled: true},
-			{PluginID: "com.example.valid", Name: "Valid", Path: "/mcp", Enabled: true},
+			{PluginID: "com.example.valid", Name: "Stale", Path: "/stale", Enabled: false, ID: "abcdefghijklmnopqrstuvwx0v"},
 		},
-	}
-
-	m := NewClientManager(cfg, client.Log, client, nil, nil, nil, nil)
-	t.Cleanup(m.Close)
+	}, nil)
 
 	got := m.ListPluginServers()
-	require.Len(t, got, 1, "empty-PluginID entry must be skipped; only valid entry hydrated")
+	require.Len(t, got, 1)
 	require.Equal(t, "com.example.valid", got[0].PluginID)
+	require.Equal(t, "Valid", got[0].Name, "plugin-owned Name must survive sync")
+	require.False(t, got[0].Enabled, "admin Enabled merged from config")
+	require.Equal(t, "abcdefghijklmnopqrstuvwx0v", got[0].ID)
 }
 
 func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
@@ -609,7 +684,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -639,7 +714,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -690,7 +765,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 			setupClientManagerTestAPI(t, pluginTestAPI)
 			client := pluginapi.NewClient(pluginTestAPI, nil)
 
-			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 			t.Cleanup(m.Close)
 
 			m.RegisterPluginServer(PluginServerConfig{
@@ -739,7 +814,7 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{
 		PluginID: "com.example.mcp",
@@ -786,7 +861,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 		},
 	}
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})
@@ -811,7 +886,7 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
 	t.Cleanup(m.Close)
 
 	const writers = 8
@@ -909,18 +984,17 @@ func TestClientManagerGetToolRetrievalOverridesEmbedded(t *testing.T) {
 
 func TestClientManagerGetToolRetrievalOverridesPlugin(t *testing.T) {
 	manager := &ClientManager{
-		config: Config{
-			PluginServers: []PluginServerConfig{
-				{
-					PluginID: "com.example.mcp",
-					Enabled:  true,
-					ToolConfigs: []ToolConfig{
-						{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
-					},
-				},
-			},
+		pluginServers:    make(map[string]PluginServerConfig),
+		pluginRegistered: make(map[string]bool),
+	}
+	manager.pluginServers["com.example.mcp"] = PluginServerConfig{
+		PluginID: "com.example.mcp",
+		Enabled:  true,
+		ToolConfigs: []ToolConfig{
+			{Name: "lookup", Policy: ToolPolicyAsk, Enabled: true, RetrievalDescriptionOverride: "Find plugin records"},
 		},
 	}
+	manager.pluginRegistered["com.example.mcp"] = true
 
 	overrides := manager.GetToolRetrievalOverrides()
 

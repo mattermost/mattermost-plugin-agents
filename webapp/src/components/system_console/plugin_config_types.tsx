@@ -3,7 +3,7 @@
 
 import {LLMBotConfig} from './bot';
 import {EmbeddingSearchConfig} from './embedding_search/types';
-import {MCPConfig} from './mcp_servers';
+import {MCPConfig} from './mcp_types';
 import {LLMService} from './service';
 import {WebSearchConfig as WebSearchSettings} from './web_search/web_search_panel';
 
