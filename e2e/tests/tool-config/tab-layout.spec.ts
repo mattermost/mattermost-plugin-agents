@@ -56,7 +56,7 @@ test.describe('Tab Layout', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await toolConfig.navigateToPluginConfig(mattermost.url());
 
-        await expect(page.getByText('AI Services')).toBeVisible();
+        await expect(page.getByText('AI Services').first()).toBeVisible();
 
         await toolConfig.getTab('MCPs').click();
         await expect(page.getByText('Enable Mattermost MCP Server (HTTP)')).toBeVisible();
@@ -70,6 +70,6 @@ test.describe('Tab Layout', () => {
         await expect(page.getByText('Enable Mattermost MCP Server (HTTP)')).toBeVisible();
 
         await toolConfig.getTab('Settings').click();
-        await expect(page.getByText('AI Functions')).toBeVisible();
+        await expect(page.getByText('AI Functions').first()).toBeVisible();
     });
 });
