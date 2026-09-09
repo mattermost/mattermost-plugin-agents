@@ -352,69 +352,69 @@ const MCPServer = ({
                     </HeadersSection>
 
                     <NestedSections>
-                    <OAuthSection>
-                        <OAuthSectionHeader
-                            role='button'
-                            tabIndex={0}
-                            aria-expanded={isOAuthExpanded}
-                            aria-controls={`oauth-section-content-${serverIndex}`}
-                            onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
-                            onKeyDown={(e: React.KeyboardEvent) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                    e.preventDefault();
-                                    setIsOAuthExpanded(!isOAuthExpanded);
-                                }
-                            }}
-                        >
-                            <OAuthSectionTitle>
-                                {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
-                            </OAuthSectionTitle>
-                            <OAuthSectionHeaderRight>
-                                {!isOAuthExpanded && config.clientID && (
-                                    <OAuthConfiguredBadge>
-                                        <FormattedMessage defaultMessage='Configured'/>
-                                    </OAuthConfiguredBadge>
-                                )}
-                                {isOAuthExpanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
-                            </OAuthSectionHeaderRight>
-                        </OAuthSectionHeader>
-                        {isOAuthExpanded && (
-                            <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
-                                <SectionHelpText>
-                                    {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
-                                </SectionHelpText>
-                                <TextItem
-                                    label={intl.formatMessage({defaultMessage: 'Client ID'})}
-                                    value={config.clientID}
-                                    onChange={(e) => onChange(serverIndex, {
-                                        ...config,
-                                        clientID: e.target.value,
-                                    })}
-                                    helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
-                                />
-                                <TextItem
-                                    label={intl.formatMessage({defaultMessage: 'Client Secret'})}
-                                    value={config.clientSecret}
-                                    type='password'
-                                    onChange={(e) => onChange(serverIndex, {
-                                        ...config,
-                                        clientSecret: e.target.value,
-                                    })}
-                                    helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
-                                />
-                            </OAuthSectionContent>
-                        )}
-                    </OAuthSection>
+                        <OAuthSection>
+                            <OAuthSectionHeader
+                                role='button'
+                                tabIndex={0}
+                                aria-expanded={isOAuthExpanded}
+                                aria-controls={`oauth-section-content-${serverIndex}`}
+                                onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
+                                onKeyDown={(e: React.KeyboardEvent) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        setIsOAuthExpanded(!isOAuthExpanded);
+                                    }
+                                }}
+                            >
+                                <OAuthSectionTitle>
+                                    {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
+                                </OAuthSectionTitle>
+                                <OAuthSectionHeaderRight>
+                                    {!isOAuthExpanded && config.clientID && (
+                                        <OAuthConfiguredBadge>
+                                            <FormattedMessage defaultMessage='Configured'/>
+                                        </OAuthConfiguredBadge>
+                                    )}
+                                    {isOAuthExpanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
+                                </OAuthSectionHeaderRight>
+                            </OAuthSectionHeader>
+                            {isOAuthExpanded && (
+                                <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
+                                    <SectionHelpText>
+                                        {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
+                                    </SectionHelpText>
+                                    <TextItem
+                                        label={intl.formatMessage({defaultMessage: 'Client ID'})}
+                                        value={config.clientID}
+                                        onChange={(e) => onChange(serverIndex, {
+                                            ...config,
+                                            clientID: e.target.value,
+                                        })}
+                                        helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
+                                    />
+                                    <TextItem
+                                        label={intl.formatMessage({defaultMessage: 'Client Secret'})}
+                                        value={config.clientSecret}
+                                        type='password'
+                                        onChange={(e) => onChange(serverIndex, {
+                                            ...config,
+                                            clientSecret: e.target.value,
+                                        })}
+                                        helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
+                                    />
+                                </OAuthSectionContent>
+                            )}
+                        </OAuthSection>
 
-                    {/* IDs are minted server-side on save, so any id-bearing entry is
-                        persisted and policy authoring is safe. */}
-                    {config.id && (
-                        <ConsolePolicySection
-                            resourceType='mcp'
-                            resourceId={config.id}
-                            resourceDisplayName={config.name || unnamedServerLabel}
-                        />
-                    )}
+                        {/* IDs are minted server-side on save, so any id-bearing entry is
+                            persisted and policy authoring is safe. */}
+                        {config.id && (
+                            <ConsolePolicySection
+                                resourceType='mcp'
+                                resourceId={config.id}
+                                resourceDisplayName={config.name || unnamedServerLabel}
+                            />
+                        )}
                     </NestedSections>
                 </ServerBody>
             )}
@@ -430,6 +430,15 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+
+    // UI-only keys so rename / later server-side IDs do not remount accordion state.
+    const serverUIKeysRef = useRef<string[]>([]);
+    const serverListKey = (serverConfig: MCPServerConfig, index: number): string => {
+        if (!serverUIKeysRef.current[index]) {
+            serverUIKeysRef.current[index] = serverConfig.id || `unsaved-${index}-${Date.now()}`;
+        }
+        return serverUIKeysRef.current[index];
+    };
 
     const configuredSiteURL = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.general.config.SiteURL,
@@ -559,6 +568,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Delete a server
     const deleteServer = (serverIndex: number) => {
+        serverUIKeysRef.current = serverUIKeysRef.current.filter((_, index) => index !== serverIndex);
         const newServers = normalizedServers.filter((_, index) => index !== serverIndex);
 
         onChange({
@@ -654,7 +664,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                     ) : (
                                         normalizedServers.map((serverConfig, index) => (
                                             <MCPServer
-                                                key={serverConfig.id || serverConfig.name || `unsaved-${index}`}
+                                                key={serverListKey(serverConfig, index)}
                                                 serverIndex={index}
                                                 serverConfig={serverConfig}
                                                 onChange={updateServer}

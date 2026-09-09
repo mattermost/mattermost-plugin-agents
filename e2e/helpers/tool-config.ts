@@ -38,7 +38,10 @@ export class ToolConfigUIHelper {
         // Wait for plugin UI to render
         await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
 
-        // Click Tools tab
+        // Tools lives under the MCPs console tab (inactive panels are unmounted).
+        await this.page.getByRole('tab', { name: 'MCPs', exact: true }).click();
+
+        // Click the inner Tools tab
         const toolsTab = this.page.getByRole('button', { name: 'Tools' });
         await toolsTab.click();
 
@@ -62,17 +65,16 @@ export class ToolConfigUIHelper {
         await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
     }
 
-    /** Get all tab buttons visible in the plugin config */
+    /** Get top-level Agents console tabs (Services / MCPs / Settings). */
     getTabButtons(): Locator {
-        // The tab buttons are rendered by the TabButton styled component
-        // They are direct children of TabsContainer, which is a div with flex layout
-        // Use role-based selectors for stability
-        return this.page.locator('button').filter({ hasText: /^(Configuration|Tools)$/ });
+        return this.page.getByRole('tab');
     }
 
-    /** Get a specific tab by name */
+    /** Get a specific tab by name (top-level tabs use role=tab; MCP inner tabs are buttons). */
     getTab(name: string): Locator {
-        return this.page.getByRole('button', { name, exact: true });
+        return this.page.getByRole('tab', { name, exact: true }).or(
+            this.page.getByRole('button', { name, exact: true }),
+        );
     }
 
     /** Expand a server row by clicking on it to show its tools */

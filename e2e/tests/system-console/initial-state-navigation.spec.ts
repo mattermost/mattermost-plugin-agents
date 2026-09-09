@@ -138,16 +138,18 @@ test.describe.serial('Initial State and Navigation', () => {
         // Navigate to system console
         await systemConsole.navigateToPluginConfig(mattermost.url());
 
-        // Verify all panels are visible
+        // Verify Services tab panels
         await expect(systemConsole.getServicesPanel()).toBeVisible();
         await expect(systemConsole.getBotsPanel()).toBeVisible();
-        await expect(systemConsole.getFunctionsPanel()).toBeVisible();
-        await expect(systemConsole.getDebugPanel()).toBeVisible();
 
         // Verify service is listed
         await expect(page.getByText('Test Service').first()).toBeVisible();
 
         await expect(page.getByText(/AI bot configuration has moved/i)).toBeVisible();
+
+        await systemConsole.selectConsoleTab('Settings');
+        await expect(systemConsole.getFunctionsPanel()).toBeVisible();
+        await expect(systemConsole.getDebugPanel()).toBeVisible();
 
         const defaultBotDropdown = page.getByText('Default bot').locator('..').getByRole('combobox');
         await defaultBotDropdown.scrollIntoViewIfNeeded();

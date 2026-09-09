@@ -25,6 +25,8 @@ type Config = PluginConfig;
 
 type ConsoleTab = 'services' | 'mcps' | 'settings';
 
+const CONSOLE_TAB_ORDER: ConsoleTab[] = ['services', 'mcps', 'settings'];
+
 /** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
 type RuntimeBotOption = {
     username: string;
@@ -228,6 +230,28 @@ const Config = (props: Props) => {
     const [activeTab, setActiveTab] = useState<ConsoleTab>('services');
     const intl = useIntl();
 
+    const handleTabKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft' && e.key !== 'Home' && e.key !== 'End') {
+            return;
+        }
+        e.preventDefault();
+        const current = CONSOLE_TAB_ORDER.indexOf(activeTab);
+        const lastIndex = CONSOLE_TAB_ORDER.length - 1;
+        let next = current;
+        if (e.key === 'ArrowRight') {
+            next = current === lastIndex ? 0 : current + 1;
+        } else if (e.key === 'ArrowLeft') {
+            next = current === 0 ? lastIndex : current - 1;
+        } else if (e.key === 'Home') {
+            next = 0;
+        } else {
+            next = lastIndex;
+        }
+        const nextTab = CONSOLE_TAB_ORDER[next];
+        setActiveTab(nextTab);
+        document.getElementById(`console-tab-${nextTab}`)?.focus();
+    }, [activeTab]);
+
     // Load config from plugin API on mount
     useEffect(() => {
         const loadConfig = async () => {
@@ -319,7 +343,10 @@ const Config = (props: Props) => {
     return (
         <ConfigContainer>
             <BetaMessage/>
-            <TabsContainer role='tablist'>
+            <TabsContainer
+                role='tablist'
+                onKeyDown={handleTabKeyDown}
+            >
                 <TabButton
                     id='console-tab-services'
                     role='tab'
