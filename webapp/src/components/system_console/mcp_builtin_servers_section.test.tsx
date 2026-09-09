@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 jest.mock('react-intl', () => {
     const React = require('react'); // eslint-disable-line @typescript-eslint/no-shadow, no-shadow, global-require
@@ -98,5 +98,31 @@ describe('BuiltInPluginServersSection', () => {
         );
 
         expect(screen.queryByTestId('console-policy-section')).toBeNull();
+    });
+
+    it('collapses and expands each built-in server accordion', () => {
+        render(
+            <IntlProvider locale='en'>
+                <BuiltInPluginServersSection
+                    embeddedServerId={EMBEDDED_ID}
+                    pluginServers={[makePluginServer()]}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText(EMBEDDED_ID)).toBeTruthy();
+        expect(screen.getByText('Plugin ID: com.example.demo')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Mattermost settings'}));
+        expect(screen.queryByText(EMBEDDED_ID)).toBeNull();
+        expect(screen.getByText('Mattermost')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Mattermost settings'}));
+        expect(screen.getByText(EMBEDDED_ID)).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Demo Plugin settings'}));
+        expect(screen.queryByText('Plugin ID: com.example.demo')).toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Demo Plugin settings'}));
+        expect(screen.getByText('Plugin ID: com.example.demo')).toBeTruthy();
     });
 });

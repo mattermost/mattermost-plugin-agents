@@ -3,7 +3,7 @@
 
 import React, {useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon, PencilOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
@@ -30,7 +30,7 @@ import type {
 
 import EnterpriseChip from './enterprise_chip';
 
-import {BooleanItem, ItemList, TextItem} from './item';
+import {BooleanItem, FormRow, ItemLabel, ItemList, TextFieldContainer, TextItem} from './item';
 
 export type MCPToolConfig = BaseMCPToolConfig;
 export type MCPEmbeddedServerConfig = BaseMCPEmbeddedServerConfig;
@@ -153,6 +153,7 @@ const MCPServer = ({
     onDelete: () => void;
 }) => {
     const intl = useIntl();
+    const [isExpanded, setIsExpanded] = useState(true);
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
@@ -251,9 +252,16 @@ const MCPServer = ({
         }
     };
 
+    const toggleExpanded = () => {
+        if (isEditingName) {
+            return;
+        }
+        setIsExpanded(!isExpanded);
+    };
+
     return (
         <ServerContainer>
-            <ServerHeader>
+            <ServerHeader $expanded={isExpanded}>
                 {isEditingName ? (
                     <ServerNameEditContainer>
                         <ServerNameInput
@@ -266,119 +274,149 @@ const MCPServer = ({
                         />
                     </ServerNameEditContainer>
                 ) : (
-                    <ServerTitle onClick={() => setIsEditingName(true)}>
+                    <ServerTitle
+                        type='button'
+                        onClick={() => setIsEditingName(true)}
+                    >
                         {config.name || unnamedServerLabel}
+                        <EditIcon aria-hidden={true}>
+                            <PencilOutlineIcon size={18}/>
+                        </EditIcon>
                     </ServerTitle>
                 )}
-                <DeleteButton onClick={onDelete}>
-                    <TrashCanOutlineIcon size={16}/>
-                    <FormattedMessage defaultMessage='Delete Server'/>
-                </DeleteButton>
+                <HeaderSpacer onClick={toggleExpanded}/>
+                {isExpanded && (
+                    <DeleteButton
+                        type='button'
+                        onClick={onDelete}
+                    >
+                        <TrashCanOutlineIcon size={16}/>
+                        <FormattedMessage defaultMessage='Delete Server'/>
+                    </DeleteButton>
+                )}
+                <ChevronButton
+                    type='button'
+                    aria-label={intl.formatMessage(
+                        {defaultMessage: '{name} settings'},
+                        {name: config.name || unnamedServerLabel},
+                    )}
+                    aria-expanded={isExpanded}
+                    aria-controls={`mcp-server-content-${serverIndex}`}
+                    onClick={toggleExpanded}
+                >
+                    {isExpanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
+                </ChevronButton>
             </ServerHeader>
 
-            <BooleanItem
-                label={intl.formatMessage({defaultMessage: 'Enable Server'})}
-                value={config.enabled}
-                onChange={updateServerEnabled}
-                helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
-            />
+            {isExpanded && (
+                <ServerBody id={`mcp-server-content-${serverIndex}`}>
+                    <BooleanItem
+                        label={intl.formatMessage({defaultMessage: 'Enable Server'})}
+                        value={config.enabled}
+                        onChange={updateServerEnabled}
+                        helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
+                    />
 
-            <TextItem
-                label={intl.formatMessage({defaultMessage: 'Server URL'})}
-                placeholder='https://mcp.example.com'
-                value={config.baseURL}
-                onChange={(e) => updateServerURL(e.target.value)}
-                onBlur={handleURLBlur}
-                helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
-            />
+                    <TextItem
+                        label={intl.formatMessage({defaultMessage: 'Server URL'})}
+                        placeholder='https://mcp.example.com'
+                        value={config.baseURL}
+                        onChange={(e) => updateServerURL(e.target.value)}
+                        onBlur={handleURLBlur}
+                        helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
+                    />
 
-            <HeadersSection>
-                <HeadersSectionTitle>
-                    {intl.formatMessage({defaultMessage: 'Headers'})}
-                </HeadersSectionTitle>
-                <HeaderMapEditor
-                    headers={config.headers}
-                    onChange={(headers) => onChange(serverIndex, {...config, headers})}
-                />
-            </HeadersSection>
+                    <HeadersSection>
+                        <HeadersSectionTitle>
+                            {intl.formatMessage({defaultMessage: 'Headers'})}
+                        </HeadersSectionTitle>
+                        <HeaderMapEditor
+                            headers={config.headers}
+                            onChange={(headers) => onChange(serverIndex, {...config, headers})}
+                        />
+                    </HeadersSection>
 
-            <HeadersSection>
-                <HeadersSectionTitle>
-                    {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
-                </HeadersSectionTitle>
-                <SectionHelpText>
-                    {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
-                </SectionHelpText>
-                <HeaderMapEditor
-                    headers={config.serviceAccountHeaders}
-                    onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
-                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
-                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
-                />
-            </HeadersSection>
-
-            <OAuthSection>
-                <OAuthSectionHeader
-                    role='button'
-                    tabIndex={0}
-                    aria-expanded={isOAuthExpanded}
-                    aria-controls={`oauth-section-content-${serverIndex}`}
-                    onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
-                    onKeyDown={(e: React.KeyboardEvent) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            setIsOAuthExpanded(!isOAuthExpanded);
-                        }
-                    }}
-                >
-                    <OAuthSectionHeaderLeft>
-                        {isOAuthExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                        <OAuthSectionTitle>
-                            {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
-                        </OAuthSectionTitle>
-                    </OAuthSectionHeaderLeft>
-                    {!isOAuthExpanded && config.clientID && (
-                        <OAuthConfiguredBadge>
-                            <FormattedMessage defaultMessage='Configured'/>
-                        </OAuthConfiguredBadge>
-                    )}
-                </OAuthSectionHeader>
-                {isOAuthExpanded && (
-                    <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
+                    <HeadersSection>
+                        <HeadersSectionTitle>
+                            {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
+                        </HeadersSectionTitle>
                         <SectionHelpText>
-                            {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
+                            {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
                         </SectionHelpText>
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Client ID'})}
-                            value={config.clientID}
-                            onChange={(e) => onChange(serverIndex, {
-                                ...config,
-                                clientID: e.target.value,
-                            })}
-                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
+                        <HeaderMapEditor
+                            headers={config.serviceAccountHeaders}
+                            onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                            namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                            valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
                         />
-                        <TextItem
-                            label={intl.formatMessage({defaultMessage: 'Client Secret'})}
-                            value={config.clientSecret}
-                            type='password'
-                            onChange={(e) => onChange(serverIndex, {
-                                ...config,
-                                clientSecret: e.target.value,
-                            })}
-                            helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
-                        />
-                    </OAuthSectionContent>
-                )}
-            </OAuthSection>
+                    </HeadersSection>
 
-            {/* IDs are minted server-side on save, so any id-bearing entry is
-                persisted and policy authoring is safe. */}
-            {config.id && (
-                <ConsolePolicySection
-                    resourceType='mcp'
-                    resourceId={config.id}
-                    resourceDisplayName={config.name || unnamedServerLabel}
-                />
+                    <NestedSections>
+                        <OAuthSection>
+                            <OAuthSectionHeader
+                                role='button'
+                                tabIndex={0}
+                                aria-expanded={isOAuthExpanded}
+                                aria-controls={`oauth-section-content-${serverIndex}`}
+                                onClick={() => setIsOAuthExpanded(!isOAuthExpanded)}
+                                onKeyDown={(e: React.KeyboardEvent) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        setIsOAuthExpanded(!isOAuthExpanded);
+                                    }
+                                }}
+                            >
+                                <OAuthSectionTitle>
+                                    {intl.formatMessage({defaultMessage: 'OAuth Credentials (Optional)'})}
+                                </OAuthSectionTitle>
+                                <OAuthSectionHeaderRight>
+                                    {!isOAuthExpanded && config.clientID && (
+                                        <OAuthConfiguredBadge>
+                                            <FormattedMessage defaultMessage='Configured'/>
+                                        </OAuthConfiguredBadge>
+                                    )}
+                                    {isOAuthExpanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
+                                </OAuthSectionHeaderRight>
+                            </OAuthSectionHeader>
+                            {isOAuthExpanded && (
+                                <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
+                                    <SectionHelpText>
+                                        {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
+                                    </SectionHelpText>
+                                    <TextItem
+                                        label={intl.formatMessage({defaultMessage: 'Client ID'})}
+                                        value={config.clientID}
+                                        onChange={(e) => onChange(serverIndex, {
+                                            ...config,
+                                            clientID: e.target.value,
+                                        })}
+                                        helptext={intl.formatMessage({defaultMessage: 'The OAuth application client ID.'})}
+                                    />
+                                    <TextItem
+                                        label={intl.formatMessage({defaultMessage: 'Client Secret'})}
+                                        value={config.clientSecret}
+                                        type='password'
+                                        onChange={(e) => onChange(serverIndex, {
+                                            ...config,
+                                            clientSecret: e.target.value,
+                                        })}
+                                        helptext={intl.formatMessage({defaultMessage: 'The OAuth application client secret.'})}
+                                    />
+                                </OAuthSectionContent>
+                            )}
+                        </OAuthSection>
+
+                        {/* IDs are minted server-side on save, so any id-bearing entry is
+                            persisted and policy authoring is safe. */}
+                        {config.id && (
+                            <ConsolePolicySection
+                                resourceType='mcp'
+                                resourceId={config.id}
+                                resourceDisplayName={config.name || unnamedServerLabel}
+                            />
+                        )}
+                    </NestedSections>
+                </ServerBody>
             )}
         </ServerContainer>
     );
@@ -392,6 +430,15 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+
+    // UI-only keys so rename / later server-side IDs do not remount accordion state.
+    const serverUIKeysRef = useRef<string[]>([]);
+    const serverListKey = (serverConfig: MCPServerConfig, index: number): string => {
+        if (!serverUIKeysRef.current[index]) {
+            serverUIKeysRef.current[index] = serverConfig.id || `unsaved-${index}-${Date.now()}`;
+        }
+        return serverUIKeysRef.current[index];
+    };
 
     const configuredSiteURL = useSelector<GlobalState, string | undefined>(
         (state) => state.entities.general.config.SiteURL,
@@ -521,6 +568,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // Delete a server
     const deleteServer = (serverIndex: number) => {
+        serverUIKeysRef.current = serverUIKeysRef.current.filter((_, index) => index !== serverIndex);
         const newServers = normalizedServers.filter((_, index) => index !== serverIndex);
 
         onChange({
@@ -616,7 +664,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                     ) : (
                                         normalizedServers.map((serverConfig, index) => (
                                             <MCPServer
-                                                key={index}
+                                                key={serverListKey(serverConfig, index)}
                                                 serverIndex={index}
                                                 serverConfig={serverConfig}
                                                 onChange={updateServer}
@@ -671,42 +719,100 @@ const ServersList = styled.div`
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     border-radius: 4px;
-    padding: 16px;
     background-color: var(--center-channel-bg);
+    overflow: hidden;
+    text-align: left;
 `;
 
-const ServerHeader = styled.div`
+const ServerHeader = styled.div<{$expanded?: boolean}>`
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    padding: 12px 12px 12px 16px;
+    text-align: left;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    ${({$expanded}) => $expanded && `
+        border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    `}
 `;
 
-const ServerTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
-    color: var(--center-channel-color);
+const HeaderSpacer = styled.div`
+    flex-grow: 1;
+    align-self: stretch;
     cursor: pointer;
-    padding: 4px 8px;
+`;
+
+const ChevronButton = styled.button`
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    border: none;
+    background: none;
+    color: inherit;
+    cursor: pointer;
     border-radius: 4px;
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.08);
     }
+`;
 
-    &::after {
-        content: '✎';
-        font-size: 12px;
-        margin-left: 8px;
-        opacity: 0;
-        transition: opacity 0.2s ease;
+const ServerBody = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 24px;
+    padding: 16px 16px 20px;
+    text-align: left;
+
+    ${FormRow} {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
     }
 
-    &:hover::after {
-        opacity: 0.7;
+    ${ItemLabel} {
+        height: auto;
     }
+
+    ${TextFieldContainer} {
+        gap: 10px;
+    }
+`;
+
+const ServerTitle = styled.button`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    padding: 4px 0;
+    margin-left: 0;
+    border: none;
+    background: none;
+    border-radius: 4px;
+    color: var(--center-channel-color);
+    cursor: pointer;
+
+    && {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 20px;
+    }
+
+    &:hover {
+        background-color: rgba(var(--center-channel-color-rgb), 0.08);
+    }
+`;
+
+const EditIcon = styled.span`
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
 const DeleteButton = styled.button`
@@ -730,14 +836,21 @@ const DeleteButton = styled.button`
 const HeadersSection = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
 `;
 
 const HeadersSectionTitle = styled.div`
     font-weight: 600;
     font-size: 14px;
+    line-height: 20px;
     color: var(--center-channel-color);
-    margin-bottom: 4px;
+`;
+
+const NestedSections = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
 `;
 
 const OAuthSection = styled.div`
@@ -752,25 +865,28 @@ const OAuthSectionHeader = styled.div`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 10px 12px;
+    padding: 12px 14px;
     cursor: pointer;
     background-color: rgba(var(--center-channel-color-rgb), 0.02);
+    text-align: left;
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.04);
     }
 `;
 
-const OAuthSectionHeaderLeft = styled.div`
+const OAuthSectionHeaderRight = styled.div`
     display: flex;
     align-items: center;
     gap: 8px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
+    flex-shrink: 0;
 `;
 
 const OAuthSectionTitle = styled.div`
     font-weight: 600;
     font-size: 13px;
+    line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
@@ -786,9 +902,11 @@ const OAuthConfiguredBadge = styled.div`
 const OAuthSectionContent = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px;
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    text-align: left;
 `;
 
 const SectionHelpText = styled.div`
@@ -932,10 +1050,6 @@ const TabButton = styled.button<{active: boolean}>`
 
     &:hover {
         color: ${(props) => (props.active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    }
-
-    &:first-child {
-        padding-left: 0;
     }
 `;
 

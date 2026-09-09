@@ -307,22 +307,21 @@ const McpsTab = (props: Props) => {
     // unmounts the section (Cancel restores the persisted value).
     const serviceAccountSection = (!canEditServiceAccountAuth && !useServiceAccountAuth) ? null : (
         <ServiceAccountSection>
-            <CheckboxRow>
+            <CheckboxLabel>
                 <CheckboxInput
                     type='checkbox'
-                    id='mcp-use-service-accounts'
                     checked={useServiceAccountAuth}
                     onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
                 />
-                <CheckboxLabel htmlFor='mcp-use-service-accounts'>
+                <CheckboxText>
                     <CheckboxTitle>
                         <FormattedMessage defaultMessage='Use service accounts for authentication'/>
                     </CheckboxTitle>
                     <CheckboxHint>
                         <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
                     </CheckboxHint>
-                </CheckboxLabel>
-            </CheckboxRow>
+                </CheckboxText>
+            </CheckboxLabel>
             {useServiceAccountAuth && (
                 <WarningBanner>
                     <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
@@ -368,26 +367,22 @@ const McpsTab = (props: Props) => {
     return (
         <Container>
             {serviceAccountSection}
-            <CheckboxRow>
+            <CheckboxLabel $disabled={serviceAccountFieldsLocked}>
                 <CheckboxInput
                     type='checkbox'
-                    id='mcp-auto-enable'
                     checked={autoEnableNewMCPTools}
                     disabled={serviceAccountFieldsLocked}
                     onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
                 />
-                <CheckboxLabel
-                    htmlFor='mcp-auto-enable'
-                    $disabled={serviceAccountFieldsLocked}
-                >
+                <CheckboxText>
                     <CheckboxTitle>
                         <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
                     </CheckboxTitle>
                     <CheckboxHint>
                         <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
                     </CheckboxHint>
-                </CheckboxLabel>
-            </CheckboxRow>
+                </CheckboxText>
+            </CheckboxLabel>
 
             <SearchInput
                 type='text'
@@ -584,12 +579,6 @@ const ServiceAccountSection = styled.div`
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
-const CheckboxRow = styled.div`
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-`;
-
 const CheckboxInput = styled.input`
     margin-top: 2px;
     cursor: pointer;
@@ -601,11 +590,18 @@ const CheckboxInput = styled.input`
 
 const CheckboxLabel = styled.label<{$disabled?: boolean}>`
     display: flex;
-    flex-direction: column;
-    gap: 2px;
+    align-items: flex-start;
+    gap: 10px;
     cursor: ${(p) => (p.$disabled ? 'not-allowed' : 'pointer')};
     user-select: none;
     opacity: ${(p) => (p.$disabled ? 0.6 : 1)};
+    margin: 0;
+`;
+
+const CheckboxText = styled.span`
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
 `;
 
 const CheckboxTitle = styled.span`

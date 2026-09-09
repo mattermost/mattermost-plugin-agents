@@ -21,17 +21,16 @@ import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers
  *
  * UPDATE THESE if the page structure changes (e.g., settings added/removed/reordered):
  *
- * Current order of radio button pairs on the page:
+ * Current order of radio button pairs on the Settings tab:
  *   0-1:  Plugin Enable (Mattermost built-in)
  *   2-3:  Render AI-generated links
  *   4-5:  Enable Channel Mention Tool Calling
  *   6-7:  Allow native web search in channels
- *   8-9:  Enable OpenTelemetry
- *   10-11: Enable Token Usage Logging
- *   12+:  Web Search, MCP settings...
+ *   8-9:  Enable Token Usage Logging
+ *   10+:  Embedding search / Web Search
  */
 const RADIO_INDICES = {
-    enableTokenUsageLogging: { true: 10, false: 11 },
+    enableTokenUsageLogging: { true: 8, false: 9 },
 } as const;
 
 /**
@@ -92,6 +91,7 @@ test.describe.serial('Debug Panel', () => {
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.selectConsoleTab('Settings');
 
         // Scroll to the Debug panel
         const debugPanel = systemConsole.getDebugPanel();
@@ -118,6 +118,7 @@ test.describe.serial('Debug Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Verify 'Enable Token Usage Logging' toggle is ON after reload
         const reloadedTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
@@ -134,6 +135,7 @@ test.describe.serial('Debug Panel', () => {
 
         // Reload and verify it's OFF
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         const finalTokenLogging = getSettingRadios(page, 'enableTokenUsageLogging');
         await expect(finalTokenLogging.false).toBeChecked();

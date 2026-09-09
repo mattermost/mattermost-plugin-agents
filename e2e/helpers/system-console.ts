@@ -50,6 +50,16 @@ export class SystemConsoleHelper {
     }
 
     /**
+     * Select a top-level Agents console tab (Services / MCPs / Settings).
+     */
+    async selectConsoleTab(name: 'Services' | 'MCPs' | 'Settings'): Promise<void> {
+        await this.page.waitForSelector('text=To report a bug or to provide feedback', { timeout: 15000 });
+        const tab = this.page.getByRole('tab', { name, exact: true });
+        await tab.click();
+        await expect(tab).toHaveAttribute('aria-selected', 'true');
+    }
+
+    /**
      * Get the "Add Service" button on the no services page
      */
     getAddServiceButton(): Locator {

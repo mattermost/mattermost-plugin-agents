@@ -60,6 +60,7 @@ test.describe.serial('MCP Panel', () => {
 
             await mmPage.login(mattermost.url(), adminUsername, adminPassword);
             await systemConsole.navigateToPluginConfig(mattermost.url());
+            await systemConsole.selectConsoleTab('MCPs');
 
             const timeoutField = page.getByLabel(/Connection Idle Timeout \(minutes\)/i).or(
                 page.locator('text=Connection Idle Timeout (minutes)').locator('..').getByRole('spinbutton'),
@@ -72,6 +73,7 @@ test.describe.serial('MCP Panel', () => {
 
             await systemConsole.clickSave();
             await page.reload();
+            await systemConsole.selectConsoleTab('MCPs');
 
             const reloadedTimeoutField = page.getByLabel(/Connection Idle Timeout \(minutes\)/i).or(
                 page.locator('text=Connection Idle Timeout (minutes)').locator('..').getByRole('spinbutton'),
@@ -101,6 +103,7 @@ test.describe.serial('MCP Panel', () => {
 
             await mmPage.login(mattermost.url(), adminUsername, adminPassword);
             await systemConsole.navigateToPluginConfig(mattermost.url());
+            await systemConsole.selectConsoleTab('MCPs');
 
             const callbackField = page.getByLabel(/MCP OAuth Callback URL/i);
             const callbackRow = callbackField.locator('xpath=..');

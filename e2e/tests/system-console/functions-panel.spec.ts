@@ -88,6 +88,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.selectConsoleTab('Settings');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();
@@ -116,6 +117,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Verify the 'Default agent' dropdown now shows 'Secondary Bot' as selected
         const reloadedDropdown = page.getByRole('combobox').first();
@@ -168,6 +170,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.selectConsoleTab('Settings');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();
@@ -202,6 +205,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Verify the field contains the entered hostnames
         const reloadedField = page.getByLabel(/allowed upstream hostnames/i).or(
@@ -218,6 +222,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Verify the field is empty after clearing and saving
         const finalField = page.getByLabel(/allowed upstream hostnames/i).or(
@@ -272,6 +277,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Navigate to system console AI plugin configuration page
         await systemConsole.navigateToPluginConfig(mattermost.url());
+        await systemConsole.selectConsoleTab('Settings');
 
         // Scroll to the AI Functions panel
         const functionsPanel = systemConsole.getFunctionsPanel();
@@ -317,6 +323,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Locate the section again after reload
         const reloadedText = page.getByText('Render AI-generated links', { exact: true });
@@ -345,6 +352,7 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Reload the page
         await page.reload();
+        await systemConsole.selectConsoleTab('Settings');
 
         // Locate the section one final time
         const finalText = page.getByText('Render AI-generated links', { exact: true });
