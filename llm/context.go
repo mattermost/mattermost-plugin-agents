@@ -53,6 +53,12 @@ type Context struct {
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]any
 
+	// ResponsePostID is the bot's streamed response post for this run. Set by
+	// conversation entry points after the placeholder post exists; not
+	// prompt-visible. Tools that resume the agent loop later
+	// (wait_for_async_work) rederive all conversation state from this post.
+	ResponsePostID string
+
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.
