@@ -127,7 +127,9 @@ export function describeAIMockCitationCase(options: {
             const aiPlugin = new AIPlugin(page);
             const llmBotHelper = new LLMBotPostHelper(page);
 
-            await mmPage.login(stack.mattermost.url(), 'regularuser', 'regularuser');
+            await mmPage.login(stack.mattermost.url(), 'regularuser', 'regularuser', {
+                channelViewTimeoutMs: 90000,
+            });
             await mmPage.createAndNavigateToDMWithBot(
                 stack.mattermost,
                 'regularuser',

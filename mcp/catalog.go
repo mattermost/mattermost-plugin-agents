@@ -34,6 +34,17 @@ type CatalogRequest struct {
 	ServiceAccount bool
 }
 
+// CatalogAccess is one request-scoped catalog result. PluginServers and
+// DeniedOrigins are the exact snapshots used to evaluate policy, plan
+// connections, and filter Tools. Catalog renderers must reuse them instead of
+// sampling the live plugin registry or evaluating policy again.
+type CatalogAccess struct {
+	Tools         []llm.Tool
+	Errors        *Errors
+	DeniedOrigins map[string]bool
+	PluginServers []PluginServerConfig
+}
+
 // UserCatalogRequest is the per-user catalog: remotes and embedded/plugin all
 // authenticate as userID.
 func UserCatalogRequest(userID string) CatalogRequest {

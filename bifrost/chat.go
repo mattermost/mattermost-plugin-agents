@@ -220,13 +220,14 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 	if cfg.JSONOutputFormat != nil {
 		params.ResponseFormat = buildChatResponseFormat(cfg.JSONOutputFormat)
 	}
-	if b.promptCachingEnabled() {
+	fallbacks := b.requestFallbacks(request)
+	if b.promptCachingEnabledFor(fallbacks) {
 		params.CacheControl = &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral}
 	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
-	req.Fallbacks = b.fallbacks
+	req.Fallbacks = fallbacks
 
 	return req
 }

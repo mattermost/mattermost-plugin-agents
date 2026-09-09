@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -45,6 +47,18 @@ const MaxAgentRequestBodyBytes = 2 << 20 // 2 MiB
 // human-readable and actionable.
 type agentErrorResponse struct {
 	Error string `json:"error"`
+}
+
+// statusForAccessErr: policy denials are 403; saving as attribute-based without ABAC is 400.
+func statusForAccessErr(err error) int {
+	switch {
+	case errors.Is(err, accesscontrol.ErrAccessDenied):
+		return http.StatusForbidden
+	case errors.Is(err, accesscontrol.ErrABACUnavailable):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
 }
 
 // abortAgentRequest writes a JSON error response with the given status code so
@@ -315,6 +329,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return
+	}
+
 	mmBot := &model.Bot{
 		Username:    req.Username,
 		DisplayName: req.DisplayName,
@@ -360,7 +379,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	accessible := make([]*llm.BotConfig, 0, len(agents))
 	for _, cfg := range agents {
-		if a.canUserAccessAgent(cfg, userID) {
+		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 		}
 	}
@@ -395,7 +414,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	if !a.canUserAccessAgent(cfg, userID) {
+	if !a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -488,6 +507,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return
+	}
+
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
 		return
@@ -525,6 +549,12 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return
+	}
+
+	// Best-effort policy cleanup: agent deletion must not fail on it. A stale
+	// policy on a deleted agent gates nothing.
+	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+		a.pluginAPI.Log.Error("Failed to delete access policy for deleted agent", "agent_id", cfg.ID, "error", err.Error())
 	}
 
 	ensureErr := a.refreshBotsAndNotify()
@@ -580,6 +610,11 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// canBypassServicePolicies: system admins author the policies and must see the full catalog.
+func (a *API) canBypassServicePolicies(userID string) bool {
+	return a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -599,8 +634,14 @@ func (a *API) handleListServices(c *gin.Context) {
 		return
 	}
 
+	bypassPolicies := a.canBypassServicePolicies(userID)
 	services := make([]ServiceInfo, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
+		if !bypassPolicies {
+			if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+				continue
+			}
+		}
 		services = append(services, ServiceInfo{
 			ID:               svc.ID,
 			Name:             svc.Name,
@@ -655,6 +696,14 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
+	// Same gate as GET /services.
+	if !a.canBypassServicePolicies(userID) {
+		if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+			abortAgentRequest(c, http.StatusForbidden, errors.New("you do not have access to the selected service"))
+			return
+		}
+	}
+
 	supportsModelFetching := svc.Type == llm.ServiceTypeAnthropic ||
 		svc.Type == llm.ServiceTypeOpenAI ||
 		svc.Type == llm.ServiceTypeAzure ||
@@ -690,16 +739,31 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
-func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
+// canUserAccessAgent reports whether userID may see the agent on list/get.
+// System admins see agents even when CanUseService would deny (they author
+// policies). Everyone else must pass the agent gate and CanUseService for the
+// primary service. Denied fallback hops are truncated per request, not here.
+func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
+
+	agentOK := false
 	if cfg.IsAdmin(userID) {
+		agentOK = true
+	} else {
+		// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
+		legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
+		agentOK = a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
+	}
+	if !agentOK {
+		return false
+	}
+
+	if a.canBypassServicePolicies(userID) {
 		return true
 	}
-	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
-	return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) == nil
+	return a.accessChecker.CanUseService(ctx, userID, cfg.ServiceID) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent
