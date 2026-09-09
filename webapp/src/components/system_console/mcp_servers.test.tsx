@@ -172,6 +172,30 @@ describe('MCPServers stable ID handling', () => {
         expect(servers[0].id).toBe(STABLE_ID);
     });
 
+    it('collapses and expands a remote MCP server accordion', () => {
+        renderServers(makeMCPConfig([existingServer]));
+
+        expect(screen.getByPlaceholderText('https://mcp.example.com')).toBeTruthy();
+        expect(screen.getByText('OAuth Credentials (Optional)')).toBeTruthy();
+        expect(screen.getByTestId('console-policy-section')).toBeTruthy();
+        expect(screen.getByText('Delete Server')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Jira settings'}));
+
+        expect(screen.queryByPlaceholderText('https://mcp.example.com')).toBeNull();
+        expect(screen.queryByText('OAuth Credentials (Optional)')).toBeNull();
+        expect(screen.queryByTestId('console-policy-section')).toBeNull();
+        expect(screen.queryByText('Delete Server')).toBeNull();
+        expect(screen.getByText('Jira')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Jira settings'}));
+
+        expect(screen.getByPlaceholderText('https://mcp.example.com')).toBeTruthy();
+        expect(screen.getByText('OAuth Credentials (Optional)')).toBeTruthy();
+        expect(screen.getByTestId('console-policy-section')).toBeTruthy();
+        expect(screen.getByText('Delete Server')).toBeTruthy();
+    });
+
     it('adds a new server without an id so the backend mints the stable ID on save', () => {
         const {onChange} = renderServers(makeMCPConfig([existingServer]));
 

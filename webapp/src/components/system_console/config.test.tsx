@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
@@ -112,6 +112,10 @@ function renderConfig() {
     return {registerSaveAction};
 }
 
+function openTab(name: string) {
+    fireEvent.click(screen.getByRole('tab', {name}));
+}
+
 describe('Config save flow', () => {
     beforeEach(() => {
         jest.clearAllMocks();
@@ -124,7 +128,9 @@ describe('Config save flow', () => {
 
         // Loaded config renders without IDs.
         await screen.findByText('service:My Service:unsaved');
+        openTab('MCPs');
         expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
+        openTab('Services');
 
         const savedConfig = {
             ...loadedConfig,
@@ -147,6 +153,7 @@ describe('Config save flow', () => {
 
         // The normalized response replaces local state: minted IDs are live.
         await screen.findByText('service:My Service:serviceidaaaaaaaaaaaaaaaaa');
+        openTab('MCPs');
         expect(screen.getByText('mcp:Jira:mcpserveridbbbbbbbbbbbbbbb')).toBeTruthy();
     });
 
@@ -164,6 +171,36 @@ describe('Config save flow', () => {
 
         expect(result.error?.message).toBe('Failed to save configuration.');
         expect(screen.getByText('service:My Service:unsaved')).toBeTruthy();
+        openTab('MCPs');
         expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
+    });
+});
+
+describe('Config tabs', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+    });
+
+    it('shows services by default and switches to MCPs and Settings', async () => {
+        renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        expect(screen.getByRole('tab', {name: 'Services'}).getAttribute('aria-selected')).toBe('true');
+        expect(screen.queryByText('mcp:Jira:unsaved')).toBeNull();
+        expect(screen.queryByText('Default bot')).toBeNull();
+
+        openTab('MCPs');
+        expect(screen.getByRole('tab', {name: 'MCPs'}).getAttribute('aria-selected')).toBe('true');
+        expect(screen.getByText('mcp:Jira:unsaved')).toBeTruthy();
+        expect(screen.queryByText('service:My Service:unsaved')).toBeNull();
+
+        openTab('Settings');
+        expect(screen.getByRole('tab', {name: 'Settings'}).getAttribute('aria-selected')).toBe('true');
+        expect(screen.getByText('AI Functions')).toBeTruthy();
+        expect(screen.getByText('Debug')).toBeTruthy();
+        expect(screen.queryByText('service:My Service:unsaved')).toBeNull();
+        expect(screen.queryByText('mcp:Jira:unsaved')).toBeNull();
     });
 });

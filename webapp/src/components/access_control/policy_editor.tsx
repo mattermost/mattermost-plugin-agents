@@ -433,7 +433,10 @@ function extractFieldValues(field: AccessControlPropertyField): string[] {
 const EditorContainer = styled.div`
     display: flex;
     flex-direction: column;
+    align-items: stretch;
     gap: 12px;
+    width: 100%;
+    text-align: left;
 `;
 
 const SpinnerContainer = styled.div`
@@ -464,6 +467,7 @@ const ReadOnlyExpression = styled.code`
 
 const ModeToggleRow = styled.div`
     display: flex;
+    justify-content: flex-start;
     gap: 4px;
 `;
 

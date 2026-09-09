@@ -98,6 +98,18 @@ afterEach(() => {
 });
 
 describe('ConsolePolicySection', () => {
+    test('renders as a collapsed accordion that expands like other boxed sections', async () => {
+        renderSection('serviceidaaaaaaaaaaaaaaaaa');
+
+        const header = screen.getByRole('button', {name: 'Access policy'});
+        expect(header.getAttribute('aria-expanded')).toBe('false');
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+
+        fireEvent.click(header);
+        expect(header.getAttribute('aria-expanded')).toBe('true');
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+    });
+
     test('the editor mounts on first expand and stays mounted when collapsed', async () => {
         renderSection('serviceidaaaaaaaaaaaaaaaaa');
 
