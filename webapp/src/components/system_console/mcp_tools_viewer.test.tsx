@@ -40,8 +40,8 @@ import {IntlProvider} from 'react-intl';
 
 import {clearMCPToolsCache, getMCPTools, getVettedToolSeed, updatePluginServer} from '../../client';
 
-import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
-import {MCPConfig} from './mcp_servers';
+import MCPToolsViewer from './mcp_tools_viewer';
+import {MCPConfig, MCPToolsResponse} from './mcp_types';
 /* eslint-enable import/first, import/order */
 
 const mockGetMCPTools = getMCPTools as jest.Mock;

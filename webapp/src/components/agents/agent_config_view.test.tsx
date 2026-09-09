@@ -42,6 +42,10 @@ jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
 }));
 
+jest.mock('@/utils/access_control', () => ({
+    useABACSupport: () => ({supported: false, loading: false}),
+}));
+
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
@@ -54,6 +58,7 @@ jest.mock('@/components/system_console/bot', () => ({
     },
     UserAccessLevel: {
         All: 0,
+        AttributeBased: 4,
     },
 }));
 
@@ -123,11 +128,19 @@ jest.mock('./tabs/config_tab', () => ({
 
 jest.mock('./tabs/access_tab', () => ({
     __esModule: true,
-    default: () => (
-        <input
-            aria-label='Channel access'
-            type='checkbox'
-        />
+    default: ({onChange}: {onChange: (updates: Partial<AgentDraft>) => void}) => (
+        <>
+            <input
+                aria-label='Channel access'
+                type='checkbox'
+            />
+            <button
+                type='button'
+                onClick={() => onChange({userAccessLevel: 0})}
+            >
+                {'Switch user access to everyone'}
+            </button>
+        </>
     ),
 }));
 
@@ -523,6 +536,85 @@ describe('AgentConfigView', () => {
 
         expect(screen.getByText('Max tool turns must be between 1 and 250')).not.toBeNull();
         expect(updateAgent).not.toHaveBeenCalled();
+    });
+
+    // --- Switching away from attribute-based access ---
+
+    const attributeBasedAgent: UserAgent = {
+        ...savedAgent,
+        id: 'agent_abac',
+        name: 'abacagent',
+        displayName: 'ABAC Agent',
+        userAccessLevel: 4,
+    };
+
+    function editViewElement(agent: UserAgent, onBack: jest.Mock, onSaved: jest.Mock) {
+        return (
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={onSaved}
+                />
+            </IntlProvider>
+        );
+    }
+
+    function renderEditView(agent: UserAgent) {
+        const onSaved = jest.fn();
+        const onBack = jest.fn();
+        const result = render(editViewElement(agent, onBack, onSaved));
+        return {...result, onSaved, onBack};
+    }
+
+    function switchAwayAndSave() {
+        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Switch user access to everyone'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+    }
+
+    test('switching away from attribute-based access saves and closes without a dialog', async () => {
+        mockUpdateAgent.mockResolvedValue({...attributeBasedAgent, userAccessLevel: 0});
+
+        const {onSaved} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_abac', expect.objectContaining({
+            userAccessLevel: 0,
+        }));
+        expect(screen.queryByRole('dialog', {name: 'Delete access policy?'})).toBeNull();
+    });
+
+    test('a failed switch-away update stays open, reports the failure, and can be retried safely', async () => {
+        mockUpdateAgent.
+            mockRejectedValueOnce(new Error('failed to delete access policy: policy storage unavailable')).
+            mockResolvedValueOnce({...attributeBasedAgent, userAccessLevel: 0});
+
+        const {onSaved} = renderEditView(attributeBasedAgent);
+        switchAwayAndSave();
+
+        expect(await screen.findByText('failed to delete access policy: policy storage unavailable')).not.toBeNull();
+        expect(onSaved).not.toHaveBeenCalled();
+        expect(mockUpdateAgent).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('dialog', {name: 'Delete access policy?'})).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent).toHaveBeenCalledTimes(2);
+    });
+
+    test('privilege-only rerenders do not submit an update that could delete the policy', () => {
+        const result = renderEditView(attributeBasedAgent);
+
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(false);
+        result.rerender(editViewElement(attributeBasedAgent, result.onBack, result.onSaved));
+
+        expect(mockUpdateAgent).not.toHaveBeenCalled();
+        expect(result.onSaved).not.toHaveBeenCalled();
     });
 
     test.each([

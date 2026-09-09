@@ -163,6 +163,42 @@ func TestHandleRefreshUserMCPToolsUsesForcedRefresh(t *testing.T) {
 	require.Equal(t, "refreshed_tool", response.Servers[0].Tools[0].Name)
 }
 
+func TestHandleRefreshUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	snapshot := mcp.PluginServerConfig{
+		PluginID: "com.example.snapshot",
+		Name:     "Snapshot Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	liveOnly := mcp.PluginServerConfig{
+		PluginID: "com.example.live-only",
+		Name:     "Live-Only Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	mcpMock := &mockMCPClientManager{
+		pluginServers:       []mcp.PluginServerConfig{snapshot, liveOnly},
+		accessPluginServers: []mcp.PluginServerConfig{snapshot},
+		tools: []llm.Tool{{
+			Name:         "snapshot_tool",
+			ServerOrigin: "plugin://" + snapshot.PluginID,
+		}},
+	}
+	e.api.mcpClientManager = mcpMock
+
+	response := refreshUserMCPToolsResponse(t, e.api, nil)
+
+	require.Equal(t, []string{testUserID}, mcpMock.refreshCalls)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, snapshot.Name, response.Servers[0].Name)
+}
+
 func TestHandleRefreshUserMCPToolsPassesRequestContext(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -488,6 +524,47 @@ func TestHandleGetUserMCPToolsIncludesEmbeddedZeroToolServer(t *testing.T) {
 	require.Empty(t, response.Servers[0].AuthURL)
 }
 
+func TestHandleGetUserMCPToolsHidesDeniedOrigins(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	const (
+		allowedOrigin = "https://allowed.example.com"
+		deniedOrigin  = "https://denied.example.com"
+		pluginID      = "com.example.denied"
+		pluginOrigin  = "plugin://" + pluginID
+	)
+
+	e.config.mcpConfig = mcp.Config{
+		Enabled: true,
+		Servers: []mcp.ServerConfig{
+			{Name: "Allowed", Enabled: true, BaseURL: allowedOrigin},
+			{Name: "Denied", Enabled: true, BaseURL: deniedOrigin},
+		},
+		EmbeddedServer: mcp.EmbeddedServerConfig{Enabled: true},
+	}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		embeddedServer: &stubEmbeddedServer{},
+		pluginServers: []mcp.PluginServerConfig{{
+			PluginID: pluginID, Name: "Denied Plugin", Path: "/mcp", Enabled: true,
+		}},
+		deniedOrigins: map[string]bool{
+			deniedOrigin:          true,
+			mcp.EmbeddedClientKey: true,
+			pluginOrigin:          true,
+		},
+		tools: []llm.Tool{{Name: "ok", ServerOrigin: allowedOrigin}},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, "Allowed", response.Servers[0].Name)
+	require.Equal(t, allowedOrigin, response.Servers[0].ServerOrigin)
+}
+
 func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -542,6 +619,44 @@ func TestHandleGetUserMCPToolsIncludesPluginServers(t *testing.T) {
 		require.True(t, tool.Enabled, "tool %q should default to enabled", tool.Name)
 		require.Equal(t, "ask", tool.Policy, "tool %q should default to ask policy", tool.Name)
 	}
+}
+
+// Response rows must come from CatalogAccess.PluginServers, not a live
+// ListPluginServers re-sample that can drift mid-request.
+func TestHandleGetUserMCPToolsUsesAccessPluginSnapshot(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	snapCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.snap",
+		Name:     "Snapshot Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+	liveOnlyCfg := mcp.PluginServerConfig{
+		PluginID: "com.example.live-only",
+		Name:     "Live-Only Plugin",
+		Path:     "/mcp",
+		Enabled:  true,
+	}
+
+	e.config.mcpConfig = mcp.Config{Enabled: true}
+	e.api.mcpClientManager = &mockMCPClientManager{
+		// Live registry has an extra server that arrived after the snapshot.
+		pluginServers:       []mcp.PluginServerConfig{snapCfg, liveOnlyCfg},
+		accessPluginServers: []mcp.PluginServerConfig{snapCfg},
+		tools: []llm.Tool{{
+			Name: "snap_tool", ServerOrigin: "plugin://" + snapCfg.PluginID,
+		}},
+	}
+
+	response := getUserMCPToolsResponse(t, e.api)
+	require.Len(t, response.Servers, 1)
+	require.Equal(t, snapCfg.Name, response.Servers[0].Name)
+	require.Equal(t, "plugin://"+snapCfg.PluginID, response.Servers[0].ServerOrigin)
 }
 
 func TestHandleGetUserMCPToolsAuthNeededStateOverridesDiscoveredTools(t *testing.T) {

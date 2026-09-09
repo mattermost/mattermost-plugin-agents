@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -67,6 +68,8 @@ type Plugin struct {
 	store                *store.Store
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
+
+	accessChecker *accesscontrol.Checker
 }
 
 type pluginLogger struct {
@@ -191,7 +194,15 @@ func (p *Plugin) OnActivate() error {
 	}
 	mtx2.Unlock()
 
-	// Load config from DB into memory and set migrated flag
+	// ABAC ID migrations must run after the config.json->DB migration and
+	// before runtime config is loaded. A follower that waited on the cluster
+	// lock must reload the winner's remapped IDs even when Migrated is false.
+	idsMigrated, err := runABACIDMigrations(p.API, pluginAPI, p.store)
+	if err != nil {
+		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
+	}
+
+	// Load the fully migrated config from DB into memory and set migrated flag.
 	dbConfig, err := p.store.GetConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config from database: %w", err)
@@ -201,7 +212,25 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, llmUpstreamHTTPClient, metricsService)
+	if idsMigrated {
+		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
+		}
+		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
+		}
+	}
+
+	// ABAC checker, built before bots.New so the composite usage gate always
+	// has one. License/enablement is probed later via IsAvailable.
+	mcpServerIDsByOrigin := func() map[string]string {
+		mcpConfig := p.configuration.MCP()
+		return mcpConfig.ServerIDByOrigin()
+	}
+	accessChecker := accesscontrol.New(accesscontrol.NewPluginAPIClient(p.API), p.API, mcpServerIDsByOrigin, &pluginAPI.Log)
+	p.accessChecker = accessChecker
+
+	bots := bots.New(p.API, pluginAPI, licenseChecker, &p.configuration, p.store, accessChecker, llmUpstreamHTTPClient, metricsService)
 
 	// migrateAndRefresh runs the one-time legacy bot migration, then forces
 	// a bot refresh only if the migration actually created new agents.
@@ -408,7 +437,7 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient)
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, accessChecker)
 	p.configuration.RegisterUpdateListener(func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	})
@@ -466,7 +495,9 @@ func (p *Plugin) OnActivate() error {
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient)
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient, accessChecker, func() string {
+		return p.configuration.MCP().EmbeddedServer.ID
+	})
 	if err != nil {
 		pluginAPI.Log.Error("Failed to create MCP handlers", "error", err)
 	} else {
@@ -506,6 +537,7 @@ func (p *Plugin) OnActivate() error {
 		getSearchInitError,
 		customPromptsStore,
 		autoreplyService,
+		accessChecker,
 	)
 
 	apiService.SetConversationService(convService)

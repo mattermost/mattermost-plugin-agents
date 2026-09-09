@@ -56,6 +56,12 @@ type CompletionRequest struct {
 	Context          *Context
 	Operation        string
 	OperationSubType string
+
+	// RestrictFallbacks, when true, attaches only AllowedFallbackServiceIDs
+	// (already truncated at the first denied hop). When false, the model uses
+	// its full configured chain (evals, tests, non-user jobs).
+	RestrictFallbacks         bool
+	AllowedFallbackServiceIDs []string
 }
 
 func (b *CompletionRequest) Truncate(maxTokens int, countTokens func(string) int) bool {

@@ -5,7 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { resetSelectedAgentPreference } from 'helpers/agent_preferences';
-import { OpenAIMockContainer, RunOpenAIMocks, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
+import { OpenAIMockContainer, RunOpenAIMocks, turnMocksWithTitleSiphon, responseTest, responseTest2, responseTest2Text, responseTestText } from 'helpers/openai-mock';
 
 // Test configuration
 const username = 'regularuser';
@@ -225,20 +225,18 @@ test.describe('Thread Analysis', () => {
     await page.getByTestId(`ai-actions-menu`).click();
 
     // Click on "Summarize Thread"
-    await openAIMock.addCompletionMock(responseTest);
+    const followUpUserText = 'What is the total duration for both phases?';
+    await openAIMock.addMocks(turnMocksWithTitleSiphon(responseTest));
     await page.getByRole('button', { name: 'Summarize Thread' }).click();
 
     // Wait for the AI RHS to open and show the summary
     await aiPlugin.expectRHSOpenWithPost();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    await expect(aiPlugin.getRhsContainer().getByText(responseTestText).last()).toBeVisible();
+    await aiPlugin.waitForThreadComposerIdle();
 
-    // Now test the follow-up question functionality
-    await openAIMock.addCompletionMock(responseTest2);
+    await openAIMock.addMocks(turnMocksWithTitleSiphon(responseTest2));
+    await aiPlugin.sendMessage(followUpUserText);
 
-    // Send a follow-up question
-    await aiPlugin.sendMessage('What is the total duration for both phases?');
-
-    // Verify the follow-up response is received successfully
     await aiPlugin.waitForBotResponse(responseTest2Text);
   });
 
