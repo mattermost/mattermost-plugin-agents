@@ -517,6 +517,24 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	// Switching away from attribute-based access: delete the agent policy.
+	// If policy deletion fails with an unexpected error, rollback the agent
+	// store to prev so the agent is not left in an inconsistent state where
+	// legacy access claims everyone is allowed but a dangling policy continues
+	// to deny users.
+	if prev.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
+		cfg.UserAccessLevel != llm.UserAccessLevelAttributeBased {
+		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
+
+		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
+				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
+			}
+			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
+			return
+		}
+	}
+
 	ensureErr := a.refreshBotsAndNotify()
 
 	// EnsureBots patches display name on success; when it did not run (no bot registry) or failed, sync explicitly.

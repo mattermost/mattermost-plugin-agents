@@ -35,7 +35,8 @@ function legacyIDNote(resourceType: PolicyResourceType) {
 }
 
 // ConsolePolicySection is the collapsible "Access policy" block on the system
-// console service and MCP server panels; admin-only, CEL editor only.
+// console service and MCP server panels; admin-only, with Simple (table) and
+// Advanced (CEL) editors matching the sysadmin agent Access tab.
 // Callers render it only for entries with a persisted id (minted server-side
 // on save), so policy PUTs can never orphan a policy against an unsaved
 // resource. Persisted legacy IDs get an explanatory note instead.
@@ -43,22 +44,30 @@ const ConsolePolicySection = (props: Props) => {
     const {resourceType, resourceId, resourceDisplayName} = props;
     const {supported} = useABACSupport();
     const [expanded, setExpanded] = useState(false);
+    const [hasOpened, setHasOpened] = useState(false);
 
     if (!supported || !resourceId) {
         return null;
     }
 
+    const toggleExpanded = () => {
+        if (!expanded) {
+            setHasOpened(true);
+        }
+        setExpanded(!expanded);
+    };
+
     return (
-        <SectionContainer>
+        <SectionContainer $collapsed={hasOpened && !expanded}>
             <SectionHeader
                 role='button'
                 tabIndex={0}
                 aria-expanded={expanded}
-                onClick={() => setExpanded(!expanded)}
+                onClick={toggleExpanded}
                 onKeyDown={(e: React.KeyboardEvent) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        setExpanded(!expanded);
+                        toggleExpanded();
                     }
                 }}
             >
@@ -67,14 +76,17 @@ const ConsolePolicySection = (props: Props) => {
                     <FormattedMessage defaultMessage='Access policy'/>
                 </SectionTitle>
             </SectionHeader>
-            {expanded && (
-                <SectionContent>
+            {(expanded || hasOpened) && (
+                <SectionContent
+                    $collapsed={!expanded}
+                    {...collapsedInert(expanded)}
+                >
                     {isValidMattermostId(resourceId) ? (
                         <PolicyEditor
                             resourceType={resourceType}
                             resourceId={resourceId}
                             resourceDisplayName={resourceDisplayName}
-                            allowSimplified={false}
+                            allowSimplified={true}
                             allowAdvanced={true}
                         />
                     ) : (
@@ -86,12 +98,22 @@ const ConsolePolicySection = (props: Props) => {
     );
 };
 
+// Omit inert when expanded: React 18 serializes inert={false} as inert="false",
+// which browsers still treat as inert.
+function collapsedInert(expanded: boolean): {inert?: ''} {
+    return expanded ? {} : {inert: ''};
+}
+
 // --- Styled Components ---
 
-const SectionContainer = styled.div`
+const SectionContainer = styled.div<{$collapsed: boolean}>`
     margin-top: 16px;
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     padding-top: 12px;
+    ${({$collapsed}) => $collapsed && `
+        position: relative;
+        overflow: hidden;
+    `}
 `;
 
 const SectionHeader = styled.div`
@@ -107,8 +129,17 @@ const SectionTitle = styled.div`
     font-weight: 600;
 `;
 
-const SectionContent = styled.div`
+const SectionContent = styled.div<{$collapsed: boolean; inert?: ''}>`
     margin-top: 12px;
+    ${({$collapsed}) => $collapsed && `
+        visibility: hidden;
+        position: absolute;
+        left: 0;
+        right: 0;
+        overflow: hidden;
+        clip-path: inset(50%);
+        pointer-events: none;
+    `}
 `;
 
 const LegacyIDNote = styled.div`

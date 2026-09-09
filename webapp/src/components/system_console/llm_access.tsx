@@ -36,6 +36,11 @@ type UserAccessLevelProps = {
     teamIDs: string[];
     onChangeIDs: (userIds: string[], teamIds: string[]) => void;
     disabled?: boolean;
+
+    // Renders the attribute-based radio (agents with ABAC support only;
+    // config bots never pass this — they are not policy-addressable).
+    showAttributeBased?: boolean;
+    attributeBasedDescription?: React.ReactNode;
 };
 
 export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
@@ -68,8 +73,21 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         onChange={() => props.onChangeLevel(UserAccessLevel.Block)}
                     />
                     <FormattedMessage defaultMessage='Block selected users'/>
+                    {props.showAttributeBased && (
+                        <>
+                            <StyledRadio
+                                type='radio'
+                                value={UserAccessLevel.AttributeBased}
+                                checked={props.level === UserAccessLevel.AttributeBased}
+                                disabled={props.disabled}
+                                onChange={() => props.onChangeLevel(UserAccessLevel.AttributeBased)}
+                            />
+                            <FormattedMessage defaultMessage='Attribute-based (access policy)'/>
+                        </>
+                    )}
                 </AllowTypes>
-                {props.level !== UserAccessLevel.All && (
+                {props.level === UserAccessLevel.AttributeBased && props.attributeBasedDescription}
+                {props.level !== UserAccessLevel.All && props.level !== UserAccessLevel.AttributeBased && (
                     <SelectWrapper>
                         <ItemLabel>
                             {props.level === UserAccessLevel.Allow ? 'Allow list' : 'Block list'}

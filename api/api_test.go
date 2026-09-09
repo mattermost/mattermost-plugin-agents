@@ -498,6 +498,12 @@ type mockAgentStore struct {
 
 	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
 	countErr error
+
+	// updateErr, when set, makes UpdateAgent fail.
+	updateErr error
+
+	// updateErrs, when non-empty, pops errors on consecutive UpdateAgent calls.
+	updateErrs []error
 }
 
 func newMockAgentStore() *mockAgentStore {
@@ -582,6 +588,16 @@ func (m *mockAgentStore) CountActiveAgents() (int, error) {
 }
 
 func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+	if len(m.updateErrs) > 0 {
+		err := m.updateErrs[0]
+		m.updateErrs = m.updateErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
 	existing, ok := m.agents[cfg.ID]
 	if !ok || existing.DeleteAt != 0 {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)

@@ -21,6 +21,7 @@ import {
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import ConfigTab from './tabs/config_tab';
@@ -208,6 +209,7 @@ const AgentConfigView = (props: Props) => {
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
     const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
+    const {supported: abacSupported} = useABACSupport();
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
@@ -256,6 +258,7 @@ const AgentConfigView = (props: Props) => {
         if (showDiscardDialogRef.current) {
             return;
         }
+
         if (isDirty) {
             setShowDiscardDialog(true);
             return;
@@ -368,6 +371,7 @@ const AgentConfigView = (props: Props) => {
             // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
             setBaselineDraft(cloneDraft(draft));
             setAvatarFile(null);
+
             onSaved(savedAgent);
         } catch (e: any) {
             const message = (typeof e?.message === 'string' ? e.message : '').trim();
@@ -457,8 +461,12 @@ const AgentConfigView = (props: Props) => {
                     {activeTab === 'access' && (
                         <AccessTab
                             draft={draft}
+                            baselineUserAccessLevel={baselineDraft.userAccessLevel}
                             onChange={updateDraft}
                             serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                            agentId={agent?.id}
+                            abacSupported={abacSupported}
+                            isSystemAdmin={canEditServiceAccountAuth}
                         />
                     )}
                     {activeTab === 'mcps' && (

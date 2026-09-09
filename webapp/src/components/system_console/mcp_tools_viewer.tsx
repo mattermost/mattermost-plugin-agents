@@ -11,33 +11,15 @@ import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} 
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
 
-import {MCPConfig, MCPServerConfig, MCPToolConfig} from './mcp_servers';
 import MCPServerToolRow from './mcp_server_tool_row';
+import {
+    MCPConfig,
+    MCPServerConfig,
+    MCPServerInfo,
+    MCPToolConfig,
+    MCPToolsResponse,
+} from './mcp_types';
 import {EMBEDDED_MATTERMOST_BASE_URL} from './vetted_tool_configs';
-
-export type MCPToolInfo = {
-    name: string;
-    description: string;
-    inputSchema: Record<string, unknown> | null;
-};
-
-export type MCPServerInfo = {
-    name: string;
-    url: string;
-    tools: MCPToolInfo[];
-    needsOAuth: boolean;
-    oauthURL?: string;
-    error: string | null;
-
-    // Plugin-server fields; remote and embedded rows read state from mcpConfig.
-    serverType?: string;
-    enabled?: boolean;
-    toolConfigs?: MCPToolConfig[];
-};
-
-export type MCPToolsResponse = {
-    servers: MCPServerInfo[];
-};
 
 type MCPToolsViewerProps = {
     mcpConfig: MCPConfig;

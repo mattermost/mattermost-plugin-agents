@@ -31,8 +31,7 @@ jest.mock('react-intl', () => {
 import {IntlProvider} from 'react-intl';
 
 import MCPServerToolRow from './mcp_server_tool_row';
-import {MCPServerInfo} from './mcp_tools_viewer';
-import {MCPServerConfig} from './mcp_servers';
+import {MCPServerConfig, MCPServerInfo} from './mcp_types';
 /* eslint-enable import/first */
 
 function makePluginServer(): MCPServerInfo {

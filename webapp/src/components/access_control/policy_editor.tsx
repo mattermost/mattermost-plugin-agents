@@ -33,14 +33,20 @@ export type PolicyEditorProps = {
     resourceId: string;
     resourceDisplayName: string;
 
-    // Agent tab: simplified (table) editor for creators/agent admins.
+    // Table (Simple) editor. Used on the agent Access tab and the system
+    // console service/MCP panels.
     allowSimplified: boolean;
 
-    // System admins additionally get the advanced (CEL) editor.
+    // CEL (Advanced) editor. System admins only; used for expressions the
+    // table can't display.
     allowAdvanced: boolean;
 
     // Forwarded as ?agent_id= on CEL calls (per-agent-admin authz lane).
     agentIdForAuthz?: string;
+
+    // When set, render nothing unless a policy already exists. Used so a
+    // retained policy stays visible after switching to a legacy access mode.
+    hideWhenEmpty?: boolean;
 };
 
 // EditorMode is the user-selectable editor; 'unsupported' is the read-only
@@ -99,7 +105,7 @@ function policyClientFor(resourceType: PolicyResourceType) {
 const DELETE_POLICY_TITLE_ID = 'delete-access-policy-title';
 
 const PolicyEditorContent = (props: PolicyEditorProps) => {
-    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz} = props;
+    const {resourceType, resourceId, resourceDisplayName, allowSimplified, allowAdvanced, agentIdForAuthz, hideWhenEmpty} = props;
     const intl = useIntl();
     const editors = getAccessControlEditors();
     const client = useMemo(() => policyClientFor(resourceType), [resourceType]);
@@ -220,7 +226,14 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
             setSavedExpression(expression);
         } catch (e) {
             const message = e instanceof Error && e.message ? e.message : '';
-            setSaveError(message || intl.formatMessage({defaultMessage: 'Failed to save the access policy. Please try again.'}));
+            if (message) {
+                setSaveError(message);
+            } else if (typeof e === 'object' && e !== null && 'status_code' in e && e.status_code === 403) {
+                // Cloud/WAF eat the 403 JSON body, leaving ClientError.message empty.
+                setSaveError(intl.formatMessage({defaultMessage: 'You do not satisfy one or more conditions in this policy. Adjust the rules to include your attributes, or ask a system admin.'}));
+            } else {
+                setSaveError(intl.formatMessage({defaultMessage: 'Failed to save the access policy. Please try again.'}));
+            }
         } finally {
             setSaving(false);
         }
@@ -256,6 +269,9 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
     }
 
     if (loading) {
+        if (hideWhenEmpty) {
+            return null;
+        }
         return (
             <SpinnerContainer>
                 <LoadingSpinner/>
@@ -271,6 +287,10 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
         );
     }
 
+    if (hideWhenEmpty && !policy) {
+        return null;
+    }
+
     const view = deriveView(mode, advancedLocked, allowSimplified, allowAdvanced);
 
     const showToggle = allowSimplified && allowAdvanced && !advancedLocked;
@@ -282,6 +302,11 @@ const PolicyEditorContent = (props: PolicyEditorProps) => {
 
     return (
         <EditorContainer>
+            {hideWhenEmpty && (
+                <HelperText>
+                    <FormattedMessage defaultMessage='This access policy still restricts who can use this agent, in addition to the setting above. Remove it here if it is no longer needed.'/>
+                </HelperText>
+            )}
             {showToggle && (
                 <ModeToggleRow>
                     <ModeButton

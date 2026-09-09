@@ -502,6 +502,37 @@ describe('PolicyEditor', () => {
         expect(client.getAccessControlFields).toHaveBeenCalledTimes(1);
     });
 
+    it('renders nothing when hideWhenEmpty is set and no policy exists', async () => {
+        client.getAgentAccessPolicy.mockResolvedValue(null);
+        const {container} = renderEditor({hideWhenEmpty: true});
+
+        await waitFor(() => {
+            expect(client.getAgentAccessPolicy).toHaveBeenCalled();
+        });
+        expect(container.innerHTML).toBe('');
+        expect(screen.queryByTestId('table-editor')).toBeNull();
+    });
+
+    it('shows a retained-policy note when hideWhenEmpty is set and a policy exists', async () => {
+        renderEditor({hideWhenEmpty: true});
+
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        expect(screen.getByText('This access policy still restricts who can use this agent, in addition to the setting above. Remove it here if it is no longer needed.')).toBeTruthy();
+    });
+
+    it('hides after remove when hideWhenEmpty is set', async () => {
+        client.deleteAgentAccessPolicy.mockResolvedValue(null);
+        const {container} = renderEditor({hideWhenEmpty: true});
+
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+        fireEvent.click(screen.getByText('Remove policy'));
+        fireEvent.click(screen.getByText('Remove'));
+
+        await waitFor(() => {
+            expect(container.innerHTML).toBe('');
+        });
+    });
+
     it('surfaces a save error and stays editable', async () => {
         client.putAgentAccessPolicy.mockRejectedValue(new Error('save exploded'));
         renderEditor();
@@ -511,6 +542,20 @@ describe('PolicyEditor', () => {
         fireEvent.click(screen.getByText('Save policy'));
 
         expect(await screen.findByText('save exploded')).toBeTruthy();
+        expect(screen.getByTestId('table-editor')).toBeTruthy();
+    });
+
+    it('surfaces a self-exclusion message when save is forbidden with an empty body', async () => {
+        const err = new Error('');
+        (err as Error & {status_code: number}).status_code = 403;
+        client.putAgentAccessPolicy.mockRejectedValue(err);
+        renderEditor();
+        expect(await screen.findByTestId('table-editor')).toBeTruthy();
+
+        fireEvent.click(screen.getByText('table-edit'));
+        fireEvent.click(screen.getByText('Save policy'));
+
+        expect(await screen.findByText('You do not satisfy one or more conditions in this policy. Adjust the rules to include your attributes, or ask a system admin.')).toBeTruthy();
         expect(screen.getByTestId('table-editor')).toBeTruthy();
     });
 
