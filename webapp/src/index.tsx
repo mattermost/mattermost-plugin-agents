@@ -148,13 +148,7 @@ export default class Plugin {
         setupRedux(registry, store);
         this.store = store;
 
-        let siteURL = store.getState().entities.general.config.SiteURL;
-
-        // Site URL should always be set by this point if the workspace is to be properly functional, but fall back to the window.location.origin just in case
-        if (!siteURL) {
-            siteURL = window.location.origin;
-        }
-        setSiteURL(siteURL);
+        setSiteURL(window.location.origin + (window.basename || ''));
 
         registry.registerDesktopNotificationHook(this.blockFastBotNotifications.bind(this));
 
@@ -394,6 +388,7 @@ export default class Plugin {
 
 declare global {
     interface Window {
+        basename?: string
         registerPlugin(pluginId: string, plugin: Plugin): void
         WebappUtils?: any
     }
