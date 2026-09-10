@@ -468,7 +468,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	progress.Advance(responseProgressLoadingConversation)
 	ensureDMWebSearchTracking(llmContext)
 
-	convResult, err := c.CreateOrGetDMConversationWithContext(ctx, bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
+	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}

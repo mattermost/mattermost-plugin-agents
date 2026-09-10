@@ -125,7 +125,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient, params.SessionID))
+	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, mmapi.WithFilePolicy(s.mmClient, params.SessionID)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -334,7 +334,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 
 // appendUserTurn creates a new user turn at the next available sequence number.
 func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string, sessionID string) (string, error) {
-	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient, sessionID))
+	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, mmapi.WithFilePolicy(s.mmClient, sessionID)))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -443,6 +443,8 @@ func AssembleRequest(
 		RestoreLoadedMCPToolsFromTurns(context.Tools, turns)
 	}
 
+	mmClient = mmapi.WithFilePolicy(mmClient, firstBuildOptions(opts).SessionID)
+
 	posts := make([]llm.Post, 0, len(turns)+1)
 
 	// System prompt is always first.
@@ -454,7 +456,6 @@ func AssembleRequest(
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
 		MMClient:       mmClient,
-		SessionID:      firstBuildOptions(opts).SessionID,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -710,6 +711,7 @@ func (s *Service) BuildChannelMentionRequest(
 	}
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
+	mmClient := mmapi.WithFilePolicy(s.mmClient, firstBuildOptions(opts).SessionID)
 
 	// Build a set of post IDs that belong to the bot's turns.
 	turnPostIDs := make(map[string]bool)
@@ -779,8 +781,7 @@ func (s *Service) BuildChannelMentionRequest(
 	// matching BuildCompletionRequest's behavior.
 	conversionOpts := PostConversionOptions{
 		RedactUnshared: redactUnshared,
-		MMClient:       s.mmClient,
-		SessionID:      firstBuildOptions(opts).SessionID,
+		MMClient:       mmClient,
 		EnableVision:   enableVision,
 		MaxFileSize:    maxFileSize,
 	}
@@ -812,9 +813,8 @@ func (s *Service) BuildChannelMentionRequest(
 			if user, ok := threadData.UsersByID[threadPost.UserId]; ok {
 				username = user.Username
 			}
-			sessionID := firstBuildOptions(opts).SessionID
-			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, s.mmClient, sessionID)
-			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: s.mmClient, SessionID: sessionID, EnableVision: enableVision, MaxFileSize: maxFileSize}))
+			blocks := userBlocksWithAttachments(format.AuthoredPost(threadPost, username), threadPost.FileIds, mmClient)
+			posts = append(posts, BlocksToPost(blocks, "user", PostConversionOptions{RedactUnshared: redactUnshared, MMClient: mmClient, EnableVision: enableVision, MaxFileSize: maxFileSize}))
 		}
 		if latestPostLinkedRole == "user" && threadPost.Id == latestPostLinkedPostID {
 			break

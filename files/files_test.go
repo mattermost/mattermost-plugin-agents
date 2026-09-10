@@ -4,7 +4,6 @@
 package files
 
 import (
-	"context"
 	"io"
 	"strings"
 	"testing"
@@ -276,7 +275,8 @@ func TestGetContent(t *testing.T) {
 			tt.setup(m)
 			svc := New(m)
 
-			c, err := svc.GetContent(context.Background(), userID, sessionID, tt.fileID, tt.offset, tt.limit)
+			ctx := auth.WithSessionID(t.Context(), sessionID)
+			c, err := svc.GetContent(ctx, userID, tt.fileID, tt.offset, tt.limit)
 
 			switch {
 			case tt.name == "invalid file id is rejected before any lookup":
@@ -315,13 +315,17 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 			).Return(false).Once()
 
 			adminReadCalled := false
+			m.EXPECT().GetFileInfo(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(&model.FileInfo{Id: fileID, ChannelId: model.NewId(), MimeType: "text/plain"}, nil).
+				Maybe()
 			m.EXPECT().GetFile(fileID).
 				Run(func(string) { adminReadCalled = true }).
 				Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
 				Maybe()
 
-			ctx := context.WithValue(t.Context(), auth.SessionIDContextKey, tt.sessionID)
-			_, err := New(m).GetContent(ctx, userID, tt.sessionID, fileID, 0, DefaultReadRunes)
+			ctx := auth.WithSessionID(t.Context(), tt.sessionID)
+			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
 
 			assert.ErrorIs(t, err, ErrForbidden)
 			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")

@@ -208,7 +208,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(c.Request.Context(), userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -228,7 +228,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(c.Request.Context(), userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		if errors.Is(err, meetings.ErrNotMeetingBotPost) {
 			c.AbortWithError(http.StatusBadRequest, err)

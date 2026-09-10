@@ -112,8 +112,10 @@ type DMConversationResult struct {
 	UserTurnID     string
 }
 
-// CreateOrGetDMConversation creates or retrieves a conversation for a DM
-// without an authenticated session. Attachments therefore fail closed.
+// CreateOrGetDMConversation creates or retrieves a conversation for a DM.
+// This is separated from ProcessDMRequest so the conversation_id can be
+// set on the response post before it is created. Callers without a session
+// fail closed on attachments.
 func (c *Conversations) CreateOrGetDMConversation(
 	botID string,
 	postingUser *model.User,
@@ -121,13 +123,11 @@ func (c *Conversations) CreateOrGetDMConversation(
 	post *model.Post,
 	llmCtx *llm.Context,
 ) (*DMConversationResult, error) {
-	return c.CreateOrGetDMConversationWithContext(stdcontext.Background(), botID, postingUser, channel, post, llmCtx)
+	return c.createOrGetDMConversation("", botID, postingUser, channel, post, llmCtx)
 }
 
-// CreateOrGetDMConversationWithContext creates or retrieves a conversation for
-// a DM while retaining the request session used for attachment policy checks.
-func (c *Conversations) CreateOrGetDMConversationWithContext(
-	ctx stdcontext.Context,
+func (c *Conversations) createOrGetDMConversation(
+	sessionID string,
 	botID string,
 	postingUser *model.User,
 	channel *model.Channel,
@@ -162,7 +162,7 @@ func (c *Conversations) CreateOrGetDMConversationWithContext(
 		channelID := channel.Id
 		result, err := c.convService.CreateConversation(conversation.CreateConversationParams{
 			UserID:       postingUser.Id,
-			SessionID:    auth.SessionIDFromContext(ctx),
+			SessionID:    sessionID,
 			BotID:        botID,
 			ChannelID:    &channelID,
 			RootPostID:   &postID,
@@ -180,7 +180,7 @@ func (c *Conversations) CreateOrGetDMConversationWithContext(
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
-		SessionID:    auth.SessionIDFromContext(ctx),
+		SessionID:    sessionID,
 		BotID:        botID,
 		ChannelID:    channel.Id,
 		RootPostID:   post.RootId,

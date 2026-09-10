@@ -128,21 +128,24 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
 		referencedRecordingFileID := referenceRecordingFileIDProp.(string)
-		sessionID := auth.SessionIDFromContext(ctx)
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
 
-		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, referencedRecordingFileID); permissionErr != nil {
+		fileInfo, getErr := mm.GetFileInfo(referencedRecordingFileID)
+		if errors.Is(getErr, mmapi.ErrFileActionForbidden) {
 			return errors.New("not permitted to read recording file on regen")
 		}
-		fileInfo, getErr := c.mmClient.GetFileInfo(referencedRecordingFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
-		transcriptionFileID := post.FileIds[0]
-		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, sessionID, transcriptionFileID); permissionErr != nil {
+		if len(post.FileIds) == 0 {
 			return errors.New("not permitted to read transcription file on regen")
 		}
-		reader, getErr := c.mmClient.GetFile(transcriptionFileID)
+		transcriptionFileID := post.FileIds[0]
+		reader, getErr := mm.GetFile(transcriptionFileID)
+		if errors.Is(getErr, mmapi.ErrFileActionForbidden) {
+			return errors.New("not permitted to read transcription file on regen")
+		}
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -183,10 +186,11 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if fileIDErr != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", fileIDErr)
 		}
-		if permissionErr := mmapi.CheckFileDownloadPermission(c.mmClient, auth.SessionIDFromContext(ctx), transcriptionFileID); permissionErr != nil {
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
+		transcriptionFileReader, fileErr := mm.GetFile(transcriptionFileID)
+		if errors.Is(fileErr, mmapi.ErrFileActionForbidden) {
 			return errors.New("not permitted to read transcription file")
 		}
-		transcriptionFileReader, fileErr := c.mmClient.GetFile(transcriptionFileID)
 		if fileErr != nil {
 			return fmt.Errorf("unable to read calls file: %w", fileErr)
 		}

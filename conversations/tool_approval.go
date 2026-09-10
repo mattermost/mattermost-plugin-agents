@@ -643,7 +643,7 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	// Channel thread posts aren't stored as turns, so rebuild with thread context.
-	completionReq, err := c.buildToolFollowUpRequest(ctx, conv, llmContext, isDM)
+	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM, auth.SessionIDFromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}
@@ -682,8 +682,8 @@ func (c *Conversations) streamToolFollowUp(
 // buildToolFollowUpRequest rebuilds the completion request for a tool follow-up.
 // Channel conversations re-fetch the live thread so non-turn thread posts stay in
 // context (matching the initial mention); DMs persist every post as a turn.
-func (c *Conversations) buildToolFollowUpRequest(ctx context.Context, conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
-	buildOpts := conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)}
+func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool, sessionID string) (*llm.CompletionRequest, error) {
+	buildOpts := conversation.BuildOptions{SessionID: sessionID}
 	if !isDM && conv.RootPostID != nil {
 		// Best-effort: if the live thread can't be fetched (deleted root,
 		// permissions, API blip), degrade to turns-only context rather than

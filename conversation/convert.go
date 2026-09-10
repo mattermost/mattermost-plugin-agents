@@ -6,6 +6,7 @@ package conversation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -36,7 +37,6 @@ var unsharedToolUseArgumentsRedaction = json.RawMessage("{}")
 type PostConversionOptions struct {
 	RedactUnshared bool
 	MMClient       mmapi.Client
-	SessionID      string
 	EnableVision   bool
 	MaxFileSize    int64
 	ToolStore      *llm.ToolStore
@@ -145,12 +145,11 @@ func BlocksToPost(
 			if opts.MMClient == nil {
 				continue
 			}
-			if err := mmapi.CheckFileDownloadPermission(opts.MMClient, opts.SessionID, block.FileID); err != nil {
-				continue
-			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
+				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+					opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
+				}
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -184,12 +183,11 @@ func BlocksToPost(
 			if opts.MMClient == nil {
 				continue
 			}
-			if err := mmapi.CheckFileDownloadPermission(opts.MMClient, opts.SessionID, block.FileID); err != nil {
-				continue
-			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
+				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+					opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
+				}
 				continue
 			}
 

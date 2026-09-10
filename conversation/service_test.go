@@ -29,6 +29,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
+const attachmentTestSessionID = "attachment-test-session"
+
 var testConnStr string
 
 func TestMain(m *testing.M) {

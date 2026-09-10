@@ -208,10 +208,10 @@ func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 	return io.NopCloser(file), nil
 }
 
-// CheckFileDownloadPermission gates admin-level file metadata and content
+// checkFileDownloadPermission gates admin-level file metadata and content
 // reads using the requesting session. It intentionally does not accept a user
 // ID: channel RBAC remains a separate, additive check at each call site.
-func CheckFileDownloadPermission(mm Client, sessionID, fileID string) error {
+func checkFileDownloadPermission(mm Client, sessionID, fileID string) error {
 	allowed := mm.HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment)
 	if sessionID == "" || !allowed {
 		return ErrFileActionForbidden

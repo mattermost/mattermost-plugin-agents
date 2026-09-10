@@ -49,17 +49,17 @@ func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgecli
 		var files []llm.File
 		if len(apiPost.FileIDs) > 0 {
 			files = make([]llm.File, len(apiPost.FileIDs))
+			mm := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(ctx))
 			for j, fileID := range apiPost.FileIDs {
 				if fileID == "" {
 					return nil, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
 				}
 
-				if err := mmapi.CheckFileDownloadPermission(a.mmClient, auth.SessionIDFromContext(ctx), fileID); err != nil {
+				// Get file info
+				fileInfo, err := mm.GetFileInfo(fileID)
+				if errors.Is(err, mmapi.ErrFileActionForbidden) {
 					return nil, fmt.Errorf("file access denied for file ID %s", fileID)
 				}
-
-				// Get file info
-				fileInfo, err := a.mmClient.GetFileInfo(fileID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
 				}
@@ -72,7 +72,10 @@ func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgecli
 				}
 
 				// Get file reader
-				fileReader, err := a.mmClient.GetFile(fileID)
+				fileReader, err := mm.GetFile(fileID)
+				if errors.Is(err, mmapi.ErrFileActionForbidden) {
+					return nil, fmt.Errorf("file access denied for file ID %s", fileID)
+				}
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
 				}
