@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost-plugin-agents/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/store"
 	"github.com/mattermost/mattermost-plugin-agents/streaming"
@@ -60,7 +61,7 @@ func (c *Conversations) isRemoteMCPLicensed() bool {
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
-func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -249,14 +250,14 @@ func (c *Conversations) HandleToolCall(userID string, post *model.Post, channel 
 		return nil
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, isDM)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM)
 }
 
 // HandleToolResult handles user approval of the second-stage tool-result sharing.
 // It flips shared flags for accepted results and, in channels, streams the LLM
 // follow-up with unshared content redacted so private tool output cannot leak
 // into the channel-visible reply.
-func (c *Conversations) HandleToolResult(userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
+func (c *Conversations) HandleToolResult(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
 	bot := c.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return fmt.Errorf("unable to get bot")
@@ -414,7 +415,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 		return fmt.Errorf("unable to get user: %w", err)
 	}
 
-	return c.streamToolFollowUp(bot, user, channel, post, conv, false)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -424,6 +425,7 @@ func (c *Conversations) HandleToolResult(userID string, post *model.Post, channe
 // privacy guarantee that keeps unshared tool output from leaking into a
 // channel-visible reply.
 func (c *Conversations) streamToolFollowUp(
+	ctx context.Context,
 	bot *bots.Bot,
 	user *model.User,
 	channel *model.Channel,
@@ -466,7 +468,7 @@ func (c *Conversations) streamToolFollowUp(
 	}
 
 	// Channel thread posts aren't stored as turns, so rebuild with thread context.
-	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
+	completionReq, err := c.buildToolFollowUpRequest(ctx, conv, llmContext, isDM)
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
 	}
@@ -508,7 +510,8 @@ func (c *Conversations) streamToolFollowUp(
 // buildToolFollowUpRequest rebuilds the completion request for a tool follow-up.
 // Channel conversations re-fetch the live thread so non-turn thread posts stay in
 // context (matching the initial mention); DMs persist every post as a turn.
-func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
+func (c *Conversations) buildToolFollowUpRequest(ctx context.Context, conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
+	buildOpts := conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)}
 	if !isDM && conv.RootPostID != nil {
 		// Best-effort: if the live thread can't be fetched (deleted root,
 		// permissions, API blip), degrade to turns-only context rather than
@@ -517,11 +520,11 @@ func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmCo
 		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to get thread data for tool follow-up, falling back to turns-only context", "error", err)
-			return c.convService.BuildCompletionRequest(conv, llmContext)
+			return c.convService.BuildCompletionRequest(conv, llmContext, buildOpts)
 		}
-		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData)
+		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData, buildOpts)
 	}
-	return c.convService.BuildCompletionRequest(conv, llmContext)
+	return c.convService.BuildCompletionRequest(conv, llmContext, buildOpts)
 }
 
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along

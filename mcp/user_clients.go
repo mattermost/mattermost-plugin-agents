@@ -109,7 +109,7 @@ func (c *UserClients) ConnectToEmbeddedServerIfAvailable(sessionID string, embed
 
 	serverClient, err := embeddedClient.CreateClient(ctxWithTimeout, c.userID, sessionID)
 	if err != nil {
-		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID, "error", err)
+		c.log.Error("Failed to connect to embedded MCP server", "userID", c.userID)
 		return fmt.Errorf("failed to connect to embedded server: %w", err)
 	}
 

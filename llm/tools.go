@@ -461,29 +461,19 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 	return result
 }
 
-func (s *ToolStore) TraceUnknown(name string, argsGetter ToolArgumentGetter) {
+func (s *ToolStore) TraceUnknown(name string, _ ToolArgumentGetter) {
 	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if err := argsGetter(&raw); err != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", err)
-		} else {
-			args = string(raw)
-		}
-		s.log.Info("unknown tool called", "name", name, "args", args)
+		s.log.Info("unknown tool called", "name", name, "status", "unknown")
 	}
 }
 
-func (s *ToolStore) TraceResolved(name string, argsGetter ToolArgumentGetter, result string, err error) {
+func (s *ToolStore) TraceResolved(name string, _ ToolArgumentGetter, _ string, err error) {
 	if s.log != nil && s.doTrace {
-		args := ""
-		var raw json.RawMessage
-		if getArgsErr := argsGetter(&raw); getArgsErr != nil {
-			args = fmt.Sprintf("failed to get tool args: %v", getArgsErr)
-		} else {
-			args = string(raw)
+		status := "success"
+		if err != nil {
+			status = "error"
 		}
-		s.log.Info("tool resolved", "name", name, "args", args, "result", result, "error", err)
+		s.log.Info("tool resolved", "name", name, "status", status)
 	}
 }
 

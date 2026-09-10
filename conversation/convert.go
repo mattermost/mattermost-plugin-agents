@@ -36,6 +36,7 @@ func BlocksToPost(
 	mmClient mmapi.Client,
 	enableVision bool,
 	maxFileSize int64,
+	sessionID string,
 ) llm.Post {
 	post := llm.Post{
 		Role: RoleFromString(role),
@@ -100,6 +101,9 @@ func BlocksToPost(
 			if mmClient == nil {
 				continue
 			}
+			if err := mmapi.CheckFileDownloadPermission(mmClient, sessionID, block.FileID); err != nil {
+				continue
+			}
 			fileInfo, err := mmClient.GetFileInfo(block.FileID)
 			if err != nil {
 				mmClient.LogError("failed to get file info for image attachment", "error", err)
@@ -118,6 +122,9 @@ func BlocksToPost(
 
 		case BlockTypeFile:
 			if mmClient == nil {
+				continue
+			}
+			if err := mmapi.CheckFileDownloadPermission(mmClient, sessionID, block.FileID); err != nil {
 				continue
 			}
 			fileInfo, err := mmClient.GetFileInfo(block.FileID)
