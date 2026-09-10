@@ -4,6 +4,8 @@
 package subtitles
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -52,4 +54,95 @@ func TestFormatTextOnly(t *testing.T) {
 	}
 
 	require.Equal(t, expectedFormatTextOnly, subtitles.FormatTextOnly())
+}
+
+func TestNewSubtitlesFromZoomChat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		input     string
+		wantLLM   string
+		wantEmpty bool
+	}{
+		{
+			name: "valid zoom chat lines",
+			input: `00:00:01 Alice: Hello everyone
+00:00:05 Bob: Hi Alice`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello everyone\n00:05 to 00:10 - Bob: Hi Alice",
+		},
+		{
+			name: "short continuation lines append to previous item",
+			input: `00:00:01 Alice: Hello
+x
+00:00:05 Bob: Hi
+ab`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello - x\n00:05 to 00:10 - Bob: Hi - ab",
+		},
+		{
+			name: "long continuation lines append instead of failing parse",
+			input: `00:00:01 Alice: Hello
+more of the message here
+00:00:05 Bob: Hi`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello - more of the message here\n00:05 to 00:10 - Bob: Hi",
+		},
+		{
+			name:      "only non-timestamp lines yields empty subtitles",
+			input:     "x\nnot-time More text here\n",
+			wantEmpty: true,
+		},
+		{
+			name: "tab-separated timestamp lines are accepted",
+			input: "00:00:01\tAlice: Hello\n" +
+				"00:00:05\tBob: Hi",
+			wantLLM: "00:01 to 00:06 - Alice: Hello\n00:05 to 00:10 - Bob: Hi",
+		},
+		{
+			name: "malformed timestamp separator appends as continuation",
+			input: `00:00:01 Alice: Hello
+00:00:05XBob: Hi`,
+			wantLLM: "00:01 to 00:06 - Alice: Hello - 00:00:05XBob: Hi",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var subs *Subtitles
+			var err error
+			require.NotPanics(t, func() {
+				subs, err = NewSubtitlesFromZoomChat(strings.NewReader(tc.input))
+			})
+
+			require.NoError(t, err)
+			require.NotNil(t, subs)
+			if tc.wantEmpty {
+				require.True(t, subs.IsEmpty())
+				return
+			}
+			require.Equal(t, tc.wantLLM, subs.FormatForLLM())
+		})
+	}
+}
+
+func TestNewSubtitlesFromZoomChatScannerError(t *testing.T) {
+	t.Parallel()
+
+	reader := io.MultiReader(
+		strings.NewReader("00:00:01 Alice: Hello\n"),
+		errReader{err: errors.New("read failed")},
+	)
+
+	subs, err := NewSubtitlesFromZoomChat(reader)
+	require.ErrorContains(t, err, "read failed")
+	require.Nil(t, subs)
+}
+
+type errReader struct {
+	err error
+}
+
+func (r errReader) Read([]byte) (int, error) {
+	return 0, r.err
 }
