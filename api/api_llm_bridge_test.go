@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -69,6 +70,13 @@ func (m *mockEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, 
 
 func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	sessionID := model.NewId()
+	mmClient.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		"svg1",
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(true)
 	mmClient.On("GetFileInfo", "svg1").Return(&model.FileInfo{
 		Id:       "svg1",
 		Name:     "vector.svg",
@@ -77,7 +85,8 @@ func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.
 	}, nil)
 
 	api := &API{mmClient: mmClient}
-	posts, err := api.convertBridgePostsToInternal(bridgeclient.CompletionRequest{
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	posts, err := api.convertBridgePostsToInternal(ctx, bridgeclient.CompletionRequest{
 		Posts: []bridgeclient.Post{{
 			Role:    "user",
 			Message: "see attached",
@@ -92,6 +101,41 @@ func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.
 	require.Equal(t, "image/svg+xml", posts[0].Files[0].MimeType)
 	require.Empty(t, posts[0].Files[0].Data)
 	require.Nil(t, posts[0].Files[0].Reader)
+}
+
+func TestConvertBridgePostsToInternalDeniedByFilePolicy(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	sessionID := model.NewId()
+	fileID := model.NewId()
+	mmClient.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false)
+	adminReadCalled := false
+	mmClient.EXPECT().GetFileInfo(fileID).
+		Run(func(string) { adminReadCalled = true }).
+		Return(&model.FileInfo{Id: fileID, MimeType: "image/png"}, nil).
+		Maybe()
+	mmClient.EXPECT().GetFile(fileID).
+		Run(func(string) { adminReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader("secret")), nil).
+		Maybe()
+
+	api := &API{mmClient: mmClient}
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	_, err := api.convertBridgePostsToInternal(ctx, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{{
+			Role:    "user",
+			Message: "see attached",
+			FileIDs: []string{fileID},
+		}},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file access denied")
+	require.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the caller's file policy denies access")
 }
 
 func TestBridgeClientAgentCompletion(t *testing.T) {

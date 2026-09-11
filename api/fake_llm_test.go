@@ -138,7 +138,11 @@ func (f *FakeLLM) ChatCompletionNoStream(_ context.Context, conversation llm.Com
 // not call out to a provider, so it returns ErrUnsupportedTokenCount by
 // default; callers can set TokenCount for a counted return, or
 // CountTokensError to exercise the estimator-fallback branch.
-func (f *FakeLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+func (f *FakeLLM) CountTokens(_ context.Context, req llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	f.mu.Lock()
+	f.lastRequest = req
+	f.LastConversation = req
+	f.mu.Unlock()
 	if f.CountTokensError != nil {
 		return 0, f.CountTokensError
 	}

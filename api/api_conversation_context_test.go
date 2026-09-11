@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -288,6 +290,109 @@ func TestHandleGetConversationContext(t *testing.T) {
 			if tt.validate != nil {
 				tt.validate(t, resp)
 			}
+		})
+	}
+}
+
+// TestHandleGetConversationContextPassesSessionToFilePolicy proves stored
+// file blocks are assembled with the caller's session. Omitting SessionID
+// from AssembleRequest fail-closes WithFilePolicy and silently drops
+// attachments from the composition the webapp renders.
+func TestHandleGetConversationContextPassesSessionToFilePolicy(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const fileBody = "SECRET_FILE_BODY"
+	fileID := model.NewId()
+	sessionID := model.NewId()
+	channelID := testChannelID
+
+	fileBlocks := mustMarshalBlocks(t, []conversation.ContentBlock{
+		{Type: conversation.BlockTypeText, Text: "see attached"},
+		{Type: conversation.BlockTypeFile, FileID: fileID, Filename: "notes.txt", MimeType: "text/plain"},
+	})
+
+	tests := []struct {
+		name          string
+		allowed       bool
+		wantFileBody  bool
+		wantAdminRead bool
+	}{
+		{
+			name:          "allowed session inlines stored file content",
+			allowed:       true,
+			wantFileBody:  true,
+			wantAdminRead: true,
+		},
+		{
+			name:          "denied session omits stored file content",
+			allowed:       false,
+			wantFileBody:  false,
+			wantAdminRead: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.conversationStore.conversations["conv-files"] = &store.Conversation{
+				ID:           "conv-files",
+				UserID:       testUserID,
+				BotID:        testBotUserID,
+				ChannelID:    &channelID,
+				SystemPrompt: "you are a helpful assistant",
+				Operation:    "conversation",
+			}
+			e.conversationStore.turns["conv-files"] = []store.Turn{
+				{ID: "turn-1", ConversationID: "conv-files", Role: "user", Content: fileBlocks, Sequence: 1},
+			}
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil).Maybe()
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil).Maybe()
+			e.mockAPI.On("GetTeam", mock.AnythingOfType("string")).Return(&model.Team{}, nil).Maybe()
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			fake := &FakeLLM{TokenCount: 100, TokenLimit: 200000}
+			mmBot := &model.Bot{UserId: testBotUserID, Username: "ai", DisplayName: "AI"}
+			bot := bots.NewBot(llm.BotConfig{Name: "ai", DisplayName: "AI"}, llm.ServiceConfig{}, mmBot, fake)
+			e.bots.SetBotsForTesting([]*bots.Bot{bot})
+
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On(
+				"HasPermissionToFileAction",
+				sessionID,
+				fileID,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(tt.allowed)
+			adminReadCalled := false
+			mmClient.EXPECT().GetFileInfo(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(&model.FileInfo{
+					Id: fileID, Name: "notes.txt", MimeType: "text/plain", Size: int64(len(fileBody)), Content: fileBody,
+				}, nil).
+				Maybe()
+			mmClient.On("LogError", mock.Anything, mock.Anything).Maybe()
+			e.api.mmClient = mmClient
+
+			request := httptest.NewRequest(http.MethodGet, "/conversations/conv-files/context", nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, recorder, request)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+			assembled := fake.LastRequest()
+			var combined strings.Builder
+			for _, post := range assembled.Posts {
+				combined.WriteString(post.Message)
+			}
+			if tt.wantFileBody {
+				require.Contains(t, combined.String(), fileBody)
+			} else {
+				require.NotContains(t, combined.String(), fileBody)
+			}
+			require.Equal(t, tt.wantAdminRead, adminReadCalled)
 		})
 	}
 }

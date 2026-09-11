@@ -4,7 +4,6 @@
 package files
 
 import (
-	"context"
 	"io"
 	"strings"
 	"testing"
@@ -12,12 +11,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func TestGetContent(t *testing.T) {
 	userID := model.NewId()
+	sessionID := model.NewId()
 	channelID := model.NewId()
 	fileID := model.NewId()
 
@@ -264,10 +265,18 @@ func TestGetContent(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := mocks.NewMockClient(t)
+			if model.IsValidId(tt.fileID) {
+				m.EXPECT().HasPermissionToFileAction(
+					sessionID,
+					tt.fileID,
+					model.AccessControlPolicyActionDownloadFileAttachment,
+				).Return(true)
+			}
 			tt.setup(m)
 			svc := New(m)
 
-			c, err := svc.GetContent(context.Background(), userID, tt.fileID, tt.offset, tt.limit)
+			ctx := auth.WithSessionID(t.Context(), sessionID)
+			c, err := svc.GetContent(ctx, userID, tt.fileID, tt.offset, tt.limit)
 
 			switch {
 			case tt.name == "invalid file id is rejected before any lookup":
@@ -280,4 +289,87 @@ func TestGetContent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetContentDeniedByFilePolicy(t *testing.T) {
+	userID := model.NewId()
+	fileID := model.NewId()
+
+	tests := []struct {
+		name      string
+		sessionID string
+	}{
+		{name: "policy denied", sessionID: model.NewId()},
+		{name: "missing session", sessionID: ""},
+		{name: "invalid session", sessionID: "invalid-session"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := mocks.NewMockClient(t)
+			m.On(
+				"HasPermissionToFileAction",
+				tt.sessionID,
+				fileID,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(false).Once()
+
+			adminReadCalled := false
+			m.EXPECT().GetFileInfo(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(&model.FileInfo{Id: fileID, ChannelId: model.NewId(), MimeType: "text/plain"}, nil).
+				Maybe()
+			m.EXPECT().GetFile(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+				Maybe()
+
+			ctx := auth.WithSessionID(t.Context(), tt.sessionID)
+			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+
+			assert.ErrorIs(t, err, ErrForbidden)
+			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")
+		})
+	}
+}
+
+// TestGetContentDeniedOnContentRead proves GetContent fail-closes when the
+// session is allowed to read metadata but denied on the subsequent content
+// fetch. Swallowing that GetFile denial as empty text would report HasText:
+// false instead of ErrForbidden.
+func TestGetContentDeniedOnContentRead(t *testing.T) {
+	userID := model.NewId()
+	fileID := model.NewId()
+	sessionID := model.NewId()
+	channelID := model.NewId()
+
+	m := mocks.NewMockClient(t)
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(true).Once()
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false).Once()
+	m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+		Id: fileID, ChannelId: channelID, MimeType: "text/plain", Name: "notes.txt",
+	}, nil)
+	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+
+	adminContentRead := false
+	m.EXPECT().GetFile(fileID).
+		Run(func(string) { adminContentRead = true }).
+		Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+		Maybe()
+
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.False(t, adminContentRead, "admin GetFile must not run after the content-read policy check denies access")
 }

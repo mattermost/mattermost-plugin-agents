@@ -49,6 +49,7 @@ func TestBuildCompletionRequestComposition(t *testing.T) {
 	// User turn carries both an image and a text file.
 	res, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       userID,
+		SessionID:    attachmentTestSessionID,
 		BotID:        botID,
 		Operation:    "conversation",
 		SystemPrompt: "you are helpful",
@@ -91,7 +92,7 @@ func TestBuildCompletionRequestComposition(t *testing.T) {
 		{Name: "get_time", Description: "Returns current time", Schema: &jsonschema.Schema{}},
 	})
 
-	req, err := svc.BuildCompletionRequest(conv, &llm.Context{Tools: tools})
+	req, err := svc.BuildCompletionRequest(conv, &llm.Context{Tools: tools}, BuildOptions{SessionID: attachmentTestSessionID})
 	require.NoError(t, err)
 
 	bySource := map[llm.CompositionSource][]llm.CompositionInput{}

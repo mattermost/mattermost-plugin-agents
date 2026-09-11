@@ -29,6 +29,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
+const attachmentTestSessionID = "attachment-test-session"
+
 var testConnStr string
 
 func TestMain(m *testing.M) {
@@ -1853,6 +1855,15 @@ func setupTestServiceWithClient(
 ) (*Service, *store.Store) {
 	t.Helper()
 
+	if mockClient, ok := mmClient.(*mmapimocks.MockClient); ok {
+		mockClient.On(
+			"HasPermissionToFileAction",
+			attachmentTestSessionID,
+			mock.Anything,
+			model.AccessControlPolicyActionDownloadFileAttachment,
+		).Return(true).Maybe()
+	}
+
 	db, err := sqlx.Connect("postgres", testConnStr)
 	require.NoError(t, err)
 
@@ -1899,6 +1910,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -1962,6 +1974,7 @@ func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 
 	res, err := svc.GetOrCreateConversation(GetOrCreateParams{
 		UserID:       userID,
+		SessionID:    attachmentTestSessionID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,
@@ -2036,6 +2049,7 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -2089,6 +2103,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2100,7 +2115,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user")
@@ -2140,6 +2155,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2151,7 +2167,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -2205,6 +2221,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2231,7 +2248,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user (resolved from the user turn)")
@@ -2273,6 +2290,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2295,7 +2313,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -2364,7 +2382,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 3, "system + root thread post + later mention turn")
