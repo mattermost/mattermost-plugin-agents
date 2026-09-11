@@ -118,7 +118,9 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := toolLicenseChecker(t, licensed)
 	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
-	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot()})
+	lm := &loadedStateLLM{}
+	streamingService := &loadedStateStreamingService{}
+	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot(lm)})
 
 	mmClient := mocks.NewMockClient(t)
 	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()

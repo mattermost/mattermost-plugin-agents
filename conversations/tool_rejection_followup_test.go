@@ -577,7 +577,7 @@ func newRejectionFollowUpConversations(
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(lm)})
 
 	mmClient := mocks.NewMockClient(t)
