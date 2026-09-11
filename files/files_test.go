@@ -332,3 +332,44 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestGetContentDeniedOnContentRead proves GetContent fail-closes when the
+// session is allowed to read metadata but denied on the subsequent content
+// fetch. Swallowing that GetFile denial as empty text would report HasText:
+// false instead of ErrForbidden.
+func TestGetContentDeniedOnContentRead(t *testing.T) {
+	userID := model.NewId()
+	fileID := model.NewId()
+	sessionID := model.NewId()
+	channelID := model.NewId()
+
+	m := mocks.NewMockClient(t)
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(true).Once()
+	m.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false).Once()
+	m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{
+		Id: fileID, ChannelId: channelID, MimeType: "text/plain", Name: "notes.txt",
+	}, nil)
+	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
+
+	adminContentRead := false
+	m.EXPECT().GetFile(fileID).
+		Run(func(string) { adminContentRead = true }).
+		Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
+		Maybe()
+
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+
+	require.ErrorIs(t, err, ErrForbidden)
+	require.False(t, adminContentRead, "admin GetFile must not run after the content-read policy check denies access")
+}

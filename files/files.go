@@ -86,7 +86,13 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, ErrForbidden
 	}
 
-	text := s.extractText(mm, fileInfo)
+	text, err := s.extractText(mm, fileInfo)
+	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return Content{}, ErrForbidden
+		}
+		return Content{}, err
+	}
 	if text == "" {
 		return Content{Name: fileInfo.Name, MimeType: fileInfo.MimeType, HasText: false}, nil
 	}
@@ -129,19 +135,25 @@ func Slice(name, mimeType, text string, offset, limit int) Content {
 
 // extractText prefers the server-extracted content (the only source for PDFs and
 // Office documents) and falls back to the raw bytes for plain text files.
-func (s *Service) extractText(mm mmapi.Client, fileInfo *model.FileInfo) string {
+// Policy denials from GetFile are returned so GetContent can map them to
+// ErrForbidden instead of treating the file as empty. Other download errors
+// still yield empty text (best-effort).
+func (s *Service) extractText(mm mmapi.Client, fileInfo *model.FileInfo) (string, error) {
 	if trimmed := strings.TrimSpace(fileInfo.Content); trimmed != "" {
-		return trimmed
+		return trimmed, nil
 	}
 
 	if !strings.HasPrefix(fileInfo.MimeType, "text/") {
-		return ""
+		return "", nil
 	}
 
 	reader, err := mm.GetFile(fileInfo.Id)
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return "", err
+		}
 		mm.LogError("failed to get file for read_file", "error", err, "file_id", fileInfo.Id)
-		return ""
+		return "", nil
 	}
 	body, err := io.ReadAll(io.LimitReader(reader, maxDownloadBytes))
 	if closeErr := reader.Close(); closeErr != nil {
@@ -149,7 +161,7 @@ func (s *Service) extractText(mm mmapi.Client, fileInfo *model.FileInfo) string 
 	}
 	if err != nil {
 		mm.LogError("failed to read file for read_file", "error", err, "file_id", fileInfo.Id)
-		return ""
+		return "", nil
 	}
-	return string(body)
+	return string(body), nil
 }
