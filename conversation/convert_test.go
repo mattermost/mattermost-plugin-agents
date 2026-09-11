@@ -272,6 +272,57 @@ func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	assert.Equal(t, "Get Issue", toolCall.Title)
 }
 
+func TestBlocksToPostPreservesRejectionSignalsThroughRedaction(t *testing.T) {
+	blocks := []ContentBlock{
+		{
+			Type:            BlockTypeToolUse,
+			ID:              "q-1",
+			Name:            "AskUserQuestion",
+			Status:          StatusRejected,
+			UserInteraction: llm.UserInteractionSelect,
+			Shared:          new(true),
+		},
+		{Type: BlockTypeToolResult, ToolUseID: "q-1", Content: "User skipped the question", Status: StatusError, Shared: new(true)},
+		{
+			Type:             BlockTypeToolUse,
+			ID:               "auto-1",
+			Name:             "jira__get_issue",
+			Input:            json.RawMessage(`{"key":"secret"}`),
+			Status:           StatusRejected,
+			WouldAutoExecute: true,
+			Shared:           new(false),
+		},
+		{Type: BlockTypeToolResult, ToolUseID: "auto-1", Content: "Tool call rejected by user", Status: StatusError, Shared: new(true)},
+		{
+			Type:   BlockTypeToolUse,
+			ID:     "human-1",
+			Name:   "search",
+			Input:  json.RawMessage(`{"q":"secret"}`),
+			Status: StatusRejected,
+			Shared: new(false),
+		},
+		{Type: BlockTypeToolResult, ToolUseID: "human-1", Content: "Tool call rejected by user", Status: StatusError, Shared: new(true)},
+	}
+
+	got := BlocksToPost(blocks, "assistant", PostConversionOptions{RedactUnshared: true})
+	require.Len(t, got.ToolUse, 3)
+
+	byID := map[string]llm.ToolCall{}
+	for _, tc := range got.ToolUse {
+		byID[tc.ID] = tc
+	}
+
+	assert.Equal(t, llm.UserInteractionSelect, byID["q-1"].UserInteraction)
+	assert.False(t, byID["q-1"].WouldAutoExecute)
+	assert.Empty(t, byID["auto-1"].UserInteraction)
+	assert.True(t, byID["auto-1"].WouldAutoExecute)
+	assert.JSONEq(t, `{}`, string(byID["auto-1"].Arguments))
+	assert.Empty(t, byID["human-1"].UserInteraction)
+	assert.False(t, byID["human-1"].WouldAutoExecute)
+	assert.JSONEq(t, `{}`, string(byID["human-1"].Arguments))
+	assert.Equal(t, "Tool call rejected by user", byID["human-1"].Result)
+}
+
 func TestRoleMapping(t *testing.T) {
 	tests := []struct {
 		roleStr  string
