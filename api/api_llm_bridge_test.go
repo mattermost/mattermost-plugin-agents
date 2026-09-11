@@ -103,6 +103,41 @@ func TestConvertBridgePostsToInternalUnsupportedImageDoesNotReadFile(t *testing.
 	require.Nil(t, posts[0].Files[0].Reader)
 }
 
+func TestConvertBridgePostsToInternalDeniedByFilePolicy(t *testing.T) {
+	mmClient := mmapimocks.NewMockClient(t)
+	sessionID := model.NewId()
+	fileID := model.NewId()
+	mmClient.On(
+		"HasPermissionToFileAction",
+		sessionID,
+		fileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false)
+	adminReadCalled := false
+	mmClient.EXPECT().GetFileInfo(fileID).
+		Run(func(string) { adminReadCalled = true }).
+		Return(&model.FileInfo{Id: fileID, MimeType: "image/png"}, nil).
+		Maybe()
+	mmClient.EXPECT().GetFile(fileID).
+		Run(func(string) { adminReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader("secret")), nil).
+		Maybe()
+
+	api := &API{mmClient: mmClient}
+	ctx := auth.WithSessionID(t.Context(), sessionID)
+	_, err := api.convertBridgePostsToInternal(ctx, bridgeclient.CompletionRequest{
+		Posts: []bridgeclient.Post{{
+			Role:    "user",
+			Message: "see attached",
+			FileIDs: []string{fileID},
+		}},
+	})
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file access denied")
+	require.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the caller's file policy denies access")
+}
+
 func TestBridgeClientAgentCompletion(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard

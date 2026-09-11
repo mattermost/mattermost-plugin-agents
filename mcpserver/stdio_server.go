@@ -82,8 +82,13 @@ func (s *MattermostStdioMCPServer) Serve() error {
 
 // serveStdio starts the server using stdio transport
 func (s *MattermostMCPServer) serveStdio() error {
-	// Add context with cancellation for graceful shutdown
 	ctx := context.Background()
+	if cfg, ok := s.config.(StdioConfig); ok && cfg.PersonalAccessToken != "" {
+		// Tool handlers inherit this context. HTTP callbacks (read_file,
+		// semantic search) forward the PAT as a bearer token so the plugin
+		// can restore a Mattermost session for file-policy checks.
+		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, cfg.PersonalAccessToken)
+	}
 
 	// Log startup
 	s.logger.Info("Starting MCP server with STDIO transport")

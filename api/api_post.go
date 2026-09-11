@@ -210,6 +210,10 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 
 	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
