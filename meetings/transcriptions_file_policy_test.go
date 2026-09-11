@@ -4,8 +4,6 @@
 package meetings
 
 import (
-	"io"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,8 +22,10 @@ import (
 // TestHandleSummarizeTranscriptionDeniedByFilePolicy proves the async
 // transcription read is session-gated. HandleSummarizeTranscription returns
 // after posting "Sure…" — a return-error assertion would not catch a missing
-// WithFilePolicy. The goroutine must consult HasPermissionToFileAction and
-// must not call admin GetFileInfo/GetFile after a deny.
+// WithFilePolicy. The worker consults HasPermissionToFileAction, then
+// UpdatePost on the denied-path error; waiting for that callback means the
+// goroutine has finished, so an unexpected admin GetFile/GetFileInfo fails
+// the mock instead of racing the test.
 func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	const (
 		userID    = "user-id-1234567890123456789012"
@@ -36,6 +36,7 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	)
 	fileID := model.NewId()
 
+	workerDone := make(chan struct{})
 	mockAPI := &plugintest.API{}
 	siteURL := "http://localhost"
 	cfg := model.Config{}
@@ -46,29 +47,24 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	mockAPI.On("GetUser", callsID).Return(&model.User{Id: callsID, Username: "calls", IsBot: true}, nil)
 	mockAPI.On("GetDirectChannel", botID, userID).Return(&model.Channel{Id: dmID}, nil)
 	mockAPI.On("CreatePost", mock.Anything).Return(&model.Post{Id: model.NewId(), ChannelId: dmID}, nil)
-	mockAPI.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil).Maybe()
+	mockAPI.On("UpdatePost", mock.Anything).Return(&model.Post{}, nil).Run(func(mock.Arguments) {
+		select {
+		case <-workerDone:
+		default:
+			close(workerDone)
+		}
+	}).Once()
 	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
 	mockAPI.On("LogError", mock.Anything).Maybe()
 	defer mockAPI.AssertExpectations(t)
 
 	mmClient := mocks.NewMockClient(t)
-	checked := make(chan struct{})
 	mmClient.On(
 		"HasPermissionToFileAction",
 		sessionID,
 		fileID,
 		model.AccessControlPolicyActionDownloadFileAttachment,
-	).Return(false).Run(func(mock.Arguments) { close(checked) }).Once()
-
-	adminReadCalled := false
-	mmClient.EXPECT().GetFileInfo(fileID).
-		Run(func(string) { adminReadCalled = true }).
-		Return(&model.FileInfo{Id: fileID, PostId: "post-id"}, nil).
-		Maybe()
-	mmClient.EXPECT().GetFile(fileID).
-		Run(func(string) { adminReadCalled = true }).
-		Return(io.NopCloser(strings.NewReader("sensitive transcript")), nil).
-		Maybe()
+	).Return(false).Once()
 
 	s := &Service{
 		pluginAPI:     pluginapi.NewClient(mockAPI, nil),
@@ -96,9 +92,8 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 	require.NotEmpty(t, result["postid"])
 
 	select {
-	case <-checked:
+	case <-workerDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("HasPermissionToFileAction was not consulted on the async transcription read")
+		t.Fatal("denied-path UpdatePost was not called; the transcription worker never finished")
 	}
-	require.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the caller's file policy denies access")
 }
