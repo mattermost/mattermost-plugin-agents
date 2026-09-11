@@ -67,11 +67,18 @@ type LLM struct {
 
 	// fallbacks is attached to every outgoing request so Bifrost retries with
 	// alternative providers when the primary fails.
-	fallbacks []schemas.Fallback
+	fallbacks []fallbackHop
 
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
+}
+
+// fallbackHop pairs a Bifrost fallback with the durable service ID it came
+// from, so the chain can be prefix-filtered per requesting user.
+type fallbackHop struct {
+	fallback  schemas.Fallback
+	serviceID string
 }
 
 // ProviderSettings holds the connection and credential fields needed to reach
@@ -167,7 +174,7 @@ func New(cfg Config) (*LLM, error) {
 		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
 	}
 
-	var fallbacks []schemas.Fallback
+	var fallbacks []fallbackHop
 	for _, fb := range cfg.Fallbacks {
 		if fb.APIKey != "" {
 			redactKeys = append(redactKeys, fb.APIKey)
@@ -201,9 +208,12 @@ func New(cfg Config) (*LLM, error) {
 		if supportsProviderFileDownloadProvider(fb.Provider) {
 			providerFileDownloadRoutes[name] = true
 		}
-		fallbacks = append(fallbacks, schemas.Fallback{
-			Provider: name,
-			Model:    fb.DefaultModel,
+		fallbacks = append(fallbacks, fallbackHop{
+			fallback: schemas.Fallback{
+				Provider: name,
+				Model:    fb.DefaultModel,
+			},
+			serviceID: fb.ID,
 		})
 	}
 
@@ -553,7 +563,7 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	return false
 }
 
-// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// promptCachingEnabledFor reports whether to request Anthropic automatic prompt
 // caching (top-level cache_control). Anthropic caches nothing unless asked,
 // so without this every turn re-bills the full system prompt, tool schemas,
 // and history at the base input rate. OpenAI-family and Gemini cache prompt
@@ -561,17 +571,36 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 // unstripped to non-Anthropic providers, so it is only attached when the
 // primary and every fallback are Anthropic; a mixed chain would 400 the
 // fallback request.
-func (b *LLM) promptCachingEnabled() bool {
+func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
 	if b.provider != schemas.Anthropic {
 		return false
 	}
-	for _, fb := range b.fallbacks {
+	for _, fb := range fallbacks {
 		if fb.Provider != schemas.Anthropic &&
 			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
 			return false
 		}
 	}
 	return true
+}
+
+// requestFallbacks returns the fallback chain to attach to this request.
+// RestrictFallbacks truncates at the first hop whose service ID is not in
+// AllowedFallbackServiceIDs so a denied hop is never skipped over.
+func (b *LLM) requestFallbacks(request llm.CompletionRequest) []schemas.Fallback {
+	allowed := make(map[string]struct{}, len(request.AllowedFallbackServiceIDs))
+	for _, id := range request.AllowedFallbackServiceIDs {
+		allowed[id] = struct{}{}
+	}
+
+	var out []schemas.Fallback
+	for _, hop := range b.fallbacks {
+		if _, ok := allowed[hop.serviceID]; request.RestrictFallbacks && !ok {
+			break
+		}
+		out = append(out, hop.fallback)
+	}
+	return out
 }
 
 // isNativeToolEnabled checks if a native tool is enabled by name.

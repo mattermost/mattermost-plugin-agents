@@ -69,12 +69,30 @@ var (
 	MCPTool   = attribute.Key("agents.mcp.tool")
 )
 
+// Attribute keys for web search operations
+var (
+	WebSearchProvider    = attribute.Key("agents.websearch.provider")
+	WebSearchResultLimit = attribute.Key("agents.websearch.result_limit")
+
+	// Failure surface: which early return a search bailed out on, plus the
+	// upstream HTTP status when there was one. The query is never attached.
+	WebSearchFailStage  = attribute.Key("agents.websearch.fail_stage")
+	WebSearchStatusCode = attribute.Key("agents.websearch.status_code")
+)
+
 // Attribute keys for Mattermost entities
 var (
 	UserID           = attribute.Key("agents.user.id")
 	ChannelID        = attribute.Key("agents.channel.id")
 	PostID           = attribute.Key("agents.post.id")
 	ThreadRootPostID = attribute.Key("agents.thread.root_post.id")
+)
+
+// Attribute keys for attribute-based access control (ABAC) decisions
+var (
+	ABACResourceType = attribute.Key("agents.abac.resource_type")
+	ABACResourceID   = attribute.Key("agents.abac.resource_id")
+	ABACOutcome      = attribute.Key("agents.abac.outcome")
 )
 
 // WithLLMAttributes returns a SpanStartOption with standard LLM attributes.

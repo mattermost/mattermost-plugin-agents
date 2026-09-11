@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -118,7 +119,7 @@ func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil), &http.Client{}, nil)
 			botsService.SetBotsForTesting([]*bots.Bot{
 				bots.NewBot(
 					llm.BotConfig{Name: "matty", DisplayName: "Matty", UserAccessLevel: llm.UserAccessLevelAll},
