@@ -100,12 +100,7 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			Schema:      schema,
 			Resolver:    typed("search_posts", p.toolCombinedSearch),
 		},
-		{
-			Name:        "search_users",
-			Description: searchUsersDescription,
-			Schema:      NewJSONSchemaForAccessMode[SearchUsersArgs](string(p.accessMode)),
-			Resolver:    typed("search_users", p.toolSearchUsers),
-		},
+		mcpTool(p, "search_users", searchUsersDescription, p.toolSearchUsers),
 	}
 }
 
@@ -462,13 +457,13 @@ func (p *MattermostToolProvider) formatCombinedResults(query string, semanticRes
 		noun = "result"
 	}
 	if semanticEnabled {
-		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\" (%d semantic, %d keyword):\n", total, noun, query, totalSemantic, totalKeyword))
+		fmt.Fprintf(&result, "Found %d %s for \"%s\" (%d semantic, %d keyword):\n", total, noun, query, totalSemantic, totalKeyword)
 	} else {
-		result.WriteString(fmt.Sprintf("Found %d %s for \"%s\":\n", total, noun, query))
+		fmt.Fprintf(&result, "Found %d %s for \"%s\":\n", total, noun, query)
 	}
 
 	if channelIDFilter != "" {
-		result.WriteString(fmt.Sprintf("Channel ID filter: %s\n", channelIDFilter))
+		fmt.Fprintf(&result, "Channel ID filter: %s\n", channelIDFilter)
 	}
 
 	if semanticEnabled && totalSemantic > 0 {
@@ -546,7 +541,7 @@ func (p *MattermostToolProvider) toolSearchUsers(mcpContext *MCPToolContext, arg
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d users matching '%s':\n\n", len(users), args.Term))
+	fmt.Fprintf(&result, "Found %d users matching '%s':\n\n", len(users), args.Term)
 
 	for i, user := range users {
 		format.WriteUser(&result, format.UserEntry{

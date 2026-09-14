@@ -35,6 +35,12 @@ type UserAccessLevelProps = {
     userIDs: string[];
     teamIDs: string[];
     onChangeIDs: (userIds: string[], teamIds: string[]) => void;
+    disabled?: boolean;
+
+    // Renders the attribute-based radio (agents with ABAC support only;
+    // config bots never pass this — they are not policy-addressable).
+    showAttributeBased?: boolean;
+    attributeBasedDescription?: React.ReactNode;
 };
 
 export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
@@ -47,6 +53,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         type='radio'
                         value={UserAccessLevel.All}
                         checked={props.level === UserAccessLevel.All}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(UserAccessLevel.All)}
                     />
                     <FormattedMessage defaultMessage='Allow for all users'/>
@@ -54,6 +61,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         type='radio'
                         value={UserAccessLevel.Allow}
                         checked={props.level === UserAccessLevel.Allow}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(UserAccessLevel.Allow)}
                     />
                     <FormattedMessage defaultMessage='Allow for selected users'/>
@@ -61,11 +69,25 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         type='radio'
                         value={UserAccessLevel.Block}
                         checked={props.level === UserAccessLevel.Block}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(UserAccessLevel.Block)}
                     />
                     <FormattedMessage defaultMessage='Block selected users'/>
+                    {props.showAttributeBased && (
+                        <>
+                            <StyledRadio
+                                type='radio'
+                                value={UserAccessLevel.AttributeBased}
+                                checked={props.level === UserAccessLevel.AttributeBased}
+                                disabled={props.disabled}
+                                onChange={() => props.onChangeLevel(UserAccessLevel.AttributeBased)}
+                            />
+                            <FormattedMessage defaultMessage='Attribute-based (access policy)'/>
+                        </>
+                    )}
                 </AllowTypes>
-                {props.level !== UserAccessLevel.All && (
+                {props.level === UserAccessLevel.AttributeBased && props.attributeBasedDescription}
+                {props.level !== UserAccessLevel.All && props.level !== UserAccessLevel.AttributeBased && (
                     <SelectWrapper>
                         <ItemLabel>
                             {props.level === UserAccessLevel.Allow ? 'Allow list' : 'Block list'}
@@ -74,6 +96,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                             userIDs={props.userIDs}
                             teamIDs={props.teamIDs}
                             onChangeIDs={props.onChangeIDs}
+                            disabled={props.disabled}
                         />
                         <HelpText>
                             {props.level === UserAccessLevel.Allow ? (
@@ -95,6 +118,7 @@ type ChannelAccessLevelProps = {
     onChangeLevel: (level: ChannelAccessLevel) => void;
     channelIDs: string[];
     onChangeChannelIDs: (channelIDs: string[]) => void;
+    disabled?: boolean;
 };
 
 export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
@@ -107,6 +131,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         type='radio'
                         value={ChannelAccessLevel.All}
                         checked={props.level === ChannelAccessLevel.All}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.All)}
                     />
                     <FormattedMessage defaultMessage='Allow for all channels'/>
@@ -114,6 +139,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         type='radio'
                         value={ChannelAccessLevel.Allow}
                         checked={props.level === ChannelAccessLevel.Allow}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.Allow)}
                     />
                     <FormattedMessage defaultMessage='Allow for selected channels'/>
@@ -121,6 +147,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         type='radio'
                         value={ChannelAccessLevel.Block}
                         checked={props.level === ChannelAccessLevel.Block}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.Block)}
                     />
                     <FormattedMessage defaultMessage='Block selected channels'/>
@@ -128,6 +155,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         type='radio'
                         value={ChannelAccessLevel.None}
                         checked={props.level === ChannelAccessLevel.None}
+                        disabled={props.disabled}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.None)}
                     />
                     <FormattedMessage defaultMessage='Block all channels'/>
@@ -140,6 +168,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         <SelectChannel
                             channelIDs={props.channelIDs}
                             onChangeChannelIDs={props.onChangeChannelIDs}
+                            disabled={props.disabled}
                         />
                         <HelpText>
                             {props.level === ChannelAccessLevel.Allow ? (

@@ -19,6 +19,31 @@ type renderMember struct {
 	role   string
 }
 
+// teamRenderMembers maps team membership records to the renderMember subset
+// consumed by renderMembers.
+func teamRenderMembers(members []*model.TeamMember) []renderMember {
+	rendered := make([]renderMember, len(members))
+	for i, member := range members {
+		rendered[i] = renderMember{
+			userID: member.UserId,
+			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		}
+	}
+	return rendered
+}
+
+// channelRenderMembers is the channel membership counterpart of teamRenderMembers.
+func channelRenderMembers(members model.ChannelMembers) []renderMember {
+	rendered := make([]renderMember, len(members))
+	for i, member := range members {
+		rendered[i] = renderMember{
+			userID: member.UserId,
+			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
+		}
+	}
+	return rendered
+}
+
 // renderMembers resolves each member's user details and formats them as a paged
 // listing. noun labels the listing (e.g. "Channel Members"). Bot accounts are
 // dropped when excludeBots is set, and the count is reported in the footer.

@@ -38,13 +38,13 @@ func GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error) {
 		}
 	}()
 
-	captions, ok := post.GetProp("captions").([]interface{})
+	captions, ok := post.GetProp("captions").([]any)
 	if !ok || len(captions) == 0 {
 		return "", errors.New("no captions on post")
 	}
 
 	// Calls will only ever have one for now.
-	return captions[0].(map[string]interface{})["file_id"].(string), nil
+	return captions[0].(map[string]any)["file_id"].(string), nil
 }
 
 // GetCaptionsFileIDFromProps is a wrapper method to make the function available via the Service

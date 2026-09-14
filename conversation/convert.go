@@ -68,11 +68,30 @@ func BlocksToPost(
 		switch block.Type {
 		case BlockTypeText:
 			textParts = append(textParts, block.Text)
+			if block.Text != "" {
+				post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+					Kind: llm.TurnSegmentText,
+					Text: block.Text,
+				})
+			}
 
 		case BlockTypeThinking:
-			// Last thinking block wins
+			// Last thinking block wins. Persisted thinking is cleared by the
+			// request builder because signed provider blocks cannot be rebuilt
+			// safely from normalized storage.
 			post.Reasoning = block.Text
 			post.ReasoningSignature = block.Signature
+
+		case BlockTypeServerToolUse:
+			if block.ServerTool == nil || block.ServerTool.ID == "" {
+				continue
+			}
+			activity := block.ServerTool.Clone()
+			post.ServerTools = append(post.ServerTools, activity)
+			post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{
+				Kind:         llm.TurnSegmentServerTool,
+				ServerToolID: activity.ID,
+			})
 
 		case BlockTypeToolUse:
 			arguments := block.Input
@@ -87,6 +106,8 @@ func BlocksToPost(
 				Arguments:    arguments,
 				MCPBareName:  block.MCPBareName,
 				Status:       StatusFromString(block.Status),
+				Title:        block.Title,
+				Description:  block.Description,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""
@@ -223,6 +244,9 @@ func BlocksToPost(
 	if len(descriptors) > 0 {
 		post.Message += "\nAttached files (call the read_file tool with the File ID to read their contents):\n" + strings.Join(descriptors, "\n\n")
 	}
+	if len(post.ServerTools) == 0 {
+		post.AssistantSegments = nil
+	}
 
 	return post
 }
@@ -232,56 +256,6 @@ func enrichToolCallFromStore(toolCall *llm.ToolCall, toolStore *llm.ToolStore) {
 		OverwriteDescription: true,
 		BareNameFallback:     true,
 	})
-}
-
-// PostToBlocks converts an llm.Post into a slice of content blocks.
-// This is used when writing turns to the database from stream events or the current llm.Post model.
-// The shared parameter controls whether tool blocks get shared=true or shared=false.
-func PostToBlocks(post llm.Post, shared bool) []ContentBlock {
-	var blocks []ContentBlock
-
-	// 1. Thinking block (if Reasoning is non-empty)
-	if post.Reasoning != "" {
-		blocks = append(blocks, ContentBlock{
-			Type:      BlockTypeThinking,
-			Text:      post.Reasoning,
-			Signature: post.ReasoningSignature,
-		})
-	}
-
-	// 2. Text block (if Message is non-empty)
-	if post.Message != "" {
-		blocks = append(blocks, ContentBlock{
-			Type: BlockTypeText,
-			Text: post.Message,
-		})
-	}
-
-	// 3. For each ToolUse: a tool_use block, optionally followed by a tool_result block
-	for _, tc := range post.ToolUse {
-		blocks = append(blocks, ContentBlock{
-			Type:         BlockTypeToolUse,
-			ID:           tc.ID,
-			Name:         tc.Name,
-			ServerOrigin: tc.ServerOrigin,
-			Input:        tc.Arguments,
-			MCPBareName:  tc.MCPBareName,
-			Status:       StatusToString(tc.Status),
-			Shared:       BoolPtr(shared),
-		})
-
-		if tc.Result != "" {
-			blocks = append(blocks, ContentBlock{
-				Type:      BlockTypeToolResult,
-				ToolUseID: tc.ID,
-				Content:   tc.Result,
-				Status:    StatusToString(tc.Status),
-				Shared:    BoolPtr(shared),
-			})
-		}
-	}
-
-	return blocks
 }
 
 // RoleFromString converts a turn role string to an llm.PostRole.
@@ -297,20 +271,6 @@ func RoleFromString(role string) llm.PostRole {
 		return llm.PostRoleSystem
 	default:
 		return llm.PostRoleUser
-	}
-}
-
-// RoleToString converts an llm.PostRole to a turn role string.
-func RoleToString(role llm.PostRole) string {
-	switch role {
-	case llm.PostRoleUser:
-		return "user"
-	case llm.PostRoleBot:
-		return "assistant"
-	case llm.PostRoleSystem:
-		return "system"
-	default:
-		return "user"
 	}
 }
 

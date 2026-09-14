@@ -11,10 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func stringPtr(s string) *string {
-	return &s
-}
-
 func makeConversation(overrides ...func(*Conversation)) *Conversation {
 	conv := &Conversation{
 		ID:        model.NewId(),
@@ -43,8 +39,8 @@ func TestCreateConversation(t *testing.T) {
 			setup: func(t *testing.T, s *Store) {},
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
-					c.ChannelID = stringPtr("channel1")
-					c.RootPostID = stringPtr("post1")
+					c.ChannelID = new("channel1")
+					c.RootPostID = new("post1")
 					c.Title = "Test Title"
 					c.SystemPrompt = "You are a helpful assistant"
 					c.Operation = "conversation"
@@ -88,7 +84,7 @@ func TestCreateConversation(t *testing.T) {
 			setup: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = "userDup"
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -97,7 +93,7 @@ func TestCreateConversation(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = "userDup"
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -109,7 +105,7 @@ func TestCreateConversation(t *testing.T) {
 			setup: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = "userA"
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -118,7 +114,7 @@ func TestCreateConversation(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = "userB"
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -133,7 +129,7 @@ func TestCreateConversation(t *testing.T) {
 			name: "allows same RootPostID with different BotID",
 			setup: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -141,7 +137,7 @@ func TestCreateConversation(t *testing.T) {
 			},
 			validate: func(t *testing.T, s *Store) {
 				conv := makeConversation(func(c *Conversation) {
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot2"
 				})
 				err := s.CreateConversation(conv)
@@ -261,7 +257,7 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 				userID := model.NewId()
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = userID
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 					c.Title = "Thread Conversation"
 				})
@@ -292,7 +288,7 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 				otherID := model.NewId()
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = ownerID
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -310,7 +306,7 @@ func TestGetConversationByThreadBotUser(t *testing.T) {
 				userID := model.NewId()
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = userID
-					c.RootPostID = stringPtr("post1")
+					c.RootPostID = new("post1")
 					c.BotID = "bot1"
 				})
 				err := s.CreateConversation(conv)
@@ -503,7 +499,7 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				userID := model.NewId()
 
-				for i := 0; i < 5; i++ {
+				for i := range 5 {
 					conv := makeConversation(func(c *Conversation) {
 						c.UserID = userID
 						c.UpdatedAt = int64(1000 + i)
@@ -605,7 +601,7 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 				conv := makeConversation(func(c *Conversation) {
 					c.UserID = userID
 					c.BotID = botID
-					c.RootPostID = stringPtr(rootPostID)
+					c.RootPostID = new(rootPostID)
 					c.Title = "Thread Conv"
 				})
 				err := s.CreateConversation(conv)

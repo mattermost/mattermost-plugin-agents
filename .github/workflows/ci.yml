@@ -48,7 +48,8 @@ jobs:
             group: e2e-shard-4
     name: e2e-${{ matrix.shard.name }}
     env:
-      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:release-11.9' }}
+      # release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
+      MM_IMAGE: ${{ vars.MM_IMAGE || 'mattermostdevelopment/mattermost-enterprise-edition:master' }}
     defaults:
       run:
         working-directory: ./e2e
@@ -217,7 +218,7 @@ jobs:
       - uses: mattermost/actions/plugin-ci/lint@main
 
   verify-no-drift:
-    name: Verify webapp i18n + package-lock are in sync
+    name: Verify webapp i18n, package-lock, and editor contract are in sync
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -230,6 +231,8 @@ jobs:
         run: make check-i18n
       - name: Check package-lock.json drift
         run: make check-locks
+      - name: Check editor contract against the pinned host snapshot
+        run: cd webapp && npm run check-editor-contract
 
   build:
     runs-on: ubuntu-latest

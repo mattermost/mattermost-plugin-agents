@@ -20,33 +20,6 @@ func IsRemoteServerOrigin(origin string) bool {
 	return origin != "" && origin != EmbeddedClientKey
 }
 
-// IsVettedHost returns true when the baseURL host matches one of the
-// Mattermost-curated vetted MCP server hosts.
-//
-// Matching semantics intentionally preserve the previous approved-server behavior:
-// - host-only matching
-// - path/query/fragment/port ignored
-// - exact host or subdomain match
-// - supports embedded://mattermost
-func IsVettedHost(baseURL string) bool {
-	if baseURL == EmbeddedClientKey {
-		return true
-	}
-
-	host, ok := vettedHostFromBaseURL(baseURL)
-	if !ok {
-		return false
-	}
-
-	for _, pattern := range vettedHostPatterns() {
-		if host == pattern || strings.HasSuffix(host, "."+pattern) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // SeedVettedToolConfigs returns one-time seed tool configs for vetted MCP hosts.
 //
 // Only Mattermost-curated READ-only tools are seeded. Most are enabled with
@@ -92,14 +65,6 @@ func vettedHostFromBaseURL(baseURL string) (string, bool) {
 	}
 
 	return host, true
-}
-
-func vettedHostPatterns() []string {
-	return []string{
-		"mcp.atlassian.com",
-		"api.githubcopilot.com",
-		"mcp.figma.com",
-	}
 }
 
 func cloneToolConfigs(src []ToolConfig) []ToolConfig {

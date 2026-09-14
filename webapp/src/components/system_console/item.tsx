@@ -556,6 +556,11 @@ export const StyledRadio = styled.input`
 		transform-origin: center center;
 		transition: 200ms transform ease-in-out;
 	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
 `;
 
 export const StyledCheckbox = styled.input`
@@ -639,6 +644,7 @@ type BooleanItemProps = {
     value: boolean
     onChange: (to: boolean) => void
     helpText?: string
+    disabled?: boolean
 };
 
 export const BooleanItem = (props: BooleanItemProps) => {
@@ -651,6 +657,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         type='radio'
                         value='true'
                         checked={props.value}
+                        disabled={props.disabled}
                         onChange={() => props.onChange(true)}
                     />
                     <FormattedMessage defaultMessage='true'/>
@@ -658,6 +665,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         type='radio'
                         value='false'
                         checked={!props.value}
+                        disabled={props.disabled}
                         onChange={() => props.onChange(false)}
                     />
                     <FormattedMessage defaultMessage='false'/>

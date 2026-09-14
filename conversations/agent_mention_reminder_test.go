@@ -26,8 +26,10 @@ const (
 	reminderBotID       = "bot-id"
 	reminderBotUsername = "test-bot"
 	reminderBotDisplay  = "Test Bot"
-	reminderUserID      = "user-id"
-	reminderOtherUserID = "other-user-id"
+	// Well-formed 26-char IDs: the agent access gate denies a user ID no policy
+	// can be evaluated against, so the reminder never reaches its own logic.
+	reminderUserID      = "user12345678901234567890ab"
+	reminderOtherUserID = "othe12345678901234567890ab"
 	reminderChannelID   = "channel-id"
 	reminderTeamID      = "team-id"
 	reminderRootID      = "root-id"
@@ -63,7 +65,7 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
-	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := bots.NewBot(
 		botConfig,
 		llm.ServiceConfig{},

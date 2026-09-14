@@ -5,14 +5,17 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	mcppkg "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	loggerlib "github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 
@@ -55,7 +58,26 @@ func (s *stubPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 // listToolNamesNoRequire avoids require so it is safe from goroutines.
 func listToolNamesNoRequire(t *testing.T, h *PluginMCPHandlers) ([]string, error) {
 	t.Helper()
-	ts := httptest.NewServer(h.MCPHandler)
+	return listToolNamesFromHandler(t, h.MCPHandler)
+}
+
+func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
+	t.Helper()
+	names, err := listToolNamesNoRequire(t, h)
+	require.NoError(t, err)
+	return names
+}
+
+func listToolNamesAs(t *testing.T, h *PluginMCPHandlers, userID string) []string {
+	t.Helper()
+	names, err := listToolNamesFromHandler(t, injectUserID(h.MCPHandler, userID))
+	require.NoError(t, err)
+	return names
+}
+
+func listToolNamesFromHandler(t *testing.T, handler http.Handler) ([]string, error) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 
 	client := gosdkmcp.NewClient(&gosdkmcp.Implementation{Name: "test-lister", Version: "1.0"}, &gosdkmcp.ClientOptions{})
@@ -79,16 +101,19 @@ func listToolNamesNoRequire(t *testing.T, h *PluginMCPHandlers) ([]string, error
 	return names, nil
 }
 
-func listToolNames(t *testing.T, h *PluginMCPHandlers) []string {
+func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]any) (*gosdkmcp.CallToolResult, error) {
 	t.Helper()
-	names, err := listToolNamesNoRequire(t, h)
-	require.NoError(t, err)
-	return names
+	return callToolWithHandler(t, h.MCPHandler, name, args)
 }
 
-func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+func callToolAs(t *testing.T, h *PluginMCPHandlers, userID, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
 	t.Helper()
-	ts := httptest.NewServer(h.MCPHandler)
+	return callToolWithHandler(t, injectUserID(h.MCPHandler, userID), name, args)
+}
+
+func callToolWithHandler(t *testing.T, handler http.Handler, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+	t.Helper()
+	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
 
 	client := gosdkmcp.NewClient(&gosdkmcp.Implementation{Name: "test-caller", Version: "1.0"}, &gosdkmcp.ClientOptions{})
@@ -104,6 +129,15 @@ func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]i
 	return sess.CallTool(context.Background(), &gosdkmcp.CallToolParams{
 		Name:      name,
 		Arguments: args,
+	})
+}
+
+func injectUserID(next http.Handler, userID string) http.Handler {
+	if userID == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), auth.UserIDContextKey, userID)))
 	})
 }
 
@@ -136,7 +170,7 @@ func newFakePluginMCPServerWithToolNames(t *testing.T, toolNames ...string) *htt
 	}
 	streamable := gosdkmcp.NewStreamableHTTPHandler(
 		func(*http.Request) *gosdkmcp.Server { return srv },
-		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: true},
 	)
 	return httptest.NewServer(streamable)
 }
@@ -155,7 +189,7 @@ func TestNewPluginMCPHandlers_IteratesRegistry(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h.MCPHandler)
 
@@ -184,7 +218,7 @@ func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testin
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 
 	toolNames := listToolNames(t, h)
@@ -201,7 +235,7 @@ func TestNewPluginMCPHandlers_SkipsPluginToolConflictingWithNativeTool(t *testin
 	require.Equal(t, 1, nativeNameCount, "native tool should remain registered once")
 	require.True(t, sawPluginUnique, "non-conflicting plugin tools should still be aggregated")
 
-	result, err := callTool(t, h, "create_post", map[string]interface{}{
+	result, err := callTool(t, h, "create_post", map[string]any{
 		"channel_id": "channel-id",
 		"message":    "from test",
 	})
@@ -230,7 +264,7 @@ func TestNewPluginMCPHandlers_FiltersToolsByPolicy(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 
 	toolNames := listToolNames(t, h)
@@ -276,7 +310,7 @@ func TestNewPluginMCPHandlers_PolicyIsPerPluginServer(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 
 	toolNames := listToolNames(t, h)
@@ -298,7 +332,7 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
 
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 
 	initial := listToolNames(t, h)
@@ -311,11 +345,8 @@ func TestRebuildExternalServer_PicksUpNewRegistrations(t *testing.T) {
 
 	after := listToolNames(t, h)
 	var sawProxy bool
-	for _, n := range after {
-		if n == "test_tool_0" {
-			sawProxy = true
-			break
-		}
+	if slices.Contains(after, "test_tool_0") {
+		sawProxy = true
 	}
 	require.True(t, sawProxy, "RebuildExternalServer should have picked up the new registration")
 }
@@ -330,7 +361,7 @@ func TestRebuildExternalServer_RemovesUnregistered(t *testing.T) {
 	}}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 
 	reg.set(nil)
@@ -350,7 +381,7 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", healthy, nil)
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 	h.proxyDiscoveryTimeout = 25 * time.Millisecond
 
@@ -362,11 +393,8 @@ func TestRebuildExternalServer_SkipsTimedOutPluginAndKeepsHealthyPlugins(t *test
 
 	after := listToolNames(t, h)
 	var sawHealthy bool
-	for _, n := range after {
-		if n == "test_tool_0" {
-			sawHealthy = true
-			break
-		}
+	if slices.Contains(after, "test_tool_0") {
+		sawHealthy = true
 	}
 	require.True(t, sawHealthy, "healthy plugins should still be aggregated after another plugin times out")
 }
@@ -377,7 +405,7 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 	mockAPI := newHangingAndHealthyPluginForwarder(t, "com.example.hung", nil, startedHungRequest)
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, nil, nil)
 	require.NoError(t, err)
 	h.proxyDiscoveryTimeout = 100 * time.Millisecond
 
@@ -421,10 +449,154 @@ func TestRebuildExternalServer_DoesNotBlockExternalRequestsWhileDiscovering(t *t
 func TestNewPluginMCPHandlers_NilRegistryIsNoOp(t *testing.T) {
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil)
+	h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, h.MCPHandler)
 	_ = listToolNames(t, h)
+}
+
+type stubMCPAccessChecker struct {
+	denied  map[string]bool
+	evalErr error
+}
+
+func (s *stubMCPAccessChecker) CanUseMCPServer(_ context.Context, _, serverID string) error {
+	if s.evalErr != nil {
+		return s.evalErr
+	}
+	if s.denied[serverID] {
+		return errors.New("denied")
+	}
+	return nil
+}
+
+func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
+	const (
+		userID      = "user-access-filter"
+		embeddedID  = "eeeeeeeeeeeeeeeeeeeeeeeeee"
+		pluginSrvID = "pppppppppppppppppppppppppp"
+		nativeTool  = "create_post"
+		pluginTool  = "test_tool_0"
+	)
+
+	target := newFakePluginMCPServer(t, 1, nil)
+	t.Cleanup(target.Close)
+	mockAPI := newPluginHTTPForwarder(t, target)
+	reg := &stubRegistry{servers: []mcppkg.PluginServerConfig{{
+		ID:             pluginSrvID,
+		PluginID:       "com.example.ext",
+		Name:           "Ext",
+		Path:           "/mcp",
+		Enabled:        true,
+		ExposeExternal: true,
+	}}}
+	logger, err := loggerlib.CreateDefaultLogger()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name       string
+		checker    mcppkg.ServerAccessChecker
+		embeddedID string
+		userID     string
+		wantNative bool
+		wantPlugin bool
+		// unknownTool, when set, is called and must be rejected before reaching the SDK.
+		unknownTool string
+	}{
+		{
+			name:       "denied embedded omits native keeps plugin",
+			checker:    &stubMCPAccessChecker{denied: map[string]bool{embeddedID: true}},
+			embeddedID: embeddedID,
+			userID:     userID,
+			wantPlugin: true,
+		},
+		{
+			name:       "denied plugin omits plugin keeps native",
+			checker:    &stubMCPAccessChecker{denied: map[string]bool{pluginSrvID: true}},
+			embeddedID: embeddedID,
+			userID:     userID,
+			wantNative: true,
+		},
+		{
+			name:       "nil checker unrestricted",
+			embeddedID: embeddedID,
+			userID:     userID,
+			wantNative: true,
+			wantPlugin: true,
+		},
+		{
+			name:       "missing userID fail closed",
+			checker:    &stubMCPAccessChecker{},
+			embeddedID: embeddedID,
+		},
+		{
+			name:       "evaluation error fail closed",
+			checker:    &stubMCPAccessChecker{evalErr: errors.New("pdp unavailable")},
+			embeddedID: embeddedID,
+			userID:     userID,
+		},
+		{
+			name: "empty embedded ID does not deny native",
+			checker: &stubMCPAccessChecker{denied: map[string]bool{
+				"": true,
+			}},
+			userID:     userID,
+			wantNative: true,
+			wantPlugin: true,
+		},
+		{
+			name:        "unknown tool name fail closed",
+			checker:     &stubMCPAccessChecker{},
+			embeddedID:  embeddedID,
+			userID:      userID,
+			wantNative:  true,
+			wantPlugin:  true,
+			unknownTool: "no_such_tool",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			h, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, reg, mockAPI, tc.checker, func() string {
+				return tc.embeddedID
+			})
+			require.NoError(t, err)
+
+			names := listToolNamesAs(t, h, tc.userID)
+			require.Equal(t, tc.wantNative, slices.Contains(names, nativeTool), "native tool listing")
+			require.Equal(t, tc.wantPlugin, slices.Contains(names, pluginTool), "plugin tool listing")
+
+			nativeResult, nativeErr := callToolAs(t, h, tc.userID, nativeTool, map[string]interface{}{
+				"channel_id": "channel-id",
+				"message":    "from test",
+			})
+			if !tc.wantNative {
+				require.Error(t, nativeErr)
+				require.Contains(t, nativeErr.Error(), "tool not available")
+			} else {
+				require.NoError(t, nativeErr)
+				require.True(t, nativeResult.IsError)
+				require.Contains(t, toolResultText(nativeResult), "session authentication provider requires token resolver")
+			}
+
+			pluginResult, pluginErr := callToolAs(t, h, tc.userID, pluginTool, map[string]interface{}{
+				"message": "hi",
+			})
+			if !tc.wantPlugin {
+				require.Error(t, pluginErr)
+				require.Contains(t, pluginErr.Error(), "tool not available")
+			} else {
+				require.NoError(t, pluginErr)
+				require.False(t, pluginResult.IsError)
+			}
+
+			if tc.unknownTool != "" {
+				_, unknownErr := callToolAs(t, h, tc.userID, tc.unknownTool, map[string]interface{}{})
+				require.Error(t, unknownErr)
+				require.Contains(t, unknownErr.Error(), "tool not available")
+			}
+		})
+	}
 }
 
 // newPerPluginForwarder routes PluginHTTP by the leading /{pluginID} path segment.

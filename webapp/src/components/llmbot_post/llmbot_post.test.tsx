@@ -380,7 +380,6 @@ describe('LLMBotPost server tool activity rendering', () => {
 
         await expect(screen.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
 
-        // The final snapshot replaces the in-progress one and adds the sandbox run.
         act(() => {
             listener?.(postUpdateMessage({
                 post_id: 'post_1',
@@ -426,6 +425,250 @@ describe('LLMBotPost server tool activity rendering', () => {
         await waitFor(() => {
             expect(screen.queryByText('Fetched example.com')).toBeNull();
         });
+    });
+});
+
+describe('LLMBotPost live activity ordering', () => {
+    // RoundView renders activity above text, so activity after text starts a new
+    // round. Otherwise narration between two sandbox runs collapses above both.
+    // `next` payloads are cumulative: the server only resets its message
+    // builder at resolved tool_call boundaries, never at activity boundaries.
+    test('narration between two sandbox runs renders in arrival order', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+        expect(listener).toBeDefined();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: "I'll write the script."}));
+        });
+        await expect(screen.findByText("I'll write the script.")).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: "I'll write the script.That found nothing. Retrying."}));
+        });
+        await expect(screen.findByText('That found nothing. Retrying.')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                    {id: 'srv2', tool: 'web_search', status: 'success', query: 'second'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: "I'll write the script.That found nothing. Retrying.Done."}));
+        });
+        await expect(screen.findByText('Done.')).resolves.toBeTruthy();
+
+        // Assert real DOM order, not just presence — the bug was purely ordering.
+        const rendered = container.textContent ?? '';
+        const positions = [
+            "I'll write the script.",
+            'Searched the web for "first"',
+            'That found nothing. Retrying.',
+            'Searched the web for "second"',
+            'Done.',
+        ].map((needle) => rendered.indexOf(needle));
+
+        expect(positions.every((pos) => pos >= 0)).toBe(true);
+        expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    });
+
+    test('splitting does not duplicate the text it closed a round on', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Only once.'}));
+        });
+        await expect(screen.findByText('Only once.')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'q'},
+                ]),
+            }));
+        });
+        await expect(screen.findByText('Searched the web for "q"')).resolves.toBeTruthy();
+
+        expect(screen.getAllByText('Only once.')).toHaveLength(1);
+        expect((container.textContent ?? '').split('Only once.').length - 1).toBe(1);
+
+        // The next cumulative payload still carries the frozen text; only the
+        // remainder may render or the frozen round's text shows twice.
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Only once.And the rest.'}));
+        });
+        await expect(screen.findByText('And the rest.')).resolves.toBeTruthy();
+        expect((container.textContent ?? '').split('Only once.').length - 1).toBe(1);
+    });
+
+    test('activity before any text keeps a single round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'q'},
+                ]),
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Here you go.'}));
+        });
+
+        await expect(screen.findByText('Here you go.')).resolves.toBeTruthy();
+
+        const rendered = container.textContent ?? '';
+        expect(rendered.indexOf('Searched the web for "q"')).toBeLessThan(rendered.indexOf('Here you go.'));
+    });
+
+    test('reasoning that follows provider activity starts a new live round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'first'},
+                ]),
+            }));
+        });
+        await expect(screen.findByText('Searched the web for "first"')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Considering the result',
+            }));
+        });
+        await expect(screen.findByText('Thinking')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Final answer.'}));
+        });
+        await expect(screen.findByText('Final answer.')).resolves.toBeTruthy();
+
+        const rendered = container.textContent ?? '';
+        expect(rendered.indexOf('Searched the web for "first"')).toBeLessThan(rendered.indexOf('Thinking'));
+        expect(rendered.indexOf('Thinking')).toBeLessThan(rendered.indexOf('Final answer.'));
+    });
+
+    // Matches splitTurnIntoRounds: a thinking block after text starts a new
+    // round even with no activity in between, so live and persisted rendering
+    // agree and the refetch does not reflow the post.
+    test('reasoning that follows text starts a new live round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        const {container} = renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Intro.'}));
+        });
+        await expect(screen.findByText('Intro.')).resolves.toBeTruthy();
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Weighing the options',
+            }));
+            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Intro.Answer.'}));
+        });
+        await expect(screen.findByText('Answer.')).resolves.toBeTruthy();
+
+        const rendered = container.textContent ?? '';
+        expect(rendered.indexOf('Intro.')).toBeLessThan(rendered.indexOf('Thinking'));
+        expect(rendered.indexOf('Thinking')).toBeLessThan(rendered.indexOf('Answer.'));
+        expect(rendered.split('Intro.').length - 1).toBe(1);
+    });
+
+    // Snapshots are cumulative and invocations update in place, so a status
+    // change must reach an invocation already frozen into an earlier round or
+    // its spinner sticks until the refetch.
+    test('a status update reaches an invocation frozen into an earlier round', async () => {
+        let listener: PostUpdateHandler | undefined;
+        const websocketRegister = jest.fn((postID, listenerID, handler) => {
+            listener = handler;
+        });
+
+        renderPost(makePost(), websocketRegister);
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'in_progress'},
+                ]),
+            }));
+        });
+        await expect(screen.findByText('Searched the web')).resolves.toBeTruthy();
+
+        // Reasoning after activity freezes srv1 into a completed live round.
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'reasoning_summary',
+                reasoning: 'Looking at the results',
+            }));
+        });
+
+        act(() => {
+            listener?.(postUpdateMessage({
+                post_id: 'post_1',
+                control: 'server_tool',
+                server_tool: JSON.stringify([
+                    {id: 'srv1', tool: 'web_search', status: 'success', query: 'release notes'},
+                    {id: 'srv2', tool: 'code_interpreter', status: 'in_progress'},
+                ]),
+            }));
+        });
+
+        // The frozen round's card must pick up the completed query/status.
+        await expect(screen.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
+        expect(screen.queryByText('Searched the web')).toBeNull();
+        expect(screen.getByText('Ran code in the provider sandbox')).toBeTruthy();
     });
 });
 

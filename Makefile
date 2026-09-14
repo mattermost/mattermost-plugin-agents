@@ -266,9 +266,9 @@ apply:
 # Pinned tool versions. Bump these here, not at the install site — keeping the
 # pins in one place lets contributors update a tool with a single edit and
 # makes Go-version-skew fixes obvious.
-GOLANGCI_LINT_VERSION    ?= v2.0.2
+GOLANGCI_LINT_VERSION    ?= v2.13.1
 GOTESTSUM_VERSION        ?= v1.7.0
-MATTERMOST_GOVET_VERSION ?= 3f08281c344327ac09364f196b15f9a81c7eff08
+MATTERMOST_GOVET_VERSION ?= 2fbfca354651528bffd39e63d7c5a2b32e6adf3e
 
 ## Install go tools.
 install-go-tools:
@@ -292,6 +292,10 @@ check-style: manifest-check apply webapp/node_modules install-go-tools
 ifneq ($(HAS_WEBAPP),)
 	cd webapp && npm run lint
 	cd webapp && npm run check-types
+# Drift tripwire for the window.Components editor contract: always checks the
+# mirrors against the committed host snapshot; additionally probes a live
+# mattermost webapp checkout (and the snapshot's freshness) when one is found.
+	cd webapp && npm run check-editor-contract
 endif
 
 # It's highly recommended to run go-vet first
@@ -301,7 +305,8 @@ ifneq ($(HAS_SERVER),)
 	@echo Running golangci-lint
 	$(GO) vet ./...
 	$(GOBIN)/golangci-lint run ./...
-	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 ./...
+	# npm dependencies can contain Go packages; do not lint third-party sources.
+	$(GO) vet -vettool=$(GOBIN)/mattermost-govet -license -license.year=2023 $$($(GO) list ./... | awk '!/\/node_modules\//')
 	$(MAKE) loadtest-controller-lint
 endif
 

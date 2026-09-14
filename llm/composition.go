@@ -109,10 +109,7 @@ func ComputeComposition(inputs []CompositionInput, total int, totalSource string
 		}
 		tokens := 0
 		if remainingWeight > 0 {
-			tokens = int(float64(remaining)*w/remainingWeight + 0.5)
-			if tokens > remaining {
-				tokens = remaining
-			}
+			tokens = min(int(float64(remaining)*w/remainingWeight+0.5), remaining)
 		}
 		c.Components = append(c.Components, CompositionComponent{
 			Source:     src,

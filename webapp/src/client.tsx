@@ -17,7 +17,7 @@ import manifest from './manifest';
 
 import {CustomPrompt} from './types';
 
-const Client4 = new Client4Class();
+export const Client4 = new Client4Class();
 
 type MCPToolPolicy = 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
 type VettedToolConfig = {name: string; policy: MCPToolPolicy; enabled: boolean};
@@ -27,13 +27,17 @@ export type UserMCPToolInfo = {
     enabled: boolean;
     policy: MCPToolPolicy;
 };
+export type MCPServerKind = 'remote' | 'embedded' | 'plugin';
+
 export type UserMCPServerInfo = {
     name: string;
     serverOrigin: string;
+    kind: MCPServerKind;
     authenticated: boolean;
     needsOAuth: boolean;
     authEmail?: string;
     authURL?: string;
+    serviceAccountConfigured: boolean;
     tools: UserMCPToolInfo[];
 };
 export type UserMCPToolsResponse = {
@@ -56,7 +60,7 @@ export function savePreferences(userId: string, preferences: PreferenceType[]) {
     return Client4.savePreferences(userId, preferences);
 }
 
-function baseRoute(): string {
+export function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
@@ -69,7 +73,7 @@ function channelRoute(channelid: string): string {
     return `${baseRoute()}/channel/${encodeURIComponent(channelid)}`;
 }
 
-function agentRoute(agentId: string): string {
+export function agentRoute(agentId: string): string {
     return `${baseRoute()}/agents/${encodeURIComponent(agentId)}`;
 }
 
@@ -81,7 +85,7 @@ function conversationRoute(conversationId: string): string {
 // agent endpoint response body. The agent API returns `{"error": "..."}` for
 // non-2xx responses so the UI can surface actionable validation feedback
 // (oversized prompt, taken username, etc.) instead of a generic retry hint.
-async function readAgentErrorMessage(response: Response): Promise<string> {
+export async function readAgentErrorMessage(response: Response): Promise<string> {
     try {
         const data: unknown = await response.json();
         if (
@@ -759,8 +763,19 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     });
 }
 
-export async function getUserMCPTools(): Promise<UserMCPToolsResponse> {
-    const url = `${baseRoute()}/mcp/tools`;
+export async function getUserMCPTools(opts?: {
+    agentId?: string;
+    serviceAccount?: boolean;
+}): Promise<UserMCPToolsResponse> {
+    const params = new URLSearchParams();
+    if (opts?.serviceAccount) {
+        params.set('catalog', 'service_account');
+    }
+    if (opts?.agentId) {
+        params.set('agent_id', opts.agentId);
+    }
+    const query = params.toString();
+    const url = `${baseRoute()}/mcp/tools${query ? `?${query}` : ''}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
     }));
@@ -934,7 +949,10 @@ export async function getPluginConfig(): Promise<PluginConfig> {
     });
 }
 
-export async function savePluginConfig(config: PluginConfig): Promise<void> {
+// savePluginConfig persists the config and returns the normalized config the
+// server saved, including server-minted service/MCP server IDs the payload
+// did not have yet.
+export async function savePluginConfig(config: PluginConfig): Promise<PluginConfig> {
     const url = `${baseRoute()}/admin/config`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',
@@ -943,7 +961,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<void> {
     }));
 
     if (response.ok) {
-        return;
+        return response.json();
     }
 
     throw new ClientError(Client4.url, {

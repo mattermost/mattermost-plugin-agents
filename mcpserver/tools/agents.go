@@ -32,12 +32,7 @@ type ListAgentsArgs struct{}
 // getAgentTools returns agent discovery tools.
 func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "list_agents",
-			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
-			Schema:      NewJSONSchemaForAccessMode[ListAgentsArgs](string(p.accessMode)),
-			Resolver:    typed("list_agents", p.toolListAgents),
-		},
+		mcpTool(p, "list_agents", `List all available AI agents (bots). Returns each agent's ID, display name, and username.`, p.toolListAgents),
 	}
 }
 

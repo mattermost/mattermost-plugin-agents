@@ -21,6 +21,8 @@ import {
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {useABACSupport} from '@/utils/access_control';
+import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
@@ -45,6 +47,7 @@ export type AgentDraft = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -69,6 +72,7 @@ const emptyDraft: AgentDraft = {
     enabledTools: [],
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
+    useServiceAccountAuth: false,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -114,6 +118,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
+        useServiceAccountAuth: draft.useServiceAccountAuth,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -144,6 +149,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         enabledMCPTools: draft.enabledTools,
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
+        useServiceAccountAuth: draft.useServiceAccountAuth,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -170,6 +176,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         enabledTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
         mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
+        useServiceAccountAuth: agent.useServiceAccountAuth ?? false,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -195,6 +202,10 @@ const AgentConfigView = (props: Props) => {
     const {mode, agent, services, onBack, onSaved} = props;
     const intl = useIntl();
 
+    // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
+    const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
+    const {supported: abacSupported} = useABACSupport();
+
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
         if (agent) {
@@ -215,12 +226,20 @@ const AgentConfigView = (props: Props) => {
     const showDiscardDialogRef = useRef(false);
     showDiscardDialogRef.current = showDiscardDialog;
 
+    // Soft-lock Access / MCP grants while SA stays on for non-admins.
+    // Save stays enabled so managers can still edit day-to-day config (including
+    // AI service, tools, and dynamic tool loading).
+    const serviceAccountFieldsLocked = !canEditServiceAccountAuth && draft.useServiceAccountAuth;
+
+    // The MCPs tab stays reachable while fields-locked so the off switch is available.
+    const mcpsTabDisabled = draft.disableTools && !serviceAccountFieldsLocked;
+
     // Leave MCPs tab if tools are disabled
     useEffect(() => {
-        if (draft.disableTools && activeTab === 'mcps') {
+        if (mcpsTabDisabled && activeTab === 'mcps') {
             setActiveTab('config');
         }
-    }, [draft.disableTools, activeTab]);
+    }, [mcpsTabDisabled, activeTab]);
 
     const isDirty = useMemo(
         () => avatarFile !== null || !draftsEqual(draft, baselineDraft),
@@ -234,6 +253,7 @@ const AgentConfigView = (props: Props) => {
         if (showDiscardDialogRef.current) {
             return;
         }
+
         if (isDirty) {
             setShowDiscardDialog(true);
             return;
@@ -346,6 +366,7 @@ const AgentConfigView = (props: Props) => {
             // Clear dirty state so onSaved -> onBack flow doesn't trigger discard prompt
             setBaselineDraft(cloneDraft(draft));
             setAvatarFile(null);
+
             onSaved(savedAgent);
         } catch (e: any) {
             const message = (typeof e?.message === 'string' ? e.message : '').trim();
@@ -401,10 +422,10 @@ const AgentConfigView = (props: Props) => {
                     </TabButton>
                     <TabButton
                         $active={activeTab === 'mcps'}
-                        disabled={draft.disableTools}
-                        title={draft.disableTools ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
+                        disabled={mcpsTabDisabled}
+                        title={mcpsTabDisabled ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
                         onClick={() => {
-                            if (!draft.disableTools) {
+                            if (!mcpsTabDisabled) {
                                 setActiveTab('mcps');
                             }
                         }}
@@ -415,6 +436,11 @@ const AgentConfigView = (props: Props) => {
 
                 <ViewBody>
                     {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
+                    {serviceAccountFieldsLocked && (
+                        <WarningBanner>
+                            <FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>
+                        </WarningBanner>
+                    )}
 
                     {activeTab === 'config' && (
                         <ConfigTab
@@ -430,13 +456,22 @@ const AgentConfigView = (props: Props) => {
                     {activeTab === 'access' && (
                         <AccessTab
                             draft={draft}
+                            baselineUserAccessLevel={baselineDraft.userAccessLevel}
                             onChange={updateDraft}
+                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                            agentId={agent?.id}
+                            abacSupported={abacSupported}
+                            isSystemAdmin={canEditServiceAccountAuth}
                         />
                     )}
                     {activeTab === 'mcps' && (
                         <McpsTab
+                            agentId={agent?.id}
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                            useServiceAccountAuth={draft.useServiceAccountAuth}
+                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                            canEditServiceAccountAuth={canEditServiceAccountAuth}
                             onChange={(updates) => updateDraft(updates)}
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />
@@ -584,6 +619,16 @@ const ErrorBanner = styled.div`
     border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
     color: var(--dnd-indicator, #D24B4E);
     font-size: 14px;
+`;
+
+const WarningBanner = styled.div.attrs({role: 'status'})`
+    padding: 8px 12px;
+    margin-bottom: 16px;
+    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.08);
+    border-radius: 4px;
+    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.3);
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: 13px;
 `;
 
 const ViewFooter = styled.div`

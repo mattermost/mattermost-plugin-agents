@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -142,6 +144,9 @@ const (
 	UserAccessLevelAllow
 	UserAccessLevelBlock
 	UserAccessLevelNone
+	// UserAccessLevelAttributeBased makes the ABAC resource policy the sole
+	// user-access gate; UserIDs/TeamIDs are ignored. A missing policy denies.
+	UserAccessLevelAttributeBased
 )
 
 // EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
@@ -193,6 +198,11 @@ type BotConfig struct {
 	// MCPDynamicToolLoading controls whether this bot uses the JIT MCP tool loading flow.
 	// It defaults to true for omitted legacy config.
 	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
+
+	// UseServiceAccountAuth switches external MCP access for this agent to
+	// admin-configured ServiceAccountHeaders instead of per-user OAuth.
+	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
@@ -270,7 +280,7 @@ func (c *BotConfig) Validate() error {
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
 		return errors.New("channelAccessLevel is out of range")
 	}
-	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
+	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelAttributeBased {
 		return errors.New("userAccessLevel is out of range")
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
@@ -399,7 +409,8 @@ func IsValidService(service ServiceConfig) bool {
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
 	case ServiceTypeLoadTestMock:
-		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
+		_, err := profile.Parse(service.LoadTestMockConfig)
+		return err == nil
 	default:
 		return false
 	}

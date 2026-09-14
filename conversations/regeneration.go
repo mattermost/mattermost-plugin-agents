@@ -259,17 +259,7 @@ func (c *Conversations) regenerateViaConversation(
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	toolsDisabled := !isDM
-	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
-		toolsDisabled = false
-	}
-	if llmContext != nil {
-		if toolsDisabled && llmContext.Tools != nil {
-			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
-		} else {
-			llmContext.DisabledToolsInfo = nil
-		}
-	}
+	toolsDisabled := applyToolAvailability(llmContext, isDM, c.channelMentionToolCallingEnabled())
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
@@ -295,25 +285,15 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
-	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
-		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
-		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
-			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)
-		}
-	}, opts...)
+	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+		c.shouldAutoExecuteTool(llmContext, isDM),
+		conv.ID,
+		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },
+		c.toolsDisabledLLMOptions(bot, toolsDisabled), "Failed to write tool turns on regen")
 
 	if runErr != nil {
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(runResult.Stream, post, nil, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, bot, runResult.Stream, post, nil, llmContext, llmContext), nil
 }

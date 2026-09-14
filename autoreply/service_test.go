@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -53,7 +54,7 @@ func newTestService(t *testing.T, dbClient *mmapi.DBClient, notifier ClusterNoti
 
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
-	botsService := bots.New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil), &http.Client{}, nil)
 	botsService.SetBotsForTesting(botList)
 
 	return NewService(NewStore(dbClient), botsService, mmClient, notifier)
@@ -698,10 +699,8 @@ func TestServiceConcurrentAccess(t *testing.T) {
 
 	stop := make(chan struct{})
 	var readers sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
+	for range 50 {
+		readers.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -715,15 +714,15 @@ func TestServiceConcurrentAccess(t *testing.T) {
 				// detector 50 spinning readers otherwise starve the writers.
 				runtime.Gosched()
 			}
-		}()
+		})
 	}
 
 	var writers sync.WaitGroup
-	for w := 0; w < 8; w++ {
+	for w := range 8 {
 		writers.Add(1)
 		go func(seed int) {
 			defer writers.Done()
-			for i := 0; i < 25; i++ {
+			for i := range 25 {
 				channelID := channelIDs[(seed+i)%len(channelIDs)]
 				switch i % 4 {
 				case 0:

@@ -29,7 +29,7 @@ func drainTextStreamEvents(t *testing.T, stream *llm.TextStreamResult) []llm.Tex
 
 func testWebSearchApprovalContext() *llm.Context {
 	return &llm.Context{
-		Parameters: map[string]interface{}{
+		Parameters: map[string]any{
 			mmtools.WebSearchContextKey: []mmtools.WebSearchContextValue{{
 				Query: "typescript tutorial",
 				Results: []mmtools.WebSearchResult{{
@@ -51,7 +51,7 @@ func TestDecorateStreamWithWebSearchAnnotations(t *testing.T) {
 
 	t.Run("returns original stream when ctx has no web search data", func(t *testing.T) {
 		stream := llm.NewStreamFromString("plain answer")
-		ctx := &llm.Context{Parameters: map[string]interface{}{}}
+		ctx := &llm.Context{Parameters: map[string]any{}}
 		assert.Same(t, stream, decorateStreamWithWebSearchAnnotations(stream, ctx))
 	})
 
@@ -73,7 +73,7 @@ func TestDecorateStreamWithWebSearchAnnotations(t *testing.T) {
 		}
 		require.NotNil(t, annotationEvent, "expected annotation event before stream end")
 
-		payload, ok := annotationEvent.Value.(map[string]interface{})
+		payload, ok := annotationEvent.Value.(map[string]any)
 		require.True(t, ok)
 		annotations, ok := payload["annotations"].([]llm.Annotation)
 		require.True(t, ok)

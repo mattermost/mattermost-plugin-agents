@@ -139,7 +139,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 				bot,
 				&model.User{Id: "user-id", Username: "user", Locale: "en"},
 				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-				builder.WithLLMContextDefaultTools(context.Background(), bot),
+				builder.WithLLMContextTools(context.Background(), bot),
 			)
 			c := &Conversations{
 				convService: conversation.NewService(convStore, nil, nil, nil),
@@ -213,7 +213,7 @@ func TestDynamicMCPStrictSearchLoadCallDerivesLoadedTools(t *testing.T) {
 }
 
 func TestDynamicMCPMetaToolsBypassApproval(t *testing.T) {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{Name: mcp.SearchToolsName, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "{}", nil }},
 		{Name: mcp.LoadToolName, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "{}", nil }},

@@ -255,7 +255,7 @@ func TestLoadOrCreateClientCredentials_EmptyStaticCredsFallsBackToKVStore(t *tes
 	mockClient.AssertCalled(t, "KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials"))
 }
 
-func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
+func TestResolveOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	// Verifies the Atlassian JIRA MCP scenario: the server URL has a path
 	// (e.g. /v1/mcp), protected resource metadata is unavailable, and
 	// authorization server metadata is only at the base well-known URL.
@@ -288,16 +288,17 @@ func TestCreateOAuthConfig_FallbackStripsPathFromServerURL(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	config, err := manager.createOAuthConfig(ctx, server.URL+"/v1/mcp", "", staticCreds)
+	resolved, err := manager.resolveOAuthConfig(ctx, server.URL+"/v1/mcp", "", staticCreds)
 
 	require.NoError(t, err)
+	config := resolved.config
 	require.NotNil(t, config)
 	require.Equal(t, "https://auth.example.com/authorize", config.Endpoint.AuthURL)
 	require.Equal(t, "https://auth.example.com/token", config.Endpoint.TokenURL)
 	require.Equal(t, "test-client", config.ClientID)
 }
 
-func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
+func TestResolveOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 	var serverURL string
 	registrationCalled := false
 	hostMetadataCalled := false
@@ -341,9 +342,10 @@ func TestCreateOAuthConfig_UsesDiscoveredRegistrationEndpoint(t *testing.T) {
 	mockClient.On("KVGet", mock.AnythingOfType("string"), mock.AnythingOfType("*mcp.ClientCredentials")).Return(nil).Once()
 	mockClient.On("KVSet", mock.AnythingOfType("string"), mock.Anything).Return(nil).Once()
 
-	config, err := manager.createOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
+	resolved, err := manager.resolveOAuthConfig(context.Background(), serverURL+"/mcp", serverURL+"/.well-known/oauth-protected-resource/mcp", nil)
 
 	require.NoError(t, err)
+	config := resolved.config
 	require.True(t, registrationCalled)
 	require.False(t, hostMetadataCalled)
 	require.Equal(t, "registered-client", config.ClientID)
@@ -769,5 +771,5 @@ func TestProcessCallback_LogsWarningWhenLookupMissesServer(t *testing.T) {
 		"credentials must be load-only at callback time; no registration fallback")
 
 	expectedMsg := "Static OAuth credentials were expected but server config not found"
-	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []interface{}{"serverID", serverID})
+	mockClient.AssertCalled(t, "LogWarn", expectedMsg, []any{"serverID", serverID})
 }

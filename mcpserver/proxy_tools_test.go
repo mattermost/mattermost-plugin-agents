@@ -31,7 +31,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *
 	type echoOut struct {
 		Echo string `json:"echo"`
 	}
-	for i := 0; i < toolCount; i++ {
+	for i := range toolCount {
 		name := fmt.Sprintf("test_tool_%d", i)
 		gosdkmcp.AddTool(srv, &gosdkmcp.Tool{Name: name, Description: "test"}, func(_ context.Context, _ *gosdkmcp.CallToolRequest, in echoIn) (*gosdkmcp.CallToolResult, echoOut, error) {
 			return nil, echoOut{Echo: in.Message}, nil
@@ -39,7 +39,7 @@ func newFakePluginMCPServer(t *testing.T, toolCount int, sawUserIDOut *string) *
 	}
 	streamable := gosdkmcp.NewStreamableHTTPHandler(
 		func(*http.Request) *gosdkmcp.Server { return srv },
-		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
+		&gosdkmcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: true},
 	)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if sawUserIDOut != nil {

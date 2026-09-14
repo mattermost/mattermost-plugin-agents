@@ -81,7 +81,7 @@ func requireShutdownIDs(t *testing.T, builder *fakeServiceLLMBuilder, want []str
 }
 
 func TestAcquireServiceLLMCachesPerService(t *testing.T) {
-	svc := openAIService("a")
+	svc := registryOpenAIService("a")
 	mmBots, _, builder := newRegistryTestBots(t, []llm.ServiceConfig{svc})
 
 	first, releaseFirst, err := mmBots.AcquireServiceLLM(svc, nil)
@@ -106,10 +106,10 @@ func TestAcquireServiceLLMRebuildsOnConfigChange(t *testing.T) {
 		{
 			name: "primary configuration changed",
 			initial: []llm.ServiceConfig{
-				openAIService("a"),
+				registryOpenAIService("a"),
 			},
 			mutate: func(cfg *mockConfig) (llm.ServiceConfig, []llm.ServiceConfig) {
-				changed := openAIService("a")
+				changed := registryOpenAIService("a")
 				changed.DefaultModel = "gpt-4.1"
 				cfg.services = []llm.ServiceConfig{changed}
 				return changed, nil
@@ -118,14 +118,14 @@ func TestAcquireServiceLLMRebuildsOnConfigChange(t *testing.T) {
 		{
 			name: "fallback configuration changed",
 			initial: func() []llm.ServiceConfig {
-				primary := openAIService("a")
+				primary := registryOpenAIService("a")
 				primary.FallbackServiceID = "b"
-				return []llm.ServiceConfig{primary, openAIService("b")}
+				return []llm.ServiceConfig{primary, registryOpenAIService("b")}
 			}(),
 			mutate: func(cfg *mockConfig) (llm.ServiceConfig, []llm.ServiceConfig) {
-				primary := openAIService("a")
+				primary := registryOpenAIService("a")
 				primary.FallbackServiceID = "b"
-				fallback := openAIService("b")
+				fallback := registryOpenAIService("b")
 				fallback.DefaultModel = "gpt-4.1"
 				cfg.services = []llm.ServiceConfig{primary, fallback}
 				return primary, []llm.ServiceConfig{fallback}
@@ -182,7 +182,7 @@ func TestAcquireServiceLLMReplacesSupersededCacheEntry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			old := openAIService("a")
+			old := registryOpenAIService("a")
 			mmBots, cfg, builder := newRegistryTestBots(t, []llm.ServiceConfig{old})
 
 			oldModel, releaseOld, err := mmBots.AcquireServiceLLM(old, nil)
@@ -191,7 +191,7 @@ func TestAcquireServiceLLMReplacesSupersededCacheEntry(t *testing.T) {
 				releaseOld()
 			}
 
-			updated := openAIService("a")
+			updated := registryOpenAIService("a")
 			updated.DefaultModel = "gpt-4.1"
 			cfg.services = []llm.ServiceConfig{updated}
 
@@ -220,7 +220,7 @@ func TestAcquireServiceLLMReplacesSupersededCacheEntry(t *testing.T) {
 }
 
 func TestAcquireServiceLLMBuildsOnceUnderConcurrency(t *testing.T) {
-	svc := openAIService("a")
+	svc := registryOpenAIService("a")
 	mmBots, _, builder := newRegistryTestBots(t, []llm.ServiceConfig{svc})
 
 	start := make(chan struct{})
@@ -257,7 +257,7 @@ func TestAcquireServiceLLMBuildsOnceUnderConcurrency(t *testing.T) {
 }
 
 func TestAcquireServiceLLMDoesNotCacheBuildFailures(t *testing.T) {
-	svc := openAIService("a")
+	svc := registryOpenAIService("a")
 	mmBots, _, builder := newRegistryTestBots(t, []llm.ServiceConfig{svc})
 	builder.failWith = errors.New("provider unavailable")
 
@@ -313,7 +313,7 @@ func TestReconcileServiceLLMs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc := openAIService("a")
+			svc := registryOpenAIService("a")
 			mmBots, cfg, builder := newRegistryTestBots(t, []llm.ServiceConfig{svc})
 
 			_, release, err := mmBots.AcquireServiceLLM(svc, nil)
@@ -342,7 +342,7 @@ func TestReconcileServiceLLMs(t *testing.T) {
 }
 
 func TestReconcileServiceLLMsWaitsForOutstandingLeases(t *testing.T) {
-	svc := openAIService("a")
+	svc := registryOpenAIService("a")
 	mmBots, cfg, builder := newRegistryTestBots(t, []llm.ServiceConfig{svc})
 
 	_, releaseFirst, err := mmBots.AcquireServiceLLM(svc, nil)
@@ -351,7 +351,7 @@ func TestReconcileServiceLLMsWaitsForOutstandingLeases(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, builder.buildCount())
 
-	changed := openAIService("a")
+	changed := registryOpenAIService("a")
 	changed.DefaultModel = "gpt-4.1"
 	cfg.services = []llm.ServiceConfig{changed}
 	mmBots.ReconcileServiceLLMs(cfg.services)
@@ -366,8 +366,8 @@ func TestReconcileServiceLLMsWaitsForOutstandingLeases(t *testing.T) {
 }
 
 func TestShutdownServiceLLMs(t *testing.T) {
-	first := openAIService("a")
-	second := openAIService("b")
+	first := registryOpenAIService("a")
+	second := registryOpenAIService("b")
 	mmBots, cfg, builder := newRegistryTestBots(t, []llm.ServiceConfig{first, second})
 
 	_, releaseFirst, err := mmBots.AcquireServiceLLM(first, nil)
@@ -377,7 +377,7 @@ func TestShutdownServiceLLMs(t *testing.T) {
 	// Keep a lease open on a retired entry so shutdown has to cover both maps.
 	_, releaseSecond, err := mmBots.AcquireServiceLLM(second, nil)
 	require.NoError(t, err)
-	changedSecond := openAIService("b")
+	changedSecond := registryOpenAIService("b")
 	changedSecond.DefaultModel = "gpt-4.1"
 	cfg.services = []llm.ServiceConfig{first, changedSecond}
 	mmBots.ReconcileServiceLLMs(cfg.services)

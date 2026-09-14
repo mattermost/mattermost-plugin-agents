@@ -11,7 +11,9 @@
     "test:watch": "jest --config jest.config.js --watch",
     "test-ci": "jest --config jest.config.js --ci",
     "i18n-extract": "formatjs extract",
-    "check-types": "tsc"
+    "check-types": "tsc",
+    "check-editor-contract": "node scripts/check_editor_contract.mjs",
+    "update-editor-contract-snapshot": "node scripts/check_editor_contract.mjs --update-snapshot"
   },
   "devDependencies": {
     "@babel/cli": "7.29.7",
