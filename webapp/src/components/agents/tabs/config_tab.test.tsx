@@ -73,7 +73,6 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEnabled: true,
         reasoningEffort: 'medium',
         thinkingBudget: 0,
-        structuredOutputEnabled: false,
         maxToolTurns: 30,
         ...overrides,
     };
