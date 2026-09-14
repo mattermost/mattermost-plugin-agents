@@ -537,8 +537,12 @@ func (b *MMBots) assembleLLM(serviceConfig llm.ServiceConfig, botConfig *llm.Bot
 	))
 
 	// Outermost so the per-user fallback prefix is resolved once per request
-	// and flows down through truncation's repeated CountTokens calls.
-	result = newFallbackAccessLLM(result, b, serviceConfig.ID)
+	// and flows down through truncation's repeated CountTokens calls. Agent
+	// calls only: a direct service call carries user_id for attribution, not
+	// as a principal, so its fallback chain is never trimmed per user.
+	if botConfig != nil {
+		result = newFallbackAccessLLM(result, b, serviceConfig.ID)
+	}
 
 	return result, providerServices, shutdown, nil
 }
