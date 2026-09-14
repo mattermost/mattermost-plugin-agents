@@ -100,14 +100,16 @@ func BlocksToPost(
 				arguments = unsharedToolUseArgumentsRedaction
 			}
 			toolCall := llm.ToolCall{
-				ID:           block.ID,
-				Name:         block.Name,
-				ServerOrigin: block.ServerOrigin,
-				Arguments:    arguments,
-				MCPBareName:  block.MCPBareName,
-				Status:       StatusFromString(block.Status),
-				Title:        block.Title,
-				Description:  block.Description,
+				ID:               block.ID,
+				Name:             block.Name,
+				ServerOrigin:     block.ServerOrigin,
+				Arguments:        arguments,
+				MCPBareName:      block.MCPBareName,
+				Status:           StatusFromString(block.Status),
+				Title:            block.Title,
+				Description:      block.Description,
+				UserInteraction:  block.UserInteraction,
+				WouldAutoExecute: block.WouldAutoExecute,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""

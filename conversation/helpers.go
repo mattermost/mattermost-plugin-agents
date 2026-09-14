@@ -157,17 +157,18 @@ func toolUseBlocks(
 	// Tool use ends an assistant turn, so calls always come last.
 	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
-			Type:            BlockTypeToolUse,
-			ID:              tc.ID,
-			Name:            tc.Name,
-			ServerOrigin:    tc.ServerOrigin,
-			Input:           tc.Arguments,
-			MCPBareName:     tc.MCPBareName,
-			Status:          StatusToString(tc.Status),
-			Shared:          new(shared),
-			UserInteraction: tc.UserInteraction,
-			Title:           tc.Title,
-			Description:     tc.Description,
+			Type:             BlockTypeToolUse,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Input:            tc.Arguments,
+			MCPBareName:      tc.MCPBareName,
+			Status:           StatusToString(tc.Status),
+			Shared:           new(shared),
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
+			Title:            tc.Title,
+			Description:      tc.Description,
 		})
 	}
 
