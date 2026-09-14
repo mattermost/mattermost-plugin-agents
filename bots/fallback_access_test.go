@@ -35,6 +35,59 @@ func (c *capturingLLM) CountTokens(_ context.Context, request llm.CompletionRequ
 func (c *capturingLLM) InputTokenLimit() int  { return 4096 }
 func (c *capturingLLM) OutputTokenLimit() int { return 4096 }
 
+// TestBuildLLMFallbackAccessOnlyForAgents pins that the per-user fallback
+// trimming is part of the agent chain only. A direct service call carries
+// user_id for attribution, so a denied fallback must not change its request.
+func TestBuildLLMFallbackAccessOnlyForAgents(t *testing.T) {
+	userID := model.NewId()
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+
+	tests := []struct {
+		name         string
+		botConfig    *llm.BotConfig
+		wantRestrict bool
+	}{
+		{
+			name:         "agent call trims the chain for the requesting user",
+			botConfig:    &llm.BotConfig{Name: "agent"},
+			wantRestrict: true,
+		},
+		{
+			name:         "service call leaves the chain untouched",
+			botConfig:    nil,
+			wantRestrict: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perID: map[string]*model.AccessDecision{fallbackID: abacDeny()}})
+			defer e.Cleanup(t)
+			primary := openAIService(primaryID, fallbackID)
+			fallback := openAIService(fallbackID, "")
+			e.bots.config = &mockConfig{services: []llm.ServiceConfig{primary, fallback}}
+
+			inner := &capturingLLM{}
+			e.bots.SetBaseLLMBuilderForTest(func(llm.ServiceConfig, llm.BotConfig, []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+				return inner, func() {}, nil
+			})
+
+			built, shutdown, err := e.bots.buildLLM(primary, tc.botConfig, []llm.ServiceConfig{fallback})
+			require.NoError(t, err)
+			defer shutdown()
+
+			_, err = built.ChatCompletion(context.Background(), llm.CompletionRequest{
+				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+				Context: &llm.Context{RequestingUser: &model.User{Id: userID}},
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantRestrict, inner.last.RestrictFallbacks)
+			require.Empty(t, inner.last.AllowedFallbackServiceIDs)
+		})
+	}
+}
+
 func TestFallbackAccessLLMStampsPrefix(t *testing.T) {
 	userID := model.NewId()
 	primaryID := model.NewId()
