@@ -14,6 +14,11 @@ import (
 // evaluation error (later hops are not skipped). The primary is not included.
 // A resolve error fails closed: callers must not attach the configured chain.
 func (m *MMBots) allowedFallbackServiceIDs(ctx context.Context, userID, primaryServiceID string) ([]string, error) {
+	// Same "not configured" state EnsureBots tolerates: no config means no
+	// fallback chain to resolve.
+	if m.config == nil {
+		return nil, nil
+	}
 	chain, err := llm.ResolveFallbackChain(primaryServiceID, m.config.GetServiceByID)
 	if err != nil {
 		return nil, err
