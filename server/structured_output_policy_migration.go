@@ -13,53 +13,33 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 )
 
-// migrateAgentStructuredOutputToServicePolicy carries the removed per-agent
-// structured output toggle over to the service policy that replaced it, so an
-// install that had it enabled keeps sending native JSON schemas instead of
-// silently dropping to the prompt fallback.
+// migrateAgentStructuredOutputToServicePolicy runs store.MigrateStructuredOutputPolicies
+// under a cluster mutex, carrying the removed per-agent structured output toggle
+// over to the service policy that replaced it so an install that had it enabled
+// keeps sending native JSON schemas instead of silently dropping to the prompt
+// fallback.
 //
-// It needs no completion flag: the migration only fills in services whose policy
-// is unset (see config.MigrateServiceStructuredOutputPolicies), so it is a no-op
-// on every activation after the first one that had something to do.
-func migrateAgentStructuredOutputToServicePolicy(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store, cfg *config.Container) error {
+// It needs no completion flag: only services whose policy is unset are filled
+// in, so it is a no-op on every activation after the first one that had
+// something to do. Callers must reload config from the store afterwards —
+// migrated=false means another node may already have written, not that this
+// process's memory is current.
+func migrateAgentStructuredOutputToServicePolicy(api plugin.API, pluginAPI *pluginapi.Client, st *store.Store) (config.Config, bool, error) {
 	mtx, err := cluster.NewMutex(api, "ai_agent_structured_output_migration")
 	if err != nil {
-		return fmt.Errorf("failed to create structured output migration mutex: %w", err)
+		return config.Config{}, false, fmt.Errorf("failed to create structured output migration mutex: %w", err)
 	}
 	mtx.Lock()
 	defer mtx.Unlock()
 
-	dbCfg, err := st.GetConfig()
+	saved, migrated, err := st.MigrateStructuredOutputPolicies()
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		return config.Config{}, false, err
 	}
-	if dbCfg == nil || len(dbCfg.Services) == 0 {
-		return nil
-	}
-
-	agents, err := st.ListAgents()
-	if err != nil {
-		return fmt.Errorf("failed to list agents: %w", err)
-	}
-
-	migrated := config.MigrateServiceStructuredOutputPolicies(dbCfg, agents)
 	if len(migrated) == 0 {
-		return nil
-	}
-
-	if saveErr := st.SaveConfig(*dbCfg); saveErr != nil {
-		return fmt.Errorf("failed to save config after structured output migration: %w", saveErr)
-	}
-	reloaded, err := st.GetConfig()
-	if err != nil {
-		return fmt.Errorf("failed to reload config: %w", err)
-	}
-	if reloaded != nil {
-		if storeErr := cfg.StorePersistedConfigWithoutNotify(reloaded); storeErr != nil {
-			return fmt.Errorf("failed to store config after structured output migration: %w", storeErr)
-		}
+		return config.Config{}, false, nil
 	}
 
 	pluginAPI.Log.Info("Migrated deprecated agent structured output to a native service policy", "service_ids", migrated)
-	return nil
+	return saved, true, nil
 }
