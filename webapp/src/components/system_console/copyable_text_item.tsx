@@ -6,7 +6,7 @@ import styled from 'styled-components';
 import {CheckIcon, ContentCopyIcon} from '@mattermost/compass-icons/components';
 import {useIntl} from 'react-intl';
 
-import {HelpText, ItemLabel, StyledInput, TextFieldContainer} from './item';
+import {FormRow, HelpText, ItemLabel, StyledInput, TextFieldContainer} from './item';
 
 export type CopyableTextItemProps = {
     label: string;
@@ -50,7 +50,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
         intl.formatMessage({id: 'aCdAsIsV', defaultMessage: 'Copy to clipboard'});
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CopyableInputRow>
@@ -74,7 +74,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
                 <HelpText>{props.helptext}</HelpText>
                 }
             </TextFieldContainer>
-        </>
+        </FormRow>
     );
 };
 

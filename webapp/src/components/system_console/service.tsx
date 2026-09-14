@@ -510,7 +510,7 @@ const Service = (props: Props) => {
 
 const ItemListContainer = styled.div`
 	padding: 24px 20px;
-	padding-right: 76px;
+	text-align: left;
 `;
 
 const Title = styled.div`

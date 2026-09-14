@@ -1,8 +1,9 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import styled from 'styled-components';
+import {ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
@@ -25,22 +26,50 @@ const BuiltInServerCard = ({
     helpText?: React.ReactNode;
     policyId?: string;
 }) => {
+    const intl = useIntl();
+    const [isExpanded, setIsExpanded] = useState(true);
+
+    const toggleExpanded = () => {
+        setIsExpanded(!isExpanded);
+    };
+
     return (
         <ReadOnlyServerContainer data-testid='built-in-server-card'>
-            <ServerHeader>
+            <ServerHeader
+                $expanded={isExpanded}
+                role='button'
+                tabIndex={0}
+                aria-expanded={isExpanded}
+                aria-label={intl.formatMessage(
+                    {defaultMessage: '{name} settings'},
+                    {name: title},
+                )}
+                onClick={toggleExpanded}
+                onKeyDown={(e: React.KeyboardEvent) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleExpanded();
+                    }
+                }}
+            >
                 <ReadOnlyTitleRow>
                     <ReadOnlyServerTitle>{title}</ReadOnlyServerTitle>
                     {badge}
                 </ReadOnlyTitleRow>
+                {isExpanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
             </ServerHeader>
-            {subtitle && <ReadOnlySubtitle>{subtitle}</ReadOnlySubtitle>}
-            {helpText && <ReadOnlyHelpText>{helpText}</ReadOnlyHelpText>}
-            {policyId && (
-                <ConsolePolicySection
-                    resourceType='mcp'
-                    resourceId={policyId}
-                    resourceDisplayName={title}
-                />
+            {isExpanded && (
+                <ServerBody>
+                    {subtitle && <ReadOnlySubtitle>{subtitle}</ReadOnlySubtitle>}
+                    {helpText && <ReadOnlyHelpText>{helpText}</ReadOnlyHelpText>}
+                    {policyId && (
+                        <ConsolePolicySection
+                            resourceType='mcp'
+                            resourceId={policyId}
+                            resourceDisplayName={title}
+                        />
+                    )}
+                </ServerBody>
             )}
         </ReadOnlyServerContainer>
     );
@@ -105,7 +134,7 @@ export const BuiltInPluginServersSection = ({
 };
 
 const BuiltInSection = styled.div`
-    margin-top: 8px;
+    margin-top: 32px;
     margin-bottom: 8px;
 `;
 
@@ -113,7 +142,6 @@ const BuiltInSectionHeader = styled.div`
     display: flex;
     flex-direction: column;
     gap: 4px;
-    margin-top: 16px;
 `;
 
 const BuiltInSectionTitle = styled.div`
@@ -138,21 +166,36 @@ const ServersList = styled.div`
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     border-radius: 4px;
-    padding: 16px;
     background-color: var(--center-channel-bg);
+    overflow: hidden;
+    text-align: left;
 `;
 
 const ReadOnlyServerContainer = styled(ServerContainer)`
     background-color: rgba(var(--center-channel-color-rgb), 0.02);
 `;
 
-const ServerHeader = styled.div`
+const ServerHeader = styled.div<{$expanded?: boolean}>`
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 12px 16px;
+    cursor: pointer;
+    user-select: none;
+    ${({$expanded}) => $expanded && `
+        border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    `}
+`;
+
+const ServerBody = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px 16px 20px;
+    text-align: left;
 `;
 
 const ReadOnlyTitleRow = styled.div`
@@ -160,11 +203,14 @@ const ReadOnlyTitleRow = styled.div`
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    text-align: left;
 `;
 
 const ReadOnlyServerTitle = styled.div`
     font-weight: 600;
-    font-size: 16px;
+    font-size: 14px;
+    line-height: 20px;
     color: var(--center-channel-color);
 `;
 
