@@ -100,7 +100,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		ReasoningEnabled:        r.ReasoningEnabled,
 		ReasoningEffort:         r.ReasoningEffort,
 		ThinkingBudget:          r.ThinkingBudget,
-		StructuredOutputEnabled: r.StructuredOutputEnabled,
+		StructuredOutputEnabled: r.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		MaxToolTurns:            r.MaxToolTurns,
 		UseServiceAccountAuth:   r.UseServiceAccountAuth,
 		CreateAt:                r.CreateAt,

@@ -1491,7 +1491,7 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 		ReasoningEnabled:        true,
 		ReasoningEffort:         "high",
 		ThinkingBudget:          4096,
-		StructuredOutputEnabled: true,
+		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 	}
 
 	body := map[string]any{

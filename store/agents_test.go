@@ -41,7 +41,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ReasoningEnabled:        true,
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          10000,
-		StructuredOutputEnabled: true,
+		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            42,
 		UseServiceAccountAuth:   true,
 	}

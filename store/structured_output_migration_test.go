@@ -64,7 +64,7 @@ func TestMigrateStructuredOutputPolicies(t *testing.T) {
 			wantNewConfig: true,
 		},
 		{
-			name: "legacy config bot not yet copied to the agents table is honoured",
+			name: "legacy config bot not yet copied to the agents table is honored",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{
 					Services: services(""),
