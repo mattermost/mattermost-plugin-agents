@@ -5,12 +5,14 @@
 # the go directive in go.mod. To bump: set the new tag without a digest, let
 # the build-fips CI job pull it, then pin the digest CI resolves. Tags follow
 # microsoft/go releases (vX.Y.Z-N -> X.Y.Z.N-dev, plus X.Y.Z-dev convenience
-# tags). Chainguard's public catalog froze go-msft-fips at 1.26 and replaced it
-# with go-openssl-fips; Mattermost's cgr.dev org currently only grants pull on
-# go-msft-fips (`go-openssl-fips` is FORBIDDEN). Probe that repo's tags in CI
-# with `make list-fips-tags` (server-fips dumps them automatically on a pull
-# failure). Do not bump go.mod past a tag this identity can pull.
-FIPS_IMAGE_REPO ?= mattermost.com/go-msft-fips
+# tags).
+#
+# Chainguard froze go-msft-fips at 1.26 (Mattermost org tags top out at
+# 1.26.8 / 1.26.8.1-dev) and publishes Go 1.27 as go-openssl-fips. This
+# identity cannot pull go-openssl-fips yet (FORBIDDEN). After the org
+# subscribes, `make list-fips-tags` / a failed server-fips dump will show
+# 1.27 tags; pin the digest CI resolves. Until then dist-fips cannot build.
+FIPS_IMAGE_REPO ?= mattermost.com/go-openssl-fips
 FIPS_IMAGE ?= cgr.dev/$(FIPS_IMAGE_REPO):1.27.1-dev
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
@@ -25,11 +27,16 @@ FIPS_GO_BUILD_LDFLAGS ?=
 # splitting on values with embedded quotes like `-gcflags "all=-N -l"`.
 .PHONY: list-fips-tags
 list-fips-tags:
-	@CREDS=$$(printf 'cgr.dev' | docker-credential-cgr get); \
-	TOKEN=$$(curl -s -u "$$(echo $$CREDS | jq -r .Username):$$(echo $$CREDS | jq -r .Secret)" \
+	@NETRC=$$(mktemp); trap 'rm -f "$$NETRC"' EXIT; \
+	chmod 600 "$$NETRC"; \
+	printf 'cgr.dev' | docker-credential-cgr get | \
+	  jq -r '"machine cgr.dev login \(.Username) password \(.Secret)"' > "$$NETRC"; \
+	TOKEN=$$(curl -s --netrc-file "$$NETRC" \
 	  "https://cgr.dev/token?scope=repository:$(FIPS_IMAGE_REPO):pull" | jq -r .token); \
-	echo "FIPS tags for $(FIPS_IMAGE_REPO):"; \
-	curl -s -H "Authorization: Bearer $$TOKEN" "https://cgr.dev/v2/$(FIPS_IMAGE_REPO)/tags/list"
+	echo "FIPS version tags for $(FIPS_IMAGE_REPO):"; \
+	curl -s -H "Authorization: Bearer $$TOKEN" \
+	  "https://cgr.dev/v2/$(FIPS_IMAGE_REPO)/tags/list" | \
+	  jq -r '.tags[]? | select(test("^(latest|[0-9])"))'
 
 .PHONY: server-fips
 server-fips: generate
