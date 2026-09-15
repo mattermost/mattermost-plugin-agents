@@ -19,11 +19,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// ToolHookConfig holds an optional opaque before-hook key for a tool.
-type ToolHookConfig struct {
-	BeforeHookKey string `json:"before_hook_key,omitempty"`
-}
-
 // MCPToolContext provides MCP-specific functionality with the authenticated client.
 type MCPToolContext struct {
 	Ctx        context.Context
@@ -34,11 +29,6 @@ type MCPToolContext struct {
 	// UserID is the Mattermost user ID of the user the Client is authenticated as.
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
-
-	// MMServerURL is the Mattermost server base URL (same as API Client4 origin) for resolving hook keys and firing callbacks.
-	MMServerURL        string
-	BeforeHookResolver auth.BeforeHookResolver
-	ToolHooks          map[string]ToolHookConfig
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -46,9 +36,7 @@ type MCPToolResolver func(*MCPToolContext, llm.ToolArgumentGetter) (string, erro
 
 // typed adapts a resolver that accepts an already-decoded argument struct into
 // an MCPToolResolver. It owns argument decoding and the standard "invalid
-// arguments" error, so individual resolvers start at their real logic. The
-// returned resolver is an ordinary MCPToolResolver, so registerDynamicTool and
-// the before-hook (which still sees the raw request arguments) are unchanged.
+// arguments" error, so individual resolvers start at their real logic.
 func typed[T any](name string, fn func(*MCPToolContext, T) (string, error)) MCPToolResolver {
 	return func(mcpContext *MCPToolContext, argsGetter llm.ToolArgumentGetter) (string, error) {
 		var args T
@@ -239,19 +227,6 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 			return json.Unmarshal(argumentsBytes, target)
 		}
 
-		// Run the optional before-hook with the raw tool arguments. The hook can
-		// reject the call by returning an error which is surfaced as a tool error
-		// to the LLM.
-		if hookErr := RunBeforeHook(mcpContext, mcpTool.Name, req.Params.Arguments); hookErr != nil {
-			p.logger.Debug("MCP tool before-hook rejected or failed", "tool", mcpTool.Name, "error", hookErr.Error())
-			return &mcp.CallToolResult{
-				Content: []mcp.Content{
-					&mcp.TextContent{Text: "Error: " + hookErr.Error()},
-				},
-				IsError: true,
-			}, nil
-		}
-
 		// Call the tool resolver
 		result, err := mcpTool.Resolver(mcpContext, argsGetter)
 		if err != nil {
@@ -298,16 +273,10 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	mcpContext := &MCPToolContext{
-		Ctx:         ctx,
-		Client:      client,
-		AccessMode:  p.accessMode,
-		MMServerURL: p.mmServerURL,
-		ToolHooks:   decodeToolHooksFromMetadata(metadata),
-		UserID:      userID,
-	}
-
-	if resolver, ok := ctx.Value(auth.BeforeHookResolverContextKey).(auth.BeforeHookResolver); ok {
-		mcpContext.BeforeHookResolver = resolver
+		Ctx:        ctx,
+		Client:     client,
+		AccessMode: p.accessMode,
+		UserID:     userID,
 	}
 
 	// Extract bot_user_id from metadata if present (for embedded servers)
@@ -319,32 +288,6 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 	}
 
 	return mcpContext, nil
-}
-
-func decodeToolHooksFromMetadata(metadata mcp.Meta) map[string]ToolHookConfig {
-	if metadata == nil {
-		return nil
-	}
-	raw, ok := metadata["tool_hooks"].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]ToolHookConfig, len(raw))
-	for name, v := range raw {
-		entry, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		var cfg ToolHookConfig
-		if s, ok := entry["before_hook_key"].(string); ok {
-			cfg.BeforeHookKey = s
-		}
-		out[name] = cfg
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }
 
 // NewJSONSchemaForAccessMode creates a JSONSchema from a Go struct, filtering fields based on access mode
