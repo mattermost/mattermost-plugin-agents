@@ -78,11 +78,6 @@ type MCPTool struct {
 	Description string
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
-
-	// Available, when set, gates the tool's visibility: it is evaluated on each
-	// tools/list request and the tool is hidden when it returns false. Nil means
-	// always available.
-	Available func() bool
 }
 
 type ToolProvider interface {
@@ -140,9 +135,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 }
 
 func (p *MattermostToolProvider) mcpTools() []MCPTool {
-	// Tool groups in registration order. Automation tools are always included;
-	// each carries an Available predicate so it is hidden from tools/list when the
-	// automation plugin is absent.
+	// Tool groups in registration order.
 	groups := []func() []MCPTool{
 		p.getPostTools,
 		p.getScheduledPostTools,
@@ -160,7 +153,6 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		p.getGroupTools,
 		p.getRoleTools,
 		p.getAgentTools,
-		p.getAutomationTools,
 	}
 
 	// Dev tools are only exposed when dev mode is enabled.
@@ -187,59 +179,8 @@ func (p *MattermostToolProvider) ToolNames() []string {
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
-	availability := map[string]func() bool{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
-		if mcpTool.Available != nil {
-			availability[mcpTool.Name] = mcpTool.Available
-		}
-	}
-
-	// Hide tools whose Available predicate currently returns false on each
-	// tools/list request (e.g. automation tools when the plugin is absent).
-	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
-}
-
-// toolAvailabilityMiddleware returns MCP receiving middleware that drops any tool
-// from tools/list whose Available predicate reports it as unavailable. Each
-// distinct predicate is evaluated at most once per request, so tools that share
-// a predicate (e.g. all automation tools) trigger a single probe rather than one
-// per tool.
-func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
-	return func(next mcp.MethodHandler) mcp.MethodHandler {
-		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
-			result, err := next(ctx, method, req)
-			if err != nil || method != "tools/list" {
-				return result, err
-			}
-			listResult, ok := result.(*mcp.ListToolsResult)
-			if !ok {
-				return result, nil
-			}
-
-			// Memoize each distinct predicate (keyed by its code pointer) for the
-			// duration of this filtering pass.
-			cache := map[uintptr]bool{}
-			isAvailable := func(predicate func() bool) bool {
-				key := reflect.ValueOf(predicate).Pointer()
-				if v, cached := cache[key]; cached {
-					return v
-				}
-				v := predicate()
-				cache[key] = v
-				return v
-			}
-
-			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
-			for _, tool := range listResult.Tools {
-				if available, gated := availability[tool.Name]; gated && !isAvailable(available) {
-					continue
-				}
-				filtered = append(filtered, tool)
-			}
-			listResult.Tools = filtered
-			return listResult, nil
-		}
 	}
 }
 
