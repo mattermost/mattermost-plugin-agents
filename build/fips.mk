@@ -2,17 +2,18 @@
 # mattermost-server's FIPS release path supports.
 
 # Microsoft Go FIPS toolchain image, digest-pinned. The Go version must satisfy
-# the go directive in go.mod — the go directive is held at 1.26.x until this
-# registry publishes a 1.27 toolchain. To bump: set the new tag without a
-# digest, let the build-fips CI job pull it, then pin the digest CI resolves.
-# Tags follow microsoft/go releases (vX.Y.Z-N -> X.Y.Z.N-dev, plus X.Y.Z-dev
-# convenience tags). To list available tags, the registry needs CI's Chainguard
-# credentials; temporarily add this recipe line to server-fips:
-#   CREDS=$$(printf 'cgr.dev' | docker-credential-cgr get); \
-#   TOKEN=$$(curl -s -u "$$(echo $$CREDS | jq -r .Username):$$(echo $$CREDS | jq -r .Secret)" \
-#     "https://cgr.dev/token?scope=repository:mattermost.com/go-msft-fips:pull" | jq -r .token); \
-#   curl -s -H "Authorization: Bearer $$TOKEN" "https://cgr.dev/v2/mattermost.com/go-msft-fips/tags/list"
-FIPS_IMAGE ?= cgr.dev/mattermost.com/go-msft-fips:1.26.7-dev@sha256:97396159540df27abea3abc617afb82c80a01df2298d7de306435f64eb119949
+# the go directive in go.mod. To bump: set the new tag without a digest, let
+# the build-fips CI job pull it, then pin the digest CI resolves. Tags follow
+# microsoft/go releases (vX.Y.Z-N -> X.Y.Z.N-dev, plus X.Y.Z-dev convenience
+# tags).
+#
+# Chainguard froze go-msft-fips at 1.26 (Mattermost org tags top out at
+# 1.26.8 / 1.26.8.1-dev) and publishes Go 1.27 as go-openssl-fips. This
+# identity cannot pull go-openssl-fips yet (FORBIDDEN). After the org
+# subscribes, `make list-fips-tags` / a failed server-fips dump will show
+# 1.27 tags; pin the digest CI resolves. Until then dist-fips cannot build.
+FIPS_IMAGE_REPO ?= mattermost.com/go-openssl-fips
+FIPS_IMAGE ?= cgr.dev/$(FIPS_IMAGE_REPO):1.27.1-dev
 BUNDLE_NAME_FIPS ?= $(PLUGIN_ID)-$(PLUGIN_VERSION)-fips.tar.gz
 FIPS_BIN := server/dist-fips/plugin-linux-amd64-fips
 
@@ -24,6 +25,19 @@ FIPS_GO_BUILD_LDFLAGS ?=
 # GO_BUILD_* are Make-substituted into the single-quoted inner script.
 # Env-var passing (`-e VAR=...`) doesn't survive a second pass of word
 # splitting on values with embedded quotes like `-gcflags "all=-N -l"`.
+.PHONY: list-fips-tags
+list-fips-tags:
+	@NETRC=$$(mktemp); trap 'rm -f "$$NETRC"' EXIT; \
+	chmod 600 "$$NETRC"; \
+	printf 'cgr.dev' | docker-credential-cgr get | \
+	  jq -r '"machine cgr.dev login \(.Username) password \(.Secret)"' > "$$NETRC"; \
+	TOKEN=$$(curl -s --netrc-file "$$NETRC" \
+	  "https://cgr.dev/token?scope=repository:$(FIPS_IMAGE_REPO):pull" | jq -r .token); \
+	echo "FIPS version tags for $(FIPS_IMAGE_REPO):"; \
+	curl -s -H "Authorization: Bearer $$TOKEN" \
+	  "https://cgr.dev/v2/$(FIPS_IMAGE_REPO)/tags/list" | \
+	  jq -r '.tags[]? | select(test("^(latest|[0-9])"))'
+
 .PHONY: server-fips
 server-fips: generate
 	mkdir -p server/dist-fips
@@ -32,11 +46,12 @@ server-fips: generate
 	  -v $(PWD):/plugin \
 	  -w /plugin/server \
 	  $(FIPS_IMAGE) \
-	  /bin/sh -c 'CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
+	  /bin/sh -c 'env -u GOEXPERIMENT CGO_ENABLED=1 GOOS=linux GOARCH=amd64 \
 	    go build -trimpath -buildvcs=false \
 	    $(GO_BUILD_FLAGS) $(GO_BUILD_GCFLAGS) $(FIPS_GO_BUILD_LDFLAGS) \
 	    -tags requirefips \
-	    -o dist-fips/plugin-linux-amd64-fips'
+	    -o dist-fips/plugin-linux-amd64-fips' \
+	|| ($(MAKE) --no-print-directory list-fips-tags; exit 1)
 
 # Mirrors mattermost-server/build/release.mk. Each check is its own recipe
 # line so a failure exits with the right status; joined with `; \`, only
@@ -44,7 +59,7 @@ server-fips: generate
 .PHONY: verify-fips
 verify-fips:
 	@test -f $(FIPS_BIN) || (echo "verify-fips: $(FIPS_BIN) not built" && exit 1)
-	$(GO) version -m $(FIPS_BIN) | grep -q "GOEXPERIMENT=systemcrypto" || (echo "ERROR: missing GOEXPERIMENT=systemcrypto" && exit 1)
+	$(GO) version -m $(FIPS_BIN) | grep -q "microsoft_systemcrypto=1" || (echo "ERROR: missing microsoft_systemcrypto=1" && exit 1)
 	$(GO) version -m $(FIPS_BIN) | grep "\-tags" | grep -q "requirefips" || (echo "ERROR: missing -tags=requirefips" && exit 1)
 	$(GO) tool nm $(FIPS_BIN) | grep -qE "func_go_openssl_OpenSSL_version|_mkcgo_OpenSSL_version" || (echo "ERROR: missing OpenSSL integration" && exit 1)
 	@echo "verify-fips: OK"

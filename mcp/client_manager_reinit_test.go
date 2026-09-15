@@ -431,9 +431,7 @@ func TestClientManagerConcurrentReInitKeepsUnaffectedSessions(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for worker := range 6 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for n := range 20 {
 				reinitConfig(manager, func(cfg *Config) {
 					cfg.IdleTimeoutMinutes = 10 + (worker+n)%7
@@ -441,7 +439,7 @@ func TestClientManagerConcurrentReInitKeepsUnaffectedSessions(t *testing.T) {
 					cfg.PluginServers[0].ExposeExternal = n%2 == 0
 				})
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -469,13 +467,11 @@ func TestClientManagerReInitRaceSafe(t *testing.T) {
 	var stop atomic.Bool
 	var wg sync.WaitGroup
 	run := func(body func()) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for i := 0; i < 40 && !stop.Load(); i++ {
 				body()
 			}
-		}()
+		})
 	}
 
 	run(func() { manager.GetToolsForUser(context.Background(), "alice", ToolSelection{}) })

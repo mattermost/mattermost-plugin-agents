@@ -66,7 +66,7 @@ See the [Bridge Client README](public/bridgeclient/README.md) for installation a
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.27+
 - Node.js 24.11+
 - Access to an LLM provider (OpenAI, Anthropic, etc.)
 

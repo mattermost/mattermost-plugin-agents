@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -847,9 +848,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			mgr.orphanPluginIDs = tt.orphanPluginIDs
 			pluginServersBefore := append([]mcp.PluginServerConfig(nil), mgr.pluginServers...)
 			orphanPluginIDsBefore := make(map[string]bool, len(mgr.orphanPluginIDs))
-			for pluginID, orphaned := range mgr.orphanPluginIDs {
-				orphanPluginIDsBefore[pluginID] = orphaned
-			}
+			maps.Copy(orphanPluginIDsBefore, mgr.orphanPluginIDs)
 
 			// Seed a baseline persisted config so the handler can clone it
 			// instead of treating the store's nil as a 500.

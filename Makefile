@@ -265,16 +265,21 @@ apply:
 # Pinned tool versions. Bump these here, not at the install site — keeping the
 # pins in one place lets contributors update a tool with a single edit and
 # makes Go-version-skew fixes obvious.
-GOLANGCI_LINT_VERSION    ?= v2.13.1
+GOLANGCI_LINT_VERSION    ?= v2.13.2
 GOTESTSUM_VERSION        ?= v1.7.0
 MATTERMOST_GOVET_VERSION ?= 2fbfca354651528bffd39e63d7c5a2b32e6adf3e
+
+# Match this module's go directive so `go install` does not switch to the tool
+# module's older toolchain (golangci-lint still declares go 1.26) and produce a
+# binary that refuses to load go1.27 packages.
+GO_TOOLCHAIN ?= go$(shell GOTOOLCHAIN=auto $(GO) list -m -f '{{.GoVersion}}')
 
 ## Install go tools.
 install-go-tools:
 	@echo Installing go tools
-	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
-	$(GO) install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
-	@if ! $(GO) install github.com/mattermost/mattermost-govet/v2@$(MATTERMOST_GOVET_VERSION); then \
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
+	@if ! GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) install github.com/mattermost/mattermost-govet/v2@$(MATTERMOST_GOVET_VERSION); then \
 		echo "" >&2; \
 		echo "*** Failed to install mattermost-govet@$(MATTERMOST_GOVET_VERSION)." >&2; \
 		echo "*** This is usually Go toolchain skew: the pinned commit does not" >&2; \

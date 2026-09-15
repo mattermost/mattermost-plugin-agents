@@ -46,11 +46,9 @@ type EmbeddingConfig struct {
 // NewEmbeddingProvider creates a new EmbeddingProvider.
 func NewEmbeddingProvider(cfg EmbeddingConfig) (*EmbeddingProvider, error) {
 	account := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider: cfg.Provider,
-			APIKey:   cfg.APIKey,
-			APIURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
-		},
+		Provider: cfg.Provider,
+		APIKey:   cfg.APIKey,
+		APIURL:   normalizeOpenAIBaseURL(cfg.Provider, cfg.APIURL),
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)
