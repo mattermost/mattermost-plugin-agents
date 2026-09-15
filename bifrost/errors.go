@@ -90,9 +90,9 @@ type rawErrorBody struct {
 }
 
 type rawErrorEnvelope struct {
-	Message  string `json:"message"`
-	Type     string `json:"type"`
-	Code     any    `json:"code"`
+	Message  string            `json:"message"`
+	Type     string            `json:"type"`
+	Code     any               `json:"code"`
 	Error    *rawErrorEnvelope `json:"error"`
 	Response *struct {
 		Error *rawErrorEnvelope `json:"error"`
