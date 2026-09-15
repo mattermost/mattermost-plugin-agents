@@ -99,12 +99,10 @@ func TestServerToolActivityRecord(t *testing.T) {
 
 func TestServerToolActivityReplayedInRequest(t *testing.T) {
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.Shutdown()
@@ -182,12 +180,10 @@ func TestServerToolActivityReplayHeaderEmittedOncePerTurn(t *testing.T) {
 
 func TestServerToolActivityNotReplayedWhenAbsent(t *testing.T) {
 	llmClient, err := New(Config{
-		ProviderSettings: ProviderSettings{
-			Provider:         schemas.Anthropic,
-			APIKey:           "test-key",
-			DefaultModel:     "claude-sonnet-4-6",
-			StreamingTimeout: 10 * time.Second,
-		},
+		Provider:         schemas.Anthropic,
+		APIKey:           "test-key",
+		DefaultModel:     "claude-sonnet-4-6",
+		StreamingTimeout: 10 * time.Second,
 	})
 	require.NoError(t, err)
 	defer llmClient.Shutdown()

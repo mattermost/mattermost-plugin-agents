@@ -13,10 +13,8 @@ import (
 
 func TestInMemoryServerCreation(t *testing.T) {
 	config := mcpserver.InMemoryConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: "http://localhost:8065",
-			DevMode:     false,
-		},
+		MMServerURL: "http://localhost:8065",
+		DevMode:     false,
 	}
 
 	mcpLogger, err := logger.CreateLoggerWithOptions(false, "")

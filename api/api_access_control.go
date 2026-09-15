@@ -70,8 +70,7 @@ func validPolicyResourceType(t string) bool {
 func bindCappedJSONBody(c *gin.Context, out any) bool {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
 	if err := c.ShouldBindJSON(out); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return false
 		}

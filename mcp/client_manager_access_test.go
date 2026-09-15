@@ -355,7 +355,7 @@ func TestGetCatalogAccessDoesNotRedialFailedRemote(t *testing.T) {
 	dialsAfterFirst := requests.Load()
 	require.Positive(t, dialsAfterFirst)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		again := m.GetCatalogAccess(ctx, req)
 		require.NotNil(t, again.Errors)
 		assert.Len(t, again.Errors.Errors, 1, "connect error must not accumulate across cache hits")

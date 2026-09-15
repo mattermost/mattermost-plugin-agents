@@ -39,15 +39,13 @@ func TestConnectionAdmissionCloseRejectsEveryAcquire(t *testing.T) {
 				results := make([]error, 32)
 				var wg sync.WaitGroup
 				for i := range results {
-					wg.Add(1)
-					go func() {
-						defer wg.Done()
+					wg.Go(func() {
 						<-start
 						results[i] = gate.acquire(context.Background())
 						if results[i] == nil {
 							gate.release()
 						}
-					}()
+					})
 				}
 				close(start)
 				if !tc.closeFirst {
@@ -176,12 +174,10 @@ func TestGetToolsForUserCapsAggregateNetworkDialsAcrossUsers(t *testing.T) {
 	results := make([][]llm.Tool, users)
 	errs := make([]*Errors, users)
 	for i, userID := range userIDs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			results[i], errs[i] = manager.GetToolsForUser(context.Background(), userID, ToolSelection{})
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

@@ -106,12 +106,12 @@ func callTool(t *testing.T, h *PluginMCPHandlers, name string, args map[string]a
 	return callToolWithHandler(t, h.MCPHandler, name, args)
 }
 
-func callToolAs(t *testing.T, h *PluginMCPHandlers, userID, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+func callToolAs(t *testing.T, h *PluginMCPHandlers, userID, name string, args map[string]any) (*gosdkmcp.CallToolResult, error) {
 	t.Helper()
 	return callToolWithHandler(t, injectUserID(h.MCPHandler, userID), name, args)
 }
 
-func callToolWithHandler(t *testing.T, handler http.Handler, name string, args map[string]interface{}) (*gosdkmcp.CallToolResult, error) {
+func callToolWithHandler(t *testing.T, handler http.Handler, name string, args map[string]any) (*gosdkmcp.CallToolResult, error) {
 	t.Helper()
 	ts := httptest.NewServer(handler)
 	t.Cleanup(ts.Close)
@@ -566,7 +566,7 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 			require.Equal(t, tc.wantNative, slices.Contains(names, nativeTool), "native tool listing")
 			require.Equal(t, tc.wantPlugin, slices.Contains(names, pluginTool), "plugin tool listing")
 
-			nativeResult, nativeErr := callToolAs(t, h, tc.userID, nativeTool, map[string]interface{}{
+			nativeResult, nativeErr := callToolAs(t, h, tc.userID, nativeTool, map[string]any{
 				"channel_id": "channel-id",
 				"message":    "from test",
 			})
@@ -579,7 +579,7 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 				require.Contains(t, toolResultText(nativeResult), "session authentication provider requires token resolver")
 			}
 
-			pluginResult, pluginErr := callToolAs(t, h, tc.userID, pluginTool, map[string]interface{}{
+			pluginResult, pluginErr := callToolAs(t, h, tc.userID, pluginTool, map[string]any{
 				"message": "hi",
 			})
 			if !tc.wantPlugin {
@@ -591,7 +591,7 @@ func TestPluginMCPHandlers_AccessFilter(t *testing.T) {
 			}
 
 			if tc.unknownTool != "" {
-				_, unknownErr := callToolAs(t, h, tc.userID, tc.unknownTool, map[string]interface{}{})
+				_, unknownErr := callToolAs(t, h, tc.userID, tc.unknownTool, map[string]any{})
 				require.Error(t, unknownErr)
 				require.Contains(t, unknownErr.Error(), "tool not available")
 			}
