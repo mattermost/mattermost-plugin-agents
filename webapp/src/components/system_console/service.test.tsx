@@ -372,3 +372,71 @@ describe('ServiceFields fallback selector', () => {
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
 });
+
+describe('ServiceFields Cohere North', () => {
+    const northService: LLMService = {
+        ...baseService,
+        name: 'North',
+        type: 'north',
+        apiKey: '',
+        apiURL: '',
+        defaultModel: '',
+        useResponsesAPI: false,
+    };
+
+    beforeEach(() => {
+        fetchModels.mockResolvedValue([]);
+    });
+
+    it('shows North-specific URL and service token fields, hides org id and Responses API toggle', () => {
+        renderFields(northService);
+
+        expect(screen.getByText('North instance URL')).toBeTruthy();
+        expect(screen.getByText('The base URL of your Cohere North instance, for example https://north.example.com')).toBeTruthy();
+        expect(screen.getByText('Service token')).toBeTruthy();
+        expect(screen.getByText("A long-lived North service token. Generate one from your North instance's developer page.")).toBeTruthy();
+        expect(screen.getByText('Streaming Timeout Seconds')).toBeTruthy();
+        expect(screen.queryByText('Organization ID')).toBeNull();
+        expect(screen.queryByText('Use Responses API')).toBeNull();
+        expect(screen.queryByText('Account ID')).toBeNull();
+    });
+
+    it('does not prefill the default model', () => {
+        renderFields(northService);
+
+        const defaultModelInput = screen.getByPlaceholderText('Default model') as HTMLInputElement;
+        expect(defaultModelInput.value).toBe('');
+    });
+
+    it('does not fetch models until both service token and instance URL are set', async () => {
+        const {rerender, onChange} = renderFields({...northService, apiKey: 'token'});
+
+        await waitFor(() => expect(screen.getByText('Default model')).toBeTruthy());
+        expect(fetchModels).not.toHaveBeenCalled();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...northService, apiKey: 'token', apiURL: 'https://north.example.com'}}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        expect(fetchModels).toHaveBeenCalledWith(
+            'north',
+            'token',
+            'https://north.example.com',
+            '',
+            expect.anything(),
+        );
+    });
+
+    it('forces useResponsesAPI on when switching to north', () => {
+        const {onChange} = renderFields(baseService);
+        const typeSelect = screen.getByText('Anthropic').closest('select') as HTMLSelectElement;
+        fireEvent.change(typeSelect, {target: {value: 'north'}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({type: 'north', useResponsesAPI: true}));
+    });
+});

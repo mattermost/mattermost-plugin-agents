@@ -68,7 +68,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | Setting | Description |
 |---------|-------------|
 | **Name** | Internal name for this service configuration |
-| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
+| **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Cohere North, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
 | **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. |
@@ -94,6 +94,7 @@ Each provider has specific configuration requirements:
 | **Anthropic** | API Key | |
 | **AWS Bedrock** | AWS Region | API Key (can use IAM role), Access/Secret Keys |
 | **Cohere** | API Key | |
+| **Cohere North** | North instance URL, Service token, Default Model | Streaming timeout, token limits, fallback service |
 | **Mistral** | API Key | |
 | **Scale AI** | API Key, API URL | Account ID (required for ScaleGov) |
 | **Azure OpenAI** | API Key, API URL | |
@@ -143,7 +144,7 @@ Some capabilities depend on the selected Service type and, for OpenAI Compatible
 | **Web Search** (native tool) | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Gemini and Vertex map this to Google Search grounding via the provider's Responses API. Allows the Agent to leverage the provider's native web search tool to respond with recent information. Capabilities and pricing are documented by the provider — see Anthropic's [web search tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool) docs. |
 | **Web Fetch** (native tool) | Available for Anthropic. Lets the agent retrieve the full content of specific web pages and PDFs during a response. See Anthropic's [web fetch tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool) docs for capabilities and pricing. |
 | **Code Execution / Code Interpreter** (native tool) | Available for Anthropic, OpenAI, and (with **Use Responses API**) OpenAI Compatible and Azure. Lets the agent run code in the provider's managed sandbox. For Anthropic, enabling this also permits web search and web fetch to post-process results inside that sandbox (Anthropic's [dynamic filtering](https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-search-tool#dynamic-filtering)); when it is **not** enabled, the plugin pins those tools' `allowed_callers` to `direct` so no sandbox is ever provisioned. Refer to Anthropic's [code execution tool](https://platform.claude.com/docs/en/agents-and-tools/tool-use/code-execution-tool) docs for pricing, data-retention, and ZDR implications. |
-| **Reasoning Enabled** | Available for Anthropic, OpenAI, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. |
+| **Reasoning Enabled** | Available for Anthropic, OpenAI, Cohere North, Google Gemini, and Google Vertex AI. For OpenAI Compatible and Azure, this setting is available when **Use Responses API** is enabled on the Service. Enables extended thinking or reasoning capabilities for complex tasks. For Gemini / Vertex, Bifrost maps a token budget to `thinkingConfig.thinkingBudget` and an effort level to `thinkingConfig.thinkingLevel` on Gemini 3.0+. For Cohere North, reasoning is controlled via effort level. See the [Provider Guide](https://docs.mattermost.com/agents/docs/providers.html) for details. |
 | **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure. When enabled and a JSON schema is provided in the request, the schema is sent natively to the provider so the model returns structured JSON matching it. Compatible model support is still required. When disabled, the schema is converted into prompt instructions instead of being sent to the provider, so requests still work with models that lack native structured output support. |
 
 New agents enable native web search and structured output by default where the selected provider supports those features. For providers that don't support native tools, native tool selections are ignored.
@@ -590,7 +591,7 @@ This separation allows multiple agents to share the same LLM service configurati
 
 Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
 
-**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `mistral`, `scale`
+**Supported service types:** `openai`, `anthropic`, `azure`, `openaicompatible`, `asage`, `cohere`, `north`, `mistral`, `scale`
 
 **Legacy format:** Older configurations that stored bots in `config.bots`, or embedded service objects within bots, are migrated on plugin startup. After legacy bot migration completes, stored `config.bots` entries are removed to avoid duplicate bot registration.
 

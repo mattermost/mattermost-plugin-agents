@@ -306,6 +306,9 @@ func (b *LLM) convertToBifrostResponsesRequest(request llm.CompletionRequest, cf
 			"cache_control": &schemas.CacheControl{Type: schemas.CacheControlTypeEphemeral},
 		}
 	}
+	if b.disableResponseStorage {
+		params.Store = schemas.Ptr(false)
+	}
 	req.Params = params
 
 	// Attach fallback chain so Bifrost retries with alternative providers on failure.
