@@ -65,6 +65,10 @@ type LLM struct {
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	useResponsesAPI bool
 
+	// disableResponseStorage forces store=false on Responses API requests so
+	// the provider does not persist the conversation in the token owner's account.
+	disableResponseStorage bool
+
 	// fallbacks is attached to every outgoing request so Bifrost retries with
 	// alternative providers when the primary fails.
 	fallbacks []fallbackHop
@@ -118,6 +122,10 @@ type Config struct {
 
 	// UseResponsesAPI enables OpenAI Responses API for native tools support
 	UseResponsesAPI bool
+
+	// DisableResponseStorage forces store=false on outbound Responses API
+	// requests. Required for North, which otherwise persists every response.
+	DisableResponseStorage bool
 
 	// Fallbacks is the ordered list of providers Bifrost tries sequentially
 	// when the primary provider fails.
@@ -241,6 +249,7 @@ func New(cfg Config) (*LLM, error) {
 		reasoningEffort:            cfg.ReasoningEffort,
 		thinkingBudget:             cfg.ThinkingBudget,
 		useResponsesAPI:            cfg.UseResponsesAPI,
+		disableResponseStorage:     cfg.DisableResponseStorage,
 		fallbacks:                  fallbacks,
 		providerFileDownloadRoutes: providerFileDownloadRoutes,
 	}, nil

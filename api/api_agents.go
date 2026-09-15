@@ -727,7 +727,8 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		svc.Type == llm.ServiceTypeAzure ||
 		svc.Type == llm.ServiceTypeOpenAICompatible ||
 		svc.Type == llm.ServiceTypeGemini ||
-		svc.Type == llm.ServiceTypeVertex
+		svc.Type == llm.ServiceTypeVertex ||
+		svc.Type == llm.ServiceTypeNorth
 	if !supportsModelFetching {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
 		return
@@ -737,7 +738,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	switch svc.Type {
 	case llm.ServiceTypeOpenAICompatible:
 		hasRequiredCredentials = svc.APIKey != "" || svc.APIURL != ""
-	case llm.ServiceTypeAzure:
+	case llm.ServiceTypeAzure, llm.ServiceTypeNorth:
 		hasRequiredCredentials = svc.APIKey != "" && svc.APIURL != ""
 	case llm.ServiceTypeVertex:
 		// Vertex uses GCP project + region; service-account JSON is optional (ADC).

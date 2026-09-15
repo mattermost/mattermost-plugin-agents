@@ -6,6 +6,7 @@ package bifrost
 import (
 	"testing"
 
+	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,6 +26,7 @@ func TestSupportsNativeTools(t *testing.T) {
 		{llm.ServiceTypeVertex, true},
 		{llm.ServiceTypeBedrock, false},
 		{llm.ServiceTypeCohere, false},
+		{llm.ServiceTypeNorth, false},
 		{llm.ServiceTypeMistral, false},
 		{llm.ServiceTypeScale, false},
 		{"unknown", false},
@@ -50,6 +52,7 @@ func TestSupportsProviderFileDownload(t *testing.T) {
 		{llm.ServiceTypeVertex, false},
 		{llm.ServiceTypeBedrock, false},
 		{llm.ServiceTypeCohere, false},
+		{llm.ServiceTypeNorth, false},
 		{llm.ServiceTypeMistral, false},
 		{llm.ServiceTypeLoadTestMock, false},
 		{"unknown", false},
@@ -115,6 +118,12 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 			want:        []string{llm.NativeToolWebSearch},
 		},
 		{
+			name:        "North drops all native tools",
+			serviceType: llm.ServiceTypeNorth,
+			tools:       allTools,
+			want:        []string{},
+		},
+		{
 			name:        "unknown tool ids are dropped",
 			serviceType: llm.ServiceTypeAnthropic,
 			tools:       []string{"totally_made_up", llm.NativeToolWebSearch},
@@ -122,6 +131,7 @@ func TestFilterNativeToolsForServiceType(t *testing.T) {
 		},
 		{"Bedrock drops tools", llm.ServiceTypeBedrock, []string{llm.NativeToolWebSearch}, []string{}},
 		{"Cohere drops tools", llm.ServiceTypeCohere, []string{llm.NativeToolWebSearch}, []string{}},
+		{"North drops tools", llm.ServiceTypeNorth, []string{llm.NativeToolWebSearch}, []string{}},
 		{"Mistral drops tools", llm.ServiceTypeMistral, []string{llm.NativeToolWebSearch}, []string{}},
 		{"nil tools stay nil", llm.ServiceTypeOpenAI, nil, nil},
 		{"empty tools stay empty", llm.ServiceTypeOpenAI, []string{}, []string{}},
@@ -143,6 +153,8 @@ func TestNewFromServiceConfigOpenAIForcesResponsesAPI(t *testing.T) {
 	}{
 		{"OpenAI direct always uses Responses API", llm.ServiceTypeOpenAI, false, true},
 		{"OpenAI direct with flag true", llm.ServiceTypeOpenAI, true, true},
+		{"North always uses Responses API", llm.ServiceTypeNorth, false, true},
+		{"North with flag true", llm.ServiceTypeNorth, true, true},
 		{"OpenAI Compatible respects flag false", llm.ServiceTypeOpenAICompatible, false, false},
 		{"OpenAI Compatible respects flag true", llm.ServiceTypeOpenAICompatible, true, true},
 		{"Anthropic respects flag false", llm.ServiceTypeAnthropic, false, false},
@@ -213,6 +225,7 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 		{"Vertex keeps native tools", llm.ServiceTypeVertex, true},
 		{"Bedrock drops native tools", llm.ServiceTypeBedrock, false},
 		{"Cohere drops native tools", llm.ServiceTypeCohere, false},
+		{"North drops native tools", llm.ServiceTypeNorth, false},
 		{"Mistral drops native tools", llm.ServiceTypeMistral, false},
 	}
 	for _, tt := range tests {
@@ -235,6 +248,81 @@ func TestNewFromServiceConfigFiltersNativeTools(t *testing.T) {
 			} else {
 				assert.Equal(t, []string{}, llmInstance.enabledNativeTools)
 			}
+		})
+	}
+}
+
+func TestMapServiceTypeToProviderAndIsSupported(t *testing.T) {
+	tests := []struct {
+		serviceType   string
+		wantProvider  schemas.ModelProvider
+		wantSupported bool
+		wantMapError  bool
+	}{
+		{llm.ServiceTypeOpenAI, schemas.OpenAI, true, false},
+		{llm.ServiceTypeOpenAICompatible, schemas.OpenAI, true, false},
+		{llm.ServiceTypeNorth, schemas.OpenAI, true, false},
+		{llm.ServiceTypeAnthropic, schemas.Anthropic, true, false},
+		{llm.ServiceTypeScale, "", false, true},
+		{"unknown", "", false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.serviceType, func(t *testing.T) {
+			assert.Equal(t, tt.wantSupported, IsSupported(tt.serviceType))
+			got, err := MapServiceTypeToProvider(tt.serviceType)
+			if tt.wantMapError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantProvider, got)
+		})
+	}
+}
+
+func TestNormalizeNorthBaseURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "empty stays empty", input: "", want: ""},
+		{name: "instance root", input: "http://host", want: "http://host/api"},
+		{name: "instance root trailing slash", input: "http://host/", want: "http://host/api"},
+		{name: "already /api", input: "http://host/api", want: "http://host/api"},
+		{name: "/api trailing slash", input: "http://host/api/", want: "http://host/api"},
+		{name: "/api/v1", input: "http://host/api/v1", want: "http://host/api"},
+		{name: "/api/v1 trailing slash", input: "http://host/api/v1/", want: "http://host/api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, normalizeNorthBaseURL(tt.input))
+		})
+	}
+}
+
+func TestNewFromServiceConfigDisableResponseStorage(t *testing.T) {
+	tests := []struct {
+		name        string
+		serviceType string
+		want        bool
+	}{
+		{"north disables storage", llm.ServiceTypeNorth, true},
+		{"openai leaves storage enabled", llm.ServiceTypeOpenAI, false},
+		{"openai compatible leaves storage enabled", llm.ServiceTypeOpenAICompatible, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := llm.ServiceConfig{
+				ID:     "test",
+				Type:   tt.serviceType,
+				APIKey: "key",
+				APIURL: "http://localhost",
+			}
+			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{}, nil)
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+			assert.Equal(t, tt.want, llmInstance.disableResponseStorage)
 		})
 	}
 }
