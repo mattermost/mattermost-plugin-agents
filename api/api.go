@@ -167,7 +167,6 @@ type API struct {
 	i18nBundle            *i18n.Bundle
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
-	beforeHookStore       *mcp.BeforeHookStore
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
 	agentStore            AgentStore
@@ -256,7 +255,6 @@ func New(
 		i18nBundle:            i18nBundle,
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
-		beforeHookStore:       mcp.NewBeforeHookStore(&pluginAPI.KV),
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
 		agentStore:            agentStore,

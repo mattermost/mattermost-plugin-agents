@@ -112,7 +112,7 @@ On web and desktop, start a new chat in the Agents right-hand pane and open the 
 
 Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
 
-- Mattermost MCP tools, including tools to search posts, find users, discover available agents, and, when the Channel Automation plugin is installed and your permissions allow it, manage channel automations. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
+- Mattermost MCP tools, including tools to search posts, find users, and discover available agents. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
 - MCP tools provided by compatible installed Mattermost plugins that register tools with Agents, after an admin enables those plugin tools
 - MCP tools provided by separately configured remote MCP servers, after an admin enables them
 

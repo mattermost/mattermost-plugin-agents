@@ -41,7 +41,7 @@ Most Go packages live at the **repo root**, not under `server/`.
 - `evals/`, `cmd/evalviewer/` — prompt evaluation harness and TUI.
 - `i18n/` — extracted translation strings.
 - `docs/` — user/admin docs.
-- `public/bridgeclient/`, `public/mcptool/` — Go packages other plugins import (frozen public API); part of the root module, not HTTP assets.
+- `public/bridgeclient/` — Go package other plugins import (frozen public API); part of the root module, not HTTP assets.
 
 ## Conventions
 
@@ -88,7 +88,7 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - `postgres/pgvector_test.go` boots its own pgvector container via `testcontainers-go` (`pgvector/pgvector:pg17`); `go test ./postgres/...` works on a fresh checkout as long as Docker is available. To run against an existing pgvector instance for fast iteration, set `PGVECTOR_TEST_DSN`.
 - Plugin config is migrated to the plugin DB on activation. For automation, read/write `GET`/`PUT /plugins/mattermost-ai/admin/config` rather than patching the Mattermost server config.
 - The embedded MCP server requires `SiteURL` to be set on the Mattermost server, and uses in-memory transport (no HTTP). On tool name collisions across MCP servers, first-registered wins; later duplicates are skipped with a warning.
-- `public/bridgeclient/` and `public/mcptool/` are consumed by other plugins — treat their exported API as frozen. They are packages of the root module (no own `go.mod`), not HTTP assets; `HAS_PUBLIC` is intentionally cleared in the Makefile.
+- `public/bridgeclient/` is consumed by other plugins — treat its exported API as frozen. It is a package of the root module (no own `go.mod`), not HTTP assets; `HAS_PUBLIC` is intentionally cleared in the Makefile.
 - A fresh checkout does not compile: run `make apply` first to generate `server/manifest.go` (`undefined: manifest` errors otherwise).
 - The repo has three Go modules: the root, `loadtest/controller/`, and `cmd/evalviewer/`. Go version bumps, `go mod tidy`, and `go fix` must be run in each.
 - `webapp/node_modules/` contains stray Go files that `./...` matches; for sweeping Go commands use `$(go list ./... | grep -v node_modules)`.
