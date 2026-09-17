@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
@@ -91,24 +92,28 @@ func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
 // the server log. The returned error carries only structured fields; the log
 // line carries the body, bounded and with configured secrets redacted, so an
 // admin can see exactly what the provider said even when it matched none of
-// the shapes bifrostErrorString understands.
-func (b *LLM) providerError(prefix string, bifrostErr *schemas.BifrostError) error {
-	err := llm.SanitizeProviderError(fmt.Errorf("%s: %s", prefix, bifrostErrorString(bifrostErr)), b.redactionKeys()...)
-	b.logProviderErrorBody(err, bifrostErr)
+// the shapes bifrostErrorString understands. A nil logger skips the log line.
+func providerError(logger ErrorLogger, redactKeys []string, prefix string, bifrostErr *schemas.BifrostError) error {
+	err := llm.SanitizeProviderError(fmt.Errorf("%s: %s", prefix, bifrostErrorString(bifrostErr)), redactKeys...)
+	logProviderErrorBody(logger, redactKeys, err, bifrostErr)
 	return err
 }
 
-func (b *LLM) logProviderErrorBody(err error, bifrostErr *schemas.BifrostError) {
-	if b.logger == nil || bifrostErr == nil {
+func (b *LLM) providerError(prefix string, bifrostErr *schemas.BifrostError) error {
+	return providerError(b.logger, b.redactionKeys(), prefix, bifrostErr)
+}
+
+func logProviderErrorBody(logger ErrorLogger, redactKeys []string, err error, bifrostErr *schemas.BifrostError) {
+	if logger == nil || bifrostErr == nil {
 		return
 	}
 	raw := parseRawErrorBody(bifrostErr.ExtraFields.RawResponse)
 	if raw.body == "" {
 		return
 	}
-	b.logger.Error("LLM provider returned an error",
+	logger.Error("LLM provider returned an error",
 		"error", err.Error(),
-		"provider_response", llm.SanitizeProviderErrorMessage(truncate(raw.body, maxRawErrorBodyLen), b.redactionKeys()...),
+		"provider_response", llm.SanitizeProviderErrorMessage(truncate(raw.body, maxRawErrorBodyLen), redactKeys...),
 	)
 }
 
@@ -229,11 +234,16 @@ func errorCode(bifrostErr *schemas.BifrostError, raw rawErrorBody) string {
 	return raw.code
 }
 
+// truncate cuts s to at most limit bytes without splitting a UTF-8 sequence.
 func truncate(s string, limit int) string {
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + "…[truncated]"
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…[truncated]"
 }
 
 // recordBifrostError attaches BifrostError fields to the current span as

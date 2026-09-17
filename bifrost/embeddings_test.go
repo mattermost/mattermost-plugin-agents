@@ -180,3 +180,33 @@ func TestBatchCreateEmbeddingsSplitsLargeBatches(t *testing.T) {
 		assert.Equal(t, float32(i), embedding[0], "embedding %d does not correspond to its input text", i)
 	}
 }
+
+func TestCreateEmbeddingProviderErrorReachesLog(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"detail":"model text-embedding-x is not served by this endpoint"}`)
+	}))
+	defer server.Close()
+
+	logger := &recordingLogger{}
+	provider, err := NewEmbeddingProvider(EmbeddingConfig{
+		Provider: schemas.OpenAI,
+		APIKey:   "test-key",
+		APIURL:   server.URL,
+		Model:    "text-embedding-x",
+		Logger:   logger,
+	})
+	require.NoError(t, err)
+	defer provider.Shutdown()
+
+	_, err = provider.CreateEmbedding(t.Context(), "hello")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bifrost embedding error")
+	require.Contains(t, err.Error(), "status=400")
+	require.NotContains(t, err.Error(), "not served by this endpoint")
+
+	require.NotEmpty(t, logger.entries)
+	body, _ := logger.entries[len(logger.entries)-1].kv["provider_response"].(string)
+	require.Contains(t, body, "not served by this endpoint")
+}

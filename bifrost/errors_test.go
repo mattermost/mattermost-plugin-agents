@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/stretchr/testify/require"
@@ -297,6 +298,15 @@ func TestProviderErrorLogsRawBodySeparately(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("truncation never splits a UTF-8 sequence", func(t *testing.T) {
+		// "é" is two bytes; place one so the byte limit lands inside it.
+		msg := strings.Repeat("a", maxRawErrorBodyLen-1) + "éz"
+		got := truncate(msg, maxRawErrorBodyLen)
+		require.True(t, utf8.ValidString(got))
+		require.Equal(t, strings.Repeat("a", maxRawErrorBodyLen-1)+"…[truncated]", got)
+		require.Equal(t, "short", truncate("short", maxRawErrorBodyLen))
+	})
 
 	t.Run("nil logger is a no-op", func(t *testing.T) {
 		b := &LLM{apiKey: apiKey}

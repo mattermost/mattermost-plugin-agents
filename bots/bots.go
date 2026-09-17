@@ -559,6 +559,7 @@ func (b *MMBots) GetTranscribe() Transcriber {
 		APIKey:   service.APIKey,
 		APIURL:   service.APIURL,
 		Model:    transcriptModel,
+		Logger:   &b.pluginAPI.Log,
 	})
 	if err != nil {
 		b.pluginAPI.Log.Error("Failed to create Bifrost transcriber",
