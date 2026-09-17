@@ -511,7 +511,11 @@ func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotCo
 		return loadtest.NewMockLLM(profile), &llm.ProviderServices{}, nil
 	}
 
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
+	var bifrostOpts []bifrost.Option
+	if b.pluginAPI != nil {
+		bifrostOpts = append(bifrostOpts, bifrost.WithLogger(&b.pluginAPI.Log))
+	}
+	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices, bifrostOpts...)
 	if err != nil {
 		if b.pluginAPI != nil {
 			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)

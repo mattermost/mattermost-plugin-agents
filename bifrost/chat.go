@@ -5,7 +5,6 @@ package bifrost
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/codes"
@@ -36,7 +35,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := b.providerError("bifrost error", bifrostErr)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -58,7 +57,7 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
+			err := b.providerError("bifrost stream error", chunk.BifrostError)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

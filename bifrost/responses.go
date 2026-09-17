@@ -344,7 +344,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 	streamChan, bifrostErr := b.client.ResponsesStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
 		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := b.providerError("bifrost error", bifrostErr)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
@@ -393,7 +393,7 @@ func (b *LLM) streamResponses(ctx context.Context, request llm.CompletionRequest
 
 		if chunk.BifrostError != nil {
 			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
+			err := b.providerError("bifrost stream error", chunk.BifrostError)
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{

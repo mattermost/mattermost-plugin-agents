@@ -27,6 +27,9 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 		useResponsesAPI bool
 		handler         http.HandlerFunc
 		wantSubstrings  []string
+		// wantLoggedBody, when set, must appear in the server-log line that
+		// carries the raw provider body, and must NOT appear in the error.
+		wantLoggedBody string
 	}{
 		{
 			name:            "Responses API in-band SSE error event on HTTP 200",
@@ -45,7 +48,8 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"sequence_number\":0,\"details\":\"upstream exploded\"}\n\n")
 			},
-			wantSubstrings: []string{"bifrost stream error", "type=error", `raw={"type":"error","sequence_number":0,"details":"upstream exploded"}`},
+			wantSubstrings: []string{"bifrost stream error", "type=error"},
+			wantLoggedBody: `"details":"upstream exploded"`,
 		},
 		{
 			name:            "Responses API HTTP 429 with OpenAI error body",
@@ -109,8 +113,10 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 			}
 			bot := llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}
 
-			llmInstance, err := NewFromServiceConfig(service, bot, nil)
+			logger := &recordingLogger{}
+			llmInstance, err := NewFromServiceConfig(service, bot, nil, WithLogger(logger))
 			require.NoError(t, err)
+			require.NotNil(t, llmInstance.logger)
 			defer llmInstance.Shutdown()
 
 			_, err = llmInstance.ChatCompletionNoStream(
@@ -122,7 +128,14 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 			for _, want := range tt.wantSubstrings {
 				require.Contains(t, err.Error(), want)
 			}
-			require.NotContains(t, err.Error(), "empty bifrost error (type=error)")
+			if tt.wantLoggedBody == "" {
+				require.NotContains(t, err.Error(), "empty bifrost error (type=error)")
+			} else {
+				require.NotContains(t, err.Error(), tt.wantLoggedBody)
+				require.NotEmpty(t, logger.entries)
+				body, _ := logger.entries[len(logger.entries)-1].kv["provider_response"].(string)
+				require.Contains(t, body, tt.wantLoggedBody)
+			}
 		})
 	}
 }

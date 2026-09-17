@@ -12,12 +12,23 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
-// maxRawErrorBodyLen bounds how much of an unparseable provider error body is
-// echoed into a log line.
-const maxRawErrorBodyLen = 2048
+const (
+	// maxRawErrorBodyLen bounds how much of a provider error body (or a
+	// message lifted out of it) is carried into an error string or log line.
+	maxRawErrorBodyLen = 2048
+	// maxRawErrorFieldLen bounds provider-supplied type/code identifiers.
+	maxRawErrorFieldLen = 128
+)
+
+// ErrorLogger is the subset of pluginapi.LogService the bifrost package uses
+// to write provider error bodies to the server log.
+type ErrorLogger interface {
+	Error(message string, keyValuePairs ...any)
+}
 
 // bifrostErrorString returns a non-empty, admin-readable description of a
 // bifrost error: the provider's message followed by every identifying detail
@@ -27,9 +38,13 @@ const maxRawErrorBodyLen = 2048
 // bifrost's expected error shape (e.g. OpenAI's in-band Responses SSE
 // `{"type":"error","error":{...}}` event delivered on HTTP 200), and on
 // transport/cancellation paths. In that case fall back to the wrapped Go error,
-// then to the raw provider body captured in ExtraFields.RawResponse (the
-// account enables SendBackRawResponse for exactly this reason), before giving
-// up with whatever status/type/code is available.
+// then to the message/type/code parsed out of the raw provider body captured in
+// ExtraFields.RawResponse (the account enables SendBackRawResponse for exactly
+// this reason), before giving up with whatever status/type/code is available.
+//
+// Only structured fields are returned: the string travels to callers such as
+// bridge plugins, so an unparsed body is never included here. It goes to the
+// server log via LLM.logProviderErrorBody instead.
 func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
 	if bifrostErr == nil {
 		return "<nil bifrost error>"
@@ -47,6 +62,9 @@ func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
 	if msg == "" {
 		msg = raw.message
 	}
+	if msg == "" {
+		msg = "empty bifrost error"
+	}
 
 	var parts []string
 	if bifrostErr.StatusCode != nil {
@@ -62,19 +80,36 @@ func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
 		parts = append(parts, fmt.Sprintf("provider=%s", provider))
 	}
 
-	if msg == "" {
-		msg = "empty bifrost error"
-		// Nothing structured could be extracted; the raw body is the only clue
-		// left for the admin, so surface it verbatim (bounded).
-		if raw.body != "" {
-			parts = append(parts, fmt.Sprintf("raw=%s", truncate(raw.body, maxRawErrorBodyLen)))
-		}
-	}
-
 	if len(parts) == 0 {
 		return msg
 	}
 	return msg + " (" + strings.Join(parts, " ") + ")"
+}
+
+// providerError builds the error returned to callers for a bifrost failure
+// and, when bifrost retained the provider's response body, writes that body to
+// the server log. The returned error carries only structured fields; the log
+// line carries the body, bounded and with configured secrets redacted, so an
+// admin can see exactly what the provider said even when it matched none of
+// the shapes bifrostErrorString understands.
+func (b *LLM) providerError(prefix string, bifrostErr *schemas.BifrostError) error {
+	err := llm.SanitizeProviderError(fmt.Errorf("%s: %s", prefix, bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+	b.logProviderErrorBody(err, bifrostErr)
+	return err
+}
+
+func (b *LLM) logProviderErrorBody(err error, bifrostErr *schemas.BifrostError) {
+	if b.logger == nil || bifrostErr == nil {
+		return
+	}
+	raw := parseRawErrorBody(bifrostErr.ExtraFields.RawResponse)
+	if raw.body == "" {
+		return
+	}
+	b.logger.Error("LLM provider returned an error",
+		"error", err.Error(),
+		"provider_response", llm.SanitizeProviderErrorMessage(truncate(raw.body, maxRawErrorBodyLen), b.redactionKeys()...),
+	)
 }
 
 // rawErrorBody is the subset of a provider error body that is useful in a log
@@ -139,13 +174,13 @@ func parseRawErrorBody(rawResponse any) rawErrorBody {
 
 	for _, c := range candidates {
 		if out.message == "" {
-			out.message = strings.TrimSpace(c.Message)
+			out.message = truncate(strings.TrimSpace(c.Message), maxRawErrorBodyLen)
 		}
 		if out.typ == "" {
-			out.typ = strings.TrimSpace(c.Type)
+			out.typ = truncate(strings.TrimSpace(c.Type), maxRawErrorFieldLen)
 		}
 		if out.code == "" {
-			out.code = codeString(c.Code)
+			out.code = truncate(codeString(c.Code), maxRawErrorFieldLen)
 		}
 	}
 	return out
@@ -164,15 +199,22 @@ func codeString(code any) string {
 	}
 }
 
-// errorType prefers the provider's specific error type over bifrost's
-// top-level Type, which on the in-band SSE path is just the literal event
-// name "error".
+// errorType prefers the provider's specific error type over the literal
+// "error", which is just an SSE event name / envelope marker and carries no
+// information about what went wrong.
 func errorType(bifrostErr *schemas.BifrostError, raw rawErrorBody) string {
-	if bifrostErr.Error != nil && bifrostErr.Error.Type != nil && *bifrostErr.Error.Type != "" {
-		return *bifrostErr.Error.Type
+	structured := ""
+	if bifrostErr.Error != nil && bifrostErr.Error.Type != nil {
+		structured = *bifrostErr.Error.Type
+	}
+	if structured != "" && structured != "error" {
+		return structured
 	}
 	if raw.typ != "" && raw.typ != "error" {
 		return raw.typ
+	}
+	if structured != "" {
+		return structured
 	}
 	if bifrostErr.Type != nil && *bifrostErr.Type != "" {
 		return *bifrostErr.Type
