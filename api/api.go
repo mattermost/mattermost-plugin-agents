@@ -725,7 +725,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		VertexProjectID:       req.VertexProjectID,
 		VertexProjectNumber:   req.VertexProjectNumber,
 		VertexAuthCredentials: req.VertexAuthCredentials,
-	})
+	}, &a.pluginAPI.Log)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

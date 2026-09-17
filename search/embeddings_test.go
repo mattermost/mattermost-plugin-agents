@@ -107,7 +107,7 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			licenseChecker := createLicenseChecker(t, tc.licensed)
 
-			search, err := InitEmbeddingsSearch(nil, tc.cfg, licenseChecker, false)
+			search, err := InitEmbeddingsSearch(nil, tc.cfg, licenseChecker, false, nil)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -269,7 +269,7 @@ func TestNewEmbeddingProvider(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			provider, err := newEmbeddingProvider(tc.config, tc.dimensions)
+			provider, err := newEmbeddingProvider(tc.config, tc.dimensions, nil)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -349,7 +349,7 @@ func TestEmbeddingProviderConfigUnmarshalEdgeCases(t *testing.T) {
 				Parameters: tc.parameters,
 			}
 
-			provider, err := newEmbeddingProvider(config, 1536)
+			provider, err := newEmbeddingProvider(config, 1536, nil)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -466,7 +466,7 @@ func TestMockProviderDimensions(t *testing.T) {
 				Parameters: json.RawMessage(`{}`),
 			}
 
-			provider, err := newEmbeddingProvider(config, tc.dimensions)
+			provider, err := newEmbeddingProvider(config, tc.dimensions, nil)
 			require.NoError(t, err)
 			require.NotNil(t, provider)
 			require.Equal(t, tc.expectedDimensions, provider.Dimensions())

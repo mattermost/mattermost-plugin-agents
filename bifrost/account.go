@@ -127,6 +127,14 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		ProxyConfig: &schemas.ProxyConfig{
 			Type: schemas.EnvProxy,
 		},
+		// Without this Bifrost discards the provider's error body before
+		// handing us a BifrostError. Provider errors that don't match Bifrost's
+		// expected shape (e.g. OpenAI's in-band Responses SSE error event) then
+		// surface with an empty message, leaving admins nothing to act on.
+		// bifrostErrorString lifts message/type/code back out of
+		// ExtraFields.RawResponse; the body itself only goes to the server log
+		// (LLM.logProviderErrorBody), never into the returned error.
+		SendBackRawResponse: true,
 	}
 
 	if a.isCustom() {

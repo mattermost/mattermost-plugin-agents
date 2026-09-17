@@ -129,7 +129,7 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 // fallbackServices is an ordered slice of fallback services resolved from the
 // primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
 // service's DefaultModel is used as the fallback model.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig, opts ...Option) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -168,7 +168,21 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
 	}
 
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	return New(cfg)
+}
+
+// Option customizes the Config built by NewFromServiceConfig.
+type Option func(*Config)
+
+// WithLogger routes provider error bodies to the given server logger.
+func WithLogger(logger ErrorLogger) Option {
+	return func(cfg *Config) {
+		cfg.Logger = logger
+	}
 }
 
 // providerSettingsFromService maps a ServiceConfig's provider connection fields
