@@ -721,7 +721,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(llm.ServiceConfig{
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), llm.ServiceConfig{
 		Type:                  req.ServiceType,
 		APIKey:                req.APIKey,
 		APIURL:                req.APIURL,

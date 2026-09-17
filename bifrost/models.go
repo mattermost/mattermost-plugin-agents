@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	northModelsPageLimit = 100
-	northModelsMaxPages  = 20
-	northModelsTimeout   = 30 * time.Second
+	northModelsPageLimit    = 100
+	northModelsMaxPages     = 20
+	northModelsTimeout      = 30 * time.Second
+	northModelsMaxBodyBytes = 4 << 20
 )
 
 // FetchModelsConfig holds configuration for fetching models.
@@ -42,7 +43,7 @@ type FetchModelsConfig struct {
 }
 
 // FetchModels retrieves the list of available models from a provider using Bifrost.
-func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
+func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	account := &providerAccount{
 		ProviderSettings: ProviderSettings{
 			Provider:              cfg.Provider,
@@ -62,7 +63,7 @@ func FetchModels(cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	}
 	defer client.Shutdown()
 
-	bifrostCtx := schemas.NewBifrostContext(context.Background(), schemas.NoDeadline)
+	bifrostCtx := schemas.NewBifrostContext(ctx, schemas.NoDeadline)
 
 	req := &schemas.BifrostListModelsRequest{
 		Provider: cfg.Provider,
@@ -113,9 +114,9 @@ func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
 // region, and service-account JSON) that cannot be expressed as a single API
 // key. The admin handler builds a ServiceConfig from raw type/key/url fields
 // and calls this, so North listing is served from the same entry point.
-func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
+func FetchModelsForService(ctx context.Context, svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 	if svc.Type == llm.ServiceTypeNorth {
-		return fetchNorthModels(context.Background(), svc.APIURL, svc.APIKey)
+		return fetchNorthModels(ctx, svc.APIURL, svc.APIKey)
 	}
 
 	provider, err := MapServiceTypeToProvider(svc.Type)
@@ -123,7 +124,7 @@ func FetchModelsForService(svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 		return nil, fmt.Errorf("model fetching not supported for service type: %s", svc.Type)
 	}
 
-	return FetchModels(FetchModelsConfig{
+	return FetchModels(ctx, FetchModelsConfig{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
 		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
@@ -184,10 +185,13 @@ func fetchNorthModels(ctx context.Context, apiURL, apiKey string) ([]llm.ModelIn
 		if err != nil {
 			return nil, llm.SanitizeProviderError(fmt.Errorf("north models request failed: %w", err), apiKey)
 		}
-		body, readErr := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, northModelsMaxBodyBytes+1))
 		resp.Body.Close()
 		if readErr != nil {
 			return nil, llm.SanitizeProviderError(fmt.Errorf("reading north models response: %w", readErr), apiKey)
+		}
+		if len(body) > northModelsMaxBodyBytes {
+			return nil, fmt.Errorf("north models response exceeded %d bytes", northModelsMaxBodyBytes)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, llm.SanitizeProviderError(fmt.Errorf("north models request failed with status %d", resp.StatusCode), apiKey)

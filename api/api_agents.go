@@ -749,7 +749,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(*svc)
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), *svc)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return

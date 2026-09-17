@@ -4,10 +4,12 @@
 package bifrost
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -75,6 +77,7 @@ func TestFetchNorthModels(t *testing.T) {
 		name             string
 		status           int
 		pages            []map[string]any
+		oversizedBody    bool
 		wantIDs          []string
 		wantDisplay      []string
 		wantInput        *int
@@ -121,6 +124,12 @@ func TestFetchNorthModels(t *testing.T) {
 			wantErrSubstring: "404",
 			wantAuth:         true,
 		},
+		{
+			name:             "oversized body",
+			oversizedBody:    true,
+			wantErrSubstring: fmt.Sprintf("exceeded %d bytes", northModelsMaxBodyBytes),
+			wantAuth:         true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -138,6 +147,11 @@ func TestFetchNorthModels(t *testing.T) {
 				if tt.status != 0 {
 					w.WriteHeader(tt.status)
 					_, _ = fmt.Fprintf(w, `{"error":%q}`, apiKey)
+					return
+				}
+				if tt.oversizedBody {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(strings.Repeat("a", northModelsMaxBodyBytes+1)))
 					return
 				}
 
@@ -158,7 +172,7 @@ func TestFetchNorthModels(t *testing.T) {
 			}))
 			defer server.Close()
 
-			models, err := FetchModelsForService(llm.ServiceConfig{
+			models, err := FetchModelsForService(context.Background(), llm.ServiceConfig{
 				Type:   llm.ServiceTypeNorth,
 				APIKey: apiKey,
 				APIURL: server.URL,
