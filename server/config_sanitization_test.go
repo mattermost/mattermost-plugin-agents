@@ -230,17 +230,34 @@ func historicalCredentialSettingKeys() []string {
 	}
 }
 
-// historicalPlainSettingKeys lists setting keys those same earlier releases
-// declared that carry no credential, with a representative stored value for
-// each. An operator can still read them out of config.json, so they stay.
+// historicalPlainSettingKeys lists every setting key those same earlier releases
+// declared that carries no credential, with a representative stored value for
+// each. An operator can still read them out of config.json, so they stay. The
+// list is the union of the settings schemas of all releases up to v0.3.2, minus
+// the keys in historicalCredentialSettingKeys.
 func historicalPlainSettingKeys() map[string]any {
 	return map[string]any{
-		"OpenAIDefaultModel": "gpt-4",
-		"llmgenerator":       "openai",
-		"AllowedTeamIDs":     "team-1,team-2",
-		"AskSageUsername":    "asksage-user",
-		"MattermostAIUrl":    "https://ai.example.com",
-		"EnableLLMTrace":     true,
+		"OpenAIDefaultModel":          "gpt-4",
+		"OpenAICompatibleUrl":         "https://compatible.example.com",
+		"OpenAICompatibleModel":       "local-model",
+		"AnthropicDefaultModel":       "claude-2",
+		"AskSageUsername":             "asksage-user",
+		"AskSageDefaultModel":         "gpt-4",
+		"llmgenerator":                "openai",
+		"ImageGenerator":              "openai",
+		"Summarizer":                  "openai",
+		"ThreadAnswerer":              "openai",
+		"ThreadConversationer":        "openai",
+		"GenericAnswerer":             "openai",
+		"EmojiSelector":               "openai",
+		"AllowedTeamIDs":              "team-1,team-2",
+		"AllowedUserIDs":              "user-1,user-2",
+		"OnlyUsersOnTeam":             "team-1",
+		"AllowPrivateChannels":        true,
+		"EnableUseRestrictions":       true,
+		"EnableAutomaticCallsSummary": true,
+		"MattermostAIUrl":             "https://ai.example.com",
+		"EnableLLMTrace":              true,
 	}
 }
 
@@ -374,7 +391,7 @@ func TestRemoveObsoleteCredentialSettings(t *testing.T) {
 			"AnthropicAPIKey": "sentinel-stored-manifest-key",
 			"AskSageUsername": "asksage-user",
 		}))
-		mockAPI.On("LogInfo", mock.Anything).Once()
+		mockAPI.On("LogInfo", mock.Anything).Maybe()
 
 		var saved map[string]any
 		mockAPI.On("SavePluginConfig", mock.Anything).Run(func(args mock.Arguments) {
@@ -388,19 +405,6 @@ func TestRemoveObsoleteCredentialSettings(t *testing.T) {
 			"config":          map[string]any{"defaultBotName": "agent"},
 			"AskSageUsername": "asksage-user",
 		}, saved)
-	})
-
-	t.Run("does not write when no such key is stored", func(t *testing.T) {
-		mockAPI := &plugintest.API{}
-		defer mockAPI.AssertExpectations(t)
-		mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
-			"config":          map[string]any{"defaultBotName": "agent"},
-			"AskSageUsername": "asksage-user",
-		}))
-
-		removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
-
-		mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
 	})
 
 	t.Run("a configuration that cannot be written does not stop activation", func(t *testing.T) {
@@ -418,19 +422,164 @@ func TestRemoveObsoleteCredentialSettings(t *testing.T) {
 			removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
 		})
 	})
+}
 
-	t.Run("no stored settings at all", func(t *testing.T) {
-		mockAPI := &plugintest.API{}
-		defer mockAPI.AssertExpectations(t)
+// TestRemoveObsoleteCredentialSettingsLeavesStoredSettingsAlone asserts that the
+// cleanup writes nothing at all when the stored plugin settings hold none of the
+// keys it removes. The write replaces the plugin's whole settings map, so
+// writing on a configuration that has nothing to remove would be enough to
+// replace the stored settings with an empty map.
+func TestRemoveObsoleteCredentialSettingsLeavesStoredSettingsAlone(t *testing.T) {
+	const pluginID = "mattermost-ai"
+
+	serverConfigWithPlugins := func(plugins map[string]map[string]any) *model.Config {
 		serverCfg := &model.Config{}
 		serverCfg.SetDefaults()
-		serverCfg.PluginSettings.Plugins = map[string]map[string]any{}
-		mockAPI.On("GetUnsanitizedConfig").Return(serverCfg)
+		serverCfg.PluginSettings.Plugins = plugins
+		return serverCfg
+	}
 
-		removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+	testCases := []struct {
+		name         string
+		serverConfig *model.Config
+	}{
+		{
+			name:         "no configuration to read",
+			serverConfig: nil,
+		},
+		{
+			name:         "no plugin settings map",
+			serverConfig: serverConfigWithPlugins(nil),
+		},
+		{
+			name:         "no settings stored for this plugin",
+			serverConfig: serverConfigWithPlugins(map[string]map[string]any{}),
+		},
+		{
+			name:         "an entry for this plugin holding nothing",
+			serverConfig: serverConfigWithPlugins(map[string]map[string]any{pluginID: nil}),
+		},
+		{
+			name:         "an entry for this plugin holding an empty map",
+			serverConfig: serverConfigWithPlugins(map[string]map[string]any{pluginID: {}}),
+		},
+		{
+			name: "only settings that stay are stored",
+			serverConfig: serverConfigWithPlugins(map[string]map[string]any{pluginID: {
+				"config":          map[string]any{"defaultBotName": "agent"},
+				"AskSageUsername": "asksage-user",
+			}}),
+		},
+		{
+			name: "settings stored for another plugin only",
+			serverConfig: serverConfigWithPlugins(map[string]map[string]any{"com.example.other": {
+				"openaiapikey": "sentinel-other-plugin-key",
+			}}),
+		},
+	}
 
-		mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
-	})
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			defer mockAPI.AssertExpectations(t)
+			mockAPI.On("GetUnsanitizedConfig").Return(testCase.serverConfig)
+			// Permitted, not expected: a write is recorded so the assertion
+			// below reports it rather than the mock failing on an unknown call.
+			mockAPI.On("SavePluginConfig", mock.Anything).Return(nil).Maybe()
+			mockAPI.On("LogInfo", mock.Anything).Maybe()
+
+			assert.NotPanics(t, func() {
+				removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+			})
+
+			mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
+		})
+	}
+}
+
+// TestRemoveObsoleteCredentialSettingsWritesStoredValues asserts that what the
+// cleanup writes back is the stored plugin settings: the value under the setting
+// the plugin reads is written back as it was stored, and the placeholder that a
+// read of the sanitized configuration returns for a setting the manifest marks
+// secret is never written to the stored configuration.
+func TestRemoveObsoleteCredentialSettingsWritesStoredValues(t *testing.T) {
+	const pluginID = "mattermost-ai"
+
+	storedConfigValue := map[string]any{
+		"defaultBotName": "agent",
+		"services": []any{
+			map[string]any{"id": "service-openai", "apiKey": "sentinel-stored-service-api-key"},
+		},
+	}
+
+	serverConfigWithStoredSettings := func(stored map[string]any) *model.Config {
+		serverCfg := &model.Config{}
+		serverCfg.SetDefaults()
+		serverCfg.PluginSettings.Plugins = map[string]map[string]any{pluginID: stored}
+		return serverCfg
+	}
+
+	sanitizedSettings := map[string]any{
+		"config":       model.FakeSetting,
+		"openaiapikey": "sentinel-stored-console-key",
+	}
+
+	mockAPI := &plugintest.API{}
+	defer mockAPI.AssertExpectations(t)
+	mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+		"config":       storedConfigValue,
+		"openaiapikey": "sentinel-stored-console-key",
+	}))
+	// The sanitized reads are made available as well, so a cleanup that took its
+	// values from one of them is caught by the assertions below rather than by a
+	// call the mock has no answer for.
+	mockAPI.On("GetConfig").Return(serverConfigWithStoredSettings(sanitizedSettings)).Maybe()
+	mockAPI.On("GetPluginConfig").Return(sanitizedSettings).Maybe()
+	mockAPI.On("LogInfo", mock.Anything).Maybe()
+
+	var saved map[string]any
+	mockAPI.On("SavePluginConfig", mock.Anything).Run(func(args mock.Arguments) {
+		saved = args.Get(0).(map[string]any)
+	}).Return(nil).Once()
+
+	removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+
+	require.NotNil(t, saved)
+	assert.Equal(t, storedConfigValue, saved["config"],
+		"the setting the plugin reads is written back with the value it was stored with")
+	for key, value := range saved {
+		assert.NotEqual(t, model.FakeSetting, value,
+			"the value written back under %q is the stored one", key)
+	}
+}
+
+// TestObsoleteCredentialSettingKeysAreNoLongerDeclared asserts that no key the
+// cleanup removes is a setting the shipped manifest still declares. A key listed
+// in both places would be dropped from the stored configuration on every
+// activation while the System Console was still writing to it.
+func TestObsoleteCredentialSettingKeysAreNoLongerDeclared(t *testing.T) {
+	pluginManifest := readPluginManifest(t)
+	require.NotNil(t, pluginManifest.SettingsSchema)
+
+	var declaredKeys []string
+	for _, setting := range pluginManifest.SettingsSchema.Settings {
+		declaredKeys = append(declaredKeys, setting.Key)
+	}
+	for _, section := range pluginManifest.SettingsSchema.Sections {
+		for _, setting := range section.Settings {
+			declaredKeys = append(declaredKeys, setting.Key)
+		}
+	}
+	require.NotEmpty(t, declaredKeys, "the manifest must declare the settings the plugin reads")
+
+	for _, declaredKey := range declaredKeys {
+		cleaned, changed := withoutObsoleteCredentialSettings(map[string]any{
+			declaredKey: "sentinel-declared-setting-value",
+		})
+
+		assert.False(t, changed, "the manifest declares %q, so the plugin still reads it", declaredKey)
+		assert.Contains(t, cleaned, declaredKey)
+	}
 }
 
 // TestManifestCustomSettingsAreMarkedSecret asserts that every custom-typed
