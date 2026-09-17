@@ -25,7 +25,8 @@
     "settings": [
       {
         "key": "Config",
-        "type": "custom"
+        "type": "custom",
+        "secret": true
       }
     ]
   }
