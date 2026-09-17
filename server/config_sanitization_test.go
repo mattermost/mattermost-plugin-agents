@@ -5,11 +5,14 @@ package main
 
 import (
 	"encoding/json"
+	"maps"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
@@ -17,6 +20,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // pluginManifestPath is the shipped manifest, read from disk so these tests pin
@@ -207,6 +212,250 @@ func TestPluginConfigSanitization(t *testing.T) {
 			assert.False(t, strings.Contains(string(after), sentinel.value),
 				"value at %s must not survive configuration sanitization", sentinel.jsonPath)
 		})
+	}
+}
+
+// historicalCredentialSettingKeys lists the credential-bearing setting keys that
+// the shipped manifest declared in earlier releases (v0.1.0 through v0.3.2). The
+// server keeps a stored plugin setting under its original key even after a later
+// manifest stops declaring that key, so an installation configured while one of
+// those releases was active still holds a value under each of them.
+func historicalCredentialSettingKeys() []string {
+	return []string{
+		"OpenAIAPIKey",
+		"OpenAICompatibleKey",
+		"AnthropicAPIKey",
+		"AskSagePassword",
+		"MattermostAISecret",
+	}
+}
+
+// historicalPlainSettingKeys lists setting keys those same earlier releases
+// declared that carry no credential, with a representative stored value for
+// each. An operator can still read them out of config.json, so they stay.
+func historicalPlainSettingKeys() map[string]any {
+	return map[string]any{
+		"OpenAIDefaultModel": "gpt-4",
+		"llmgenerator":       "openai",
+		"AllowedTeamIDs":     "team-1,team-2",
+		"AskSageUsername":    "asksage-user",
+		"MattermostAIUrl":    "https://ai.example.com",
+		"EnableLLMTrace":     true,
+	}
+}
+
+// settingKeyCasings returns the casings a stored setting key can carry: the one
+// the manifest declared, the lowercased one the System Console writes, and an
+// arbitrary one a hand-edited config.json can hold.
+func settingKeyCasings() map[string]func(string) string {
+	return map[string]func(string) string{
+		"manifest":  func(key string) string { return key },
+		"console":   strings.ToLower,
+		"hand-held": strings.ToUpper,
+	}
+}
+
+// TestStoredPluginSettingSanitization asserts that a value stored under a setting
+// key the plugin no longer reads does not reach the sanitized server
+// configuration, whatever casing it is stored under, while the setting the plugin
+// does read and the remaining stored keys are left as they were.
+func TestStoredPluginSettingSanitization(t *testing.T) {
+	casings := settingKeyCasings()
+
+	testCases := []struct {
+		name          string
+		casings       []string
+		expectChanged bool
+	}{
+		{
+			name:          "stored in the casing the manifest declared",
+			casings:       []string{"manifest"},
+			expectChanged: true,
+		},
+		{
+			name:          "stored in the casing the System Console writes",
+			casings:       []string{"console"},
+			expectChanged: true,
+		},
+		{
+			name:          "the same key stored under several casings at once",
+			casings:       []string{"manifest", "console", "hand-held"},
+			expectChanged: true,
+		},
+		{
+			name:          "no such key stored",
+			casings:       nil,
+			expectChanged: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			pluginManifest := readPluginManifest(t)
+			serverCfg := serverConfigWithPluginConfig(t, pluginManifest.Id, credentialSentinelConfig())
+
+			stored := serverCfg.PluginSettings.Plugins[pluginManifest.Id]
+			plainSettings := historicalPlainSettingKeys()
+			maps.Copy(stored, plainSettings)
+
+			var sentinels []string
+			for _, key := range historicalCredentialSettingKeys() {
+				for _, casing := range testCase.casings {
+					storedKey := casings[casing](key)
+					sentinel := "sentinel-stored-" + storedKey
+					stored[storedKey] = sentinel
+					sentinels = append(sentinels, sentinel)
+				}
+			}
+
+			before, err := json.Marshal(serverCfg.PluginSettings)
+			require.NoError(t, err)
+			for _, sentinel := range sentinels {
+				require.Contains(t, string(before), sentinel,
+					"fixture must store the sentinel in the plugin settings")
+			}
+
+			cleaned, changed := withoutObsoleteCredentialSettings(stored)
+			assert.Equal(t, testCase.expectChanged, changed,
+				"the cleanup reports whether the stored plugin settings need to be written back")
+			if !testCase.expectChanged {
+				assert.Equal(t, stored, cleaned,
+					"with nothing to remove the stored plugin settings are returned unchanged")
+			}
+
+			require.Contains(t, cleaned, "config", "the setting the plugin reads is kept")
+			for key, value := range plainSettings {
+				assert.Equal(t, value, cleaned[key], "the value stored under %q is kept as it was", key)
+			}
+			untouched, err := json.Marshal(serverCfg.PluginSettings)
+			require.NoError(t, err)
+			assert.Equal(t, string(before), string(untouched),
+				"the cleanup works on a copy and leaves the settings it was given alone")
+
+			serverCfg.PluginSettings.Plugins[pluginManifest.Id] = cleaned
+			serverCfg.Sanitize([]*model.Manifest{pluginManifest}, nil)
+
+			after, err := json.Marshal(serverCfg.PluginSettings)
+			require.NoError(t, err)
+
+			for _, sentinel := range sentinels {
+				assert.NotContains(t, string(after), sentinel,
+					"a value stored under a setting key the plugin no longer reads must not reach the sanitized configuration")
+			}
+			for _, sentinel := range credentialSentinels() {
+				assert.NotContains(t, string(after), sentinel.value,
+					"value at %s must not survive configuration sanitization", sentinel.jsonPath)
+			}
+			assert.Equal(t, model.FakeSetting, serverCfg.PluginSettings.Plugins[pluginManifest.Id]["config"],
+				"the setting the plugin reads is still listed, redacted")
+		})
+	}
+}
+
+// TestRemoveObsoleteCredentialSettings asserts how the cleanup drives the plugin
+// API: it reads the unsanitized configuration, writes back only when a stored key
+// actually has to go, and treats a failed write as non-fatal.
+func TestRemoveObsoleteCredentialSettings(t *testing.T) {
+	const pluginID = "mattermost-ai"
+
+	serverConfigWithStoredSettings := func(stored map[string]any) *model.Config {
+		serverCfg := &model.Config{}
+		serverCfg.SetDefaults()
+		serverCfg.PluginSettings.Plugins = map[string]map[string]any{pluginID: stored}
+		return serverCfg
+	}
+
+	t.Run("writes the remaining settings back when a stored key has to go", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		defer mockAPI.AssertExpectations(t)
+		mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+			"config":          map[string]any{"defaultBotName": "agent"},
+			"openaiapikey":    "sentinel-stored-console-key",
+			"AnthropicAPIKey": "sentinel-stored-manifest-key",
+			"AskSageUsername": "asksage-user",
+		}))
+		mockAPI.On("LogInfo", mock.Anything).Once()
+
+		var saved map[string]any
+		mockAPI.On("SavePluginConfig", mock.Anything).Run(func(args mock.Arguments) {
+			saved = args.Get(0).(map[string]any)
+		}).Return(nil).Once()
+
+		removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+
+		require.NotNil(t, saved)
+		assert.Equal(t, map[string]any{
+			"config":          map[string]any{"defaultBotName": "agent"},
+			"AskSageUsername": "asksage-user",
+		}, saved)
+	})
+
+	t.Run("does not write when no such key is stored", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		defer mockAPI.AssertExpectations(t)
+		mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+			"config":          map[string]any{"defaultBotName": "agent"},
+			"AskSageUsername": "asksage-user",
+		}))
+
+		removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+
+		mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
+	})
+
+	t.Run("a configuration that cannot be written does not stop activation", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		defer mockAPI.AssertExpectations(t)
+		mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+			"config":       map[string]any{"defaultBotName": "agent"},
+			"openaiapikey": "sentinel-stored-console-key",
+		}))
+		mockAPI.On("SavePluginConfig", mock.Anything).Return(
+			model.NewAppError("SaveConfig", "ent.cluster.save_config.error", nil, "", http.StatusForbidden)).Once()
+		mockAPI.On("LogWarn", mock.Anything, "error", mock.Anything).Once()
+
+		assert.NotPanics(t, func() {
+			removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+		})
+	})
+
+	t.Run("no stored settings at all", func(t *testing.T) {
+		mockAPI := &plugintest.API{}
+		defer mockAPI.AssertExpectations(t)
+		serverCfg := &model.Config{}
+		serverCfg.SetDefaults()
+		serverCfg.PluginSettings.Plugins = map[string]map[string]any{}
+		mockAPI.On("GetUnsanitizedConfig").Return(serverCfg)
+
+		removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+
+		mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
+	})
+}
+
+// TestManifestCustomSettingsAreMarkedSecret asserts that every custom-typed
+// setting in the shipped manifest is marked secret. A custom setting is rendered
+// by a component this plugin ships, so the manifest cannot describe what the
+// stored value holds and sanitization has to assume it holds a credential.
+func TestManifestCustomSettingsAreMarkedSecret(t *testing.T) {
+	pluginManifest := readPluginManifest(t)
+	require.NotNil(t, pluginManifest.SettingsSchema)
+
+	assertCustomSettingsAreSecret := func(t *testing.T, location string, settings []*model.PluginSetting) {
+		t.Helper()
+
+		for _, setting := range settings {
+			if setting.Type != "custom" {
+				continue
+			}
+			assert.True(t, setting.Secret,
+				"%s setting %q holds a value only this plugin can interpret", location, setting.Key)
+		}
+	}
+
+	assertCustomSettingsAreSecret(t, "top-level", pluginManifest.SettingsSchema.Settings)
+	for _, section := range pluginManifest.SettingsSchema.Sections {
+		assertCustomSettingsAreSecret(t, "section "+section.Key, section.Settings)
 	}
 }
 
