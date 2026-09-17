@@ -92,9 +92,11 @@ func supportsProviderFileDownloadProvider(provider schemas.ModelProvider) bool {
 // vector-store configuration surface yet, so sending the bare tool would 400
 // every completion.
 //
-// Only the primary provider needs gating here; Bifrost strips unsupported
-// native tools per attempted fallback provider (pinned by
-// TestAnthropicOnlyWebFetchDroppedForOpenAI).
+// Bifrost strips unsupported native tools per Bifrost provider, not per
+// plugin service type. Service types that share a Bifrost provider but
+// lack its tools (North, registered as OpenAI) must therefore be rejected
+// as fallbacks in NewFromServiceConfig; per-hop stripping would otherwise
+// treat them as OpenAI and forward web_search/code_interpreter.
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
 	case llm.ServiceTypeAnthropic:
@@ -154,9 +156,6 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		InputTokenLimit:  serviceConfig.InputTokenLimit,
 		OutputTokenLimit: serviceConfig.OutputTokenLimit,
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
-		// North persists responses into the token owner's account unless store
-		// is explicitly disabled on every Responses request.
-		DisableResponseStorage: serviceConfig.Type == llm.ServiceTypeNorth,
 
 		// Bot-specific configuration
 		EnabledNativeTools: filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools),
@@ -166,6 +165,14 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	}
 
 	for _, fbSvc := range fallbackServices {
+		if fbSvc.Type == llm.ServiceTypeNorth {
+			if !llm.ServiceUsesResponsesAPI(serviceConfig) {
+				return nil, fmt.Errorf("fallback service %q (Cohere North) requires a primary service that uses the Responses API; %q (%s) does not", fbSvc.ID, serviceConfig.ID, serviceConfig.Type)
+			}
+			if len(cfg.EnabledNativeTools) > 0 {
+				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			}
+		}
 		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
 		if fbErr != nil {
 			// Fail bot setup rather than silently dropping the fallback: an
@@ -195,6 +202,7 @@ func providerSettingsFromService(provider schemas.ModelProvider, svc llm.Service
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 		DefaultModel:          svc.DefaultModel,
 		StreamingTimeout:      time.Duration(svc.StreamingTimeoutSeconds) * time.Second,
+		DisableStore:          svc.Type == llm.ServiceTypeNorth,
 	}
 }
 

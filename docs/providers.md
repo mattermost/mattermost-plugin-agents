@@ -153,6 +153,8 @@ Not supported:
 
 Requests are sent with `store: false`, so agent conversations are not persisted in the token owner's North conversation history.
 
+North can only be used as a fallback for a primary service that uses the Responses API and has no provider-native tools enabled; otherwise the agent fails to start with a configuration error.
+
 North applies its own system context on top of the agent's instructions, and its usage accounting includes that overhead.
 
 ## Mistral

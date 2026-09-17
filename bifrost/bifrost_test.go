@@ -2238,6 +2238,68 @@ func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
 }
 
+func TestNewFromServiceConfig_NorthFallbackDisablesStore(t *testing.T) {
+	var cloudHits, northHits atomic.Int32
+	var northPath atomic.Value
+	var northBody []byte
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	northServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		northHits.Add(1)
+		northPath.Store(r.URL.Path)
+		northBody, _ = io.ReadAll(r.Body)
+		if !strings.HasSuffix(r.URL.Path, "/v1/responses") {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		responsesSSE(w, "from-north")
+	}))
+	defer northServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "north-fallback",
+	}
+	northSvc := llm.ServiceConfig{
+		ID:           "north-fallback",
+		Type:         llm.ServiceTypeNorth,
+		APIKey:       "north-key",
+		APIURL:       northServer.URL,
+		DefaultModel: "command-a",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{northSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "failover to the North fallback should succeed")
+	assert.Equal(t, "from-north", result)
+	assert.Positive(t, cloudHits.Load(), "openai primary should have been attempted before falling back")
+	assert.Positive(t, northHits.Load(), "north fallback should have received the request")
+	require.Equal(t, "/api/v1/responses", northPath.Load(), "north fallback must be called on /v1/responses")
+
+	require.NotEmpty(t, northBody, "the outbound North /v1/responses body must be captured")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(northBody, &payload))
+	store, hasStore := payload["store"]
+	require.True(t, hasStore, "north fallback must send a store field")
+	assert.Equal(t, false, store)
+}
+
 func TestNorthResponsesRequestDisablesStorage(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -2685,6 +2747,7 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			assert.Equal(t, tt.expectedModel, entry.DefaultModel)
 			assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
 			assert.Equal(t, tt.expectedChatOnly, entry.ChatOnly)
+			assert.Equal(t, tt.svc.Type == llm.ServiceTypeNorth, entry.DisableStore)
 		})
 	}
 }

@@ -301,28 +301,156 @@ func TestNormalizeNorthBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewFromServiceConfigDisableResponseStorage(t *testing.T) {
+func TestProviderSettingsDisableStore(t *testing.T) {
 	tests := []struct {
 		name        string
 		serviceType string
 		want        bool
 	}{
-		{"north disables storage", llm.ServiceTypeNorth, true},
-		{"openai leaves storage enabled", llm.ServiceTypeOpenAI, false},
-		{"openai compatible leaves storage enabled", llm.ServiceTypeOpenAICompatible, false},
+		{"north disables store", llm.ServiceTypeNorth, true},
+		{"openai leaves store enabled", llm.ServiceTypeOpenAI, false},
+		{"openai compatible leaves store enabled", llm.ServiceTypeOpenAICompatible, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			service := llm.ServiceConfig{
+			svc := llm.ServiceConfig{
 				ID:     "test",
 				Type:   tt.serviceType,
 				APIKey: "key",
 				APIURL: "http://localhost",
 			}
-			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{}, nil)
+			provider, err := MapServiceTypeToProvider(svc.Type)
+			require.NoError(t, err)
+			settings := providerSettingsFromService(provider, svc)
+			assert.Equal(t, tt.want, settings.DisableStore)
+
+			acc := &providerAccount{ProviderSettings: settings}
+			cfg, err := acc.GetConfigForProvider(acc.registeredName())
+			require.NoError(t, err)
+			if tt.want {
+				require.NotNil(t, cfg.OpenAIConfig)
+				assert.True(t, cfg.OpenAIConfig.DisableStore)
+			} else {
+				assert.Nil(t, cfg.OpenAIConfig)
+			}
+		})
+	}
+}
+
+func TestNewFromServiceConfigNorthFallbackCompatibility(t *testing.T) {
+	northFallback := llm.ServiceConfig{
+		ID:           "svc-north",
+		Type:         llm.ServiceTypeNorth,
+		APIKey:       "north-key",
+		APIURL:       "http://localhost",
+		DefaultModel: "command-a",
+	}
+	openaiFallback := llm.ServiceConfig{
+		ID:           "svc-openai",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "openai-key",
+		DefaultModel: "gpt-4o",
+	}
+
+	tests := []struct {
+		name          string
+		primary       llm.ServiceConfig
+		fallback      llm.ServiceConfig
+		bot           llm.BotConfig
+		wantErrSubstr string
+	}{
+		{
+			name: "chat-path primary rejects north fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-anthropic",
+				Type:         llm.ServiceTypeAnthropic,
+				APIKey:       "anthropic-key",
+				DefaultModel: "claude-sonnet-4-20250514",
+			},
+			fallback:      northFallback,
+			bot:           llm.BotConfig{ID: "bot-1", ServiceID: "svc-anthropic"},
+			wantErrSubstr: "requires a primary service that uses the Responses API",
+		},
+		{
+			name: "openaicompatible chat path rejects north fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-compat",
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIKey:       "compat-key",
+				APIURL:       "http://localhost",
+				DefaultModel: "llama3",
+			},
+			fallback:      northFallback,
+			bot:           llm.BotConfig{ID: "bot-1", ServiceID: "svc-compat"},
+			wantErrSubstr: "requires a primary service that uses the Responses API",
+		},
+		{
+			name: "openai responses primary with north fallback is ok",
+			primary: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+			fallback: northFallback,
+			bot:      llm.BotConfig{ID: "bot-1", ServiceID: "svc-openai"},
+		},
+		{
+			name: "openai primary with native tools rejects north fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+			fallback: northFallback,
+			bot: llm.BotConfig{
+				ID:                 "bot-1",
+				ServiceID:          "svc-openai",
+				EnabledNativeTools: []string{llm.NativeToolWebSearch},
+			},
+			wantErrSubstr: "does not support provider-native tools",
+		},
+		{
+			name: "north primary with openai fallback is ok",
+			primary: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://localhost",
+				DefaultModel: "command-a",
+			},
+			fallback: openaiFallback,
+			bot:      llm.BotConfig{ID: "bot-1", ServiceID: "svc-north"},
+		},
+		{
+			name: "openaicompatible with responses api accepts north fallback",
+			primary: llm.ServiceConfig{
+				ID:              "svc-compat",
+				Type:            llm.ServiceTypeOpenAICompatible,
+				APIKey:          "compat-key",
+				APIURL:          "http://localhost",
+				DefaultModel:    "gpt-oss",
+				UseResponsesAPI: true,
+			},
+			fallback: northFallback,
+			bot:      llm.BotConfig{ID: "bot-1", ServiceID: "svc-compat"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmInstance, err := NewFromServiceConfig(tt.primary, tt.bot, []llm.ServiceConfig{tt.fallback})
+			if tt.wantErrSubstr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrSubstr)
+				assert.Contains(t, err.Error(), tt.fallback.ID)
+				return
+			}
 			require.NoError(t, err)
 			defer llmInstance.Shutdown()
-			assert.Equal(t, tt.want, llmInstance.disableResponseStorage)
+			require.Len(t, llmInstance.fallbacks, 1)
+			assert.Equal(t, tt.fallback.ID, llmInstance.fallbacks[0].serviceID)
 		})
 	}
 }
