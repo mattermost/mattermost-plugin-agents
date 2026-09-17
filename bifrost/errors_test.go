@@ -156,7 +156,7 @@ func TestBifrostErrorString(t *testing.T) {
 			expected: "empty bifrost error (status=502)",
 		},
 		{
-			name: "raw body without a recognised message is never placed in the returned string",
+			name: "raw body without a recognized message is never placed in the returned string",
 			input: &schemas.BifrostError{
 				Type:  strPtr("error"),
 				Error: &schemas.ErrorField{},
@@ -224,7 +224,7 @@ func TestProviderErrorLogsRawBodySeparately(t *testing.T) {
 		wantBodyAbsent   []string
 	}{
 		{
-			name: "unrecognised body goes to the log, not the error",
+			name: "unrecognized body goes to the log, not the error",
 			input: &schemas.BifrostError{
 				Type:  schemas.Ptr("error"),
 				Error: &schemas.ErrorField{},
