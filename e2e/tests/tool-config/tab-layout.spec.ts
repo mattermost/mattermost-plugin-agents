@@ -9,8 +9,8 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
 /**
  * Test Suite: Tab Layout Verification (4.7)
  *
- * Verifies that the system console plugin page shows exactly 2 tabs:
- * "Configuration" and "Tools". No "Approved Servers" tab should exist.
+ * Verifies the Agents console shows Services / MCPs / Settings, and that
+ * the MCPs tab contains Configuration and Tools. No "Approved Servers" tab.
  */
 
 let mattermost: MattermostContainer;
@@ -27,7 +27,7 @@ test.describe('Tab Layout', () => {
         await mattermost.stop();
     });
 
-    test('should show exactly 2 tabs: Configuration and Tools', async ({ page }) => {
+    test('should show Services, MCPs, and Settings tabs', async ({ page }) => {
         test.setTimeout(60000);
 
         const mmPage = new MattermostPage(page);
@@ -36,22 +36,18 @@ test.describe('Tab Layout', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await toolConfig.navigateToPluginConfig(mattermost.url());
 
-        // Get all tab buttons
         const tabs = toolConfig.getTabButtons();
+        await expect(tabs).toHaveCount(3);
 
-        // Verify exactly 2 tabs exist
-        await expect(tabs).toHaveCount(2);
+        await expect(toolConfig.getTab('Services')).toBeVisible();
+        await expect(toolConfig.getTab('MCPs')).toBeVisible();
+        await expect(toolConfig.getTab('Settings')).toBeVisible();
 
-        // Verify tab names
-        await expect(toolConfig.getTab('Configuration')).toBeVisible();
-        await expect(toolConfig.getTab('Tools')).toBeVisible();
-
-        // Verify NO "Approved Servers" tab exists
         const approvedServersTab = page.getByRole('button', { name: 'Approved Servers', exact: true });
         await expect(approvedServersTab).not.toBeVisible();
     });
 
-    test('should switch between tabs', async ({ page }) => {
+    test('should switch between console and MCP tabs', async ({ page }) => {
         test.setTimeout(60000);
 
         const mmPage = new MattermostPage(page);
@@ -60,15 +56,20 @@ test.describe('Tab Layout', () => {
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
         await toolConfig.navigateToPluginConfig(mattermost.url());
 
-        // Verify Configuration tab content is visible by default
-        await expect(page.getByText('Enable Mattermost MCP Server (HTTP)')).toBeVisible();
+        await expect(page.getByText('AI Services').first()).toBeVisible();
 
-        // Click Tools tab
+        await toolConfig.getTab('MCPs').click();
+        await expect(page.getByText('Enable Mattermost MCP Server (HTTP)')).toBeVisible();
+        await expect(toolConfig.getTab('Configuration')).toBeVisible();
+        await expect(toolConfig.getTab('Tools')).toBeVisible();
+
         await toolConfig.getTab('Tools').click();
         await expect(page.getByText('MCP Tools Configuration')).toBeVisible();
 
-        // Click back to Configuration tab
         await toolConfig.getTab('Configuration').click();
         await expect(page.getByText('Enable Mattermost MCP Server (HTTP)')).toBeVisible();
+
+        await toolConfig.getTab('Settings').click();
+        await expect(page.getByText('AI Functions').first()).toBeVisible();
     });
 });

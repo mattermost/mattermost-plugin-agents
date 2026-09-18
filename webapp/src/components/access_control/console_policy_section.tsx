@@ -4,7 +4,7 @@
 import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
 import {PolicyResourceType} from '@/types/access_control';
 import {isValidMattermostId, useABACSupport} from '@/utils/access_control';
@@ -71,10 +71,10 @@ const ConsolePolicySection = (props: Props) => {
                     }
                 }}
             >
-                {expanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
                 <SectionTitle>
                     <FormattedMessage defaultMessage='Access policy'/>
                 </SectionTitle>
+                {expanded ? <ChevronUpIcon size={16}/> : <ChevronDownIcon size={16}/>}
             </SectionHeader>
             {(expanded || hasOpened) && (
                 <SectionContent
@@ -107,30 +107,48 @@ function collapsedInert(expanded: boolean): {inert?: ''} {
 // --- Styled Components ---
 
 const SectionContainer = styled.div<{$collapsed: boolean}>`
-    margin-top: 16px;
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    padding-top: 12px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    border-radius: 4px;
+    overflow: hidden;
+    text-align: left;
     ${({$collapsed}) => $collapsed && `
         position: relative;
-        overflow: hidden;
     `}
 `;
 
 const SectionHeader = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 14px;
     cursor: pointer;
     user-select: none;
+    background-color: rgba(var(--center-channel-color-rgb), 0.02);
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+
+    &:hover {
+        background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    }
 `;
 
 const SectionTitle = styled.div`
-    font-size: 14px;
     font-weight: 600;
+    font-size: 13px;
+    line-height: 20px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
 const SectionContent = styled.div<{$collapsed: boolean; inert?: ''}>`
-    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+    text-align: left;
     ${({$collapsed}) => $collapsed && `
         visibility: hidden;
         position: absolute;
@@ -145,6 +163,7 @@ const SectionContent = styled.div<{$collapsed: boolean; inert?: ''}>`
 const LegacyIDNote = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
+    text-align: left;
 `;
 
 export default ConsolePolicySection;

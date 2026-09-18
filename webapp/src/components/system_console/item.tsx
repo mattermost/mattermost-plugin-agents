@@ -609,6 +609,24 @@ const CheckboxControlLabel = styled.label`
 	line-height: 20px;
 `;
 
+export const RadioOptionLabel = styled.label`
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 400;
+	line-height: 20px;
+	margin: 0;
+`;
+
+export const RadioOptionGroup = styled.div`
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 20px;
+`;
+
 const CheckboxControlText = styled.span`
 	position: relative;
 	top: 1px;
@@ -652,24 +670,28 @@ export const BooleanItem = (props: BooleanItemProps) => {
         <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
-                <FieldControlRow>
-                    <StyledRadio
-                        type='radio'
-                        value='true'
-                        checked={props.value}
-                        disabled={props.disabled}
-                        onChange={() => props.onChange(true)}
-                    />
-                    <FormattedMessage defaultMessage='true'/>
-                    <StyledRadio
-                        type='radio'
-                        value='false'
-                        checked={!props.value}
-                        disabled={props.disabled}
-                        onChange={() => props.onChange(false)}
-                    />
-                    <FormattedMessage defaultMessage='false'/>
-                </FieldControlRow>
+                <RadioOptionGroup>
+                    <RadioOptionLabel>
+                        <StyledRadio
+                            type='radio'
+                            value='true'
+                            checked={props.value}
+                            disabled={props.disabled}
+                            onChange={() => props.onChange(true)}
+                        />
+                        <FormattedMessage defaultMessage='true'/>
+                    </RadioOptionLabel>
+                    <RadioOptionLabel>
+                        <StyledRadio
+                            type='radio'
+                            value='false'
+                            checked={!props.value}
+                            disabled={props.disabled}
+                            onChange={() => props.onChange(false)}
+                        />
+                        <FormattedMessage defaultMessage='false'/>
+                    </RadioOptionLabel>
+                </RadioOptionGroup>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>
                 }
