@@ -8,7 +8,7 @@ import {FormattedMessage} from 'react-intl';
 import {useSelectPost} from '@/hooks';
 
 import {getChannelInterval} from '@/client';
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlistForChannel} from '@/bots';
 
@@ -83,7 +83,7 @@ interface Props {
 
 const UnreadsSumarize = (props: Props) => {
     const selectPost = useSelectPost();
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.channelId);
 
     const summarizeNew = async () => {
@@ -101,7 +101,7 @@ const UnreadsSumarize = (props: Props) => {
         selectPost(result.postid, result.channelid);
     };
 
-    if (!isBasicsLicensed) {
+    if (!channelSummarizationLicensed) {
         return null;
     }
 

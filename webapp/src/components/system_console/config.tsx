@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
+import {useIsLicensedFor} from '@/license';
 
 import {Pill} from '../pill';
 
@@ -13,6 +14,7 @@ import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
@@ -193,6 +195,12 @@ const Config = (props: Props) => {
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
     const intl = useIntl();
+    const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
+    const tokenAccountingChip = useLicenseChipProps('token_accounting');
+    const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const providerWebSearchChip = useLicenseChipProps('provider_web_search');
+    const meetingsLicensed = useIsLicensedFor('meetings');
+    const meetingsChip = useLicenseChipProps('meetings');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -372,11 +380,73 @@ const Config = (props: Props) => {
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}
                         value={Boolean(value.allowNativeWebSearchInChannels)}
+                        disableTrue={!providerWebSearchLicensed}
+                        extra={!providerWebSearchLicensed && (
+                            <EnterpriseChip
+                                title={providerWebSearchChip.title}
+                                text={providerWebSearchChip.text}
+                                subtext={providerWebSearchChip.subtext}
+                            />
+                        )}
                         onChange={(to) => {
+                            if (to && !providerWebSearchLicensed) {
+                                return;
+                            }
                             updateConfig({allowNativeWebSearchInChannels: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Enable call summaries'/>}
+                        value={Boolean(value.enableCallSummary)}
+                        disableTrue={!meetingsLicensed}
+                        extra={!meetingsLicensed && (
+                            <EnterpriseChip
+                                title={meetingsChip.title}
+                                text={meetingsChip.text}
+                                subtext={meetingsChip.subtext}
+                            />
+                        )}
+                        onChange={(to) => {
+                            if (to && !meetingsLicensed) {
+                                return;
+                            }
+                            updateConfig({enableCallSummary: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, call recordings can be transcribed and summarized by Agents.'})}
+                    />
+                    <SelectionItem
+                        label={intl.formatMessage({defaultMessage: 'Call transcript generator'})}
+                        value={value.transcriptBackend}
+                        disabled={!meetingsLicensed && !value.transcriptBackend}
+                        extra={!meetingsLicensed && (
+                            <EnterpriseChip
+                                title={meetingsChip.title}
+                                text={meetingsChip.text}
+                                subtext={meetingsChip.subtext}
+                            />
+                        )}
+                        onChange={(e) => {
+                            if (e.target.value && !meetingsLicensed) {
+                                return;
+                            }
+                            updateConfig({transcriptBackend: e.target.value});
+                        }}
+                        helptext={intl.formatMessage({defaultMessage: 'Agent used to generate transcripts from call recordings.'})}
+                    >
+                        <SelectionItemOption value=''>
+                            {intl.formatMessage({defaultMessage: 'None'})}
+                        </SelectionItemOption>
+                        {runtimeBots.map((bot) => (
+                            <SelectionItemOption
+                                key={bot.username}
+                                value={bot.username}
+                                disabled={!meetingsLicensed}
+                            >
+                                {bot.displayName}
+                            </SelectionItemOption>
+                        ))}
+                    </SelectionItem>
                 </ItemList>
             </Panel>
             <Panel
@@ -406,7 +476,20 @@ const Config = (props: Props) => {
                     <BooleanItem
                         label={intl.formatMessage({defaultMessage: 'Enable Token Usage Logging'})}
                         value={value.enableTokenUsageLogging}
-                        onChange={(to) => updateConfig({enableTokenUsageLogging: to})}
+                        disableTrue={!tokenAccountingLicensed}
+                        extra={!tokenAccountingLicensed && (
+                            <EnterpriseChip
+                                title={tokenAccountingChip.title}
+                                text={tokenAccountingChip.text}
+                                subtext={tokenAccountingChip.subtext}
+                            />
+                        )}
+                        onChange={(to) => {
+                            if (to && !tokenAccountingLicensed) {
+                                return;
+                            }
+                            updateConfig({enableTokenUsageLogging: to});
+                        }}
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
                 </ItemList>

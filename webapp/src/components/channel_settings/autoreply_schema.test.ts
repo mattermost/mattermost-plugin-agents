@@ -27,6 +27,7 @@ import {
 } from './autoreply_schema';
 import {getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
+import AutoReplyModePicker from './autoreply_mode_picker';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
 // in jsdom. Stub it so importing the bots/picker chain doesn't throw.
@@ -332,18 +333,15 @@ describe('makeChannelAutoReplySchema shape', () => {
         expect(schema.sections[0].settings.map((s) => s.name)).toEqual(['mode', 'bot_id']);
     });
 
-    test('radio setting has default off matching one of three non-empty options', () => {
-        const radio = schema.sections[0].settings[0];
-        if (radio.type !== 'radio') {
-            throw new Error('expected the first setting to be the radio');
+    test('custom setting provides the mode picker component', () => {
+        const custom = schema.sections[0].settings[0];
+        if (custom.type !== 'custom') {
+            throw new Error('expected the first setting to be the custom mode picker');
         }
-        expect(radio.default).toBe('off');
-        expect(radio.options.map((o) => o.value)).toEqual(['off', 'root_posts', 'threads']);
-        expect(radio.options.map((o) => o.value)).toContain(radio.default);
-        for (const option of radio.options) {
-            expect(option.value.length).toBeGreaterThan(0);
-            expect(option.text.length).toBeGreaterThan(0);
-        }
+        expect(custom.component).toBe(AutoReplyModePicker);
+        expect(custom).not.toHaveProperty('title');
+        expect(custom).not.toHaveProperty('helpText');
+        expect(custom).not.toHaveProperty('default');
     });
 
     test('custom setting provides the agent picker component and no title/helpText/default', () => {

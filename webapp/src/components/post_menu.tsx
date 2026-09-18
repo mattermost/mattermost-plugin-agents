@@ -12,7 +12,7 @@ import {doReaction, doThreadAnalysis} from '../client';
 
 import {useSelectPost} from '@/hooks';
 
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlistForChannel} from '@/bots';
 
@@ -35,16 +35,12 @@ const PostMenu = (props: Props) => {
     const intl = useIntl();
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.post.channel_id);
     const post = props.post;
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const threadSummarizationLicensed = useIsLicensedFor('thread_summarization');
 
     const analyzeThread = async (postId: string, analysisType: string) => {
         const result = await doThreadAnalysis(postId, analysisType, activeBot?.username || '');
         selectPost(result.postid, result.channelid);
     };
-
-    if (!isBasicsLicensed) {
-        return null;
-    }
 
     if (bots && bots.length === 0) {
         // No bots available (either unconfigured or filtered by permissions)
@@ -65,18 +61,22 @@ const PostMenu = (props: Props) => {
                 setActiveBot={setActiveBot}
             />
             <Divider/>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'summarize_thread')}>
-                <span className='icon'><IconThreadSummarization/></span>
-                <FormattedMessage defaultMessage='Summarize Thread'/>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'action_items')}>
-                <span className='icon'><IconSparkleCheckmarkStyled/></span>
-                <FormattedMessage defaultMessage='Find action items'/>
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => analyzeThread(post.id, 'open_questions')}>
-                <span className='icon'><IconSparkleQuestionStyled/></span>
-                <FormattedMessage defaultMessage='Find open questions'/>
-            </DropdownMenuItem>
+            {threadSummarizationLicensed && (
+                <>
+                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'summarize_thread')}>
+                        <span className='icon'><IconThreadSummarization/></span>
+                        <FormattedMessage defaultMessage='Summarize Thread'/>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'action_items')}>
+                        <span className='icon'><IconSparkleCheckmarkStyled/></span>
+                        <FormattedMessage defaultMessage='Find action items'/>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => analyzeThread(post.id, 'open_questions')}>
+                        <span className='icon'><IconSparkleQuestionStyled/></span>
+                        <FormattedMessage defaultMessage='Find open questions'/>
+                    </DropdownMenuItem>
+                </>
+            )}
             <DropdownMenuItem onClick={() => doReaction(post.id)}>
                 <span className='icon'><IconReactForMe/></span>
                 <FormattedMessage defaultMessage='React for me'/>

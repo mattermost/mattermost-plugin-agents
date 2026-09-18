@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 jest.mock('react-intl', () => {
     const React = require('react'); // eslint-disable-line @typescript-eslint/no-shadow, no-shadow, global-require
@@ -27,12 +27,16 @@ jest.mock('react-intl', () => {
 });
 
 jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
     useIsBasicsLicensed: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
 }));
 
 jest.mock('../enterprise_chip', () => ({
     __esModule: true,
-    default: () => null,
+    default: ({text}: {text?: string}) => <span>{text}</span>,
+    useLicenseChipProps: () => ({title: 'Available on Enterprise plans and above', text: 'Enterprise', subtext: 'Available on Enterprise plans and above', levelName: 'Enterprise'}),
 }));
 
 jest.mock('./use_job_status', () => ({
@@ -323,5 +327,59 @@ describe('EmbeddingSearchPanel rebuild gating', () => {
         );
 
         expect(screen.getByText('Index posts from the last N days')).toBeTruthy();
+    });
+});
+
+describe('EmbeddingSearchPanel license gating', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        mockUseJobStatus.mockReset();
+        mockUseJobStatus.mockReturnValue(idleJobStatus);
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    it('keeps current values visible and disables enabling below Enterprise', () => {
+        useIsLicensedFor.mockReturnValue(false);
+        const onChange = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={enabledConfig('openai')}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByText('Enable Embedding Search')).toBeTruthy();
+        expect(screen.getByText('Enterprise')).toBeTruthy();
+        const trueRadio = screen.getAllByDisplayValue('true')[0] as HTMLInputElement;
+        expect(trueRadio.disabled).toBe(true);
+        const falseRadio = screen.getAllByDisplayValue('false')[0] as HTMLInputElement;
+        expect(falseRadio.disabled).toBe(false);
+        fireEvent.click(falseRadio);
+        expect(onChange).toHaveBeenCalled();
+        expect(onChange.mock.calls[0][0].type).toBe('');
+    });
+
+    it('allows enabling at Enterprise', () => {
+        useIsLicensedFor.mockReturnValue(true);
+        const onChange = jest.fn();
+
+        render(
+            <IntlProvider locale='en'>
+                <EmbeddingSearchPanel
+                    value={{...enabledConfig('openai'), type: ''}}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        const trueRadio = screen.getAllByDisplayValue('true')[0] as HTMLInputElement;
+        expect(trueRadio.disabled).toBe(false);
+        fireEvent.click(trueRadio);
+        expect(onChange).toHaveBeenCalled();
+        expect(onChange.mock.calls[0][0].type).toBe('composite');
     });
 });

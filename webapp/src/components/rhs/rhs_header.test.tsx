@@ -25,6 +25,10 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+}));
+
 jest.mock('react-intl', () => ({
     FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     useIntl: () => ({
