@@ -271,3 +271,35 @@ func (e *LicenseChecker) IsMultiLLMLicensed() bool {
 func (e *LicenseChecker) IsBasicsLicensed() bool {
 	return e.HasLevel(LevelEnterprise)
 }
+
+// AgentLimitError reports that another AI agent is not available at current.
+// Uncapped levels return nil. abortNotLicensed unwraps the nested *LicenseError
+// for license_required while Error names the numeric cap and the level that
+// raises it (Professional raises the cap to 3; Enterprise removes it).
+func AgentLimitError(current Level) error {
+	limit, ok := AgentLimitFor(current)
+	if !ok {
+		return nil
+	}
+	required := LevelProfessional
+	if current >= LevelProfessional {
+		required = LevelEnterprise
+	}
+	return &agentLimitError{
+		lic:   LicenseError{RequiredLevel: required, CurrentLevel: current},
+		Limit: limit,
+	}
+}
+
+type agentLimitError struct {
+	lic   LicenseError
+	Limit int
+}
+
+func (e *agentLimitError) Error() string {
+	return fmt.Sprintf("the current license level allows %d AI agents; more agents require a Mattermost %s license", e.Limit, e.lic.RequiredLevel)
+}
+
+func (e *agentLimitError) Unwrap() error {
+	return &e.lic
+}

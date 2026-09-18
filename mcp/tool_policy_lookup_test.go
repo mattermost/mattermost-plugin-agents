@@ -6,6 +6,8 @@ package mcp
 import (
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -219,6 +221,89 @@ func TestLookupToolPolicy(t *testing.T) {
 		policy, enabled := LookupToolPolicy(Config{}, "bogus://nowhere", "x")
 
 		require.Equal(t, ToolPolicyAsk, policy)
+		require.False(t, enabled)
+	})
+}
+
+func TestLookupEffectiveToolPolicy(t *testing.T) {
+	const remoteURL = "https://remote.example.com/mcp"
+	const pluginOrigin = "plugin://com.example.demo"
+
+	cfg := Config{
+		EmbeddedServer: EmbeddedServerConfig{
+			Enabled: true,
+			ToolConfigs: []ToolConfig{
+				{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+				{Name: "custom_unseeded", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+				{Name: "disabled_tool", Policy: ToolPolicyAutoRunEverywhere, Enabled: false},
+			},
+		},
+		Servers: []ServerConfig{{
+			Name:    "remote",
+			Enabled: true,
+			BaseURL: remoteURL,
+			ToolConfigs: []ToolConfig{
+				{Name: "remote_tool", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+				{Name: "remote_disabled", Policy: ToolPolicyAutoRunEverywhere, Enabled: false},
+			},
+		}},
+		PluginServers: []PluginServerConfig{{
+			PluginID: "com.example.demo",
+			Name:     "Demo Plugin",
+			Enabled:  true,
+			ToolConfigs: []ToolConfig{
+				{Name: "plugin_tool", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+			},
+		}},
+	}
+
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			licensed := level >= enterprise.LevelEnterprise
+
+			policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_file", licensed)
+			require.True(t, enabled)
+			if licensed {
+				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+			} else {
+				require.Equal(t, ToolPolicyAutoRunInDM, policy, "embedded seed policy is used below Enterprise")
+			}
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "custom_unseeded", licensed)
+			require.True(t, enabled)
+			if licensed {
+				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+			} else {
+				require.Equal(t, ToolPolicyAsk, policy, "unseeded embedded tools use ask below Enterprise")
+			}
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", licensed)
+			require.False(t, enabled, "Enabled=false is honoured at every level")
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_tool", licensed)
+			require.True(t, enabled)
+			if licensed {
+				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+			} else {
+				require.Equal(t, ToolPolicyAsk, policy)
+			}
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_disabled", licensed)
+			require.False(t, enabled, "remote Enabled=false is honoured at every level")
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, pluginOrigin, "plugin_tool", licensed)
+			require.True(t, enabled)
+			if licensed {
+				require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
+			} else {
+				require.Equal(t, ToolPolicyAsk, policy)
+			}
+		})
+	}
+
+	t.Run("turning off a tool stays disabled when policies are available", func(t *testing.T) {
+		policy, enabled := LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", true)
+		require.Equal(t, ToolPolicyAutoRunEverywhere, policy)
 		require.False(t, enabled)
 	})
 }

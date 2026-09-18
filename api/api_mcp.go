@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -73,7 +74,7 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("catalog must be empty or %s", mcpToolsCatalogServiceAccount))
 		return mcp.CatalogRequest{}, false
 	}
-	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.IsBasicsLicensed() {
+	if catalog != mcpToolsCatalogServiceAccount || !a.licenseChecker.Allows(enterprise.CapMCPServiceAccount) {
 		return mcp.UserCatalogRequest(userID), true
 	}
 

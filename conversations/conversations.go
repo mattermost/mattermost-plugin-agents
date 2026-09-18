@@ -266,12 +266,22 @@ func (c *Conversations) runToolLoop(
 	writeFailMsg string,
 	writeFailArgs ...any,
 ) (*toolrunner.ToolRunResult, error) {
+	opts = c.withProviderWebSearchLicense(opts)
 	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds))
 	return runner.Run(ctx, req, shouldExecute, func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, sharedForTurns(turns)); writeErr != nil {
 			c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
 		}
 	}, opts...)
+}
+
+// withProviderWebSearchLicense omits the provider-native web search tool below
+// Professional so the request is sent without it. A nil checker fails closed.
+func (c *Conversations) withProviderWebSearchLicense(opts []llm.LanguageModelOption) []llm.LanguageModelOption {
+	if c.licenseChecker.Allows(enterprise.CapProviderWebSearch) {
+		return opts
+	}
+	return append([]llm.LanguageModelOption{llm.WithSkipNativeWebSearch()}, opts...)
 }
 
 // channelMentionToolCallingEnabled reports whether the admin config allows

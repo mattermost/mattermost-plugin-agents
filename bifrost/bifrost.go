@@ -562,7 +562,7 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed {
+	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed && !cfg.SkipNativeWebSearch {
 		return true
 	}
 	return false

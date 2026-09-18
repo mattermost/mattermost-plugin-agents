@@ -208,6 +208,58 @@ func TestLicenseErrorMessage(t *testing.T) {
 	require.Equal(t, "enterprise", err.RequiredLevel.Key())
 }
 
+func TestAgentLimitError(t *testing.T) {
+	tests := []struct {
+		name     string
+		level    Level
+		wantNil  bool
+		contains []string
+		required Level
+	}{
+		{
+			name:     "unlicensed names the free cap and Professional",
+			level:    LevelUnlicensed,
+			contains: []string{"1 AI agents", "Professional"},
+			required: LevelProfessional,
+		},
+		{
+			name:     "professional names the professional cap and Enterprise",
+			level:    LevelProfessional,
+			contains: []string{"3 AI agents", "Enterprise"},
+			required: LevelEnterprise,
+		},
+		{
+			name:    "enterprise is uncapped",
+			level:   LevelEnterprise,
+			wantNil: true,
+		},
+		{
+			name:    "enterprise advanced is uncapped",
+			level:   LevelEnterpriseAdvanced,
+			wantNil: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := AgentLimitError(tc.level)
+			if tc.wantNil {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			for _, s := range tc.contains {
+				require.Contains(t, err.Error(), s)
+			}
+			require.True(t, errors.Is(err, ErrNotLicensed))
+			var licErr *LicenseError
+			require.True(t, errors.As(err, &licErr))
+			require.Equal(t, tc.required, licErr.RequiredLevel)
+			require.Equal(t, tc.level, licErr.CurrentLevel)
+		})
+	}
+}
+
 // checkerAt returns a LicenseChecker backed by a plugin API reporting level.
 func checkerAt(t *testing.T, level Level) *LicenseChecker {
 	t.Helper()

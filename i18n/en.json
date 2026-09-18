@@ -4,6 +4,10 @@
     "translation": "To respond to an agent you must @mention them."
   },
   {
+    "id": "agents.multiplayer_channels_requires_professional",
+    "translation": "Invoking an agent in a channel or group message is available with a Mattermost Professional license or higher."
+  },
+  {
     "id": "agents.no_longer_access_error",
     "translation": "Sorry, you no longer have access to the original thread."
   },

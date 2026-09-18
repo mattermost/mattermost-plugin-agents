@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -173,29 +175,120 @@ type ServiceInfo struct {
 	UseResponsesAPI  bool   `json:"useResponsesAPI"`
 }
 
-// FreeTierAgentLimit is the maximum number of self-service agents allowed when
-// the server does not have a multi-LLM (E20+) license.
-const FreeTierAgentLimit = 1
-
-// AgentActiveCountHeader is returned on GET /agents for unlicensed servers so the
-// webapp can gate creation against the server-wide count (not the access-filtered list).
+// AgentActiveCountHeader is returned on GET /agents when agents are capped so the
+// webapp can gate creation against the server-wide combined pool (not the
+// access-filtered list).
 const AgentActiveCountHeader = "X-Agent-Active-Count"
 
-// checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
-// enforces FreeTierAgentLimit across all self-service agents on the server. It writes
-// the abort response and returns false when creation must be blocked.
+// AgentLimitHeader is returned alongside AgentActiveCountHeader with the
+// numeric agent cap at the current license level.
+const AgentLimitHeader = "X-Agent-Limit"
+
+func (a *API) pluginConfigOrEmpty() *config.Config {
+	if a.configStore == nil {
+		return &config.Config{}
+	}
+	cfg, err := a.configStore.GetConfig()
+	if err != nil || cfg == nil {
+		return &config.Config{}
+	}
+	return cfg
+}
+
+func validConfigBotCount(cfg *config.Config) int {
+	if cfg == nil {
+		return 0
+	}
+	n := 0
+	for _, bot := range cfg.Bots {
+		if bot.IsValid() {
+			n++
+		}
+	}
+	return n
+}
+
+// combinedAgentPoolCount is the number of valid configuration-file bots plus
+// non-deleted user-created agents. This is the pool compared against AgentLimit.
+func (a *API) combinedAgentPoolCount() (int, error) {
+	dbCount := 0
+	if a.agentStore != nil {
+		var err error
+		dbCount, err = a.agentStore.CountActiveAgents()
+		if err != nil {
+			return 0, err
+		}
+	}
+	configCount := 0
+	if a.configStore != nil {
+		cfg, err := a.configStore.GetConfig()
+		if err != nil {
+			return 0, err
+		}
+		configCount = validConfigBotCount(cfg)
+	}
+	return configCount + dbCount, nil
+}
+
+// checkAgentCreateQuota allows unlimited creation when agents are uncapped;
+// otherwise enforces AgentLimit across the combined pool. It writes the abort
+// response and returns false when creation must be blocked.
 func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
-	if a.licenseChecker.IsMultiLLMLicensed() {
+	limit, capped := a.licenseChecker.AgentLimit()
+	if !capped {
 		return true
 	}
-	count, err := a.agentStore.CountActiveAgents()
+	count, err := a.combinedAgentPoolCount()
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
 	}
-	if count >= FreeTierAgentLimit {
-		abortAgentRequest(c, http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
+	if count >= limit {
+		abortNotLicensed(c, enterprise.AgentLimitError(a.licenseChecker.Level()))
 		return false
+	}
+	return true
+}
+
+// checkAgentLicenseGates denies create/update requests that newly enable a
+// gated BotConfig field. prev is nil on create (compared against defaults).
+func (a *API) checkAgentLicenseGates(c *gin.Context, proposed llm.BotConfig, prev *llm.BotConfig) bool {
+	if proposed.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
+		(prev == nil || prev.UserAccessLevel != llm.UserAccessLevelAttributeBased) {
+		if err := a.licenseChecker.Check(enterprise.CapAttributeBasedAccess); err != nil {
+			abortNotLicensed(c, err)
+			return false
+		}
+	}
+	if config.AccessControlsNewlyRestricted(prev, proposed) {
+		if err := a.licenseChecker.Check(enterprise.CapAgentAccessControls); err != nil {
+			abortNotLicensed(c, err)
+			return false
+		}
+	}
+	if proposed.UseServiceAccountAuth && (prev == nil || !prev.UseServiceAccountAuth) {
+		if err := a.licenseChecker.Check(enterprise.CapMCPServiceAccount); err != nil {
+			abortNotLicensed(c, err)
+			return false
+		}
+	}
+	if config.BotHasProviderWebSearch(proposed) && (prev == nil || !config.BotHasProviderWebSearch(*prev)) {
+		if err := a.licenseChecker.Check(enterprise.CapProviderWebSearch); err != nil {
+			abortNotLicensed(c, err)
+			return false
+		}
+	}
+	if !a.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
+		unchanged := prev != nil && prev.ServiceID == proposed.ServiceID
+		if !unchanged {
+			active := config.ActiveServiceIDs(a.pluginConfigOrEmpty(), a.licenseChecker.Level())
+			if !slices.Contains(active, proposed.ServiceID) {
+				if err := a.licenseChecker.Check(enterprise.CapMultipleLLMServices); err != nil {
+					abortNotLicensed(c, err)
+					return false
+				}
+			}
+		}
 	}
 	return true
 }
@@ -322,14 +415,19 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	proposed := buildAgentConfigForCreate(req, userID, "")
+	if !a.checkAgentLicenseGates(c, *proposed, nil) {
+		return
+	}
+
 	// Validate the built config before creating the Mattermost bot account so an
 	// invalid request does not leave an orphan bot user behind.
-	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
+	if err := proposed.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
 		return
 	}
 
-	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, proposed, nil); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
 	}
@@ -384,15 +482,17 @@ func (a *API) handleListAgents(c *gin.Context) {
 		}
 	}
 
-	// Enrich (best-effort) with the server-wide count so the webapp can gate creation
-	// against the real quota, not the access-filtered list. A failure here must not fail
-	// the list request: just omit the header and let the create API enforce the limit.
-	if !a.licenseChecker.IsMultiLLMLicensed() {
-		count, err := a.agentStore.CountActiveAgents()
+	// Enrich (best-effort) with the server-wide combined pool count so the
+	// webapp can gate creation against the real quota, not the access-filtered
+	// list. A failure here must not fail the list request: just omit the
+	// headers and let the create API enforce the limit.
+	if limit, capped := a.licenseChecker.AgentLimit(); capped {
+		count, err := a.combinedAgentPoolCount()
 		if err != nil {
 			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
 		} else {
 			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
+			c.Header(AgentLimitHeader, strconv.Itoa(limit))
 		}
 	}
 
@@ -488,6 +588,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
+		return
+	}
+
+	if !a.checkAgentLicenseGates(c, proposed, cfg) {
 		return
 	}
 

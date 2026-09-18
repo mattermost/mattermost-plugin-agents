@@ -32,8 +32,10 @@ func newPluginCallbackServices(mmServerURL string) (*tools.HTTPSemanticSearchSer
 // registerTools registers all tools using the tool provider.
 // searchService and fileContentService are optional and can be nil when the
 // corresponding capability is unavailable.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService)
+// allowStateChangingTools is evaluated per request; a nil predicate means
+// state-changing tools are not available.
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, allowStateChangingTools)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

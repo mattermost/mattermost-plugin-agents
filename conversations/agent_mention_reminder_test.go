@@ -40,6 +40,7 @@ type reminderFixture struct {
 	conv       *conversations.Conversations
 	client     *fakeMMClient
 	botService *bots.MMBots
+	mockAPI    *plugintest.API
 }
 
 func newReminderFixture(t *testing.T) *reminderFixture {
@@ -59,18 +60,19 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuProfessional}).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: reminderTeamID, Name: "team"}, nil).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
 	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	fLLM := newDMTestLLM(dmMakeTextStream("canned reply"))
 	bot := bots.NewBot(
 		botConfig,
-		llm.ServiceConfig{},
+		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: reminderBotID, Username: reminderBotUsername, DisplayName: reminderBotDisplay},
-		nil,
+		fLLM,
 	)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -84,16 +86,18 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 			reminderOtherUserID: {Id: reminderOtherUserID, Username: "other", Locale: "en"},
 			reminderBotID:       {Id: reminderBotID, Username: reminderBotUsername, IsBot: true, Locale: "en"},
 		},
-		channels: map[string]*model.Channel{},
+		channels:        map[string]*model.Channel{},
+		allowCreatePost: true,
 	}
 
-	conv := conversations.New(promptsManager, client, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conv := conversations.New(promptsManager, client, &fakeStreamingService{}, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
 	conv.SetConversationService(conversation.NewService(newFakeConvStore(), promptsManager, client, botService))
 
 	return &reminderFixture{
 		conv:       conv,
 		client:     client,
 		botService: botService,
+		mockAPI:    mockAPI,
 	}
 }
 
@@ -244,7 +248,9 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 				require.Equal(t, reminderReplyID, ephemeral.GetProp(conversations.AgentMentionReminderTargetPostIDProp))
 				require.NotEmpty(t, ephemeral.Message)
 			} else {
-				require.Empty(t, fix.client.ephemeralPosts, "expected no ephemeral reminder")
+				for _, ephemeral := range fix.client.ephemeralPosts {
+					require.NotEqual(t, conversations.AgentMentionReminderPostType, ephemeral.GetProp("type"), "expected no ephemeral reminder")
+				}
 			}
 		})
 	}

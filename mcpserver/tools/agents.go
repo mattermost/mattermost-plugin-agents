@@ -32,7 +32,7 @@ type ListAgentsArgs struct{}
 // getAgentTools returns agent discovery tools.
 func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "list_agents", `List all available AI agents (bots). Returns each agent's ID, display name, and username.`, p.toolListAgents),
+		mcpReadTool(p, "list_agents", `List all available AI agents (bots). Returns each agent's ID, display name, and username.`, p.toolListAgents),
 	}
 }
 

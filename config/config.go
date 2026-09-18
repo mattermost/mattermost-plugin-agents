@@ -187,6 +187,11 @@ func (c *Container) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 	return c.Config().GetServiceByID(id)
 }
 
+// GetServices returns LLM services in configuration order.
+func (c *Container) GetServices() []llm.ServiceConfig {
+	return c.Config().Services
+}
+
 // Update replaces the current configuration and notifies all listeners.
 // The new configuration is deep-copied to ensure the new and old
 // configurations are independent of each other.

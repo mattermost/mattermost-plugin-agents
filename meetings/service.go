@@ -6,6 +6,7 @@ package meetings
 import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
@@ -29,6 +30,7 @@ type Service struct {
 	metricsService   metrics.Metrics
 	contextBuilder   *llmcontext.Builder
 	conversations    *conversations.Conversations
+	licenseChecker   *enterprise.LicenseChecker
 
 	ffmpegPath string
 }
@@ -43,6 +45,7 @@ func NewService(
 	metricsService metrics.Metrics,
 	contextBuilder *llmcontext.Builder,
 	conversations *conversations.Conversations,
+	licenseChecker *enterprise.LicenseChecker,
 ) *Service {
 	service := &Service{
 		pluginAPI:        pluginAPI,
@@ -53,6 +56,7 @@ func NewService(
 		metricsService:   metricsService,
 		contextBuilder:   contextBuilder,
 		conversations:    conversations,
+		licenseChecker:   licenseChecker,
 	}
 
 	service.ffmpegPath = resolveFFMPEGPath()
@@ -61,4 +65,14 @@ func NewService(
 	}
 
 	return service
+}
+
+// checkMeetingsLicense returns a *enterprise.LicenseError when meeting
+// transcription and summaries are not available at the current level.
+func (s *Service) checkMeetingsLicense() error {
+	var checker *enterprise.LicenseChecker
+	if s != nil {
+		checker = s.licenseChecker
+	}
+	return checker.Check(enterprise.CapMeetings)
 }

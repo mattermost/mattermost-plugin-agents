@@ -512,8 +512,8 @@ func TestClientManagerGetToolsForUser_ReconnectsAfterStoredSessionRevoked(t *tes
 		&sessionEchoEmbeddedMCPServer{ctx: runCtx},
 		http.DefaultClient,
 		nil,
-		nil,
-	)
+		RemoteMCPAlwaysAllowed,
+		nil)
 	t.Cleanup(manager.Close)
 
 	tools, mcpErrors := manager.GetTools(context.Background(), UserCatalogRequest(userID))
