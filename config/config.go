@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"sync/atomic"
 
@@ -180,6 +181,16 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return c.Config().EmbeddingSearchConfig
+}
+
+// GetServices returns a shallow copy of the configured services so callers can
+// hold and iterate a stable snapshot while the container is updated.
+func (c *Container) GetServices() []llm.ServiceConfig {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return nil
+	}
+	return slices.Clone(cfg.Services)
 }
 
 // GetServiceByID returns the service configuration for the given ID
