@@ -421,6 +421,36 @@ func TestIsValidService(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "Valid North service with API key and URL",
+			service: ServiceConfig{
+				ID:     "service-north",
+				Type:   ServiceTypeNorth,
+				APIKey: "north-key",
+				APIURL: "http://host",
+			},
+			want: true,
+		},
+		{
+			name: "North service missing API key",
+			service: ServiceConfig{
+				ID:     "service-north",
+				Type:   ServiceTypeNorth,
+				APIKey: "", // bad
+				APIURL: "http://host",
+			},
+			want: false,
+		},
+		{
+			name: "North service missing API URL",
+			service: ServiceConfig{
+				ID:     "service-north",
+				Type:   ServiceTypeNorth,
+				APIKey: "north-key",
+				APIURL: "", // bad
+			},
+			want: false,
+		},
+		{
 			name: "Valid Bedrock service with region",
 			service: ServiceConfig{
 				ID:     "service-7",

@@ -1979,6 +1979,80 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 	assert.Equal(t, "llama3", llmInstance.fallbacks[1].fallback.Model)
 }
 
+func TestNewFromServiceConfig_NorthCoexistsWithOpenAI(t *testing.T) {
+	tests := []struct {
+		name     string
+		primary  llm.ServiceConfig
+		fallback llm.ServiceConfig
+	}{
+		{
+			name: "north primary openai fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+		},
+		{
+			name: "openai primary north fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+		},
+		{
+			name: "north primary openai-compatible fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-local",
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIURL:       "http://localhost:11434/v1",
+				DefaultModel: "llama3",
+			},
+		},
+	}
+
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "svc-primary"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmInstance, err := NewFromServiceConfig(tt.primary, bot, []llm.ServiceConfig{tt.fallback})
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			require.Len(t, llmInstance.fallbacks, 1)
+			assert.Equal(t, schemas.OpenAI, llmInstance.provider)
+			assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].fallback.Provider,
+				"a north service sharing the OpenAI base type with another service must occupy a distinct custom-provider slot")
+			assert.Equal(t, tt.fallback.ID, llmInstance.fallbacks[0].serviceID)
+			assert.Equal(t, customProviderName(schemas.OpenAI, tt.fallback.ID), llmInstance.fallbacks[0].fallback.Provider)
+		})
+	}
+}
+
 // TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain pins the contract
 // that a fallback service which cannot be mapped to a Bifrost provider fails
 // bot construction instead of being silently dropped: an admin must find out
@@ -2109,6 +2183,12 @@ func chatCompletionSSE(w http.ResponseWriter, content string) {
 	fmt.Fprint(w, "data: [DONE]\n\n")
 }
 
+func responsesSSE(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":%q}\n\n", content)
+	fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\"}}\n\n")
+}
+
 func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 	var chatHit, responsesHit atomic.Bool
 
@@ -2156,6 +2236,122 @@ func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 	assert.Equal(t, "from-chat-completions", result)
 	assert.True(t, chatHit.Load(), "request must use /v1/chat/completions")
 	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
+}
+
+func TestNewFromServiceConfig_NorthFallbackDisablesStore(t *testing.T) {
+	var cloudHits, northHits atomic.Int32
+	var northPath atomic.Value
+	var northBody []byte
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	northServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		northHits.Add(1)
+		northPath.Store(r.URL.Path)
+		northBody, _ = io.ReadAll(r.Body)
+		if !strings.HasSuffix(r.URL.Path, "/v1/responses") {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		responsesSSE(w, "from-north")
+	}))
+	defer northServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "north-fallback",
+	}
+	northSvc := llm.ServiceConfig{
+		ID:           "north-fallback",
+		Type:         llm.ServiceTypeNorth,
+		APIKey:       "north-key",
+		APIURL:       northServer.URL,
+		DefaultModel: "command-a",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{northSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "failover to the North fallback should succeed")
+	assert.Equal(t, "from-north", result)
+	assert.Positive(t, cloudHits.Load(), "openai primary should have been attempted before falling back")
+	assert.Positive(t, northHits.Load(), "north fallback should have received the request")
+	require.Equal(t, "/api/v1/responses", northPath.Load(), "north fallback must be called on /v1/responses")
+
+	require.NotEmpty(t, northBody, "the outbound North /v1/responses body must be captured")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(northBody, &payload))
+	store, hasStore := payload["store"]
+	require.True(t, hasStore, "north fallback must send a store field")
+	assert.Equal(t, false, store)
+}
+
+func TestNorthResponsesRequestDisablesStorage(t *testing.T) {
+	tests := []struct {
+		name           string
+		serviceType    string
+		wantStoreFalse bool
+	}{
+		{name: "north sends store false", serviceType: llm.ServiceTypeNorth, wantStoreFalse: true},
+		{name: "openai omits store", serviceType: llm.ServiceTypeOpenAI, wantStoreFalse: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var recordedBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/v1/responses") {
+					http.Error(w, "unexpected path", http.StatusNotFound)
+					return
+				}
+				recordedBody, _ = io.ReadAll(r.Body)
+				responsesSSE(w, "ok")
+			}))
+			defer server.Close()
+
+			service := llm.ServiceConfig{
+				ID:           "svc-1",
+				Type:         tt.serviceType,
+				APIKey:       "key",
+				APIURL:       server.URL,
+				DefaultModel: "test-model",
+			}
+			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}, nil)
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			_, _ = llmInstance.ChatCompletionNoStream(
+				context.Background(),
+				llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+				llm.WithToolsDisabled(),
+			)
+
+			require.NotEmpty(t, recordedBody, "the outbound /v1/responses body must be captured")
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(recordedBody, &payload))
+			store, hasStore := payload["store"]
+			if tt.wantStoreFalse {
+				require.True(t, hasStore, "north must send a store field")
+				assert.Equal(t, false, store)
+			} else {
+				assert.False(t, hasStore, "openai must not send a store field")
+			}
+		})
+	}
 }
 
 // TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
@@ -2518,6 +2714,19 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			expectedChatOnly: false,
 		},
 		{
+			name: "North normalizes URL and is not chat-only",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "key",
+				APIURL:       "http://host/api/v1",
+				DefaultModel: "command-a",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "command-a",
+			expectedAPIURL:   "http://host/api",
+			expectedChatOnly: false,
+		},
+		{
 			name: "unsupported service type",
 			svc: llm.ServiceConfig{
 				Type: "unknown-type",
@@ -2538,6 +2747,7 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			assert.Equal(t, tt.expectedModel, entry.DefaultModel)
 			assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
 			assert.Equal(t, tt.expectedChatOnly, entry.ChatOnly)
+			assert.Equal(t, tt.svc.Type == llm.ServiceTypeNorth, entry.DisableStore)
 		})
 	}
 }

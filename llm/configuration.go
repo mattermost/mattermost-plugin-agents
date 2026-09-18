@@ -54,8 +54,9 @@ type ServiceConfig struct {
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`
 
-	// UseResponsesAPI determines whether to use the new OpenAI Responses API
-	// Only applicable to OpenAI and OpenAI-compatible services
+	// UseResponsesAPI determines whether to use the OpenAI Responses API.
+	// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor
+	// this operator toggle. Other service types ignore it.
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 
 	// FallbackServiceID is the ID of another service to fall back to when this
@@ -70,12 +71,12 @@ type ServiceConfig struct {
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
-// Direct OpenAI always uses it; OpenAI-compatible and Azure honor the operator toggle.
+// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor the operator toggle.
 // All other service types ignore UseResponsesAPI — a stale flag carried over from a
 // previous service type must not be allowed to route the request through Responses.
 func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
 	switch cfg.Type {
-	case ServiceTypeOpenAI:
+	case ServiceTypeOpenAI, ServiceTypeNorth:
 		return true
 	case ServiceTypeOpenAICompatible, ServiceTypeAzure:
 		return cfg.UseResponsesAPI
@@ -314,6 +315,8 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeCohere:
 		return service.APIKey != ""
+	case ServiceTypeNorth:
+		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeBedrock:
 		// Bedrock requires AWS region
 		// API key is optional as AWS credentials can come from environment/IAM role

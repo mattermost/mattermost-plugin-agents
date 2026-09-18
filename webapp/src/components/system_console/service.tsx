@@ -50,6 +50,7 @@ const mapServiceTypeToDisplayName = new Map<string, string>([
     ['anthropic', 'Anthropic'],
     ['bedrock', 'AWS Bedrock'],
     ['cohere', 'Cohere'],
+    ['north', 'Cohere North'],
     ['mistral', 'Mistral'],
     ['asage', 'asksage (Experimental)'],
     ['gemini', 'Google Gemini'],
@@ -84,11 +85,12 @@ type ServiceFieldsProps = {
 export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale';
+    const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'north';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
     const isMistral = type === 'mistral';
     const isScale = type === 'scale';
+    const isNorth = type === 'north';
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
@@ -125,10 +127,10 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         }
     }, [props.service.tokenLimit, props.service.outputTokenLimit]);
 
-    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex';
+    const supportsModelFetching = type === 'anthropic' || type === 'openai' || type === 'azure' || type === 'openaicompatible' || type === 'gemini' || type === 'vertex' || type === 'north';
 
     useEffect(() => {
-        if (type === 'openai' && !props.service.useResponsesAPI) {
+        if ((type === 'openai' || type === 'north') && !props.service.useResponsesAPI) {
             props.onChange({...props.service, useResponsesAPI: true});
         }
     }, [type, props.onChange, props.service]);
@@ -136,12 +138,16 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     useEffect(() => {
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region (service-account JSON optional)
         // - others: API key
         let hasRequiredCredentials = false;
         switch (type) {
         case 'openaicompatible':
             hasRequiredCredentials = Boolean(props.service.apiKey || props.service.apiURL);
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(props.service.apiKey && props.service.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(props.service.vertexProjectID && props.service.region);
@@ -233,6 +239,24 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [effectiveInputLimit, effectiveOutputLimit]);
 
+    let apiURLLabel = intl.formatMessage({defaultMessage: 'API URL'});
+    let apiURLHelpText = '';
+    if (isNorth) {
+        apiURLLabel = intl.formatMessage({defaultMessage: 'North instance URL'});
+        apiURLHelpText = intl.formatMessage({defaultMessage: 'The base URL of your Cohere North instance, for example https://north.example.com'});
+    } else if (isScale) {
+        apiURLHelpText = intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'});
+    }
+
+    let apiKeyLabel = intl.formatMessage({defaultMessage: 'API Key'});
+    let apiKeyHelpText = '';
+    if (isNorth) {
+        apiKeyLabel = intl.formatMessage({defaultMessage: 'Service token'});
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'A long-lived North service token. Generate one from your North instance\'s developer page.'});
+    } else if (type === 'bedrock') {
+        apiKeyHelpText = intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'});
+    }
+
     return (
         <>
             <TextItem
@@ -249,7 +273,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         ...props.service,
                         type: nextType,
                         apiKey: nextType === 'vertex' ? '' : props.service.apiKey,
-                        useResponsesAPI: nextType === 'openai' ? true : props.service.useResponsesAPI,
+                        useResponsesAPI: (nextType === 'openai' || nextType === 'north') ? true : props.service.useResponsesAPI,
                     });
                 }}
             >
@@ -261,16 +285,17 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
                 <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
                 <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
+                <SelectionItemOption value='north'>{'Cohere North'}</SelectionItemOption>
                 <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
                 <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
                 <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
             </SelectionItem>
-            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale') && (
+            {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'north') && (
                 <TextItem
-                    label={intl.formatMessage({defaultMessage: 'API URL'})}
+                    label={apiURLLabel}
                     value={props.service.apiURL}
                     onChange={(e) => props.onChange({...props.service, apiURL: e.target.value})}
-                    helptext={isScale ? intl.formatMessage({defaultMessage: 'Scale API endpoint (e.g., https://sgp-api.scalegov.com/v5)'}) : undefined} // eslint-disable-line no-undefined
+                    helptext={apiURLHelpText}
                 />
             )}
             {type === 'bedrock' && (
@@ -333,17 +358,16 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             )}
             {type !== 'vertex' && (
                 <TextItem
-                    label={intl.formatMessage({defaultMessage: 'API Key'})}
+                    label={apiKeyLabel}
                     type='password'
                     value={props.service.apiKey}
                     onChange={(e) => props.onChange({...props.service, apiKey: e.target.value})}
-                    // eslint-disable-next-line no-undefined
-                    helptext={type === 'bedrock' ? intl.formatMessage({defaultMessage: 'Optional. Bedrock console API key (base64 encoded). If IAM credentials above are set, they take precedence.'}) : undefined}
+                    helptext={apiKeyHelpText}
                 />
             )}
             {isOpenAIType && (
                 <>
-                    {!isCohere && !isMistral && (
+                    {!isCohere && !isMistral && !isNorth && (
                         <TextItem
                             label={isScale ? intl.formatMessage({defaultMessage: 'Account ID'}) : intl.formatMessage({defaultMessage: 'Organization ID'})}
                             value={props.service.orgId}

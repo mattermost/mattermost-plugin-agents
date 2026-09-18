@@ -1169,6 +1169,44 @@ func TestFetchModelsForServiceGeminiMissingAPIKey(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+func TestFetchModelsForServiceNorthMissingCredentials(t *testing.T) {
+	tests := []struct {
+		name string
+		svc  llm.ServiceConfig
+	}{
+		{
+			name: "missing API key",
+			svc:  llm.ServiceConfig{ID: "north-svc", Type: llm.ServiceTypeNorth, APIURL: "http://host"},
+		},
+		{
+			name: "missing API URL",
+			svc:  llm.ServiceConfig{ID: "north-svc", Type: llm.ServiceTypeNorth, APIKey: "key"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.api.configStore = &mockConfigStore{
+				cfg: &config.Config{
+					Services: []llm.ServiceConfig{tt.svc},
+				},
+			}
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			body := map[string]string{"serviceID": tt.svc.ID}
+			recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+			require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+		})
+	}
+}
+
 func TestListServicesForbiddenWithoutManageOwnPermission(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)

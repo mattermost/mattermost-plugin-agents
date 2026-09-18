@@ -101,6 +101,11 @@ type ProviderSettings struct {
 
 	DefaultModel     string
 	StreamingTimeout time.Duration
+
+	// DisableStore maps onto schemas.OpenAIConfig.DisableStore so Bifrost
+	// forces store=false on every outgoing OpenAI-family request for this
+	// provider — including when it is reached as a fallback hop.
+	DisableStore bool
 }
 
 // Config holds the configuration for creating a LLM instance.
