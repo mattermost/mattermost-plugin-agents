@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 // ConversationResponse is the JSON shape returned by GET /conversations/{id}.
@@ -80,7 +81,7 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering and display sanitization
-	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
+	turnResponses, err := turnsToResponse(turns, userID != conv.UserID, a.anchoredPostTextLookup())
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -108,10 +109,48 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 	return conversation.ComputePostApprovalState(allTurns, *turn.PostID)
 }
 
+// anchoredPostTextLookup returns a lookup for the current message of a post a
+// turn is anchored to, resolving each post ID at most once per request. ok is
+// false when the post is gone or cannot be read.
+func (a *API) anchoredPostTextLookup() func(postID string) (message string, ok bool) {
+	type anchoredPost struct {
+		message string
+		ok      bool
+	}
+	resolved := make(map[string]anchoredPost)
+
+	return func(postID string) (string, bool) {
+		if cached, seen := resolved[postID]; seen {
+			return cached.message, cached.ok
+		}
+
+		var anchor anchoredPost
+		post, err := a.pluginAPI.Post.GetPost(postID)
+		switch {
+		case err != nil:
+			if !errors.Is(err, pluginapi.ErrNotFound) {
+				a.pluginAPI.Log.Warn("Failed to read the post a conversation turn is anchored to",
+					"error", err, "post_id", postID)
+			}
+		case post != nil && post.DeleteAt == 0:
+			anchor = anchoredPost{message: post.Message, ok: true}
+		}
+
+		resolved[postID] = anchor
+		return anchor.message, anchor.ok
+	}
+}
+
 // turnsToResponse converts store turns to response objects with display
 // sanitization, first applying privacy filtering when the requesting user is
-// not the conversation owner.
-func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResponse, error) {
+// not the conversation owner. For such a request, the text of a turn anchored
+// to a post is served only while it matches the current message of that post,
+// which anchoredPostText resolves.
+func turnsToResponse(
+	turns []store.Turn,
+	filterForNonRequester bool,
+	anchoredPostText func(postID string) (string, bool),
+) ([]TurnResponse, error) {
 	result := make([]TurnResponse, len(turns))
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
@@ -120,6 +159,12 @@ func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResp
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
+			if turn.PostID != nil {
+				message, ok := anchoredPostText(*turn.PostID)
+				if !ok || message != conversation.TextContent(blocks) {
+					blocks = conversation.WithTextContent(blocks, "")
+				}
+			}
 		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)
