@@ -27,6 +27,7 @@ const (
 	storedUserTurnText      = "stored original text"
 	storedAssistantTurnText = "assistant reply text"
 	currentUserPostMessage  = "current text"
+	flaggedPostMessage      = "message carried by the post flagged deleted"
 )
 
 // Post IDs the seeded turns are anchored to.
@@ -215,7 +216,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 			},
 		},
 		{
-			name:           "anchored post is flagged deleted with no message",
+			name:           "anchored post is flagged deleted",
 			userID:         testOtherUserID,
 			conversationID: "conv-anchor-deleted",
 			setup: func(t *testing.T, e *TestEnvironment) {
@@ -224,7 +225,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 					Id:        anchoredUserPostID,
 					UserId:    testUserID,
 					ChannelId: channelID,
-					Message:   "",
+					Message:   flaggedPostMessage,
 					DeleteAt:  model.GetMillis(),
 				}, nil).Maybe()
 				e.mockAPI.On("GetPost", anchoredAssistantPostID).Return(&model.Post{
@@ -240,6 +241,8 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 			validate: func(t *testing.T, body []byte) {
 				assert.NotContains(t, string(body), storedUserTurnText,
 					"user turn text requires a live anchored post")
+				assert.NotContains(t, string(body), flaggedPostMessage,
+					"a post flagged deleted supplies no text to the response")
 			},
 		},
 		{

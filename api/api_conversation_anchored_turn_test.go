@@ -121,8 +121,8 @@ func TestGetConversationAnchoredTurnShapes(t *testing.T) {
 			},
 			postMessage: edgePostMessage,
 			validate: func(t *testing.T, blocks []conversation.ContentBlock) {
-				assert.Contains(t, conversation.TextContent(blocks), edgePostMessage,
-					"the message a channel member can read on the post itself stays readable in the conversation")
+				assert.Equal(t, edgePostMessage, conversation.TextContent(blocks),
+					"the text served for the turn is the message a channel member can read on the post itself")
 			},
 		},
 		{
