@@ -635,6 +635,14 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 }
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
+	if newPost == nil {
+		return
+	}
+	if p.conversationsService != nil {
+		if err := p.conversationsService.UpdateTurnForEditedPost(newPost, oldPost); err != nil {
+			p.pluginAPI.Log.Error("Failed to update conversation turn for edited post", "error", err, "post_id", newPost.Id)
+		}
+	}
 	if p.indexerService != nil {
 		channel, err := p.API.GetChannel(newPost.ChannelId)
 		if err != nil {
