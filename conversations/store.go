@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -42,31 +43,36 @@ func (c *Conversations) SaveTitle(threadID, title string) error {
 // DeleteConversationsForDeletedPost drops the text of the turn anchored to the
 // given post and soft-deletes conversations associated with it. If the post is
 // a root post, conversations keyed by that RootPostID are marked as deleted.
+// Both run on every call and both outcomes are reported.
 func (c *Conversations) DeleteConversationsForDeletedPost(post *model.Post) error {
 	if post == nil || post.Id == "" {
 		return nil
 	}
+	return errors.Join(c.clearTurnTextForPost(post.Id), c.softDeleteConversationsForRootPost(post.Id))
+}
 
-	turn, err := c.turnAnchoredToPost(post.Id)
-	if err != nil {
+// clearTurnTextForPost empties the text of the turn anchored to postID.
+func (c *Conversations) clearTurnTextForPost(postID string) error {
+	turn, err := c.turnAnchoredToPost(postID)
+	if err != nil || turn == nil {
 		return err
 	}
-	if turn != nil {
-		if setErr := c.setTurnText(turn, ""); setErr != nil {
-			return setErr
-		}
-	}
+	return c.setTurnText(turn, "")
+}
 
+// softDeleteConversationsForRootPost marks every live conversation keyed by
+// the given root post ID as deleted.
+func (c *Conversations) softDeleteConversationsForRootPost(rootPostID string) error {
 	if c.db == nil {
 		return nil
 	}
 	now := model.GetMillis()
-	_, err = c.db.ExecBuilder(c.db.Builder().
+	_, err := c.db.ExecBuilder(c.db.Builder().
 		Update("LLM_Conversations").
 		Set("DeleteAt", now).
 		Set("UpdatedAt", now).
 		Where(sq.And{
-			sq.Eq{"RootPostID": post.Id},
+			sq.Eq{"RootPostID": rootPostID},
 			sq.Eq{"DeleteAt": 0},
 		}))
 	return err
@@ -108,7 +114,8 @@ func (c *Conversations) turnAnchoredToPost(postID string) (*store.Turn, error) {
 }
 
 // setTurnText writes text as the whole text content of the turn, leaving its
-// other content blocks as stored.
+// other content blocks as stored. A title written from this turn is dropped
+// along with the text it was written from.
 func (c *Conversations) setTurnText(turn *store.Turn, text string) error {
 	blocks, err := conversation.UnmarshalBlocks(turn.Content)
 	if err != nil {
@@ -118,5 +125,24 @@ func (c *Conversations) setTurnText(turn *store.Turn, text string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal turn content: %w", err)
 	}
-	return c.convService.UpdateTurnContent(turn.ID, content)
+	if err := c.convService.UpdateTurnContent(turn.ID, content); err != nil {
+		return err
+	}
+	return c.clearGeneratedTitle(turn)
+}
+
+// clearGeneratedTitle empties the title of the conversation the turn belongs
+// to, when that turn is the one the title was written from: a conversation's
+// title is generated from the message of its opening user turn, the turn
+// CreateConversation writes at sequence 1.
+func (c *Conversations) clearGeneratedTitle(turn *store.Turn) error {
+	if c.db == nil || turn.Role != "user" || turn.Sequence != 1 {
+		return nil
+	}
+	_, err := c.db.ExecBuilder(c.db.Builder().
+		Update("LLM_Conversations").
+		Set("Title", "").
+		Set("UpdatedAt", model.GetMillis()).
+		Where(sq.Eq{"ID": turn.ConversationID}))
+	return err
 }

@@ -81,7 +81,8 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering and display sanitization
-	turnResponses, err := turnsToResponse(turns, userID != conv.UserID, a.anchoredPostTextLookup())
+	anchoredPostText := a.anchoredPostTextLookup(conv.ChannelID)
+	turnResponses, err := turnsToResponse(turns, userID != conv.UserID, anchoredPostText)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
 		return
@@ -111,8 +112,9 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 
 // anchoredPostTextLookup returns a lookup for the current message of a post a
 // turn is anchored to, resolving each post ID at most once per request. ok is
-// false when the post is gone or cannot be read.
-func (a *API) anchoredPostTextLookup() func(postID string) (message string, ok bool) {
+// true only for a live post in channelID, the channel the conversation the
+// turn belongs to is bound to.
+func (a *API) anchoredPostTextLookup(channelID *string) func(postID string) (message string, ok bool) {
 	type anchoredPost struct {
 		message string
 		ok      bool
@@ -132,7 +134,7 @@ func (a *API) anchoredPostTextLookup() func(postID string) (message string, ok b
 				a.pluginAPI.Log.Warn("Failed to read the post a conversation turn is anchored to",
 					"error", err, "post_id", postID)
 			}
-		case post != nil && post.DeleteAt == 0:
+		case post != nil && post.DeleteAt == 0 && channelID != nil && post.ChannelId == *channelID:
 			anchor = anchoredPost{message: post.Message, ok: true}
 		}
 
@@ -144,8 +146,9 @@ func (a *API) anchoredPostTextLookup() func(postID string) (message string, ok b
 // turnsToResponse converts store turns to response objects with display
 // sanitization, first applying privacy filtering when the requesting user is
 // not the conversation owner. For such a request, the text of a turn anchored
-// to a post is served only while it matches the current message of that post,
-// which anchoredPostText resolves.
+// to a post is the message that post currently carries, which anchoredPostText
+// resolves; a turn holding no text of its own keeps none, and a turn already
+// holding that message is carried over as stored.
 func turnsToResponse(
 	turns []store.Turn,
 	filterForNonRequester bool,
@@ -159,10 +162,13 @@ func turnsToResponse(
 		}
 		if filterForNonRequester {
 			blocks = conversation.FilterForNonRequester(blocks)
-			if turn.PostID != nil {
+			if stored := conversation.TextContent(blocks); turn.PostID != nil && stored != "" {
 				message, ok := anchoredPostText(*turn.PostID)
-				if !ok || message != conversation.TextContent(blocks) {
-					blocks = conversation.WithTextContent(blocks, "")
+				if !ok {
+					message = ""
+				}
+				if message != stored {
+					blocks = conversation.WithTextContent(blocks, message)
 				}
 			}
 		}
