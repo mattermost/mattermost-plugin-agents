@@ -65,6 +65,9 @@ import (
 //	                  tool-capable models on Bedrock.
 //	cohere, mistral   not positively known to be capable. Only the newer model
 //	                  generations accept a json_schema response format.
+//	north             not positively known to be capable. It uses the
+//	                  Responses API path, but model names are instance-local
+//	                  and not the OpenAI families this table can identify.
 //	scale             has no native path: the Bifrost adapter cannot build
 //	                  this type at all.
 //	loadtest_mock     has no native path: loadtest.MockLLM ignores
@@ -87,7 +90,7 @@ func ResolveStructuredOutputCapability(svc llm.ServiceConfig, model string) bool
 	default:
 		// Everything else is either model-dependent behind an identity we
 		// cannot read (azure, openaicompatible, anthropic, vertex, bedrock,
-		// cohere, mistral) or has no native path at all (scale,
+		// cohere, mistral, north) or has no native path at all (scale,
 		// loadtest_mock, unrecognized types).
 		return false
 	}

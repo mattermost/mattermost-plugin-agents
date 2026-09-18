@@ -217,7 +217,8 @@ const Bot = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -229,12 +230,16 @@ const Bot = (props: Props) => {
 
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region
         // - others: API key
         let hasRequiredCredentials: string | boolean = false;
         switch (selectedService.type) {
         case 'openaicompatible':
             hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(selectedService.apiKey && selectedService.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
@@ -386,7 +391,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;

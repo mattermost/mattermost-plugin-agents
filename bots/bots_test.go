@@ -1191,6 +1191,11 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
 			expected: true,
 		},
+		{
+			name:     "north does not deliver native web search",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeNorth},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1242,6 +1247,11 @@ func TestHasNativeCodeExecutionEnabled(t *testing.T) {
 		{
 			name:     "service without native tool support",
 			service:  llm.ServiceConfig{Type: llm.ServiceTypeCohere},
+			expected: false,
+		},
+		{
+			name:     "north does not support code_interpreter",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeNorth},
 			expected: false,
 		},
 	}

@@ -199,6 +199,12 @@ func TestResolveStructuredOutputCapability(t *testing.T) {
 			want:  false,
 		},
 		{
+			name:  "north is not capable",
+			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeNorth, APIKey: "key", APIURL: "https://north.example.com"},
+			model: "command-a",
+			want:  false,
+		},
+		{
 			name:  "mistral is not capable",
 			svc:   llm.ServiceConfig{ID: "s", Type: llm.ServiceTypeMistral, APIKey: "key"},
 			model: "mistral-large-latest",

@@ -277,6 +277,20 @@ func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
 				"serviceType": llm.ServiceTypeGemini,
 			},
 		},
+		{
+			name: "North missing API key",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeNorth,
+				"apiURL":      "http://host",
+			},
+		},
+		{
+			name: "North missing API URL",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeNorth,
+				"apiKey":      "key",
+			},
+		},
 	}
 
 	for _, tt := range tests {

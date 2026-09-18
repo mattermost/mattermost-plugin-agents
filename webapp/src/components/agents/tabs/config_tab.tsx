@@ -52,7 +52,7 @@ type Props = {
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
-const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'];
+const visionToolServiceTypes = ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'];
 const CUSTOM_INSTRUCTIONS_LENGTH_WARNING_THRESHOLD = MaxCustomInstructionsRunes * 0.9;
 
 const ConfigTab = (props: Props) => {
@@ -116,7 +116,8 @@ const ConfigTab = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex'));
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north'));
 
     const selectedServiceAsLLM: LLMService | null = useMemo(() => {
         if (!selectedService) {
@@ -133,7 +134,7 @@ const ConfigTab = (props: Props) => {
             tokenLimit: 0,
             streamingTimeoutSeconds: 0,
             outputTokenLimit: selectedService.outputTokenLimit || 4096,
-            useResponsesAPI: selectedService.type === 'openai' ? true : selectedService.useResponsesAPI,
+            useResponsesAPI: (selectedService.type === 'openai' || selectedService.type === 'north') ? true : selectedService.useResponsesAPI,
             region: '',
             awsAccessKeyID: '',
             awsSecretAccessKey: '',
