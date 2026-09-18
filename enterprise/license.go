@@ -109,18 +109,18 @@ var capabilities = map[Capability]capabilitySpec{
 	CapAttributeBasedAccess: {LevelEnterpriseAdvanced, "Attribute-based access control"},
 }
 
-// RequiredLevel returns the minimum level at which cap is available. Unknown
+// RequiredLevel returns the minimum level at which capability is available. Unknown
 // capabilities require Enterprise Advanced so a typo can never open a gate.
-func RequiredLevel(cap Capability) Level {
-	if spec, ok := capabilities[cap]; ok {
+func RequiredLevel(capability Capability) Level {
+	if spec, ok := capabilities[capability]; ok {
 		return spec.minLevel
 	}
 	return LevelEnterpriseAdvanced
 }
 
-// DisplayName returns the admin-facing name of cap.
-func DisplayName(cap Capability) string {
-	if spec, ok := capabilities[cap]; ok {
+// DisplayName returns the admin-facing name of capability.
+func DisplayName(capability Capability) string {
+	if spec, ok := capabilities[capability]; ok {
 		return spec.display
 	}
 	return capabilityUnknownDisplay
@@ -149,9 +149,9 @@ func (e *LicenseError) Error() string {
 
 func (e *LicenseError) Unwrap() error { return ErrNotLicensed }
 
-// NewLicenseError builds the error returned when cap is denied at current.
-func NewLicenseError(cap Capability, current Level) *LicenseError {
-	return &LicenseError{Capability: cap, RequiredLevel: RequiredLevel(cap), CurrentLevel: current}
+// NewLicenseError builds the error returned when capability is denied at current.
+func NewLicenseError(capability Capability, current Level) *LicenseError {
+	return &LicenseError{Capability: capability, RequiredLevel: RequiredLevel(capability), CurrentLevel: current}
 }
 
 // LicenseChecker resolves the server license into a Level and answers
@@ -208,24 +208,24 @@ func LevelFor(config *model.Config, license *model.License) Level {
 	return LevelUnlicensed
 }
 
-// HasLevel reports whether the current level is at least min.
-func (e *LicenseChecker) HasLevel(min Level) bool {
-	return e.Level() >= min
+// HasLevel reports whether the current level is at least minimum.
+func (e *LicenseChecker) HasLevel(minimum Level) bool {
+	return e.Level() >= minimum
 }
 
-// Allows reports whether cap is available at the current level.
-func (e *LicenseChecker) Allows(cap Capability) bool {
-	return e.Level() >= RequiredLevel(cap)
+// Allows reports whether capability is available at the current level.
+func (e *LicenseChecker) Allows(capability Capability) bool {
+	return e.Level() >= RequiredLevel(capability)
 }
 
-// Check returns nil when cap is available, or a *LicenseError describing the
-// required level otherwise.
-func (e *LicenseChecker) Check(cap Capability) error {
+// Check returns nil when capability is available, or a *LicenseError
+// describing the required level otherwise.
+func (e *LicenseChecker) Check(capability Capability) error {
 	current := e.Level()
-	if current >= RequiredLevel(cap) {
+	if current >= RequiredLevel(capability) {
 		return nil
 	}
-	return NewLicenseError(cap, current)
+	return NewLicenseError(capability, current)
 }
 
 // AgentLimit returns the maximum number of active agents (configuration-file

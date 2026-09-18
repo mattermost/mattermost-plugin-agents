@@ -470,8 +470,8 @@ func (b *MMBots) EnsureBots() error {
 				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
 				continue
 			}
-			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
-				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
+			if _, deactivateErr := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); deactivateErr != nil {
+				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", deactivateErr.Error())
 				continue
 			}
 		}
@@ -482,17 +482,17 @@ func (b *MMBots) EnsureBots() error {
 	for _, bot := range bots {
 		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
-			var err error
-			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
+			var patchErr error
+			bot.mmBot, patchErr = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
 				DisplayName: &bot.cfg.DisplayName,
 				Description: &description,
 			})
-			if err != nil {
-				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", err.Error())
+			if patchErr != nil {
+				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", patchErr.Error())
 				continue
 			}
-			if _, err := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); err != nil {
-				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", err.Error())
+			if _, activeErr := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); activeErr != nil {
+				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", activeErr.Error())
 				continue
 			}
 		} else {
@@ -501,9 +501,8 @@ func (b *MMBots) EnsureBots() error {
 				DisplayName: bot.cfg.DisplayName,
 				Description: description,
 			}
-			err := b.pluginAPI.Bot.Create(bot.mmBot)
-			if err != nil {
-				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", err.Error())
+			if createErr := b.pluginAPI.Bot.Create(bot.mmBot); createErr != nil {
+				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", createErr.Error())
 				continue
 			}
 		}

@@ -32,11 +32,11 @@ func abortNotLicensed(c *gin.Context, err error) {
 	c.AbortWithStatusJSON(http.StatusForbidden, resp)
 }
 
-// requireCapability aborts the request with a license error when cap is not
+// requireCapability aborts the request with a license error when capability is not
 // available and reports whether the handler may proceed. A nil license
 // checker fails closed.
-func (a *API) requireCapability(c *gin.Context, cap enterprise.Capability) bool {
-	if err := a.licenseChecker.Check(cap); err != nil {
+func (a *API) requireCapability(c *gin.Context, capability enterprise.Capability) bool {
+	if err := a.licenseChecker.Check(capability); err != nil {
 		abortNotLicensed(c, err)
 		return false
 	}
@@ -44,8 +44,8 @@ func (a *API) requireCapability(c *gin.Context, cap enterprise.Capability) bool 
 }
 
 // capabilityRequired is the middleware form of requireCapability.
-func (a *API) capabilityRequired(cap enterprise.Capability) gin.HandlerFunc {
+func (a *API) capabilityRequired(capability enterprise.Capability) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		a.requireCapability(c, cap)
+		a.requireCapability(c, capability)
 	}
 }

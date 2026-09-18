@@ -87,11 +87,11 @@ func AccessControlsNewlyRestricted(prev *llm.BotConfig, next llm.BotConfig) bool
 	return !accessControlFieldsEqual(*prev, next)
 }
 
-func check(level enterprise.Level, cap enterprise.Capability) error {
-	if level >= enterprise.RequiredLevel(cap) {
+func check(level enterprise.Level, capability enterprise.Capability) error {
+	if level >= enterprise.RequiredLevel(capability) {
 		return nil
 	}
-	return enterprise.NewLicenseError(cap, level)
+	return enterprise.NewLicenseError(capability, level)
 }
 
 func emptyIfNil(prev *Config) Config {

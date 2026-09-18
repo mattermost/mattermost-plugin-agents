@@ -199,8 +199,6 @@ const Config = (props: Props) => {
     const tokenAccountingChip = useLicenseChipProps('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
     const providerWebSearchChip = useLicenseChipProps('provider_web_search');
-    const meetingsLicensed = useIsLicensedFor('meetings');
-    const meetingsChip = useLicenseChipProps('meetings');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -396,57 +394,6 @@ const Config = (props: Props) => {
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
-                    <BooleanItem
-                        label={<FormattedMessage defaultMessage='Enable call summaries'/>}
-                        value={Boolean(value.enableCallSummary)}
-                        disableTrue={!meetingsLicensed}
-                        extra={!meetingsLicensed && (
-                            <EnterpriseChip
-                                title={meetingsChip.title}
-                                text={meetingsChip.text}
-                                subtext={meetingsChip.subtext}
-                            />
-                        )}
-                        onChange={(to) => {
-                            if (to && !meetingsLicensed) {
-                                return;
-                            }
-                            updateConfig({enableCallSummary: to});
-                        }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, call recordings can be transcribed and summarized by Agents.'})}
-                    />
-                    <SelectionItem
-                        label={intl.formatMessage({defaultMessage: 'Call transcript generator'})}
-                        value={value.transcriptBackend}
-                        disabled={!meetingsLicensed && !value.transcriptBackend}
-                        extra={!meetingsLicensed && (
-                            <EnterpriseChip
-                                title={meetingsChip.title}
-                                text={meetingsChip.text}
-                                subtext={meetingsChip.subtext}
-                            />
-                        )}
-                        onChange={(e) => {
-                            if (e.target.value && !meetingsLicensed) {
-                                return;
-                            }
-                            updateConfig({transcriptBackend: e.target.value});
-                        }}
-                        helptext={intl.formatMessage({defaultMessage: 'Agent used to generate transcripts from call recordings.'})}
-                    >
-                        <SelectionItemOption value=''>
-                            {intl.formatMessage({defaultMessage: 'None'})}
-                        </SelectionItemOption>
-                        {runtimeBots.map((bot) => (
-                            <SelectionItemOption
-                                key={bot.username}
-                                value={bot.username}
-                                disabled={!meetingsLicensed}
-                            >
-                                {bot.displayName}
-                            </SelectionItemOption>
-                        ))}
-                    </SelectionItem>
                 </ItemList>
             </Panel>
             <Panel

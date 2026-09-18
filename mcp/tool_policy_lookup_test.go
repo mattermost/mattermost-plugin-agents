@@ -277,8 +277,8 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 				require.Equal(t, ToolPolicyAsk, policy, "unseeded embedded tools use ask below Enterprise")
 			}
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", licensed)
-			require.False(t, enabled, "Enabled=false is honoured at every level")
+			_, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "disabled_tool", licensed)
+			require.False(t, enabled, "Enabled=false is honored at every level")
 
 			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_tool", licensed)
 			require.True(t, enabled)
@@ -288,8 +288,8 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 				require.Equal(t, ToolPolicyAsk, policy)
 			}
 
-			policy, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_disabled", licensed)
-			require.False(t, enabled, "remote Enabled=false is honoured at every level")
+			_, enabled = LookupEffectiveToolPolicy(cfg, remoteURL, "remote_disabled", licensed)
+			require.False(t, enabled, "remote Enabled=false is honored at every level")
 
 			policy, enabled = LookupEffectiveToolPolicy(cfg, pluginOrigin, "plugin_tool", licensed)
 			require.True(t, enabled)

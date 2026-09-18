@@ -189,8 +189,6 @@ describe('Config license gating', () => {
             ...loadedConfig,
             enableTokenUsageLogging: true,
             allowNativeWebSearchInChannels: true,
-            enableCallSummary: true,
-            transcriptBackend: 'matty',
         });
         (getAIBots as jest.Mock).mockResolvedValue({bots: [{username: 'matty', displayName: 'Matty'}]});
     });
@@ -212,7 +210,7 @@ describe('Config license gating', () => {
         return rowFor(label).querySelector('input[value="false"]') as HTMLInputElement;
     }
 
-    it('keeps token logging, native web search, and meetings settings visible below their minimum and allows turning them off', async () => {
+    it('keeps token logging and native web search settings visible below their minimum and allows turning them off', async () => {
         useIsLicensedFor.mockReturnValue(false);
         renderConfig();
         await screen.findByText('Enable Token Usage Logging');
@@ -221,28 +219,19 @@ describe('Config license gating', () => {
         expect(falseRadioFor('Enable Token Usage Logging').disabled).toBe(false);
         expect(trueRadioFor('Allow native web search in channels').disabled).toBe(true);
         expect(falseRadioFor('Allow native web search in channels').disabled).toBe(false);
-        expect(trueRadioFor('Enable call summaries').disabled).toBe(true);
-        expect(falseRadioFor('Enable call summaries').disabled).toBe(false);
-
-        const transcript = screen.getByText('None').closest('select') as HTMLSelectElement;
-        expect(transcript.disabled).toBe(false);
     });
 
-    it('allows enabling token logging, native web search, and meetings settings when licensed', async () => {
+    it('allows enabling token logging and native web search settings when licensed', async () => {
         useIsLicensedFor.mockReturnValue(true);
         (getPluginConfig as jest.Mock).mockResolvedValue({
             ...loadedConfig,
             enableTokenUsageLogging: false,
             allowNativeWebSearchInChannels: false,
-            enableCallSummary: false,
-            transcriptBackend: '',
         });
         renderConfig();
         await screen.findByText('Enable Token Usage Logging');
 
         expect(trueRadioFor('Enable Token Usage Logging').disabled).toBe(false);
         expect(trueRadioFor('Allow native web search in channels').disabled).toBe(false);
-        expect(trueRadioFor('Enable call summaries').disabled).toBe(false);
-        expect((screen.getByText('None').closest('select') as HTMLSelectElement).disabled).toBe(false);
     });
 });

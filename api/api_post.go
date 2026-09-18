@@ -498,6 +498,11 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 	}
 
 	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}

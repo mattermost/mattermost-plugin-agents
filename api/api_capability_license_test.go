@@ -28,12 +28,12 @@ func decodeLicenseError(t *testing.T, resp *http.Response) licenseErrorResponse 
 	return body
 }
 
-func requireLicenseDenied(t *testing.T, resp *http.Response, cap enterprise.Capability) {
+func requireLicenseDenied(t *testing.T, resp *http.Response, capability enterprise.Capability) {
 	t.Helper()
 	require.Equal(t, http.StatusForbidden, resp.StatusCode)
 	body := decodeLicenseError(t, resp)
 	require.NotEmpty(t, body.Error)
-	require.Equal(t, enterprise.RequiredLevel(cap).Key(), body.LicenseRequired)
+	require.Equal(t, enterprise.RequiredLevel(capability).Key(), body.LicenseRequired)
 }
 
 func requireNotLicenseDenied(t *testing.T, resp *http.Response) {

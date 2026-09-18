@@ -76,41 +76,6 @@ func toolLicenseTestBot() *bots.Bot {
 	)
 }
 
-// toolLicenseTestBuilder builds a context builder whose license state matches
-// the scenario under test: unlicensed builders drop remote MCP tools at
-// supply time, mirroring production.
-func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
-	t.Helper()
-
-	mockAPI := &plugintest.API{}
-	mockLicenseState(mockAPI, licensed)
-	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
-	for i := 1; i <= 10; i++ {
-		args := make([]any, i)
-		for j := range args {
-			args[j] = mock.Anything
-		}
-		mockAPI.On("LogDebug", args...).Maybe()
-		mockAPI.On("LogInfo", args...).Maybe()
-		mockAPI.On("LogWarn", args...).Maybe()
-		mockAPI.On("LogError", args...).Maybe()
-	}
-
-	builtinTools := []llm.Tool{channelFollowUpTestMCPTool("builtin_tool", "", "built-in tool")}
-	mcpTools := []llm.Tool{
-		channelFollowUpTestMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
-		channelFollowUpTestMCPTool("jira__get_issue", toolLicenseRemoteOrigin, "fetch Jira issue"),
-		channelFollowUpTestMCPTool("playbooks__run", toolLicensePluginOrigin, "start a playbook run"),
-	}
-
-	return llmcontext.NewLLMContextBuilder(
-		pluginapi.NewClient(mockAPI, nil),
-		&toolLicenseBuiltinProvider{tools: builtinTools},
-		&channelFollowUpTestMCPToolProvider{tools: mcpTools},
-		&channelFollowUpTestConfig{},
-	)
-}
-
 func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, licensed bool) *Conversations {
 	t.Helper()
 	level := enterprise.LevelUnlicensed
