@@ -142,6 +142,10 @@ type tokenUsageDimensions struct {
 }
 
 func (w *TokenUsageLoggingWrapper) emitTokenUsage(dimensions tokenUsageDimensions, usage TokenUsage) {
+	if w == nil || w.sinks == nil || !w.sinks.AccountingEnabled() {
+		return
+	}
+
 	fields := buildTokenUsageLogKeyValuePairs(dimensions, usage)
 
 	if pluginLogger := w.sinks.PluginLogger(); pluginLogger != nil {
@@ -345,5 +349,5 @@ func (w *TokenUsageLoggingWrapper) ChatCompletionNoStream(ctx context.Context, r
 }
 
 func (w *TokenUsageLoggingWrapper) shouldTrackTokenUsage() bool {
-	return w != nil && w.sinks != nil && w.sinks.LoggingEnabled()
+	return w != nil && w.sinks != nil && w.sinks.AccountingEnabled() && w.sinks.LoggingEnabled()
 }

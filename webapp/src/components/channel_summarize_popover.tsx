@@ -175,19 +175,21 @@ interface Props {
     channelName: string;
     onSummarize: (options: any) => void;
     lastViewedAt: number;
+    showAskInput?: boolean;
+    showSummarizeOptions?: boolean;
 }
 
-export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelName, onSummarize, lastViewedAt}: Props) => {
+export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelName, onSummarize, lastViewedAt, showAskInput = true, showSummarizeOptions = true}: Props) => {
     const [inputValue, setInputValue] = useState('');
     const [isFocused, setIsFocused] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const [showDateModal, setShowDateModal] = useState(false);
 
     useEffect(() => {
-        if (inputRef.current) {
+        if (showAskInput && inputRef.current) {
             inputRef.current.focus();
         }
-    }, []);
+    }, [showAskInput]);
 
     const handleInputClick = () => {
         if (inputRef.current) {
@@ -240,57 +242,61 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
     return (
         <>
             <PopoverContainer>
-                <InputContainer>
-                    <AIInputWrapper
-                        isFocused={isFocused}
-                        hasValue={inputValue.length > 0}
-                        onClick={handleInputClick}
-                    >
-                        <IconWrapper>
-                            <IconAI/>
-                        </IconWrapper>
-                        <FormattedMessage defaultMessage='Ask Agents about this channel...'>
-                            {(placeholder) => (
-                                <StyledInput
-                                    ref={inputRef}
-                                    type='text'
-                                    placeholder={placeholder as unknown as string}
-                                    value={inputValue}
-                                    onChange={(e) => setInputValue(e.target.value)}
-                                    onFocus={() => setIsFocused(true)}
-                                    onBlur={() => setIsFocused(false)}
-                                    onKeyDown={handleKeyDown}
-                                />
-                            )}
-                        </FormattedMessage>
-                        <TrailingIconWrapper
-                            data-testid='send-custom-prompt-button'
-                            isActive={inputValue.length > 0}
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                handleInputSubmit();
-                            }}
+                {showAskInput && (
+                    <InputContainer>
+                        <AIInputWrapper
+                            isFocused={isFocused}
+                            hasValue={inputValue.length > 0}
+                            onClick={handleInputClick}
                         >
-                            <SendIcon size={16}/>
-                        </TrailingIconWrapper>
-                    </AIInputWrapper>
-                </InputContainer>
-                <Divider/>
-                <MenuList>
-                    <MenuItem onClick={handleSummarizeUnreads}>
-                        <FormattedMessage defaultMessage='Summarize unreads'/>
-                    </MenuItem>
-                    <MenuItem onClick={() => handleSummarizeDays(7)}>
-                        <FormattedMessage defaultMessage='Summarize last 7 days'/>
-                    </MenuItem>
-                    <MenuItem onClick={() => handleSummarizeDays(14)}>
-                        <FormattedMessage defaultMessage='Summarize last 14 days'/>
-                    </MenuItem>
-                    <MenuItem onClick={handleDateRangeSelect}>
-                        <FormattedMessage defaultMessage='Select date range to summarize'/>
-                    </MenuItem>
-                </MenuList>
-                <Divider/>
+                            <IconWrapper>
+                                <IconAI/>
+                            </IconWrapper>
+                            <FormattedMessage defaultMessage='Ask Agents about this channel...'>
+                                {(placeholder) => (
+                                    <StyledInput
+                                        ref={inputRef}
+                                        type='text'
+                                        placeholder={placeholder as unknown as string}
+                                        value={inputValue}
+                                        onChange={(e) => setInputValue(e.target.value)}
+                                        onFocus={() => setIsFocused(true)}
+                                        onBlur={() => setIsFocused(false)}
+                                        onKeyDown={handleKeyDown}
+                                    />
+                                )}
+                            </FormattedMessage>
+                            <TrailingIconWrapper
+                                data-testid='send-custom-prompt-button'
+                                isActive={inputValue.length > 0}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleInputSubmit();
+                                }}
+                            >
+                                <SendIcon size={16}/>
+                            </TrailingIconWrapper>
+                        </AIInputWrapper>
+                    </InputContainer>
+                )}
+                {showAskInput && showSummarizeOptions && <Divider/>}
+                {showSummarizeOptions && (
+                    <MenuList>
+                        <MenuItem onClick={handleSummarizeUnreads}>
+                            <FormattedMessage defaultMessage='Summarize unreads'/>
+                        </MenuItem>
+                        <MenuItem onClick={() => handleSummarizeDays(7)}>
+                            <FormattedMessage defaultMessage='Summarize last 7 days'/>
+                        </MenuItem>
+                        <MenuItem onClick={() => handleSummarizeDays(14)}>
+                            <FormattedMessage defaultMessage='Summarize last 14 days'/>
+                        </MenuItem>
+                        <MenuItem onClick={handleDateRangeSelect}>
+                            <FormattedMessage defaultMessage='Select date range to summarize'/>
+                        </MenuItem>
+                    </MenuList>
+                )}
+                {(showAskInput || showSummarizeOptions) && <Divider/>}
                 <BotSelectorWrapper>
                     <BotDropdown
                         bots={bots}
@@ -310,12 +316,14 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                     </BotDropdown>
                 </BotSelectorWrapper>
             </PopoverContainer>
-            <SummarizeDateRangeModal
-                show={showDateModal}
-                onClose={() => setShowDateModal(false)}
-                onSummarize={handleSummarizeDateRange}
-                channelName={channelName}
-            />
+            {showSummarizeOptions && (
+                <SummarizeDateRangeModal
+                    show={showDateModal}
+                    onClose={() => setShowDateModal(false)}
+                    onSummarize={handleSummarizeDateRange}
+                    channelName={channelName}
+                />
+            )}
         </>
     );
 };

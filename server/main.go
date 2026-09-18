@@ -385,7 +385,7 @@ func (p *Plugin) OnActivate() error {
 
 	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
 		return p.configuration.Config()
-	}, &pluginLogger{service: &pluginAPI.Log}, untrustedHTTPClient)
+	}, &pluginLogger{service: &pluginAPI.Log}, untrustedHTTPClient, licenseChecker)
 
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
@@ -418,7 +418,9 @@ func (p *Plugin) OnActivate() error {
 		defer embeddedMu.Unlock()
 
 		if embeddedServer == nil {
-			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService)
+			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
+				return licenseChecker.Allows(enterprise.CapStateChangingTools)
+			})
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server", "error", embeddedErr)
 				return nil
@@ -437,7 +439,10 @@ func (p *Plugin) OnActivate() error {
 		}
 		return mcp.ServerConfig{}, false
 	}
-	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, accessChecker)
+	// Remote and plugin MCP servers are available at Enterprise and above; the
+	// embedded Mattermost server is connected at every level.
+	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
+	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
 	p.configuration.RegisterUpdateListener(func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	})
@@ -477,6 +482,7 @@ func (p *Plugin) OnActivate() error {
 		metricsService,
 		contextBuilder,
 		conversationsService,
+		licenseChecker,
 	)
 
 	// Set the meetings service on conversations to break circular dependency
@@ -485,7 +491,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
-		return mcp.LookupToolPolicy(p.configuration.MCP(), serverBaseURL, llm.BareMCPToolName(toolName))
+		return mcp.LookupEffectiveToolPolicy(p.configuration.MCP(), serverBaseURL, llm.BareMCPToolName(toolName), licenseChecker.Allows(enterprise.CapToolApprovalPolicies))
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
@@ -495,7 +501,9 @@ func (p *Plugin) OnActivate() error {
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient, accessChecker, func() string {
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient, func() bool {
+		return licenseChecker.Allows(enterprise.CapStateChangingTools)
+	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
 	})
 	if err != nil {

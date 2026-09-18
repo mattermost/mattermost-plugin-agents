@@ -4,8 +4,11 @@
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {useIsLicensedFor} from '@/license';
+
 import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from '../item';
+import EnterpriseChip, {useLicenseChipProps} from '../enterprise_chip';
 
 export type WebSearchGoogleConfig = {
     apiKey: string;
@@ -45,6 +48,8 @@ const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
+    const sovereignSearchLicensed = useIsLicensedFor('sovereign_web_search');
+    const sovereignSearchChip = useLicenseChipProps('sovereign_web_search');
 
     // Provide defaults for missing config objects
     const google = value.google || DEFAULT_GOOGLE_CONFIG;
@@ -77,7 +82,20 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                 <BooleanItem
                     label={intl.formatMessage({defaultMessage: 'Enable Web Search'})}
                     value={value.enabled}
-                    onChange={(enabled) => handleUpdate({enabled})}
+                    disableTrue={!sovereignSearchLicensed}
+                    extra={!sovereignSearchLicensed && (
+                        <EnterpriseChip
+                            title={sovereignSearchChip.title}
+                            text={sovereignSearchChip.text}
+                            subtext={sovereignSearchChip.subtext}
+                        />
+                    )}
+                    onChange={(enabled) => {
+                        if (enabled && !sovereignSearchLicensed) {
+                            return;
+                        }
+                        handleUpdate({enabled});
+                    }}
                     helpText={intl.formatMessage({defaultMessage: 'Allow agents to call Mattermost\'s built-in web search tool. If your LLM already provides native web search support, leave this disabled.'})}
                 />
                 <SelectionItem

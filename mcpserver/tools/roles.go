@@ -46,8 +46,8 @@ const (
 // getRoleTools returns the role and permission tools.
 func (p *MattermostToolProvider) getRoleTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_role", getRoleDescription, p.toolGetRole),
-		mcpTool(p, "get_channel_moderations", getChannelModerationsDescription, p.toolGetChannelModerations),
+		mcpReadTool(p, "get_role", getRoleDescription, p.toolGetRole),
+		mcpReadTool(p, "get_channel_moderations", getChannelModerationsDescription, p.toolGetChannelModerations),
 		mcpTool(p, "update_channel_member_roles", updateChannelMemberRolesDescription, p.toolUpdateChannelMemberRoles),
 		mcpTool(p, "update_team_member_roles", updateTeamMemberRolesDescription, p.toolUpdateTeamMemberRoles),
 	}

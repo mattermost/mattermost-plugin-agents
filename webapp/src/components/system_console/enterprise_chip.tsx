@@ -2,10 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
+
+import {Capability, requiredLevelFor, useLicenseLevelName} from '@/license';
 
 const Chip = styled.div`
     position: relative;
@@ -76,5 +79,23 @@ const EnterpriseChip = (props: Props) => {
         </OverlayTrigger>
     );
 };
+
+// useLicenseChipProps names the required plan for a capability. Pass the
+// result to EnterpriseChip so admin surfaces stay consistent.
+export function useLicenseChipProps(capability: Capability): {title: string; text: string; subtext: string; levelName: string} {
+    const intl = useIntl();
+    const levelName = useLicenseLevelName();
+    const name = levelName(requiredLevelFor(capability));
+    const available = intl.formatMessage(
+        {defaultMessage: 'Available on {level} plans and above'},
+        {level: name},
+    );
+    return {
+        title: available,
+        text: name,
+        subtext: available,
+        levelName: name,
+    };
+}
 
 export default EnterpriseChip;

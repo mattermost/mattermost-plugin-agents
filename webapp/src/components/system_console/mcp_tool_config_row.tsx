@@ -6,8 +6,11 @@ import styled from 'styled-components';
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 import {useIntl} from 'react-intl';
 
+import {useIsLicensedFor} from '@/license';
+
 import {ToggleSwitch} from '../toggle_switch';
 
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type MCPToolConfigRowProps = {
@@ -20,6 +23,8 @@ type MCPToolConfigRowProps = {
 
 const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
     const intl = useIntl();
+    const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
+    const approvalChip = useLicenseChipProps('tool_approval_policies');
     const [schemaExpanded, setSchemaExpanded] = useState(false);
     const overrideInputId = useId();
 
@@ -73,7 +78,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                         <PolicySelect
                             value={toolConfig.policy}
                             onChange={handlePolicyChange}
-                            disabled={serverDisabled}
+                            disabled={serverDisabled || !approvalPoliciesLicensed}
                         >
                             <option value='auto_run_in_dm'>
                                 {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
@@ -85,6 +90,13 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                                 {intl.formatMessage({defaultMessage: 'Ask Every Time'})}
                             </option>
                         </PolicySelect>
+                        {!approvalPoliciesLicensed && (
+                            <EnterpriseChip
+                                title={approvalChip.title}
+                                text={approvalChip.text}
+                                subtext={approvalChip.subtext}
+                            />
+                        )}
                     </PolicySelectWrapper>
                     <ToggleWrapper>
                         <ToggleSwitch
@@ -183,10 +195,12 @@ const ToolDescription = styled.div`
 
 const PolicySelectWrapper = styled.div`
     display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-    justify-content: center;
-    width: 192px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    width: auto;
+    min-width: 192px;
 `;
 
 const PolicySelect = styled.select`

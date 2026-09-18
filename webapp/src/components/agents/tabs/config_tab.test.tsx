@@ -34,9 +34,22 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('@/client', () => ({
     fetchModelsForAgentService: jest.fn().mockResolvedValue([]),
     getBotProfilePictureUrl: jest.fn().mockResolvedValue(''),
+}));
+
+jest.mock('@/license', () => ({
+    LicenseLevel: {Unlicensed: 0, Professional: 1, Enterprise: 2, EnterpriseAdvanced: 3},
+    useIsLicensedFor: jest.fn(() => true),
+    useServiceLimit: jest.fn(() => null),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
 }));
 
 jest.mock('src/../../assets/bot_icon.png', () => 'placeholder-icon.png', {virtual: true});
@@ -158,5 +171,78 @@ describe('ConfigTab', () => {
         expect(screen.queryByTestId('native-tool-web_search')).toBeNull();
         expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
         expect(screen.queryByText('Structured Output')).toBeNull();
+    });
+});
+
+describe('ConfigTab license gating', () => {
+    const {useIsLicensedFor, useServiceLimit} = jest.requireMock('@/license') as {
+        useIsLicensedFor: jest.Mock;
+        useServiceLimit: jest.Mock;
+    };
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+        useServiceLimit.mockReturnValue(null);
+    });
+
+    test('notes that only the first service is active when the service cap is in effect', async () => {
+        useServiceLimit.mockReturnValue(1);
+        const second: ServiceInfo = {...openaiService, id: 'svc_other', name: 'Other'};
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft()}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, second]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        expect(screen.getByText(/Only the first configured service is active/)).not.toBeNull();
+    });
+
+    test('lets an unlicensed admin turn native web search off but not on', async () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search');
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({enabledNativeTools: ['web_search']})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+        expect(
+            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+        ).toBe(false);
+    });
+
+    test('disables turning native web search on below Professional', async () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search');
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({enabledNativeTools: []})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                />
+            </IntlProvider>,
+        );
+
+        await screen.findByText('AI Service');
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+        expect(
+            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+        ).toBe(true);
+        expect(screen.getByText('Enterprise')).not.toBeNull();
     });
 });

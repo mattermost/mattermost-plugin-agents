@@ -76,10 +76,13 @@ If a non–system-admin agent admin loses access to an agent's service under ABA
 
 ### License
 
-The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+The number of agents that can be active depends on the license level. Configuration-file bots and user-created agents count together as one pool.
 
-- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
-- **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
+- **Free** (no license): one agent. Once one agent exists, the **Create agent** button is disabled with a hint naming the plan that raises the cap, and the API returns HTTP 403 with an actionable licensing message for any over-limit creation attempt.
+- **Professional**: three agents.
+- **Enterprise, Entry and Enterprise Advanced**: unlimited agents (subject to permissions).
+
+Agent access controls (restricting an agent to named users, teams or channels, and the corresponding block lists) are available at Professional and above; attribute-based access is available at Enterprise Advanced; service-account authentication is available at Enterprise and above. Resetting any of these to their open defaults is always permitted.
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
 
@@ -273,7 +276,7 @@ Practical consequences:
 
 ### "Create agent" is disabled and an upgrade hint is shown
 
-The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
+The server has reached the number of agents its license level allows (one on Free, three on Professional). The Agents page still shows the list, but **Create agent** is disabled. Apply a Professional, Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to raise the cap, or delete an existing agent before creating a replacement.
 
 ### "Create agent" button is hidden
 
@@ -293,9 +296,9 @@ This badge is **not** used to mean "you are denied by service ABAC." Non–syste
 
 Another agent (active or recently deleted) already uses the username. Pick a different username. Usernames cannot be changed after creation, so attempting to edit the conflicting agent is not a workaround — delete that agent if it is truly unused, or pick another name.
 
-### Saving an agent returns "creating more than 1 self-service agent(s) requires an E20 or Enterprise license"
+### Saving an agent returns a licensing error naming a required plan
 
-You are at the free-tier limit and the server does not have a multi-LLM license. Apply a qualifying license, or delete the existing agent before creating a replacement.
+The server has reached the number of agents its license level allows, or the agent uses a capability available at a higher level (for example access controls, attribute-based access or service-account authentication). The message names the level that provides it. Apply a qualifying license, or adjust the agent so it stays within the current level.
 
 ### Avatar didn't update after save
 

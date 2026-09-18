@@ -37,6 +37,8 @@ import {IntItem} from '@/components/system_console/number_items';
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
+import {LicenseLevel, useLicenseLevelName, useServiceLimit} from '@/license';
+
 import {AgentDraft} from '../agent_config_view';
 
 type Props = {
@@ -66,6 +68,8 @@ const ConfigTab = (props: Props) => {
         usernameLocked = false,
     } = props;
     const intl = useIntl();
+    const serviceLimit = useServiceLimit();
+    const levelName = useLicenseLevelName();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const customInstructionsLength = useMemo(() => codePointLength(draft.customInstructions), [draft.customInstructions]);
@@ -297,10 +301,17 @@ const ConfigTab = (props: Props) => {
                     value={draft.serviceId}
                     onChange={(e) => onChange({serviceId: e.target.value})}
                     error={errors.serviceId}
-                    helptext={intl.formatMessage({
-                        defaultMessage:
-                            'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
-                    })}
+                    helptext={
+                        serviceLimit !== null && services.length > 1 ?
+                            intl.formatMessage(
+                                {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
+                                {plan: levelName(LicenseLevel.Enterprise)},
+                            ) :
+                            intl.formatMessage({
+                                defaultMessage:
+                                    'Select an AI service to load model suggestions and configure vision, tools, native provider tools, reasoning, and structured output.',
+                            })
+                    }
                 >
                     <SelectionItemOption value=''>
                         {intl.formatMessage({defaultMessage: 'Select a service'})}

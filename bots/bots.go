@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -31,6 +32,7 @@ import (
 type Config interface {
 	GetBots() []llm.BotConfig
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
+	GetServices() []llm.ServiceConfig
 	GetDefaultBotName() string
 	EnableTokenUsageLogging() bool
 	EnableTokenUsageLogToPlugin() bool
@@ -88,6 +90,11 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		pluginTokenLogger = &pluginAPI.Log
 	}
 
+	tokenUsageSinks := llm.NewTokenUsageSinks(pluginTokenLogger)
+	tokenUsageSinks.SetAccountingEnabled(func() bool {
+		return licenseChecker.Allows(enterprise.CapTokenAccounting)
+	})
+
 	return &MMBots{
 		ensureBotsClusterMutex: mutexPluginAPI,
 		pluginAPI:              pluginAPI,
@@ -96,7 +103,7 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 		agentStore:             agentStore,
 		accessChecker:          accessChecker,
 		llmUpstreamHTTPClient:  llmUpstreamHTTPClient,
-		tokenUsageSinks:        llm.NewTokenUsageSinks(pluginTokenLogger),
+		tokenUsageSinks:        tokenUsageSinks,
 		metrics:                metrics,
 	}
 }
@@ -107,32 +114,125 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 // rebuild, so the check can't miss a service used only by a DB agent.
 func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}, map[string]llm.ServiceConfig, error) {
 	// config.GetBots() returns the config-owned slice; clone before
-	// truncating + appending so we don't overwrite it.
-	botCfgs := slices.Clone(b.config.GetBots())
-	if len(botCfgs) > 1 && !b.licenseChecker.IsMultiLLMLicensed() {
-		b.pluginAPI.Log.Error("Only one bot allowed with current license.")
-		botCfgs = botCfgs[:1]
-	}
-
-	// DB-backed user agents bypass the license multi-LLM cap — gated by
-	// PermissionManageOwnAgent at the API layer instead.
-	activeDBBotUsernames := make(map[string]struct{})
+	// appending so we don't overwrite it.
+	pool := slices.Clone(b.config.GetBots())
+	dbNames := make(map[string]struct{})
 	if b.agentStore != nil {
 		dbAgents, err := b.agentStore.ListAgents()
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
+		sortAgentsByCreateAt(dbAgents)
 		for _, cfg := range dbAgents {
 			if cfg == nil {
 				continue
 			}
-			activeDBBotUsernames[cfg.Name] = struct{}{}
-			botCfgs = append(botCfgs, *cfg)
+			dbNames[cfg.Name] = struct{}{}
+			pool = append(pool, *cfg)
 		}
 	}
 
+	botCfgs, activeDBBotUsernames := b.selectActiveBots(pool, dbNames)
 	serviceCfgs := b.resolveServiceCfgs(botCfgs)
 	return botCfgs, activeDBBotUsernames, serviceCfgs, nil
+}
+
+// sortAgentsByCreateAt orders DB agents by CreateAt ascending, then ID, so the
+// combined pool is deterministic even when ListAgents does not specify order.
+func sortAgentsByCreateAt(agents []*llm.BotConfig) {
+	slices.SortFunc(agents, func(a, b *llm.BotConfig) int {
+		if a == nil && b == nil {
+			return 0
+		}
+		if a == nil {
+			return 1
+		}
+		if b == nil {
+			return -1
+		}
+		if a.CreateAt != b.CreateAt {
+			if a.CreateAt < b.CreateAt {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+}
+
+func (b *MMBots) licenseLevel() enterprise.Level {
+	if b == nil || b.licenseChecker == nil {
+		return enterprise.LevelUnlicensed
+	}
+	return b.licenseChecker.Level()
+}
+
+func (b *MMBots) activeServiceIDSet() map[string]struct{} {
+	var services []llm.ServiceConfig
+	if b.config != nil {
+		services = b.config.GetServices()
+	}
+	ids := config.ActiveServiceIDs(&config.Config{Services: services}, b.licenseLevel())
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
+}
+
+// selectActiveBots keeps the first AgentLimit valid agents that reference an
+// active LLM service. Cap-inactive and service-inactive agents are omitted
+// from the ensure set (so existing Mattermost bot accounts are deactivated)
+// and from activeDBBotUsernames. DB rows are never deleted.
+func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struct{}) ([]llm.BotConfig, map[string]struct{}) {
+	limit, capped := b.licenseChecker.AgentLimit()
+	activeServices := b.activeServiceIDSet()
+	_, servicesCapped := b.licenseChecker.ServiceLimit()
+
+	active := make([]llm.BotConfig, 0, len(pool))
+	activeDB := make(map[string]struct{})
+	var capInactive []string
+	var serviceInactive []string
+
+	for _, cfg := range pool {
+		if !cfg.IsValid() {
+			continue
+		}
+		if servicesCapped {
+			if _, ok := activeServices[cfg.ServiceID]; !ok {
+				serviceInactive = append(serviceInactive, cfg.Name)
+				continue
+			}
+		}
+		if capped && len(active) >= limit {
+			capInactive = append(capInactive, cfg.Name)
+			continue
+		}
+		active = append(active, cfg)
+		if _, isDB := dbNames[cfg.Name]; isDB {
+			activeDB[cfg.Name] = struct{}{}
+		}
+	}
+
+	if b.pluginAPI != nil {
+		if len(capInactive) > 0 {
+			b.pluginAPI.Log.Warn(
+				"AI agents over the current license agent limit are inactive",
+				"inactive_agents", strings.Join(capInactive, ", "),
+				"limit", limit,
+				"license_level", b.licenseLevel().String(),
+			)
+		}
+		if len(serviceInactive) > 0 {
+			b.pluginAPI.Log.Warn(
+				"Agents referencing LLM services other than the first configured service are inactive; multiple LLM services are available at Enterprise and above",
+				"inactive_agents", strings.Join(serviceInactive, ", "),
+				"license_level", b.licenseLevel().String(),
+			)
+		}
+	}
+
+	return active, activeDB
 }
 
 // resolveServiceCfgs builds a map of service configs referenced by the given
@@ -146,6 +246,11 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 			if svc, ok := b.config.GetServiceByID(botCfg.ServiceID); ok {
 				result[botCfg.ServiceID] = svc
 			}
+		}
+		// Fallback chains are available at Enterprise and above. Exclude them
+		// from change detection so the snapshot matches getLLM.
+		if !b.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
+			continue
 		}
 		// Include fallback chain services so changes to them trigger re-init.
 		// Best-effort: a chain-resolution error is surfaced when the bot's LLM
@@ -222,7 +327,7 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 		return
 	}
 
-	loggingEnabled := b.config.EnableTokenUsageLogging()
+	loggingEnabled := b.licenseChecker.Allows(enterprise.CapTokenAccounting) && b.config.EnableTokenUsageLogging()
 	pluginEnabled := loggingEnabled && b.config.EnableTokenUsageLogToPlugin()
 	fileEnabled := loggingEnabled && b.config.EnableTokenUsageLogToFile()
 
@@ -365,8 +470,8 @@ func (b *MMBots) EnsureBots() error {
 				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
 				continue
 			}
-			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
-				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
+			if _, deactivateErr := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); deactivateErr != nil {
+				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", deactivateErr.Error())
 				continue
 			}
 		}
@@ -377,17 +482,17 @@ func (b *MMBots) EnsureBots() error {
 	for _, bot := range bots {
 		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
 		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
-			var err error
-			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
+			var patchErr error
+			bot.mmBot, patchErr = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
 				DisplayName: &bot.cfg.DisplayName,
 				Description: &description,
 			})
-			if err != nil {
-				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", err.Error())
+			if patchErr != nil {
+				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", patchErr.Error())
 				continue
 			}
-			if _, err := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); err != nil {
-				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", err.Error())
+			if _, activeErr := b.pluginAPI.Bot.UpdateActive(prevBot.UserId, true); activeErr != nil {
+				b.pluginAPI.Log.Error("Failed to update bot active", "bot_name", bot.cfg.Name, "error", activeErr.Error())
 				continue
 			}
 		} else {
@@ -396,20 +501,22 @@ func (b *MMBots) EnsureBots() error {
 				DisplayName: bot.cfg.DisplayName,
 				Description: description,
 			}
-			err := b.pluginAPI.Bot.Create(bot.mmBot)
-			if err != nil {
-				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", err.Error())
+			if createErr := b.pluginAPI.Bot.Create(bot.mmBot); createErr != nil {
+				b.pluginAPI.Log.Error("Failed to ensure bot", "bot_name", bot.cfg.Name, "error", createErr.Error())
 				continue
 			}
 		}
 
 		b.ensureDefaultProfileImage(bot)
 
-		// Resolve fallback chain for this bot's service. A misconfigured chain
-		// fails bot setup so the admin finds out now, not at failover time.
-		fallbackServices, err := llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
-		if err != nil {
-			return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, err)
+		// Fallback chains are available at Enterprise and above.
+		var fallbackServices []llm.ServiceConfig
+		if b.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
+			var ferr error
+			fallbackServices, ferr = llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
+			if ferr != nil {
+				return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, ferr)
+			}
 		}
 
 		bot.llm, bot.providerServices, err = b.getLLM(bot.service, bot.cfg, fallbackServices)

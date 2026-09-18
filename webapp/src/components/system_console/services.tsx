@@ -6,11 +6,14 @@ import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {useServiceLimit} from '@/license';
+
 import {TertiaryButton} from '../assets/buttons';
 import ConfirmationDialog from '../confirmation_dialog';
 
 import Service, {LLMService} from './service';
 import {LLMBotConfig} from './bot';
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 
 const defaultNewService: LLMService = {
     id: '',
@@ -48,6 +51,9 @@ const Services = (props: Props) => {
     const intl = useIntl();
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
+    const serviceLimit = useServiceLimit();
+    const serviceChip = useLicenseChipProps('multiple_llm_services');
+    const addDisabled = serviceLimit !== null && props.services.length >= serviceLimit;
 
     // No id is assigned client-side: the backend mints the stable ID on save
     // (normalizeAdminConfig); policy authoring needs a persisted id.
@@ -106,10 +112,25 @@ const Services = (props: Props) => {
                     />
                 ))}
             </ServicesList>
-            <TertiaryButton onClick={addNewService} >
-                <PlusAIServiceIcon/>
-                <FormattedMessage defaultMessage='Add an AI Service'/>
-            </TertiaryButton>
+            <AddServiceRow>
+                <TertiaryButton
+                    onClick={addNewService}
+                    disabled={addDisabled}
+                >
+                    <PlusAIServiceIcon/>
+                    <FormattedMessage defaultMessage='Add an AI Service'/>
+                </TertiaryButton>
+                {addDisabled && (
+                    <EnterpriseChip
+                        title={serviceChip.title}
+                        text={serviceChip.text}
+                        subtext={intl.formatMessage(
+                            {defaultMessage: 'Your current plan allows {count} LLM services. Additional services are available on {plan} plans and above.'},
+                            {count: serviceLimit, plan: serviceChip.levelName},
+                        )}
+                    />
+                )}
+            </AddServiceRow>
             <ConfirmationDialog
                 show={showErrorDialog}
                 title={<FormattedMessage defaultMessage='Cannot Delete Service'/>}
@@ -126,6 +147,13 @@ const PlusAIServiceIcon = styled(PlusIcon)`
 	width: 18px;
 	height: 18px;
 	margin-right: 8px;
+`;
+
+const AddServiceRow = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
 `;
 
 const ServicesList = styled.div`

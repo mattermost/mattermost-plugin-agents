@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -37,6 +38,11 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 // handleMCPRegister handles POST /bridge/v1/mcp/register using the authenticated
 // Mattermost-Plugin-ID header.
 func (a *API) handleMCPRegister(c *gin.Context) {
+	if err := a.licenseChecker.Check(enterprise.CapRemoteMCP); err != nil {
+		abortNotLicensed(c, err)
+		return
+	}
+
 	// Attribute the caller before anything can fail, so every audit fail
 	// path carries it. The header is set by the Mattermost server for
 	// inter-plugin requests and is the registered PluginID too, so one

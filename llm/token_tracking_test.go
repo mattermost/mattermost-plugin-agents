@@ -123,6 +123,7 @@ func makeStream(events ...TextStreamEvent) *TextStreamResult {
 
 func makeTestTokenUsageSinks(loggingEnabled bool, pluginLogger TokenUsagePluginLogger, tokenLogger *mlog.Logger) *TokenUsageSinks {
 	sinks := NewTokenUsageSinks(pluginLogger)
+	sinks.SetAccountingEnabled(func() bool { return true })
 	sinks.SetLoggingEnabled(loggingEnabled)
 	sinks.SetPluginEnabled(pluginLogger != nil)
 	sinks.SetFileEnabled(tokenLogger != nil)
@@ -541,4 +542,33 @@ func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 
 		mockLLM.AssertExpectations(t)
 	})
+}
+
+func TestTokenTrackingWrapper_AccountingDisabledEmitsNothing(t *testing.T) {
+	mockLLM := &MockLanguageModel{}
+	pluginLogger := &observedPluginLogger{}
+	metrics := &observedMetrics{}
+	sinks := NewTokenUsageSinks(pluginLogger)
+	sinks.SetLoggingEnabled(true)
+	sinks.SetPluginEnabled(true)
+	sinks.SetAccountingEnabled(func() bool { return false })
+	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, metrics)
+
+	mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
+		makeStream(
+			TextStreamEvent{Type: EventTypeText, Value: "hello"},
+			TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 2, OutputTokens: 3}},
+			TextStreamEvent{Type: EventTypeEnd, Value: nil},
+		),
+		nil,
+	).Once()
+
+	result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{Context: &Context{}})
+	require.NoError(t, err)
+	_, err = result.ReadAll()
+	require.NoError(t, err)
+
+	assert.Empty(t, pluginLogger.Entries())
+	assert.Empty(t, metrics.Calls())
+	mockLLM.AssertExpectations(t)
 }

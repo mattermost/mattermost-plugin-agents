@@ -18,6 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
@@ -422,11 +423,13 @@ func (a *API) prepareAgentBridgeCompletion(
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 
-	// Enable native web search if the bot supports it.
-	// Native web search is a provider-level feature (not an MCP tool),
-	// so it's not part of allowed_tools — it's always available when configured.
-	if bot.HasNativeWebSearchEnabled() {
+	// Enable native web search if the bot supports it. Native web search is a
+	// provider-level feature (not an MCP tool), so it's not part of
+	// allowed_tools; it is available at Professional and above.
+	if bot.HasNativeWebSearchEnabled() && a.licenseChecker.Allows(enterprise.CapProviderWebSearch) {
 		opts = append(opts, llm.WithNativeWebSearchAllowed())
+	} else {
+		opts = append(opts, llm.WithSkipNativeWebSearch())
 	}
 
 	// Build the auto-run predicate from the explicit allowlist. Returning nil

@@ -13,12 +13,14 @@ import {DangerPill} from '../pill';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {LicenseLevel, useIsLicensedFor, useLicenseLevelName, useServiceLimit} from '@/license';
 
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -145,10 +147,15 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
+    const webSearchChip = useLicenseChipProps('provider_web_search');
 
     const availableNativeTools = nativeToolOptions(provider, intl);
 
     const setToolEnabled = (toolId: string, enabled: boolean) => {
+        if (toolId === 'web_search' && enabled && !webSearchLicensed) {
+            return;
+        }
         const currentTools = props.enabledTools || [];
         if (enabled) {
             if (!currentTools.includes(toolId)) {
@@ -167,20 +174,31 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                 {titleMessage}
             </ItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                disabled={props.disabled}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <NativeToolField key={tool.id}>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && (
+                                    <EnterpriseChip
+                                        title={webSearchChip.title}
+                                        text={webSearchChip.text}
+                                        subtext={webSearchChip.subtext}
+                                    />
+                                )}
+                            </FieldControlRow>
+                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                        </NativeToolField>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );
@@ -202,6 +220,8 @@ type ModelInfo = {
 const Bot = (props: Props) => {
     const [open, setOpen] = useState(false);
     const intl = useIntl();
+    const serviceLimit = useServiceLimit();
+    const levelName = useLicenseLevelName();
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
     const [loadingModels, setLoadingModels] = useState(false);
     const [modelsFetchError, setModelsFetchError] = useState<string>('');
@@ -343,6 +363,14 @@ const Bot = (props: Props) => {
                             label={intl.formatMessage({defaultMessage: 'AI Service'})}
                             value={props.bot.serviceID}
                             onChange={(e) => props.onChange({...props.bot, serviceID: e.target.value})}
+                            helptext={
+                                serviceLimit !== null && props.services.length > 1 ?
+                                    intl.formatMessage(
+                                        {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
+                                        {plan: levelName(LicenseLevel.Enterprise)},
+                                    ) :
+                                    ''
+                            }
                         >
                             <SelectionItemOption value=''>
                                 {intl.formatMessage({defaultMessage: 'Select a service'})}

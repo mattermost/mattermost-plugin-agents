@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -245,6 +246,13 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
 	if restrictionErr := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); restrictionErr != nil {
 		return restrictionErr
+	}
+
+	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
+		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
+			c.notifyMultiplayerChannelsRequiresLicense(postingUser, channel, post)
+			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
+		}
 	}
 
 	// Check config to determine if tools should be allowed in channel mentions
@@ -585,6 +593,29 @@ func (c *Conversations) responseLocale(postingUser *model.User, channel *model.C
 		return postingUser.Locale
 	}
 	return defaultLocale
+}
+
+func (c *Conversations) notifyMultiplayerChannelsRequiresLicense(postingUser *model.User, channel *model.Channel, post *model.Post) {
+	if c.mmClient == nil || postingUser == nil || channel == nil || post == nil {
+		return
+	}
+
+	fallback := "Invoking an agent in a channel or group message is available with a Mattermost Professional license or higher."
+	message := fallback
+	if c.i18n != nil {
+		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(postingUser.Locale))
+		message = T("agents.multiplayer_channels_requires_professional", fallback)
+	}
+
+	ephemeral := &model.Post{
+		ChannelId: channel.Id,
+		RootId:    post.RootId,
+		Message:   message,
+	}
+	if ephemeral.RootId == "" {
+		ephemeral.RootId = post.Id
+	}
+	c.mmClient.SendEphemeralPost(postingUser.Id, ephemeral)
 }
 
 func (c *Conversations) fallbackLocale(userLocale string) string {

@@ -12,10 +12,12 @@ import IconAI from '../assets/icon_ai';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 
 export type LLMService = {
     id: string
@@ -85,6 +87,8 @@ type ServiceFieldsProps = {
 export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
+    const fallbackLicensed = useIsLicensedFor('multiple_llm_services');
+    const fallbackChip = useLicenseChipProps('multiple_llm_services');
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'north';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
@@ -445,7 +449,20 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Fallback Service'})}
                 value={props.service.fallbackServiceID || ''}
-                onChange={(e) => props.onChange({...props.service, fallbackServiceID: e.target.value})}
+                disabled={!fallbackLicensed && !props.service.fallbackServiceID}
+                extra={!fallbackLicensed && (
+                    <EnterpriseChip
+                        title={fallbackChip.title}
+                        text={fallbackChip.text}
+                        subtext={fallbackChip.subtext}
+                    />
+                )}
+                onChange={(e) => {
+                    if (!fallbackLicensed && e.target.value !== '') {
+                        return;
+                    }
+                    props.onChange({...props.service, fallbackServiceID: e.target.value});
+                }}
                 helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
             >
                 <SelectionItemOption value=''>

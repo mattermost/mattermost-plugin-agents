@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -126,10 +127,16 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
+		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
+			return config.Config{}, err
+		}
 		changedKeys = audit.ChangedJSONKeys(prev, normalized)
 		return normalized, nil
 	})
 	switch {
+	case errors.Is(err, enterprise.ErrNotLicensed):
+		abortNotLicensed(c, err)
+		return
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
@@ -159,4 +166,20 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// vettedDefaultToolPolicy returns the vetted default policy the System Console
+// seeds for a tool on a server, so seeded defaults are not treated as an
+// admin-authored tool approval policy by the license gate.
+func vettedDefaultToolPolicy(serverBaseURL, toolName string) string {
+	baseURL := serverBaseURL
+	if baseURL == config.MCPEmbeddedServerOrigin {
+		baseURL = mcp.EmbeddedClientKey
+	}
+	for _, tc := range mcp.SeedVettedToolConfigs(baseURL) {
+		if tc.Name == toolName {
+			return tc.Policy
+		}
+	}
+	return ""
 }

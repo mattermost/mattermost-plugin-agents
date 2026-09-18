@@ -103,6 +103,16 @@ export async function readAgentErrorMessage(response: Response): Promise<string>
     return '';
 }
 
+// License denials are 403 with `{error, license_required}`. Other plugin
+// endpoints historically throw ClientError with an empty message; keep that
+// for non-403 statuses so callers that only inspect status_code are unchanged.
+export async function readClientErrorMessage(response: Response): Promise<string> {
+    if (response.status !== 403) {
+        return '';
+    }
+    return readAgentErrorMessage(response);
+}
+
 export async function doReaction(postid: string) {
     const url = `${postRoute(postid)}/react`;
     const response = await fetch(url, Client4.getOptions({
@@ -114,7 +124,7 @@ export async function doReaction(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -134,7 +144,7 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -155,7 +165,7 @@ export async function doChannelAnalysis(channelId: string, analysisType: string,
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -172,7 +182,7 @@ export async function doTranscribe(postid: string, fileID: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -189,7 +199,7 @@ export async function doSummarizeTranscription(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -206,7 +216,7 @@ export async function doStopGenerating(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -223,7 +233,7 @@ export async function doRegenerate(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -244,7 +254,7 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -264,7 +274,7 @@ export async function doToolResult(postid: string, toolIDs: string[]): Promise<v
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -281,7 +291,7 @@ export async function doPostbackSummary(postid: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -306,7 +316,7 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -338,7 +348,7 @@ export async function getAIThreads() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -381,7 +391,7 @@ export async function getConversation(conversationId: string): Promise<Conversat
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -407,7 +417,7 @@ export async function getConversationContext(conversationId: string): Promise<Co
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -424,7 +434,7 @@ export async function getAIBots() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -467,7 +477,7 @@ export async function doRunSearch(query: string, teamId: string, channelId: stri
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -554,7 +564,7 @@ export async function doReindexPosts(clearIndex = true) {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -571,7 +581,7 @@ export async function getReindexStatus() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -588,7 +598,7 @@ export async function cancelReindex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -605,7 +615,7 @@ export async function catchUpIndex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -622,7 +632,7 @@ export async function rebuildVectorIndex() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -639,7 +649,7 @@ export async function checkIndexHealth() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -656,7 +666,7 @@ export async function getMCPTools() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -673,7 +683,7 @@ export async function clearMCPToolsCache() {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -699,7 +709,7 @@ export async function updatePluginServer(
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -723,7 +733,7 @@ export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConf
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -757,7 +767,7 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -785,7 +795,7 @@ export async function getUserMCPTools(opts?: {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -802,7 +812,7 @@ export async function refreshUserMCPTools(): Promise<UserMCPToolsResponse> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -819,7 +829,7 @@ export async function getUserToolPreferences(): Promise<{disabled_servers: strin
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -837,7 +847,7 @@ export async function updateUserToolPreferences(prefs: {disabled_servers: string
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -861,7 +871,7 @@ export async function getChannelAutoReply(channelId: string): Promise<ChannelAut
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -879,7 +889,7 @@ export async function updateChannelAutoReply(channelId: string, settings: Channe
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -896,7 +906,7 @@ export async function disconnectMCPOAuth(serverName: string): Promise<void> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -926,7 +936,7 @@ export async function getChannelInterval(
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -943,7 +953,7 @@ export async function getPluginConfig(): Promise<PluginConfig> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -965,7 +975,7 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -976,6 +986,9 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
 export type AgentsListResult = {
     agents: UserAgent[];
     activeAgentCount?: number;
+
+    // Present when the server sent X-Agent-Limit. null means uncapped.
+    agentLimit?: number | null;
 };
 
 export async function getAgents(): Promise<AgentsListResult> {
@@ -987,17 +1000,26 @@ export async function getAgents(): Promise<AgentsListResult> {
     if (response.ok) {
         const agents = await response.json() as UserAgent[];
         const activeCountHeader = response.headers.get('X-Agent-Active-Count');
+        const limitHeader = response.headers.get('X-Agent-Limit');
         const result: AgentsListResult = {agents};
 
         // Only trust a strict non-negative integer (rejects e.g. "1foo", "", null).
         if (activeCountHeader !== null && (/^\d+$/).test(activeCountHeader)) {
             result.activeAgentCount = Number.parseInt(activeCountHeader, 10);
         }
+        if (limitHeader !== null) {
+            if ((/^\d+$/).test(limitHeader)) {
+                result.agentLimit = Number.parseInt(limitHeader, 10);
+            } else {
+                // Empty or non-numeric (e.g. "unlimited") means uncapped.
+                result.agentLimit = null;
+            }
+        }
         return result;
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1092,7 +1114,7 @@ export async function getServices(): Promise<ServiceInfo[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1119,7 +1141,7 @@ export async function fetchModelsForAgentService(serviceId: string, signal?: Abo
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1136,7 +1158,7 @@ export async function getCustomPrompts(): Promise<CustomPrompt[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1154,7 +1176,7 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1169,7 +1191,7 @@ export async function updateCustomPrompt(id: string, prompt: {name: string; desc
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
@@ -1184,7 +1206,7 @@ export async function deleteCustomPrompt(id: string): Promise<void> {
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
@@ -1202,7 +1224,7 @@ export async function getCustomPromptPins(): Promise<string[]> {
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });
@@ -1217,7 +1239,7 @@ export async function setCustomPromptPin(promptId: string, pinned: boolean): Pro
 
     if (!response.ok) {
         throw new ClientError(Client4.url, {
-            message: '',
+            message: await readClientErrorMessage(response),
             status_code: response.status,
             url,
         });
@@ -1236,7 +1258,7 @@ export async function renderCustomPrompt(id: string, channelId?: string, botUser
     }
 
     throw new ClientError(Client4.url, {
-        message: '',
+        message: await readClientErrorMessage(response),
         status_code: response.status,
         url,
     });

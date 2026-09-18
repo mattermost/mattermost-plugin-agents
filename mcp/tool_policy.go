@@ -84,3 +84,33 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 
 	return ToolPolicyAsk, false
 }
+
+// LookupEffectiveToolPolicy is LookupToolPolicy with the product-default policy
+// substituted when tool-approval policies are not available. Enabled still
+// comes from the stored config, so a disabled tool stays disabled at every
+// level. When policies are not available, EmbeddedClientKey tools use the
+// vetted seed policy (or ask if the tool is not in the seed) and every other
+// origin uses ask.
+func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, policiesLicensed bool) (string, bool) {
+	policy, enabled := LookupToolPolicy(cfg, serverBaseURL, toolName)
+	if policiesLicensed {
+		return policy, enabled
+	}
+
+	defaultPolicy := ToolPolicyAsk
+	if serverBaseURL == EmbeddedClientKey {
+		lookupName := ToolPolicyLookupName(&ServerConfig{
+			Name:        EmbeddedServerName,
+			Enabled:     true,
+			BaseURL:     EmbeddedClientKey,
+			ToolConfigs: SeedVettedToolConfigs(EmbeddedClientKey),
+		}, toolName)
+		for _, seed := range SeedVettedToolConfigs(EmbeddedClientKey) {
+			if seed.Name == lookupName || seed.Name == toolName {
+				defaultPolicy = seed.Policy
+				break
+			}
+		}
+	}
+	return defaultPolicy, enabled
+}

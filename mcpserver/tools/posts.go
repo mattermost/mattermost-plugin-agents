@@ -84,13 +84,13 @@ func (p *MattermostToolProvider) getPostTools() []MCPTool {
 	groupMessageDesc := fmt.Sprintf(groupMessageDescriptionFmt, attachmentsParam)
 
 	return []MCPTool{
-		mcpTool(p, "read_post", readPostDescription, p.toolReadPost),
+		mcpReadTool(p, "read_post", readPostDescription, p.toolReadPost),
 		mcpTool(p, "create_post", createPostDesc, p.toolCreatePost),
 		mcpTool(p, "dm", dmDesc, p.toolDM),
 		mcpTool(p, "group_message", groupMessageDesc, p.toolGroupMessage),
-		mcpTool(p, "get_post_info", getPostInfoDescription, p.toolGetPostInfo),
-		mcpTool(p, "list_pinned_posts", listPinnedPostsDescription, p.toolListPinnedPosts),
-		mcpTool(p, "list_saved_posts", listSavedPostsDescription, p.toolListSavedPosts),
+		mcpReadTool(p, "get_post_info", getPostInfoDescription, p.toolGetPostInfo),
+		mcpReadTool(p, "list_pinned_posts", listPinnedPostsDescription, p.toolListPinnedPosts),
+		mcpReadTool(p, "list_saved_posts", listSavedPostsDescription, p.toolListSavedPosts),
 		mcpTool(p, "update_post", updatePostDescription, p.toolUpdatePost),
 		mcpTool(p, "delete_post", deletePostDescription, p.toolDeletePost),
 		mcpTool(p, "pin_post", pinPostDescription, p.toolPinPost),

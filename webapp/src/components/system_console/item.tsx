@@ -130,6 +130,7 @@ export type SelectionItemProps = {
     helptext?: string
     disabled?: boolean
     error?: string
+    extra?: React.ReactNode
 };
 
 export const SelectionItem = (props: SelectionItemProps) => {
@@ -146,6 +147,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                     >
                         {props.children}
                     </SelectField>
+                    {props.extra}
                 </FieldControlRow>
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -645,6 +647,11 @@ type BooleanItemProps = {
     onChange: (to: boolean) => void
     helpText?: string
     disabled?: boolean
+
+    // When true, the "true" radio is disabled so the setting cannot be turned
+    // on, but turning it off remains possible.
+    disableTrue?: boolean
+    extra?: React.ReactNode
 };
 
 export const BooleanItem = (props: BooleanItemProps) => {
@@ -657,7 +664,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         type='radio'
                         value='true'
                         checked={props.value}
-                        disabled={props.disabled}
+                        disabled={props.disabled || props.disableTrue}
                         onChange={() => props.onChange(true)}
                     />
                     <FormattedMessage defaultMessage='true'/>
@@ -669,6 +676,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         onChange={() => props.onChange(false)}
                     />
                     <FormattedMessage defaultMessage='false'/>
+                    {props.extra}
                 </FieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>
