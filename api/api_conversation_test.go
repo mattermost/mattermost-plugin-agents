@@ -601,29 +601,36 @@ func allowAnyPostLookup(mockAPI *plugintest.API) {
 	}).Maybe()
 }
 
-// turnTextByRole decodes the response and returns the concatenated text of
-// every text block on the first turn with the given role.
-func turnTextByRole(t *testing.T, body []byte, role string) string {
+// turnByRole returns the first turn with the given role. The test fails if
+// that role is absent, so an empty-text assertion cannot pass on a dropped turn.
+func turnByRole(t *testing.T, body []byte, role string) TurnResponse {
 	t.Helper()
 
 	var response ConversationResponse
 	require.NoError(t, json.Unmarshal(body, &response))
-
 	for _, turn := range response.Turns {
-		if turn.Role != role {
-			continue
+		if turn.Role == role {
+			return turn
 		}
-		var blocks []conversation.ContentBlock
-		require.NoError(t, json.Unmarshal(turn.Content, &blocks))
-		text := ""
-		for _, block := range blocks {
-			if block.Type == conversation.BlockTypeText {
-				text += block.Text
-			}
-		}
-		return text
 	}
-	return ""
+	require.FailNowf(t, "missing turn", "response has no %q turn", role)
+	return TurnResponse{}
+}
+
+// textOfTurn returns the concatenated text of every text block on the turn.
+func textOfTurn(t *testing.T, turn TurnResponse) string {
+	t.Helper()
+
+	var blocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turn.Content, &blocks))
+	return conversation.TextContent(blocks)
+}
+
+// turnTextByRole decodes the response and returns the concatenated text of
+// every text block on the first turn with the given role.
+func turnTextByRole(t *testing.T, body []byte, role string) string {
+	t.Helper()
+	return textOfTurn(t, turnByRole(t, body, role))
 }
 
 // turnBlocks decodes the content blocks of the single turn in the response.
@@ -724,7 +731,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 			validate: func(t *testing.T, body []byte) {
 				assert.NotContains(t, string(body), storedUserTurnText,
 					"user turn text requires a retrievable anchored post")
-				assert.Empty(t, turnTextByRole(t, body, "user"))
+				assert.Empty(t, textOfTurn(t, turnByRole(t, body, "user")))
 			},
 		},
 		{
@@ -746,7 +753,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 					"user turn text requires a live anchored post")
 				assert.NotContains(t, string(body), flaggedPostMessage,
 					"a post flagged deleted supplies no text to the response")
-				assert.Empty(t, turnTextByRole(t, body, "user"))
+				assert.Empty(t, textOfTurn(t, turnByRole(t, body, "user")))
 			},
 		},
 		{
