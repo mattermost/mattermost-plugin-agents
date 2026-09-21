@@ -710,6 +710,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 			validate: func(t *testing.T, body []byte) {
 				assert.NotContains(t, string(body), storedUserTurnText,
 					"user turn text must match the current content of the post it is anchored to")
+				assert.Equal(t, currentUserPostMessage, turnTextByRole(t, body, "user"))
 			},
 		},
 		{
@@ -723,6 +724,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 			validate: func(t *testing.T, body []byte) {
 				assert.NotContains(t, string(body), storedUserTurnText,
 					"user turn text requires a retrievable anchored post")
+				assert.Empty(t, turnTextByRole(t, body, "user"))
 			},
 		},
 		{
@@ -744,6 +746,7 @@ func TestGetConversationTurnTextReflectsAnchoredPost(t *testing.T) {
 					"user turn text requires a live anchored post")
 				assert.NotContains(t, string(body), flaggedPostMessage,
 					"a post flagged deleted supplies no text to the response")
+				assert.Empty(t, turnTextByRole(t, body, "user"))
 			},
 		},
 		{
