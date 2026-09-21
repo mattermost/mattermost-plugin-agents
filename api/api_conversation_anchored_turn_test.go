@@ -253,6 +253,19 @@ func TestGetConversationAnchoredTurnShapes(t *testing.T) {
 			},
 		},
 		{
+			name: "empty stored text alongside a post that has a message",
+			stored: []conversation.ContentBlock{
+				{Type: conversation.BlockTypeToolUse, ID: "tc1", Name: "search", Shared: new(true)},
+			},
+			postMessage: edgePostMessage,
+			validate: func(t *testing.T, blocks []conversation.ContentBlock) {
+				assert.Empty(t, conversation.TextContent(blocks),
+					"a turn holding no text of its own keeps none")
+				assert.NotContains(t, conversation.TextContent(blocks), edgePostMessage)
+				require.Len(t, blocksOfType(blocks, conversation.BlockTypeToolUse), 1)
+			},
+		},
+		{
 			name: "anchor post id that resolves to no post",
 			stored: []conversation.ContentBlock{
 				{Type: conversation.BlockTypeText, Text: "stale question"},
