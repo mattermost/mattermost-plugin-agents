@@ -24,6 +24,16 @@ func BatchSkippedToolResult(toolName string, unavailableNames []string) string {
 	)
 }
 
+// BatchSkippedForInvalidArgumentsToolResult is BatchSkippedToolResult for a
+// batch halted by a sibling call the model built with unusable arguments.
+func BatchSkippedForInvalidArgumentsToolResult(toolName string, invalidNames []string) string {
+	return batchSkippedToolResultPrefix + fmt.Sprintf(
+		"tool %s was not executed because the batch contained tool call(s) with invalid arguments: %s",
+		toolName,
+		strings.Join(invalidNames, ", "),
+	)
+}
+
 func IsBatchSkippedToolResult(result string) bool {
 	return strings.HasPrefix(result, batchSkippedToolResultPrefix)
 }

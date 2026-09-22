@@ -90,9 +90,46 @@ describe('parseQuestionArgs', () => {
         ['empty options', {question: 'Q?', options: []}],
         ['option without a label', {question: 'Q?', options: [{description: 'no label'}]}],
         ['option with an empty label', {question: 'Q?', options: [{label: ''}]}],
-        ['non-object option', {question: 'Q?', options: ['A']}],
+        ['options carrying pseudo-XML markup', {question: 'Q?', options: '<parameter name="label">B'}],
+        ['options that are neither a list nor an object', {question: 'Q?', options: 42}],
     ])('returns null for %s', (_label, args) => {
         expect(parseQuestionArgs(args as ToolCall['arguments'])).toBeNull();
+    });
+
+    // Questions asked before the server started repairing arguments are still
+    // persisted in these shapes; without the same repairs here they render as
+    // a generic approval card whose Accept can never resolve them.
+    test.each([
+        ['options stringified as a JSON array', {question: 'Q?', options: '[{"label":"A"},{"label":"B"}]'}, ['A', 'B']],
+        ['options given as bare string labels', {question: 'Q?', options: ['A', 'B']}, ['A', 'B']],
+        ['each option stringified individually', {question: 'Q?', options: ['{"label":"A"}', '{"label":"B"}']}, ['A', 'B']],
+        ['lone option object not wrapped in an array', {question: 'Q?', options: {label: 'A'}}, ['A']],
+        ['whole argument object double encoded', '{"question":"Q?","options":[{"label":"A"}]}', ['A']],
+    ])('repairs %s', (_label, args, wantLabels) => {
+        const parsed = parseQuestionArgs(args as ToolCall['arguments']);
+        expect(parsed?.options.map((o) => o.label)).toEqual(wantLabels);
+    });
+
+    test('repairs stringified booleans', () => {
+        const parsed = parseQuestionArgs({
+            question: 'Q?',
+            options: [{label: 'A'}],
+            multi_select: 'true',
+            allow_free_form: 'false',
+        });
+        expect(parsed?.multiSelect).toBe(true);
+        expect(parsed?.allowFreeForm).toBe(false);
+    });
+
+    test('an uncoercible boolean falls back to its default', () => {
+        const parsed = parseQuestionArgs({
+            question: 'Q?',
+            options: [{label: 'A'}],
+            multi_select: {value: 'yes'},
+            allow_free_form: {value: 'no'},
+        });
+        expect(parsed?.multiSelect).toBe(false);
+        expect(parsed?.allowFreeForm).toBe(true);
     });
 });
 

@@ -207,6 +207,84 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 	}
 }
 
+// TestHandleToolCallFailsUnanswerableQuestion pins the escape hatch for a
+// question persisted before the arguments could be repaired: accepting it
+// resolves the block as an error the model can re-ask from, instead of
+// rejecting the click and leaving a card whose Accept can never succeed.
+func TestHandleToolCallFailsUnanswerableQuestion(t *testing.T) {
+	convStore, conv := loadedStateConversationStore()
+
+	blocks := []conversation.ContentBlock{{
+		Type:            conversation.BlockTypeToolUse,
+		ID:              "q-1",
+		Name:            "AskUserQuestion",
+		Input:           json.RawMessage(`{"question":"Q?","options":"<parameter name=\"label\">File a GitHub issue instead"}`),
+		Status:          conversation.StatusPending,
+		UserInteraction: llm.UserInteractionSelect,
+		Shared:          new(false),
+	}}
+	content, err := json.Marshal(blocks)
+	require.NoError(t, err)
+	approvalPostID := "approval-post-id"
+	require.NoError(t, convStore.CreateTurn(&store.Turn{
+		ID:             "assistant-turn",
+		ConversationID: conv.ID,
+		PostID:         &approvalPostID,
+		Role:           "assistant",
+		Content:        content,
+		Sequence:       1,
+	}))
+
+	mockAPI := &plugintest.API{}
+	pluginAPI := pluginapi.NewClient(mockAPI, nil)
+	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	lm := &loadedStateLLM{}
+	bot := loadedStateBot(lm)
+	botsService.SetBotsForTesting([]*bots.Bot{bot})
+
+	mmClient := mocks.NewMockClient(t)
+	mmClient.On("LogDebug", mock.Anything, mock.Anything).Maybe().Return()
+	mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
+	mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mmClient.On("GetConfig").Maybe().Return(&model.Config{})
+
+	streamingService := &loadedStateStreamingService{}
+	c := &Conversations{
+		mmClient:         mmClient,
+		contextBuilder:   loadedStateBuilder(t),
+		bots:             botsService,
+		convService:      conversation.NewService(convStore, nil, nil, nil),
+		streamingService: streamingService,
+	}
+
+	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+
+	err = c.HandleToolCall(context.Background(), "user-id", approvalPost,
+		&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
+		[]string{"q-1"}, nil)
+	require.NoError(t, err)
+	streamingService.waitForStreaming()
+
+	turns, err := convStore.GetTurnsForConversation(conv.ID)
+	require.NoError(t, err)
+	require.Len(t, turns, 2)
+
+	var updatedBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[0].Content, &updatedBlocks))
+	assert.Equal(t, conversation.StatusError, updatedBlocks[0].Status)
+
+	var resultBlocks []conversation.ContentBlock
+	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
+	require.Len(t, resultBlocks, 1)
+	assert.Equal(t, conversation.StatusError, resultBlocks[0].Status)
+	assert.Contains(t, resultBlocks[0].Content, "Ask again with arguments matching the tool schema")
+	assert.NotNil(t, resultBlocks[0].DecidedAt)
+
+	assert.Len(t, lm.requests, 1, "the model must get a follow-up so it can re-ask")
+}
+
 // TestHandleToolCallMixedBatchInChannelAwaitsShareDecision pins the channel
 // privacy gate for a batch mixing a normal tool with a question: the answered
 // question is terminal, but the normal tool's result still needs a Share /
