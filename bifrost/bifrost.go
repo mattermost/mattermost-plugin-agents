@@ -40,7 +40,6 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
-	maxImageDimension       = 2000
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
@@ -517,7 +516,7 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 // when supported and readable, a placeholder text block otherwise. The block
 // type differs between the chat and Responses APIs, so callers supply the
 // text- and image-block constructors.
-func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
+func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
 	parts := make([]T, 0, len(post.Files)+1)
 
 	if post.Message != "" {
@@ -536,15 +535,17 @@ func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBloc
 			continue
 		}
 
-		if imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil &&
-			(imageConfig.Width > maxImageDimension || imageConfig.Height > maxImageDimension) {
-			parts = append(parts, textBlock(fmt.Sprintf(
-				"[Image omitted because its dimensions (%dx%d) exceed the maximum allowed size of %d pixels per dimension.]",
-				imageConfig.Width,
-				imageConfig.Height,
-				maxImageDimension,
-			)))
-			continue
+		if maxDim > 0 {
+			if imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil &&
+				(imageConfig.Width > maxDim || imageConfig.Height > maxDim) {
+				parts = append(parts, textBlock(fmt.Sprintf(
+					"[Image omitted because its dimensions (%dx%d) exceed the maximum allowed size of %d pixels per dimension.]",
+					imageConfig.Width,
+					imageConfig.Height,
+					maxDim,
+				)))
+				continue
+			}
 		}
 
 		encoded := base64.StdEncoding.EncodeToString(data)
