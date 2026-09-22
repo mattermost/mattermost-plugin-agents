@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import {deflateSync} from 'node:zlib';
+
 import {expect, test} from '@playwright/test';
 
 import MattermostContainer from 'helpers/mmcontainer';
@@ -17,13 +19,50 @@ import {RunAIMockContainer} from 'helpers/plugincontainer';
 
 const username = 'regularuser';
 const password = 'regularuser';
-const rootMessage = 'Project status image for thread summarization (2400 × 1 pixels)';
-const summaryResponse = 'Thread summary completed. One oversized image was omitted because it exceeds the 2000 pixel limit.';
-const omissionContext = 'Image omitted because its dimensions (2400x1)';
-const oversizedPNG = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAACWAAAAABCAIAAADVHwIVAAAAIklEQVR42u3CAQ0AAAgDIJs8osEtYZDDmOypqqqqqqqqJR8RsM8kAgyuYwAAAABJRU5ErkJggg==',
-    'base64',
-);
+// OpenAI's documented hard side cap is 65535px; a 1-pixel-wider image is omitted.
+const openaiMaxImageDimension = 65535;
+const oversizedWidth = openaiMaxImageDimension + 1;
+const rootMessage = `Project status image for thread summarization (${oversizedWidth} × 1 pixels)`;
+const summaryResponse = `Thread summary completed. One oversized image was omitted because it exceeds the ${openaiMaxImageDimension} pixel limit.`;
+const omissionContext = `Image omitted because its dimensions (${oversizedWidth}x1)`;
+const oversizedPNG = grayscalePNG(oversizedWidth, 1);
+
+function crc32(data: Buffer): number {
+    let crc = 0xffffffff;
+    for (const byte of data) {
+        crc ^= byte;
+        for (let i = 0; i < 8; i++) {
+            crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+        }
+    }
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+    const typeBuf = Buffer.from(type, 'ascii');
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])));
+    return Buffer.concat([len, typeBuf, data, crc]);
+}
+
+function grayscalePNG(width: number, height: number): Buffer {
+    const raw = Buffer.alloc((width + 1) * height, 0xff);
+    for (let y = 0; y < height; y++) {
+        raw[y * (width + 1)] = 0;
+    }
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    return Buffer.concat([
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+        pngChunk('IHDR', ihdr),
+        pngChunk('IDAT', deflateSync(raw)),
+        pngChunk('IEND', Buffer.alloc(0)),
+    ]);
+}
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
@@ -62,7 +101,7 @@ test('summarizes a channel thread after omitting an oversized image', async ({pa
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
                     error: {
-                        message: 'At least one image dimension exceeds 2000 pixels',
+                        message: `At least one image dimension exceeds ${openaiMaxImageDimension} pixels`,
                         type: 'invalid_request_error',
                     },
                 }),

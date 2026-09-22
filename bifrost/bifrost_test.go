@@ -337,8 +337,8 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 		}},
 	}
 
-	first := b.createMultimodalContent(post)
-	second := b.createMultimodalContent(post)
+	first := b.createMultimodalContent(post, 0)
+	second := b.createMultimodalContent(post, 0)
 
 	require.Len(t, first, 2)
 	require.Len(t, second, 2)
@@ -351,52 +351,75 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 	tests := []struct {
 		name        string
+		maxDim      int
 		mimeType    string
 		width       int
 		height      int
 		wantOmitted bool
 	}{
 		{
-			name:        "image at dimension limit is included",
+			name:        "image at Anthropic dimension limit is included",
+			maxDim:      anthropicMaxImageDimension,
 			mimeType:    "image/png",
-			width:       2000,
+			width:       anthropicMaxImageDimension,
 			height:      1,
 			wantOmitted: false,
 		},
 		{
-			name:        "PNG wider than dimension limit is omitted",
+			name:        "PNG wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
 			mimeType:    "image/png",
-			width:       2001,
+			width:       anthropicMaxImageDimension + 1,
 			height:      1,
 			wantOmitted: true,
 		},
 		{
-			name:        "image taller than dimension limit is omitted",
+			name:        "image taller than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
 			mimeType:    "image/png",
 			width:       1,
-			height:      2001,
+			height:      anthropicMaxImageDimension + 1,
 			wantOmitted: true,
 		},
 		{
-			name:        "JPEG wider than dimension limit is omitted",
+			name:        "JPEG wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
 			mimeType:    "image/jpeg",
-			width:       2001,
+			width:       anthropicMaxImageDimension + 1,
 			height:      1,
 			wantOmitted: true,
 		},
 		{
-			name:        "GIF wider than dimension limit is omitted",
+			name:        "GIF wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
 			mimeType:    "image/gif",
-			width:       2001,
+			width:       anthropicMaxImageDimension + 1,
 			height:      1,
 			wantOmitted: true,
 		},
 		{
-			name:        "WebP wider than dimension limit is omitted",
-			mimeType:    "image/webp",
-			width:       2002,
-			height:      2,
+			name:        "image between many-image and single-image Anthropic limits is omitted at 2000",
+			maxDim:      anthropicManyImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicManyImageDimension + 1,
+			height:      1,
 			wantOmitted: true,
+		},
+		{
+			name:        "OpenAI image just over 8000 is still included",
+			maxDim:      openaiMaxImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicMaxImageDimension + 1,
+			height:      1,
+			wantOmitted: false,
+		},
+		{
+			name:        "zero max dimension disables omission",
+			maxDim:      0,
+			mimeType:    "image/png",
+			width:       20000,
+			height:      1,
+			wantOmitted: false,
 		},
 	}
 
@@ -413,7 +436,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 					Size:     int64(len(data)),
 					Data:     data,
 				}},
-			})
+			}, tt.maxDim)
 
 			require.Len(t, parts, 2)
 			if tt.wantOmitted {
@@ -422,7 +445,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 				require.NotNil(t, parts[1].Text)
 				assert.Contains(t, *parts[1].Text, "Image omitted")
 				assert.Contains(t, *parts[1].Text, fmt.Sprintf("%dx%d", tt.width, tt.height))
-				assert.Contains(t, *parts[1].Text, "2000 pixels per dimension")
+				assert.Contains(t, *parts[1].Text, fmt.Sprintf("%d pixels per dimension", tt.maxDim))
 				return
 			}
 
@@ -435,7 +458,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 
 	t.Run("continues processing valid images after an oversized image", func(t *testing.T) {
 		validPNG := encodeTestImage(t, "image/png", 10, 10)
-		oversizedPNG := encodeTestImage(t, "image/png", 2001, 1)
+		oversizedPNG := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
 		validJPEG := encodeTestImage(t, "image/jpeg", 10, 10)
 		parts := (&LLM{}).createMultimodalContent(llm.Post{
 			Role:    llm.PostRoleUser,
@@ -445,7 +468,7 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 				{MimeType: "image/png", Data: oversizedPNG},
 				{MimeType: "image/jpeg", Data: validJPEG},
 			},
-		})
+		}, anthropicMaxImageDimension)
 
 		require.Len(t, parts, 4)
 		assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[1].Type)
@@ -455,6 +478,73 @@ func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
 		assert.Contains(t, *parts[2].Text, "Image omitted")
 		assert.Contains(t, parts[3].ImageURLStruct.URL, "data:image/jpeg;base64,")
 	})
+}
+
+func TestConvertMessagesAppliesProviderImageLimit(t *testing.T) {
+	overManyImage := encodeTestImage(t, "image/png", anthropicManyImageDimension+1, 1)
+	overAnthropic := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
+
+	files := make([]llm.File, anthropicManyImageThreshold+1)
+	for i := range files {
+		files[i] = llm.File{MimeType: "image/png", Data: overManyImage}
+	}
+
+	tests := []struct {
+		name        string
+		provider    schemas.ModelProvider
+		posts       []llm.Post
+		wantOmitted bool
+	}{
+		{
+			name:     "Anthropic omits above 8000 on a short request",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   []llm.File{{MimeType: "image/png", Data: overAnthropic}},
+			}},
+			wantOmitted: true,
+		},
+		{
+			name:     "Anthropic many-image request omits at 2000",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   files,
+			}},
+			wantOmitted: true,
+		},
+		{
+			name:     "Gemini does not omit an 8001px image",
+			provider: schemas.Gemini,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   []llm.File{{MimeType: "image/png", Data: overAnthropic}},
+			}},
+			wantOmitted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts, llm.LanguageModelConfig{})
+			require.Len(t, messages, 1)
+			require.NotNil(t, messages[0].Content)
+			blocks := messages[0].Content.ContentBlocks
+			require.Greater(t, len(blocks), 1)
+
+			foundOmitted := false
+			for _, block := range blocks[1:] {
+				if block.Type == schemas.ChatContentBlockTypeText && block.Text != nil &&
+					strings.Contains(*block.Text, "Image omitted") {
+					foundOmitted = true
+				}
+			}
+			assert.Equal(t, tt.wantOmitted, foundOmitted)
+		})
+	}
 }
 
 func encodeTestImage(t *testing.T, mimeType string, width, height int) []byte {

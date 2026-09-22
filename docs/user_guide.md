@@ -172,7 +172,7 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content. Images that exceed the provider's documented maximum dimensions are omitted and replaced with a short note so the rest of the conversation can continue.
 
 In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 
