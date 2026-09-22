@@ -7,10 +7,17 @@
 package bifrost
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+
+	// Register standard image decoders for image.DecodeConfig.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"slices"
 	"strings"
@@ -22,6 +29,9 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	// Register the WebP decoder for image.DecodeConfig.
+	_ "golang.org/x/image/webp"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
@@ -30,6 +40,7 @@ const (
 	DefaultMaxTokens        = 8192
 	MaxToolResolutionDepth  = 10
 	DefaultStreamingTimeout = 5 * time.Minute
+	maxImageDimension       = 2000
 	// CountTokensTimeout caps the count-tokens preflight so a wedged provider
 	// can't block the request handler.
 	CountTokensTimeout = 30 * time.Second
@@ -522,6 +533,17 @@ func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBloc
 		data, err := readFileData(file)
 		if err != nil {
 			parts = append(parts, textBlock("[Error reading image data]"))
+			continue
+		}
+
+		if imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil &&
+			(imageConfig.Width > maxImageDimension || imageConfig.Height > maxImageDimension) {
+			parts = append(parts, textBlock(fmt.Sprintf(
+				"[Image omitted because its dimensions (%dx%d) exceed the maximum allowed size of %d pixels per dimension.]",
+				imageConfig.Width,
+				imageConfig.Height,
+				maxImageDimension,
+			)))
 			continue
 		}
 

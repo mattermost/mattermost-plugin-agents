@@ -6,8 +6,13 @@ package bifrost
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -341,6 +346,139 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 	require.NotNil(t, second[1].ImageURLStruct)
 	assert.Equal(t, first[1].ImageURLStruct.URL, second[1].ImageURLStruct.URL)
 	assert.Contains(t, second[1].ImageURLStruct.URL, "UE5HREFUQQ==")
+}
+
+func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
+	tests := []struct {
+		name        string
+		mimeType    string
+		width       int
+		height      int
+		wantOmitted bool
+	}{
+		{
+			name:        "image at dimension limit is included",
+			mimeType:    "image/png",
+			width:       2000,
+			height:      1,
+			wantOmitted: false,
+		},
+		{
+			name:        "PNG wider than dimension limit is omitted",
+			mimeType:    "image/png",
+			width:       2001,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "image taller than dimension limit is omitted",
+			mimeType:    "image/png",
+			width:       1,
+			height:      2001,
+			wantOmitted: true,
+		},
+		{
+			name:        "JPEG wider than dimension limit is omitted",
+			mimeType:    "image/jpeg",
+			width:       2001,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "GIF wider than dimension limit is omitted",
+			mimeType:    "image/gif",
+			width:       2001,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "WebP wider than dimension limit is omitted",
+			mimeType:    "image/webp",
+			width:       2002,
+			height:      2,
+			wantOmitted: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := encodeTestImage(t, tt.mimeType, tt.width, tt.height)
+
+			b := &LLM{}
+			parts := b.createMultimodalContent(llm.Post{
+				Role:    llm.PostRoleUser,
+				Message: "summarize this image",
+				Files: []llm.File{{
+					MimeType: tt.mimeType,
+					Size:     int64(len(data)),
+					Data:     data,
+				}},
+			})
+
+			require.Len(t, parts, 2)
+			if tt.wantOmitted {
+				assert.Equal(t, schemas.ChatContentBlockTypeText, parts[1].Type)
+				assert.Nil(t, parts[1].ImageURLStruct)
+				require.NotNil(t, parts[1].Text)
+				assert.Contains(t, *parts[1].Text, "Image omitted")
+				assert.Contains(t, *parts[1].Text, fmt.Sprintf("%dx%d", tt.width, tt.height))
+				assert.Contains(t, *parts[1].Text, "2000 pixels per dimension")
+				return
+			}
+
+			assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[1].Type)
+			assert.Nil(t, parts[1].Text)
+			require.NotNil(t, parts[1].ImageURLStruct)
+			assert.Contains(t, parts[1].ImageURLStruct.URL, "data:"+tt.mimeType+";base64,")
+		})
+	}
+
+	t.Run("continues processing valid images after an oversized image", func(t *testing.T) {
+		validPNG := encodeTestImage(t, "image/png", 10, 10)
+		oversizedPNG := encodeTestImage(t, "image/png", 2001, 1)
+		validJPEG := encodeTestImage(t, "image/jpeg", 10, 10)
+		parts := (&LLM{}).createMultimodalContent(llm.Post{
+			Role:    llm.PostRoleUser,
+			Message: "summarize these images",
+			Files: []llm.File{
+				{MimeType: "image/png", Data: validPNG},
+				{MimeType: "image/png", Data: oversizedPNG},
+				{MimeType: "image/jpeg", Data: validJPEG},
+			},
+		})
+
+		require.Len(t, parts, 4)
+		assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[1].Type)
+		assert.Equal(t, schemas.ChatContentBlockTypeText, parts[2].Type)
+		assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[3].Type)
+		assert.Contains(t, parts[1].ImageURLStruct.URL, "data:image/png;base64,")
+		assert.Contains(t, *parts[2].Text, "Image omitted")
+		assert.Contains(t, parts[3].ImageURLStruct.URL, "data:image/jpeg;base64,")
+	})
+}
+
+func encodeTestImage(t *testing.T, mimeType string, width, height int) []byte {
+	t.Helper()
+
+	if mimeType == "image/webp" {
+		data, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4TBUAAAAv0UcAAAcQ0f/+B4CE8P+9FtH/lA4A")
+		require.NoError(t, err)
+		return data
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	var data bytes.Buffer
+	switch mimeType {
+	case "image/gif":
+		require.NoError(t, gif.Encode(&data, img, nil))
+	case "image/jpeg":
+		require.NoError(t, jpeg.Encode(&data, img, nil))
+	case "image/png":
+		require.NoError(t, png.Encode(&data, img))
+	default:
+		require.Fail(t, "unsupported test image MIME type", mimeType)
+	}
+	return data.Bytes()
 }
 
 // TestConvertToBifrostRequestOpus47Reasoning verifies that when our
