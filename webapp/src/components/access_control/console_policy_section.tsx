@@ -10,7 +10,7 @@ import {PolicyResourceType} from '@/types/access_control';
 import {isValidMattermostId, useABACSupport} from '@/utils/access_control';
 import {useIsLicensedFor} from '@/license';
 
-import EnterpriseChip, {useLicenseChipProps} from '../system_console/enterprise_chip';
+import {LicenseChip} from '../system_console/enterprise_chip';
 
 import PolicyEditor from './policy_editor';
 
@@ -47,7 +47,6 @@ const ConsolePolicySection = (props: Props) => {
     const {resourceType, resourceId, resourceDisplayName} = props;
     const {supported} = useABACSupport();
     const abacLicensed = useIsLicensedFor('attribute_based_access');
-    const abacChip = useLicenseChipProps('attribute_based_access');
     const [expanded, setExpanded] = useState(false);
     const [hasOpened, setHasOpened] = useState(false);
 
@@ -81,11 +80,7 @@ const ConsolePolicySection = (props: Props) => {
                     <FormattedMessage defaultMessage='Access policy'/>
                 </SectionTitle>
                 {!abacLicensed && (
-                    <EnterpriseChip
-                        title={abacChip.title}
-                        text={abacChip.text}
-                        subtext={abacChip.subtext}
-                    />
+                    <LicenseChip capability='attribute_based_access'/>
                 )}
             </SectionHeader>
             {(expanded || hasOpened) && (

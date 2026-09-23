@@ -8,7 +8,7 @@ import styled from 'styled-components';
 import {useIsLicensedFor} from '@/license';
 
 import {Pill} from '../../pill';
-import EnterpriseChip, {useLicenseChipProps} from '../enterprise_chip';
+import {LicenseChip} from '../enterprise_chip';
 import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption} from '../item';
 import {FloatItem, IntItem} from '../number_items';
@@ -87,7 +87,6 @@ interface Props {
 const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
     const semanticSearchLicensed = useIsLicensedFor('semantic_search');
-    const semanticSearchChip = useLicenseChipProps('semantic_search');
     const effectiveType = value.type || '';
     const isEnabled = effectiveType !== '';
 
@@ -184,16 +183,9 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                     value={isEnabled}
                     disableTrue={!semanticSearchLicensed}
                     extra={!semanticSearchLicensed && (
-                        <EnterpriseChip
-                            title={semanticSearchChip.title}
-                            text={semanticSearchChip.text}
-                            subtext={semanticSearchChip.subtext}
-                        />
+                        <LicenseChip capability='semantic_search'/>
                     )}
                     onChange={(enabled) => {
-                        if (enabled && !semanticSearchLicensed) {
-                            return;
-                        }
                         if (enabled) {
                             onChange({
                                 type: 'composite',

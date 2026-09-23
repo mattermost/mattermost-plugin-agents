@@ -103,9 +103,9 @@ export async function readAgentErrorMessage(response: Response): Promise<string>
     return '';
 }
 
-// License denials are 403 with `{error, license_required}`. Other plugin
-// endpoints historically throw ClientError with an empty message; keep that
-// for non-403 statuses so callers that only inspect status_code are unchanged.
+// readClientErrorMessage returns the server's error text for 403 responses,
+// which carry `{error, license_required}` for license denials. Other statuses
+// yield an empty message; callers inspect status_code for those.
 export async function readClientErrorMessage(response: Response): Promise<string> {
     if (response.status !== 403) {
         return '';
@@ -986,9 +986,6 @@ export async function savePluginConfig(config: PluginConfig): Promise<PluginConf
 export type AgentsListResult = {
     agents: UserAgent[];
     activeAgentCount?: number;
-
-    // Present when the server sent X-Agent-Limit. null means uncapped.
-    agentLimit?: number | null;
 };
 
 export async function getAgents(): Promise<AgentsListResult> {
@@ -1000,20 +997,11 @@ export async function getAgents(): Promise<AgentsListResult> {
     if (response.ok) {
         const agents = await response.json() as UserAgent[];
         const activeCountHeader = response.headers.get('X-Agent-Active-Count');
-        const limitHeader = response.headers.get('X-Agent-Limit');
         const result: AgentsListResult = {agents};
 
         // Only trust a strict non-negative integer (rejects e.g. "1foo", "", null).
         if (activeCountHeader !== null && (/^\d+$/).test(activeCountHeader)) {
             result.activeAgentCount = Number.parseInt(activeCountHeader, 10);
-        }
-        if (limitHeader !== null) {
-            if ((/^\d+$/).test(limitHeader)) {
-                result.agentLimit = Number.parseInt(limitHeader, 10);
-            } else {
-                // Empty or non-numeric (e.g. "unlimited") means uncapped.
-                result.agentLimit = null;
-            }
         }
         return result;
     }

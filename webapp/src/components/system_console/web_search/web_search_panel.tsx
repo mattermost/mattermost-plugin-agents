@@ -8,7 +8,7 @@ import {useIsLicensedFor} from '@/license';
 
 import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from '../item';
-import EnterpriseChip, {useLicenseChipProps} from '../enterprise_chip';
+import {LicenseChip} from '../enterprise_chip';
 
 export type WebSearchGoogleConfig = {
     apiKey: string;
@@ -49,7 +49,6 @@ const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
     const sovereignSearchLicensed = useIsLicensedFor('sovereign_web_search');
-    const sovereignSearchChip = useLicenseChipProps('sovereign_web_search');
 
     // Provide defaults for missing config objects
     const google = value.google || DEFAULT_GOOGLE_CONFIG;
@@ -84,18 +83,9 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     value={value.enabled}
                     disableTrue={!sovereignSearchLicensed}
                     extra={!sovereignSearchLicensed && (
-                        <EnterpriseChip
-                            title={sovereignSearchChip.title}
-                            text={sovereignSearchChip.text}
-                            subtext={sovereignSearchChip.subtext}
-                        />
+                        <LicenseChip capability='sovereign_web_search'/>
                     )}
-                    onChange={(enabled) => {
-                        if (enabled && !sovereignSearchLicensed) {
-                            return;
-                        }
-                        handleUpdate({enabled});
-                    }}
+                    onChange={(enabled) => handleUpdate({enabled})}
                     helpText={intl.formatMessage({defaultMessage: 'Allow agents to call Mattermost\'s built-in web search tool. If your LLM already provides native web search support, leave this disabled.'})}
                 />
                 <SelectionItem

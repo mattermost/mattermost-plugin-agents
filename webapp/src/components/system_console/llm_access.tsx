@@ -11,7 +11,7 @@ import {useIsLicensedFor} from '@/license';
 
 import {ChannelAccessLevel, UserAccessLevel} from './bot';
 
-import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {LicenseChip} from './enterprise_chip';
 
 import {FormRow, HelpText, ItemLabel, StyledRadio} from './item';
 
@@ -50,7 +50,6 @@ type UserAccessLevelProps = {
 export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
     const accessLicensed = useIsLicensedFor('agent_access_controls');
     const abacLicensed = useIsLicensedFor('attribute_based_access');
-    const accessChip = useLicenseChipProps('agent_access_controls');
     const showAttributeBased = Boolean(props.showAttributeBased && (abacLicensed || props.level === UserAccessLevel.AttributeBased));
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
 
@@ -97,11 +96,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                     )}
                 </AllowTypes>
                 {!accessLicensed && (
-                    <EnterpriseChip
-                        title={accessChip.title}
-                        text={accessChip.text}
-                        subtext={accessChip.subtext}
-                    />
+                    <LicenseChip capability='agent_access_controls'/>
                 )}
                 {props.level === UserAccessLevel.AttributeBased && props.attributeBasedDescription}
                 {props.level !== UserAccessLevel.All && props.level !== UserAccessLevel.AttributeBased && (
@@ -140,7 +135,6 @@ type ChannelAccessLevelProps = {
 
 export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
     const accessLicensed = useIsLicensedFor('agent_access_controls');
-    const accessChip = useLicenseChipProps('agent_access_controls');
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
 
     return (
@@ -182,11 +176,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                     <FormattedMessage defaultMessage='Block all channels'/>
                 </AllowTypes>
                 {!accessLicensed && (
-                    <EnterpriseChip
-                        title={accessChip.title}
-                        text={accessChip.text}
-                        subtext={accessChip.subtext}
-                    />
+                    <LicenseChip capability='agent_access_controls'/>
                 )}
                 {(props.level === ChannelAccessLevel.Allow || props.level === ChannelAccessLevel.Block) && (
                     <SelectWrapper>

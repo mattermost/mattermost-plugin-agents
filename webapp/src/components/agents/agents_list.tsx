@@ -37,7 +37,7 @@ const AgentsList = () => {
     // Mirrors api.canConfigureAgentServices. Users without these permissions
     // browse read-only; requesting /services would 403 and wrongly flag every agent.
     const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
-    const agentLimitFromLicense = useAgentLimit();
+    const agentLimit = useAgentLimit();
     const licenseLevel = useLicenseLevel();
     const licenseLevelName = useLicenseLevelName();
 
@@ -55,11 +55,8 @@ const AgentsList = () => {
     const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
     const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
-    const [serverAgentLimit, setServerAgentLimit] = useState<number | null>(null);
-    const [hasServerAgentLimit, setHasServerAgentLimit] = useState(false);
 
     const serverAgentCount = activeAgentCount ?? agents.length;
-    const agentLimit = hasServerAgentLimit ? serverAgentLimit : agentLimitFromLicense;
     const createQuotaReached = agentLimit !== null && serverAgentCount >= agentLimit;
     const createButtonDisabled = loading || createQuotaReached;
     const nextAgentPlanName = licenseLevelName(
@@ -78,12 +75,6 @@ const AgentsList = () => {
             const agentResult = await getAgents();
             setAgents(agentResult.agents || []);
             setActiveAgentCount(agentResult.activeAgentCount ?? null);
-            if (Object.prototype.hasOwnProperty.call(agentResult, 'agentLimit')) {
-                setServerAgentLimit(agentResult.agentLimit ?? null);
-                setHasServerAgentLimit(true);
-            } else {
-                setHasServerAgentLimit(false);
-            }
             if (canViewServices) {
                 try {
                     const serviceResult = await getServices();

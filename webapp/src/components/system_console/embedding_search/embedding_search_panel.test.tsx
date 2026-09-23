@@ -35,7 +35,7 @@ jest.mock('@/license', () => ({
 jest.mock('../enterprise_chip', () => ({
     __esModule: true,
     default: ({text}: {text?: string}) => <span>{text}</span>,
-    useLicenseChipProps: () => ({title: 'Available on Enterprise plans and above', text: 'Enterprise', subtext: 'Available on Enterprise plans and above', levelName: 'Enterprise'}),
+    LicenseChip: () => <span>{'Enterprise'}</span>,
 }));
 
 jest.mock('./use_job_status', () => ({

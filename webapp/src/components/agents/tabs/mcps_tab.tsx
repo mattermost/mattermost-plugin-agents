@@ -13,7 +13,7 @@ import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 import {useIsLicensedFor} from '@/license';
-import EnterpriseChip, {useLicenseChipProps} from '@/components/system_console/enterprise_chip';
+import {LicenseChip} from '@/components/system_console/enterprise_chip';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 
@@ -143,7 +143,6 @@ const McpsTab = (props: Props) => {
     } = props;
     const intl = useIntl();
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
-    const serviceAccountChip = useLicenseChipProps('mcp_service_account');
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
 
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
@@ -334,11 +333,7 @@ const McpsTab = (props: Props) => {
                     </CheckboxHint>
                 </CheckboxLabel>
                 {!serviceAccountLicensed && (
-                    <EnterpriseChip
-                        title={serviceAccountChip.title}
-                        text={serviceAccountChip.text}
-                        subtext={serviceAccountChip.subtext}
-                    />
+                    <LicenseChip capability='mcp_service_account'/>
                 )}
             </CheckboxRow>
             {useServiceAccountAuth && (

@@ -10,7 +10,7 @@ import {useIsLicensedFor} from '@/license';
 
 import {ToggleSwitch} from '../toggle_switch';
 
-import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {LicenseChip} from './enterprise_chip';
 import {MCPToolConfig, MCPToolInfo} from './mcp_types';
 
 type MCPToolConfigRowProps = {
@@ -24,7 +24,6 @@ type MCPToolConfigRowProps = {
 const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled, displayName}: MCPToolConfigRowProps) => {
     const intl = useIntl();
     const approvalPoliciesLicensed = useIsLicensedFor('tool_approval_policies');
-    const approvalChip = useLicenseChipProps('tool_approval_policies');
     const [schemaExpanded, setSchemaExpanded] = useState(false);
     const overrideInputId = useId();
 
@@ -91,11 +90,7 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                             </option>
                         </PolicySelect>
                         {!approvalPoliciesLicensed && (
-                            <EnterpriseChip
-                                title={approvalChip.title}
-                                text={approvalChip.text}
-                                subtext={approvalChip.subtext}
-                            />
+                            <LicenseChip capability='tool_approval_policies'/>
                         )}
                     </PolicySelectWrapper>
                     <ToggleWrapper>

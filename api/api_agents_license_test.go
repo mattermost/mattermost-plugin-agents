@@ -6,7 +6,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -324,14 +323,11 @@ func TestListAgentsQuotaHeadersByLicense(t *testing.T) {
 
 			recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
 			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-			limit, capped := enterprise.AgentLimitFor(level)
-			if !capped {
+			if _, capped := enterprise.AgentLimitFor(level); !capped {
 				assert.Empty(t, recorder.Result().Header.Get(AgentActiveCountHeader))
-				assert.Empty(t, recorder.Result().Header.Get(AgentLimitHeader))
 				return
 			}
 			assert.Equal(t, "1", recorder.Result().Header.Get(AgentActiveCountHeader))
-			assert.Equal(t, strconv.Itoa(limit), recorder.Result().Header.Get(AgentLimitHeader))
 		})
 	}
 }

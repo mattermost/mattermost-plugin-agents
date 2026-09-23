@@ -8,7 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 
-import {useAgentLimit, useLicenseLevel, useLicenseLevelName, LicenseLevel} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import Bot, {ChannelAccessLevel, LLMBotConfig, UserAccessLevel} from './bot';
 import EnterpriseChip from './enterprise_chip';
@@ -48,14 +48,9 @@ type Props = {
 }
 
 const Bots = (props: Props) => {
-    const agentLimit = useAgentLimit();
-    const licenseLevel = useLicenseLevel();
-    const licenseLevelName = useLicenseLevelName();
-    const licenceAddDisabled = agentLimit !== null && props.bots.length >= agentLimit;
+    const multiLLMLicensed = useIsLicensedFor('multiple_llm_services');
+    const licenceAddDisabled = !multiLLMLicensed && props.bots.length > 0;
     const intl = useIntl();
-    const nextAgentPlanName = licenseLevelName(
-        licenseLevel < LicenseLevel.Professional ? LicenseLevel.Professional : LicenseLevel.Enterprise,
-    );
 
     const addNewBot = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
@@ -105,15 +100,8 @@ const Bots = (props: Props) => {
                 </TertiaryButton>
                 {licenceAddDisabled && (
                     <EnterpriseChip
-                        title={intl.formatMessage(
-                            {defaultMessage: 'Your current plan allows {count} agents. Additional agents are available on {plan} plans and above.'},
-                            {count: agentLimit, plan: nextAgentPlanName},
-                        )}
-                        text={nextAgentPlanName}
-                        subtext={intl.formatMessage(
-                            {defaultMessage: 'Your current plan allows {count} agents. Additional agents are available on {plan} plans and above.'},
-                            {count: agentLimit, plan: nextAgentPlanName},
-                        )}
+                        text={intl.formatMessage({defaultMessage: 'Use multiple AI bots on qualifying Mattermost plans'})}
+                        subtext={intl.formatMessage({defaultMessage: 'Multiple AI services require a qualifying Mattermost plan'})}
                     />
                 )}
             </EnterpriseChipContainer>

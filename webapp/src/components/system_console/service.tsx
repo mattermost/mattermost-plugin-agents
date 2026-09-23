@@ -17,7 +17,7 @@ import {useIsLicensedFor} from '@/license';
 import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
-import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {LicenseChip} from './enterprise_chip';
 
 export type LLMService = {
     id: string
@@ -108,7 +108,6 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
     const fallbackLicensed = useIsLicensedFor('model_fallback');
-    const fallbackChip = useLicenseChipProps('model_fallback');
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'north';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
@@ -471,11 +470,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 value={props.service.fallbackServiceID || ''}
                 disabled={!fallbackLicensed && !props.service.fallbackServiceID}
                 extra={!fallbackLicensed && (
-                    <EnterpriseChip
-                        title={fallbackChip.title}
-                        text={fallbackChip.text}
-                        subtext={fallbackChip.subtext}
-                    />
+                    <LicenseChip capability='model_fallback'/>
                 )}
                 onChange={(e) => {
                     if (!fallbackLicensed && e.target.value !== '') {

@@ -14,7 +14,7 @@ import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
-import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {LicenseChip} from './enterprise_chip';
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
@@ -196,9 +196,7 @@ const Config = (props: Props) => {
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
-    const tokenAccountingChip = useLicenseChipProps('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
-    const providerWebSearchChip = useLicenseChipProps('provider_web_search');
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -380,16 +378,9 @@ const Config = (props: Props) => {
                         value={Boolean(value.allowNativeWebSearchInChannels)}
                         disableTrue={!providerWebSearchLicensed}
                         extra={!providerWebSearchLicensed && (
-                            <EnterpriseChip
-                                title={providerWebSearchChip.title}
-                                text={providerWebSearchChip.text}
-                                subtext={providerWebSearchChip.subtext}
-                            />
+                            <LicenseChip capability='provider_web_search'/>
                         )}
                         onChange={(to) => {
-                            if (to && !providerWebSearchLicensed) {
-                                return;
-                            }
                             updateConfig({allowNativeWebSearchInChannels: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
@@ -425,18 +416,9 @@ const Config = (props: Props) => {
                         value={value.enableTokenUsageLogging}
                         disableTrue={!tokenAccountingLicensed}
                         extra={!tokenAccountingLicensed && (
-                            <EnterpriseChip
-                                title={tokenAccountingChip.title}
-                                text={tokenAccountingChip.text}
-                                subtext={tokenAccountingChip.subtext}
-                            />
+                            <LicenseChip capability='token_accounting'/>
                         )}
-                        onChange={(to) => {
-                            if (to && !tokenAccountingLicensed) {
-                                return;
-                            }
-                            updateConfig({enableTokenUsageLogging: to});
-                        }}
+                        onChange={(to) => updateConfig({enableTokenUsageLogging: to})}
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
                 </ItemList>

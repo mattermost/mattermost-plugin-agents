@@ -189,19 +189,6 @@ describe('AgentsList create-button gating', () => {
         expect(screen.getByText(professionalQuotaMessage)).not.toBeNull();
     });
 
-    test('prefers X-Agent-Limit from the server over the client license hook', async () => {
-        mockUseAgentLimit.mockReturnValue(1);
-        mockUseLicenseLevel.mockReturnValue(0);
-        mockGetAgents.mockResolvedValue({agents: [makeAgent('a1')], activeAgentCount: 1, agentLimit: null});
-
-        renderList();
-
-        await screen.findByText('Agent a1');
-        const button = screen.getByRole('button', {name: 'Create agent'});
-        expect((button as HTMLButtonElement).disabled).toBe(false);
-        expect(screen.queryByText(unlicensedQuotaMessage)).toBeNull();
-    });
-
     test('unlicensed disables Create when server quota is reached but list is empty', async () => {
         mockGetAgents.mockResolvedValue({agents: [], activeAgentCount: 1});
 

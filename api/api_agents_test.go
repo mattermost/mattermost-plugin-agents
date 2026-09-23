@@ -542,7 +542,6 @@ func TestListAgentsIncludesActiveCountHeaderWhenUnlicensed(t *testing.T) {
 	resp := recorder.Result()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Equal(t, "1", resp.Header.Get(AgentActiveCountHeader))
-	assert.Equal(t, "1", resp.Header.Get(AgentLimitHeader))
 
 	var agents []*llm.BotConfig
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&agents))

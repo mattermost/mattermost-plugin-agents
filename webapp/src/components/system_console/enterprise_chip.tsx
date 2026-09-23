@@ -98,4 +98,17 @@ export function useLicenseChipProps(capability: Capability): {title: string; tex
     };
 }
 
+// LicenseChip marks a control as unavailable at the current license level and
+// names the plan that provides capability.
+export const LicenseChip = ({capability}: {capability: Capability}) => {
+    const chip = useLicenseChipProps(capability);
+    return (
+        <EnterpriseChip
+            title={chip.title}
+            text={chip.text}
+            subtext={chip.subtext}
+        />
+    );
+};
+
 export default EnterpriseChip;

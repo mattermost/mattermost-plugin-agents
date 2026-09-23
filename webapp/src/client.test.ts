@@ -11,7 +11,6 @@ import manifest from './manifest';
 import {
     doLoopInAgent,
     doThreadAnalysis,
-    getAgents,
     getChannelAutoReply,
     getConversation,
     getConversationContext,
@@ -357,49 +356,6 @@ describe('license denial errors', () => {
         await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
             status_code: 500,
             message: '',
-        });
-    });
-});
-
-describe('getAgents', () => {
-    test('reads X-Agent-Limit when present', async () => {
-        mockFetch.mockResolvedValue({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve([{id: 'a1'}]),
-            headers: {
-                get: (name: string) => {
-                    if (name === 'X-Agent-Active-Count') {
-                        return '2';
-                    }
-                    if (name === 'X-Agent-Limit') {
-                        return '3';
-                    }
-                    return null;
-                },
-            },
-        } as unknown as Response);
-
-        await expect(getAgents()).resolves.toEqual({
-            agents: [{id: 'a1'}],
-            activeAgentCount: 2,
-            agentLimit: 3,
-        });
-    });
-
-    test('treats a non-numeric X-Agent-Limit as uncapped', async () => {
-        mockFetch.mockResolvedValue({
-            ok: true,
-            status: 200,
-            json: () => Promise.resolve([]),
-            headers: {
-                get: (name: string) => (name === 'X-Agent-Limit' ? 'unlimited' : null),
-            },
-        } as unknown as Response);
-
-        await expect(getAgents()).resolves.toEqual({
-            agents: [],
-            agentLimit: null,
         });
     });
 });

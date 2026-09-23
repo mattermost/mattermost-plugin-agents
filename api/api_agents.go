@@ -185,10 +185,6 @@ type ServiceInfo struct {
 // access-filtered list).
 const AgentActiveCountHeader = "X-Agent-Active-Count"
 
-// AgentLimitHeader is returned alongside AgentActiveCountHeader with the
-// numeric agent cap at the current license level.
-const AgentLimitHeader = "X-Agent-Limit"
-
 func (a *API) pluginConfigOrEmpty() *config.Config {
 	if a.configStore == nil {
 		return &config.Config{}
@@ -503,14 +499,13 @@ func (a *API) handleListAgents(c *gin.Context) {
 	// Enrich (best-effort) with the server-wide combined pool count so the
 	// webapp can gate creation against the real quota, not the access-filtered
 	// list. A failure here must not fail the list request: just omit the
-	// headers and let the create API enforce the limit.
-	if limit, capped := a.licenseChecker.AgentLimit(); capped {
+	// header and let the create API enforce the limit.
+	if _, capped := a.licenseChecker.AgentLimit(); capped {
 		count, err := a.combinedAgentPoolCount(agents)
 		if err != nil {
 			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
 		} else {
 			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
-			c.Header(AgentLimitHeader, strconv.Itoa(limit))
 		}
 	}
 

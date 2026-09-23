@@ -28,7 +28,7 @@ import type {
     MCPToolsResponse,
 } from './mcp_types';
 
-import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
+import {LicenseChip} from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 
@@ -163,8 +163,6 @@ const MCPServer = ({
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
-    const remoteMcpChip = useLicenseChipProps('remote_mcp');
-    const serviceAccountChip = useLicenseChipProps('mcp_service_account');
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
@@ -293,16 +291,9 @@ const MCPServer = ({
                 value={config.enabled}
                 disableTrue={!remoteMcpLicensed}
                 extra={!remoteMcpLicensed && (
-                    <EnterpriseChip
-                        title={remoteMcpChip.title}
-                        text={remoteMcpChip.text}
-                        subtext={remoteMcpChip.subtext}
-                    />
+                    <LicenseChip capability='remote_mcp'/>
                 )}
                 onChange={(enabled) => {
-                    if (enabled && !remoteMcpLicensed) {
-                        return;
-                    }
                     updateServerEnabled(enabled);
                 }}
                 helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
@@ -335,11 +326,7 @@ const MCPServer = ({
                     {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
                 </SectionHelpText>
                 {!serviceAccountLicensed && (
-                    <EnterpriseChip
-                        title={serviceAccountChip.title}
-                        text={serviceAccountChip.text}
-                        subtext={serviceAccountChip.subtext}
-                    />
+                    <LicenseChip capability='mcp_service_account'/>
                 )}
                 <HeaderMapEditor
                     headers={config.serviceAccountHeaders}
@@ -422,7 +409,6 @@ const MCPServer = ({
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
-    const remoteMcpChip = useLicenseChipProps('remote_mcp');
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -528,10 +514,6 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // ID-less entries with no identity match as new and mints the stable ID
     // on save (client-invented IDs are rejected as fabricated).
     const addServer = () => {
-        if (!remoteMcpLicensed) {
-            return;
-        }
-
         // Use the auto-generated name
         const serverName = generateServerName();
 
@@ -594,18 +576,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 value={config.enablePluginServer}
                                 disableTrue={!remoteMcpLicensed}
                                 extra={!remoteMcpLicensed && (
-                                    <EnterpriseChip
-                                        title={remoteMcpChip.title}
-                                        text={remoteMcpChip.text}
-                                        subtext={remoteMcpChip.subtext}
-                                    />
+                                    <LicenseChip capability='remote_mcp'/>
                                 )}
-                                onChange={(enablePluginServer) => {
-                                    if (enablePluginServer && !remoteMcpLicensed) {
-                                        return;
-                                    }
-                                    onChange({...config, enablePluginServer});
-                                }}
+                                onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
                                 helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
                             />
                             <TextItem
@@ -685,11 +658,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 <FormattedMessage defaultMessage='Add Remote MCP Server'/>
                             </TertiaryButton>
                             {!remoteMcpLicensed && (
-                                <EnterpriseChip
-                                    title={remoteMcpChip.title}
-                                    text={remoteMcpChip.text}
-                                    subtext={remoteMcpChip.subtext}
-                                />
+                                <LicenseChip capability='remote_mcp'/>
                             )}
                         </AddServerContainer>
                     </>
