@@ -529,10 +529,10 @@ func TestAutoReplyTriggerRechecks(t *testing.T) {
 			},
 		},
 		{
-			name:      "unlicensed server still reminds a thread reply after an agent post",
+			name:      "server without auto-reply still reminds a thread reply after an agent post",
 			botConfig: autoReplyBotConfig(),
 			setting:   autoreply.Setting{ChannelID: autoReplyChannelID, BotID: autoReplyBotUserID, Mode: autoreply.ModeThreads},
-			license:   &model.License{},
+			license:   &model.License{SkuShortName: model.LicenseShortSkuProfessional},
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
 				return env.threadReply(autoReplyUserID, "thanks!", true)
 			},
