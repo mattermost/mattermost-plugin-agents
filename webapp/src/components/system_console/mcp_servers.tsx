@@ -533,13 +533,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         <div>
             <TabsContainer>
                 <TabButton
-                    active={activeTab === 'config'}
+                    $active={activeTab === 'config'}
                     onClick={() => setActiveTab('config')}
                 >
                     <FormattedMessage defaultMessage='Configuration'/>
                 </TabButton>
                 <TabButton
-                    active={activeTab === 'tools'}
+                    $active={activeTab === 'tools'}
                     onClick={() => setActiveTab('tools')}
                 >
                     <FormattedMessage defaultMessage='Tools'/>
@@ -919,19 +919,19 @@ const TabsContainer = styled.div`
     margin-bottom: 24px;
 `;
 
-const TabButton = styled.button<{active: boolean}>`
+const TabButton = styled.button<{$active: boolean}>`
     padding: 12px 16px;
     border: none;
     background: none;
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
-    color: ${(props) => (props.active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(props) => (props.active ? 'var(--button-bg)' : 'transparent')};
+    color: ${(props) => (props.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
+    border-bottom: 2px solid ${(props) => (props.$active ? 'var(--button-bg)' : 'transparent')};
     transition: color 0.2s ease, border-color 0.2s ease;
 
     &:hover {
-        color: ${(props) => (props.active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+        color: ${(props) => (props.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
     }
 
     &:first-child {

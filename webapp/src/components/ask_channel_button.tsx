@@ -19,7 +19,7 @@ import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
 
 interface ButtonContainerProps {
-    isActive: boolean;
+    $isActive: boolean;
 }
 
 const ButtonContainer = styled.button<ButtonContainerProps>`
@@ -44,7 +44,7 @@ const ButtonContainer = styled.button<ButtonContainerProps>`
         color: rgba(var(--center-channel-color-rgb), 0.72);
     }
 
-    ${({isActive}) => isActive && css`
+    ${({$isActive}) => $isActive && css`
         background: rgba(var(--button-bg-rgb), 0.08);
         color: var(--button-bg);
 
@@ -182,7 +182,7 @@ const AskChannelButton = () => {
                 <ButtonContainer
                     ref={target}
                     onClick={handleToggle}
-                    isActive={showPopover}
+                    $isActive={showPopover}
                     aria-label={buttonLabel}
                     title={buttonLabel}
                     data-testid='ask-channel-button'
@@ -197,7 +197,7 @@ const AskChannelButton = () => {
                     <ButtonContainer
                         ref={target}
                         onClick={handleToggle}
-                        isActive={showPopover}
+                        $isActive={showPopover}
                         aria-label={buttonLabel}
                         title={buttonLabel}
                         data-testid='ask-channel-button'
