@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -23,6 +24,7 @@ var MeetingBotUsernames = []string{"calls", "zoom", "google-meet"}
 // Service handles meeting summarization and transcription functionality
 type Service struct {
 	pluginAPI        *pluginapi.Client
+	mmClient         mmapi.Client
 	streamingService streaming.Service
 	prompts          *llm.Prompts
 	bots             *bots.MMBots
@@ -38,6 +40,7 @@ type Service struct {
 // NewService creates a new meetings service
 func NewService(
 	pluginAPI *pluginapi.Client,
+	mmClient mmapi.Client,
 	streamingService streaming.Service,
 	prompts *llm.Prompts,
 	bots *bots.MMBots,
@@ -49,6 +52,7 @@ func NewService(
 ) *Service {
 	service := &Service{
 		pluginAPI:        pluginAPI,
+		mmClient:         mmClient,
 		streamingService: streamingService,
 		prompts:          prompts,
 		bots:             bots,

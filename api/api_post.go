@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -207,11 +208,15 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {
 			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, err)
@@ -232,7 +237,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {
@@ -307,6 +312,10 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {
 			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
@@ -497,7 +506,11 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+	detachedCtx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	if err := a.conversationsService.HandleLoopInAgent(detachedCtx, userID, bot, post, channel); err != nil {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {
 			abortNotLicensed(c, err)

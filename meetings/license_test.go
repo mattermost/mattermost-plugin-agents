@@ -22,14 +22,14 @@ func TestMeetingsServiceLicenseGate(t *testing.T) {
 		{
 			name: "HandleTranscribeFile",
 			call: func(s *Service) error {
-				_, err := s.HandleTranscribeFile("user", nil, nil, nil, "file")
+				_, err := s.HandleTranscribeFile("user", nil, nil, nil, "file", "")
 				return err
 			},
 		},
 		{
 			name: "HandleSummarizeTranscription",
 			call: func(s *Service) error {
-				_, err := s.HandleSummarizeTranscription("user", nil, nil, nil)
+				_, err := s.HandleSummarizeTranscription("user", nil, nil, nil, "")
 				return err
 			},
 		},
@@ -43,7 +43,7 @@ func TestMeetingsServiceLicenseGate(t *testing.T) {
 		{
 			name: "summarizeCallRecording",
 			call: func(s *Service) error {
-				return s.summarizeCallRecording(nil, "root", &model.User{}, "file", nil)
+				return s.summarizeCallRecording(nil, "root", &model.User{}, "file", nil, nil)
 			},
 		},
 		{
