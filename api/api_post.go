@@ -299,6 +299,10 @@ func (a *API) handleRegenerate(c *gin.Context) {
 
 	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
 	}

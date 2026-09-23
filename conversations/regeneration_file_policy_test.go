@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -72,14 +73,12 @@ func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 		name      string
 		setupPost func(post *model.Post, fileID string)
 		setup     func(t *testing.T, mm *mocks.MockClient, c *Conversations, fileID string)
-		wantErr   string
 	}{
 		{
 			name: "recording file policy denial does not read file metadata",
 			setupPost: func(post *model.Post, fileID string) {
 				post.AddProp(ReferencedRecordingFileID, fileID)
 			},
-			wantErr: "not permitted to read recording file on regen",
 		},
 		{
 			name: "transcription file policy denial does not read file contents",
@@ -91,7 +90,6 @@ func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 				mm.On("GetPost", "transcript-post-id").Return(&model.Post{Id: "transcript-post-id"}, nil)
 				c.meetingsService = regenMeetingsStub{captionsFileID: fileID}
 			},
-			wantErr: "not permitted to read transcription file",
 		},
 	}
 
@@ -144,8 +142,7 @@ func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 			tt.setupPost(post, fileID)
 
 			err := c.HandleRegenerate(auth.WithSessionID(t.Context(), sessionID), userID, post, &model.Channel{Id: "channel-id"})
-			require.Error(t, err)
-			require.Contains(t, err.Error(), tt.wantErr)
+			require.ErrorIs(t, err, mmapi.ErrFileActionForbidden)
 			require.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the caller's file policy denies access")
 		})
 	}

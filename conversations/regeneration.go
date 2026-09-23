@@ -131,21 +131,14 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
 
 		fileInfo, getErr := mm.GetFileInfo(referencedRecordingFileID)
-		if errors.Is(getErr, mmapi.ErrFileActionForbidden) {
-			return errors.New("not permitted to read recording file on regen")
-		}
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
 		if len(post.FileIds) == 0 {
-			return errors.New("not permitted to read transcription file on regen")
+			return errors.New("no transcription file on regen post")
 		}
-		transcriptionFileID := post.FileIds[0]
-		reader, getErr := mm.GetFile(transcriptionFileID)
-		if errors.Is(getErr, mmapi.ErrFileActionForbidden) {
-			return errors.New("not permitted to read transcription file on regen")
-		}
+		reader, getErr := mm.GetFile(post.FileIds[0])
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -188,9 +181,6 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		}
 		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
 		transcriptionFileReader, fileErr := mm.GetFile(transcriptionFileID)
-		if errors.Is(fileErr, mmapi.ErrFileActionForbidden) {
-			return errors.New("not permitted to read transcription file")
-		}
 		if fileErr != nil {
 			return fmt.Errorf("unable to read calls file: %w", fileErr)
 		}
