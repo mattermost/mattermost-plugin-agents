@@ -1,6 +1,6 @@
 module github.com/mattermost/mattermost-plugin-agents/v2
 
-go 1.26.4
+go 1.26.7
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
@@ -11,8 +11,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/jmoiron/sqlx v1.4.0
-	github.com/lib/pq v1.12.0
-	github.com/mattermost/mattermost/server/public v0.3.1-0.20260402155910-d9d71af83e3f
+	github.com/lib/pq v1.12.3
+	github.com/mattermost/mattermost/server/public v0.4.5-0.20260911134158-fa302bf9e623
 	github.com/mattermost/morph v1.1.0
 	github.com/mattermost/testcontainers-mattermost-go v0.1.0
 	github.com/maximhq/bifrost/core v1.5.18
