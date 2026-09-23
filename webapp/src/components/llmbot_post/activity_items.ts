@@ -36,7 +36,9 @@ export interface PostActivity {
     /** Every tool invocation in the activity area, in order. */
     items: ActivityItem[];
 
+    /** A client tool call can wait on approval after the stream ends; provider tools cannot. */
     hasRunningTool: boolean;
+
     hasError: boolean;
     hasRejected: boolean;
 }
@@ -150,7 +152,7 @@ export function deriveActivity(rounds: Round[], options: DeriveActivityOptions =
         activityRounds,
         answerRounds,
         items,
-        hasRunningTool: items.some((item) => !isTerminalToolStatus(item.status)),
+        hasRunningTool: items.some((item) => item.kind === 'tool' && !isTerminalToolStatus(item.status)),
         hasError: items.some((item) => item.status === ToolCallStatus.Error),
         hasRejected: items.some((item) => item.status === ToolCallStatus.Rejected),
     };

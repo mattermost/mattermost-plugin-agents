@@ -38,6 +38,14 @@ function activityElement(rounds: Round[], options: {
 const currentRow = () => screen.getByTestId('llm-bot-tool-activity-current');
 
 describe('ToolActivityDisplay collapsed row', () => {
+    test('summarizes a finished response even if a provider tool never reported completion', () => {
+        render(activityElement([
+            makeRound('r1', 'Let me look', [makeTool({id: 'tc_a'})], [makeServerTool({id: 'srv_a', status: 'in_progress'})]),
+        ]));
+
+        expect(currentRow().textContent).toBe('Used 2 tools');
+    });
+
     test('shows only the summary once the response is done', () => {
         render(activityElement([
             makeRound('r1', 'Let me look', [makeTool({id: 'tc_a'}), makeTool({id: 'tc_b'})]),

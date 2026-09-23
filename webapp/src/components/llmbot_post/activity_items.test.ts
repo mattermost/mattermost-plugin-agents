@@ -106,7 +106,7 @@ describe('deriveActivity items', () => {
         {name: 'client tool accepted', tool: makeTool({status: ToolCallStatus.Accepted}), running: true, error: false, rejected: false},
         {name: 'client tool failed', tool: makeTool({status: ToolCallStatus.Error}), running: false, error: true, rejected: false},
         {name: 'client tool rejected', tool: makeTool({status: ToolCallStatus.Rejected}), running: false, error: false, rejected: true},
-        {name: 'server tool running', server: makeServerTool({status: 'in_progress'}), running: true, error: false, rejected: false},
+        {name: 'server tool left in progress', server: makeServerTool({status: 'in_progress'}), running: false, error: false, rejected: false},
         {name: 'server tool failed', server: makeServerTool({status: 'error'}), running: false, error: true, rejected: false},
         {name: 'server tool done', server: makeServerTool({status: 'success'}), running: false, error: false, rejected: false},
     ])('reports status for $name', ({tool, server, running, error, rejected}) => {
