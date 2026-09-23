@@ -4,8 +4,10 @@ import { MattermostPage } from 'helpers/mm';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
+    buildChatCompletionMockRule,
     buildToolCallResponse,
     buildTextResponse,
+    titleGenerationMockRule,
     turnMocksWithTitleSiphon,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
@@ -14,11 +16,11 @@ import { adminUsername, adminPassword } from 'helpers/system-console-container';
 /**
  * Test Suite: AskUserQuestion with arguments that miss the declared schema
  *
- * Models routinely stringify the option list instead of emitting it inline.
+ * Models sometimes stringify the option list instead of emitting it inline.
  * Such a question used to render as a generic Accept/Reject approval card
- * whose Accept failed server-side with "failed to parse question arguments",
- * leaving the question unanswerable. Both sides now repair the shape, so the
- * question card renders and the answer round-trips.
+ * whose Accept failed server-side with "failed to parse question arguments".
+ * The server now rejects the call before the user sees it, and the model asks
+ * again with valid arguments.
  */
 
 let mattermost: MattermostContainer;
@@ -29,14 +31,21 @@ const firstOption = 'Town Square';
 const secondOption = 'Off-Topic';
 const followUpText = 'Posting the release notes in Town Square now.';
 
+const options = [
+    { label: firstOption, description: 'Everyone sees it' },
+    { label: secondOption },
+];
+
 // The option list arrives as a JSON-encoded string rather than an array.
 const malformedQuestionArgs = JSON.stringify({
     question: questionText,
-    options: JSON.stringify([
-        { label: firstOption, description: 'Everyone sees it' },
-        { label: secondOption },
-    ]),
+    options: JSON.stringify(options),
 });
+
+const validQuestionArgs = JSON.stringify({ question: questionText, options });
+
+// Only the retry request carries the rejected call's error result.
+const rejectionResultMatch = 'invalid arguments for tool AskUserQuestion';
 
 async function waitForSentPost(page: Page, message: string, timeout = 30000): Promise<Locator> {
     const post = page.locator('.post').filter({
@@ -57,14 +66,23 @@ test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
         await mattermost.stop();
     });
 
-    test('renders an answerable question card and round-trips the answer', async ({ page }) => {
+    test('rejects the malformed call and shows the model\'s valid retry as a question card', async ({ page }) => {
         test.setTimeout(120000);
 
         const userMessage = 'Publish the release notes ' + Date.now();
 
-        await openAIMock.addMocks(turnMocksWithTitleSiphon(
-            buildToolCallResponse('call_ask_user_question', 'AskUserQuestion', malformedQuestionArgs),
-        ));
+        // Later rules take priority: the retry rule matches only once the
+        // rejection has been sent back to the model.
+        await openAIMock.addMocks([
+            buildChatCompletionMockRule(
+                buildToolCallResponse('call_malformed_question', 'AskUserQuestion', malformedQuestionArgs),
+            ),
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(
+                buildToolCallResponse('call_valid_question', 'AskUserQuestion', validQuestionArgs),
+                { bodyContains: rejectionResultMatch },
+            ),
+        ]);
 
         const mmPage = new MattermostPage(page);
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
@@ -84,8 +102,8 @@ test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
         const botPost = rhs.locator('[data-testid="llm-bot-post"]').last();
 
         // The question card, not the generic approval card: the question text
-        // and both repaired option labels are rendered, and the footer offers
-        // Skip rather than Reject.
+        // and both option labels are rendered, and the footer offers Skip
+        // rather than Reject.
         await expect(botPost.getByText(questionText, { exact: true })).toBeVisible({ timeout: 30000 });
         await expect(botPost.getByText(firstOption, { exact: true })).toBeVisible({ timeout: 30000 });
         await expect(botPost.getByText(secondOption, { exact: true })).toBeVisible({ timeout: 30000 });
@@ -98,7 +116,6 @@ test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
         await botPost.getByText(firstOption, { exact: true }).click();
         await botPost.getByRole('button', { name: /^accept$/i }).click();
 
-        // Accepting resolves the question instead of failing the request.
         await expect(botPost.getByText('Answered', { exact: true })).toBeVisible({ timeout: 30000 });
         await expect(rhs.getByText(followUpText, { exact: false })).toBeVisible({ timeout: 30000 });
     });
