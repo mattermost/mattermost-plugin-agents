@@ -20,15 +20,13 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // convertBridgePostsToInternal converts bridge posts to internal llm posts.
-func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgeclient.CompletionRequest) ([]llm.Post, error) {
+func (a *API) convertBridgePostsToInternal(req bridgeclient.CompletionRequest) ([]llm.Post, error) {
 	posts := make([]llm.Post, len(req.Posts))
 
 	for i, apiPost := range req.Posts {
@@ -49,17 +47,13 @@ func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgecli
 		var files []llm.File
 		if len(apiPost.FileIDs) > 0 {
 			files = make([]llm.File, len(apiPost.FileIDs))
-			mm := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(ctx))
 			for j, fileID := range apiPost.FileIDs {
 				if fileID == "" {
 					return nil, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
 				}
 
 				// Get file info
-				fileInfo, err := mm.GetFileInfo(fileID)
-				if errors.Is(err, mmapi.ErrFileActionForbidden) {
-					return nil, fmt.Errorf("file access denied for file ID %s", fileID)
-				}
+				fileInfo, err := a.mmClient.GetFileInfo(fileID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file info for file ID %s: %w", fileID, err)
 				}
@@ -72,10 +66,7 @@ func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgecli
 				}
 
 				// Get file reader
-				fileReader, err := mm.GetFile(fileID)
-				if errors.Is(err, mmapi.ErrFileActionForbidden) {
-					return nil, fmt.Errorf("file access denied for file ID %s", fileID)
-				}
+				fileReader, err := a.mmClient.GetFile(fileID)
 				if err != nil {
 					return nil, fmt.Errorf("failed to get file for file ID %s: %w", fileID, err)
 				}
@@ -109,8 +100,8 @@ func (a *API) convertBridgePostsToInternal(ctx stdcontext.Context, req bridgecli
 // convertServiceBridgeRequestToInternal converts a service bridge request to an
 // internal llm.CompletionRequest. The service path has no agent, so the request
 // carries no bot identity.
-func (a *API) convertServiceBridgeRequestToInternal(ctx stdcontext.Context, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
-	posts, err := a.convertBridgePostsToInternal(ctx, req)
+func (a *API) convertServiceBridgeRequestToInternal(req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
+	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
 	}
@@ -169,7 +160,7 @@ func (a *API) buildServiceBridgeContext(req bridgeclient.CompletionRequest) *llm
 }
 
 func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
-	posts, err := a.convertBridgePostsToInternal(ctx, req)
+	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
 	}
@@ -604,7 +595,7 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 
 	// Converting the request before leasing a model keeps a malformed role,
 	// file, or JSON schema a 400 that never allocates a provider client.
-	llmRequest, err := a.convertServiceBridgeRequestToInternal(c.Request.Context(), req, llm.OperationBridgeService, operationSubType)
+	llmRequest, err := a.convertServiceBridgeRequestToInternal(req, llm.OperationBridgeService, operationSubType)
 	if err != nil {
 		return fail(http.StatusBadRequest, fmt.Sprintf("invalid request: %v", err))
 	}
