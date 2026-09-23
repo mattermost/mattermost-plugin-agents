@@ -29,6 +29,7 @@ type fakeMMClient struct {
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
+	fileInfos            map[string]*model.FileInfo
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {

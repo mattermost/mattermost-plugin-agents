@@ -115,7 +115,7 @@ func SetupTestSuite(t *testing.T) *TestSuite {
 	require.NoError(t, err, "Failed to get admin client")
 
 	// Create a personal access token for testing
-	pat, _, err := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token")
+	pat, _, err := adminClient.CreateUserAccessToken(ctx, "me", "MCP Integration Test Token", 0)
 	require.NoError(t, err, "Failed to create PAT token")
 	adminToken := pat.Token
 
