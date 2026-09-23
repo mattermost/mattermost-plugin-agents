@@ -143,14 +143,6 @@ export class AgentPageHelper {
         return this.page.getByPlaceholder('How would you like the agent to respond?');
     }
 
-    getBooleanFieldRadios(label: string): Locator {
-        return this.getLabeledSection(label).locator('input[type="radio"]');
-    }
-
-    async setBooleanField(label: string, value: boolean): Promise<void> {
-        await this.getBooleanFieldRadios(label).nth(value ? 0 : 1).click();
-    }
-
     getNativeToolsSection(sectionTitle: 'Native Claude Tools' | 'Native OpenAI Tools'): Locator {
         return this.getLabeledSection(sectionTitle);
     }
@@ -170,10 +162,6 @@ export class AgentPageHelper {
 
     getThinkingBudgetInput(): Locator {
         return this.getExactLabel('Thinking Budget (tokens)').locator('xpath=following-sibling::input[1]');
-    }
-
-    getStructuredOutputNote(): Locator {
-        return this.page.getByText('Requests that ask for structured JSON output will skip extended thinking', {exact: false});
     }
 
     getAdvancedConfigurationToggle(): Locator {

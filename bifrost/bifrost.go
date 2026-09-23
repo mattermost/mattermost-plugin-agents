@@ -7,10 +7,17 @@
 package bifrost
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+
+	// Register standard image decoders for image.DecodeConfig.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"slices"
 	"strings"
@@ -21,6 +28,9 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	// Register the WebP decoder for image.DecodeConfig.
+	_ "golang.org/x/image/webp"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -101,6 +111,11 @@ type ProviderSettings struct {
 
 	DefaultModel     string
 	StreamingTimeout time.Duration
+
+	// DisableStore maps onto schemas.OpenAIConfig.DisableStore so Bifrost
+	// forces store=false on every outgoing OpenAI-family request for this
+	// provider — including when it is reached as a fallback hop.
+	DisableStore bool
 }
 
 // Config holds the configuration for creating a LLM instance.
@@ -501,7 +516,7 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 // when supported and readable, a placeholder text block otherwise. The block
 // type differs between the chat and Responses APIs, so callers supply the
 // text- and image-block constructors.
-func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
+func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
 	parts := make([]T, 0, len(post.Files)+1)
 
 	if post.Message != "" {
@@ -518,6 +533,19 @@ func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBloc
 		if err != nil {
 			parts = append(parts, textBlock("[Error reading image data]"))
 			continue
+		}
+
+		if maxDim > 0 {
+			if imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil &&
+				(imageConfig.Width > maxDim || imageConfig.Height > maxDim) {
+				parts = append(parts, textBlock(fmt.Sprintf(
+					"[Image omitted because its dimensions (%dx%d) exceed the maximum allowed size of %d pixels per dimension.]",
+					imageConfig.Width,
+					imageConfig.Height,
+					maxDim,
+				)))
+				continue
+			}
 		}
 
 		encoded := base64.StdEncoding.EncodeToString(data)

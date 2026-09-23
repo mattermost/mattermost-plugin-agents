@@ -24,6 +24,22 @@ func TestServiceUsesResponsesAPI(t *testing.T) {
 			expected: true,
 		},
 		{
+			name: "North always uses responses",
+			service: ServiceConfig{
+				Type:            ServiceTypeNorth,
+				UseResponsesAPI: false,
+			},
+			expected: true,
+		},
+		{
+			name: "North with flag true still uses responses",
+			service: ServiceConfig{
+				Type:            ServiceTypeNorth,
+				UseResponsesAPI: true,
+			},
+			expected: true,
+		},
+		{
 			name: "OpenAI compatible with toggle off",
 			service: ServiceConfig{
 				Type:            ServiceTypeOpenAICompatible,

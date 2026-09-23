@@ -13,14 +13,15 @@ const MaxConsecutiveToolCallFailures = 3
 
 const batchSkippedToolResultPrefix = "[batch_skipped] "
 
-// BatchSkippedToolResult marks a tool result as skipped because another tool in
-// the same batch was unavailable. The message is still surfaced to the LLM and
-// UI as an error, but it must not count toward MaxConsecutiveToolCallFailures.
-func BatchSkippedToolResult(toolName string, unavailableNames []string) string {
+// BatchSkippedToolResult marks a tool result as skipped because another call in
+// the same batch was rejected (an unavailable tool or invalid arguments). The
+// message is still surfaced to the LLM and UI as an error, but it must not
+// count toward MaxConsecutiveToolCallFailures.
+func BatchSkippedToolResult(toolName string, rejectedNames []string) string {
 	return batchSkippedToolResultPrefix + fmt.Sprintf(
-		"tool %s was not executed because the batch contained unavailable tool(s): %s",
+		"tool %s was not executed because the batch contained rejected tool call(s): %s",
 		toolName,
-		strings.Join(unavailableNames, ", "),
+		strings.Join(rejectedNames, ", "),
 	)
 }
 

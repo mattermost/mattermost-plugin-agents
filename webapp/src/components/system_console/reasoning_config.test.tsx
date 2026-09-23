@@ -172,3 +172,17 @@ describe('ReasoningConfigItem thinking budget validation', () => {
         }
     });
 });
+
+describe('ReasoningConfigItem Cohere North', () => {
+    it('shows effort-based reasoning even when useResponsesAPI is false', () => {
+        renderItem(
+            {reasoningEnabled: true, reasoningEffort: 'medium'},
+            {type: 'north', useResponsesAPI: false, defaultModel: ''},
+        );
+
+        expect(screen.getByText('Reasoning')).toBeTruthy();
+        expect(screen.getByText('Reasoning Effort')).toBeTruthy();
+        expect(screen.queryByText('Thinking Budget (tokens)')).toBeNull();
+        expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
+    });
+});
