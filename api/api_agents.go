@@ -80,28 +80,31 @@ func abortAgentRequest(c *gin.Context, status int, err error) {
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
 //   - Otherwise, the agent gets only the tools listed in enabledMCPTools (empty/missing = no MCP tools).
 type AgentRequestFields struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	DisplayName           string               `json:"displayName" binding:"required"`
+	ServiceID             string               `json:"serviceID" binding:"required"`
+	CustomInstructions    string               `json:"customInstructions"`
+	ChannelAccessLevel    int                  `json:"channelAccessLevel"`
+	ChannelIDs            []string             `json:"channelIDs"`
+	UserAccessLevel       int                  `json:"userAccessLevel"`
+	UserIDs               []string             `json:"userIDs"`
+	TeamIDs               []string             `json:"teamIDs"`
+	AdminUserIDs          []string             `json:"adminUserIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth bool                 `json:"useServiceAccountAuth"`
+	Model                 string               `json:"model"`
+	EnableVision          bool                 `json:"enableVision"`
+	DisableTools          bool                 `json:"disableTools"`
+	EnabledNativeTools    []string             `json:"enabledNativeTools"`
+	ReasoningEnabled      bool                 `json:"reasoningEnabled"`
+	ReasoningEffort       string               `json:"reasoningEffort"`
+	ThinkingBudget        int                  `json:"thinkingBudget"`
+	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
+	// compatibility with existing callers, but ignored at runtime. Structured
+	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+	MaxToolTurns            int  `json:"maxToolTurns"`
 }
 
 // applyTo overwrites the request-controlled fields on cfg.
@@ -126,7 +129,9 @@ func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	cfg.ReasoningEnabled = r.ReasoningEnabled
 	cfg.ReasoningEffort = r.ReasoningEffort
 	cfg.ThinkingBudget = r.ThinkingBudget
-	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled
+	// Persisted verbatim so existing callers keep round-tripping; the runtime
+	// reads ServiceConfig.StructuredOutputPolicy instead.
+	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled //nolint:staticcheck
 	cfg.MaxToolTurns = r.MaxToolTurns
 }
 

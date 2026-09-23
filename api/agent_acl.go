@@ -79,7 +79,7 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.ReasoningEnabled = false
 	cfg.ReasoningEffort = ""
 	cfg.ThinkingBudget = 0
-	cfg.StructuredOutputEnabled = false
+	cfg.StructuredOutputEnabled = false //nolint:staticcheck // deprecated field is still persisted, so it must be normalized too
 	cfg.MaxToolTurns = 0
 	cfg.UseServiceAccountAuth = false
 

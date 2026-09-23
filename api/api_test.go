@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,7 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
+	services                        []llm.ServiceConfig
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -90,6 +92,10 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
 	return false
+}
+
+func (tc *testConfigImpl) GetServices() []llm.ServiceConfig {
+	return slices.Clone(tc.services)
 }
 
 type testLLMContextToolProvider struct {
