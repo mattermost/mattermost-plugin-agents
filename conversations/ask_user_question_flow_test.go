@@ -200,7 +200,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 
 			if tc.wantFollowUp {
 				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
-				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
+				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, toolRejectionGuidance),
 					"answered or skipped questions must not receive tool-rejection guidance")
 			} else {
 				assert.Empty(t, lm.requests, "expected no follow-up LLM request")
@@ -326,6 +326,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			&model.Post{Id: "root-post-id"},
 			conv,
 			true,
+			false,
 			nil,
 		)
 		require.NoError(t, err)
@@ -378,6 +379,7 @@ func TestStreamToolFollowUpInteractiveFlag(t *testing.T) {
 			&model.Post{Id: "post-id"},
 			conv,
 			false,
+			false,
 			nil,
 		)
 		require.NoError(t, err)
@@ -412,7 +414,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 		wantToolResult        string
 		wantToolUseShared     bool
 		wantResultShared      bool
-		wantFollowUp          bool
 		wantRejectionGuidance bool
 	}{
 		{
@@ -425,7 +426,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        "restored-result",
 			wantToolUseShared:     true,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: false,
 		},
 		{
@@ -438,7 +438,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: false,
 		},
 		{
@@ -456,7 +455,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: false,
 		},
 		{
@@ -470,7 +468,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        "restored-result",
 			wantToolUseShared:     true,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: false,
 		},
 		{
@@ -484,7 +481,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        toolCallPolicyDeniedResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: false,
 		},
 		{
@@ -498,7 +494,6 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			wantToolResult:        toolCallRejectedByUserResult,
 			wantToolUseShared:     false,
 			wantResultShared:      true,
-			wantFollowUp:          true,
 			wantRejectionGuidance: true,
 		},
 	}
@@ -615,21 +610,13 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				assert.NotNil(t, resultBlocks[1].DecidedAt, "answer result is terminal")
 			}
 
-			if tc.wantFollowUp {
-				require.Len(t, lm.requests, 1, "expected a follow-up LLM request")
-				requestText := completionRequestText(lm.requests[0])
-				assert.Contains(t, requestText, tc.wantToolResult)
-				if tc.wantRejectionGuidance {
-					requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
-				} else {
-					assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
-						"policy denial and auto-exec must not receive user-rejection guidance")
-					if tc.wantToolResult != toolCallRejectedByUserResult {
-						assert.NotContains(t, requestText, toolCallRejectedByUserResult)
-					}
-				}
+			require.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+			assert.Contains(t, requestToolResults(lm.requests[0]), tc.wantToolResult)
+			if tc.wantRejectionGuidance {
+				requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
 			} else {
-				assert.Empty(t, lm.requests)
+				assert.NotContains(t, completionRequestText(lm.requests[0]), toolCallRejectedByUserResult,
+					"policy denial and auto-exec must not blame the user or receive rejection guidance")
 			}
 		})
 	}

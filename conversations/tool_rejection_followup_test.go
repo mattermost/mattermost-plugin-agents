@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -50,10 +49,8 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 		blocks             []conversation.ContentBlock
 		acceptedIDs        []string
 		failingTool        bool
-		wantFollowUp       bool
 		wantGuidance       bool
-		wantRequestHas     []string
-		wantRequestOmits   []string
+		wantArgsHidden     bool
 		wantToolUseShared  []bool
 		wantResultShared   []bool
 		wantResultContents []string
@@ -62,9 +59,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			name:               "lone DM rejection continues with guidance",
 			channel:            dmChannel,
 			blocks:             []conversation.ContentBlock{pendingJira("tool-use-1", true)},
-			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{toolCallRejectedByUserResult},
@@ -73,10 +68,8 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			name:               "lone channel rejection continues with visible reason and private args",
 			channel:            openChannel,
 			blocks:             []conversation.ContentBlock{pendingJira("tool-use-1", false)},
-			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
-			wantRequestOmits:   []string{plantedRejectionArg},
+			wantArgsHidden:     true,
 			wantToolUseShared:  []bool{false},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{toolCallRejectedByUserResult},
@@ -96,9 +89,7 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				},
 			},
 			acceptedIDs:        []string{"tool-use-1"},
-			wantFollowUp:       true,
 			wantGuidance:       true,
-			wantRequestHas:     []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult, "restored-result"},
 			wantToolUseShared:  []bool{true, true},
 			wantResultShared:   []bool{true, true},
 			wantResultContents: []string{"restored-result", toolCallRejectedByUserResult},
@@ -109,10 +100,6 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 			blocks:             []conversation.ContentBlock{pendingJira("tool-use-1", true)},
 			acceptedIDs:        []string{"tool-use-1"},
 			failingTool:        true,
-			wantFollowUp:       true,
-			wantGuidance:       false,
-			wantRequestHas:     []string{"jira unavailable"},
-			wantRequestOmits:   []string{llm.ToolRejectionUserMessage},
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{"jira unavailable"},
@@ -129,10 +116,6 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				WouldAutoExecute: true,
 				Shared:           new(true),
 			}},
-			wantFollowUp:       true,
-			wantGuidance:       false,
-			wantRequestHas:     []string{toolCallPolicyDeniedResult},
-			wantRequestOmits:   []string{llm.ToolRejectionUserMessage, toolCallRejectedByUserResult},
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{toolCallPolicyDeniedResult},
@@ -152,10 +135,6 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				UserInteraction: llm.UserInteractionSelect,
 				Shared:          new(true),
 			}},
-			wantFollowUp:       true,
-			wantGuidance:       false,
-			wantRequestHas:     []string{"User skipped the question"},
-			wantRequestOmits:   []string{llm.ToolRejectionUserMessage},
 			wantToolUseShared:  []bool{true},
 			wantResultShared:   []bool{true},
 			wantResultContents: []string{"User skipped the question"},
@@ -212,94 +191,135 @@ func TestHandleToolCallRejectionFollowsUp(t *testing.T) {
 				assert.NotNil(t, resultBlocks[i].DecidedAt)
 			}
 
-			if !tc.wantFollowUp {
-				assert.Empty(t, lm.requests)
-				return
-			}
 			require.Len(t, lm.requests, 1, "expected one immediate continuation")
-			requestText := completionRequestText(lm.requests[0])
+			req := lm.requests[0]
+			assert.Subset(t, requestToolResults(req), tc.wantResultContents,
+				"the model must see every result unredacted")
 			if tc.wantGuidance {
-				requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
+				requireRejectionGuidanceIsFinalUserPost(t, req.Posts)
 			} else {
-				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage),
-					"non-human-rejection continuations must not receive rejection guidance")
+				assert.Zero(t, countUserMessagesContaining(req.Posts, toolRejectionGuidance),
+					"only user rejections receive rejection guidance")
 			}
-			for _, want := range tc.wantRequestHas {
-				assert.Contains(t, requestText, want)
-			}
-			for _, omit := range tc.wantRequestOmits {
-				assert.NotContains(t, requestText, omit)
+			if tc.wantArgsHidden {
+				assert.NotContains(t, completionRequestText(req), plantedRejectionArg)
 			}
 		})
 	}
 }
 
 func TestHandleToolCallMixedChannelRejectionGuidanceAfterShare(t *testing.T) {
-	convStore, conv := loadedStateConversationStore()
-	nextSeq := 1
-	seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
+	accepted := conversation.ContentBlock{
+		Type:   conversation.BlockTypeToolUse,
+		ID:     "tool-use-1",
+		Name:   "jira__get_issue",
+		Input:  json.RawMessage(`{"issue_key":"MM-1"}`),
+		Status: conversation.StatusPending,
+		Shared: new(false),
+	}
 
-	blocks := []conversation.ContentBlock{
+	cases := []struct {
+		name         string
+		declined     conversation.ContentBlock
+		wantResult   string
+		wantGuidance bool
+	}{
 		{
-			Type:   conversation.BlockTypeToolUse,
-			ID:     "tool-use-1",
-			Name:   "jira__get_issue",
-			Input:  json.RawMessage(`{"issue_key":"MM-1"}`),
-			Status: conversation.StatusPending,
-			Shared: new(false),
+			name: "user rejection",
+			declined: conversation.ContentBlock{
+				Type:   conversation.BlockTypeToolUse,
+				ID:     "tool-use-2",
+				Name:   "jira__transition_issue",
+				Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
+				Status: conversation.StatusPending,
+				Shared: new(false),
+			},
+			wantResult:   toolCallRejectedByUserResult,
+			wantGuidance: true,
 		},
 		{
-			Type:   conversation.BlockTypeToolUse,
-			ID:     "tool-use-2",
-			Name:   "jira__transition_issue",
-			Input:  json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
-			Status: conversation.StatusPending,
-			Shared: new(false),
+			name: "skipped question",
+			declined: conversation.ContentBlock{
+				Type:            conversation.BlockTypeToolUse,
+				ID:              "tool-use-2",
+				Name:            "AskUserQuestion",
+				Input:           json.RawMessage(`{"question":"Which project?","options":[{"label":"A"},{"label":"B"}]}`),
+				Status:          conversation.StatusPending,
+				UserInteraction: llm.UserInteractionSelect,
+				Shared:          new(false),
+			},
+			wantResult: "User skipped the question",
+		},
+		{
+			name: "policy-denied deferred auto-run",
+			declined: conversation.ContentBlock{
+				Type:             conversation.BlockTypeToolUse,
+				ID:               "tool-use-2",
+				Name:             "jira__transition_issue",
+				Input:            json.RawMessage(`{"issue_key":"` + plantedRejectionArg + `"}`),
+				Status:           conversation.StatusPending,
+				WouldAutoExecute: true,
+				Shared:           new(false),
+			},
+			wantResult: toolCallPolicyDeniedResult,
 		},
 	}
-	content, err := json.Marshal(blocks)
-	require.NoError(t, err)
-	approvalPostID := "approval-post-id"
-	require.NoError(t, convStore.CreateTurn(&store.Turn{
-		ID:             "assistant-turn",
-		ConversationID: conv.ID,
-		PostID:         &approvalPostID,
-		Role:           "assistant",
-		Content:        content,
-		Sequence:       nextSeq,
-	}))
 
-	lm := &loadedStateLLM{}
-	streamingService := &loadedStateStreamingService{}
-	c := newRejectionFollowUpConversations(t, convStore, lm, streamingService, false)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			convStore, conv := loadedStateConversationStore()
+			nextSeq := 1
+			seedLoadToolPair(t, convStore, conv.ID, "load-1", "jira__get_issue", &nextSeq)
 
-	approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
-	approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
-	channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
+			content, err := json.Marshal([]conversation.ContentBlock{accepted, tc.declined})
+			require.NoError(t, err)
+			approvalPostID := "approval-post-id"
+			require.NoError(t, convStore.CreateTurn(&store.Turn{
+				ID:             "assistant-turn",
+				ConversationID: conv.ID,
+				PostID:         &approvalPostID,
+				Role:           "assistant",
+				Content:        content,
+				Sequence:       nextSeq,
+			}))
 
-	require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
-	assert.Empty(t, lm.requests, "mixed channel batch must wait for the share decision")
+			lm := &loadedStateLLM{}
+			streamingService := &loadedStateStreamingService{}
+			c := newRejectionFollowUpConversations(t, convStore, lm, streamingService, false)
 
-	turns, err := convStore.GetTurnsForConversation(conv.ID)
-	require.NoError(t, err)
-	var resultBlocks []conversation.ContentBlock
-	require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
-	require.Len(t, resultBlocks, 2)
-	assert.Nil(t, resultBlocks[0].DecidedAt)
-	assert.False(t, *resultBlocks[0].Shared)
-	assert.NotNil(t, resultBlocks[1].DecidedAt)
-	assert.True(t, *resultBlocks[1].Shared)
-	assert.Equal(t, toolCallRejectedByUserResult, resultBlocks[1].Content)
+			approvalPost := &model.Post{Id: approvalPostID, UserId: "bot-id"}
+			approvalPost.AddProp(streaming.ConversationIDProp, conv.ID)
+			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen}
 
-	require.NoError(t, c.HandleToolResult(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
-	streamingService.waitForStreaming()
+			require.NoError(t, c.HandleToolCall(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}, nil))
+			assert.Empty(t, lm.requests, "mixed channel batch must wait for the share decision")
 
-	require.Len(t, lm.requests, 1)
-	requestText := completionRequestText(lm.requests[0])
-	requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
-	assert.Contains(t, requestText, toolCallRejectedByUserResult)
-	assert.Contains(t, requestText, "restored-result")
-	assert.NotContains(t, requestText, plantedRejectionArg)
+			turns, err := convStore.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			var resultBlocks []conversation.ContentBlock
+			require.NoError(t, json.Unmarshal(turns[3].Content, &resultBlocks))
+			require.Len(t, resultBlocks, 2)
+			assert.Nil(t, resultBlocks[0].DecidedAt)
+			assert.False(t, *resultBlocks[0].Shared)
+			assert.NotNil(t, resultBlocks[1].DecidedAt)
+			assert.True(t, *resultBlocks[1].Shared)
+			assert.Equal(t, tc.wantResult, resultBlocks[1].Content)
+
+			require.NoError(t, c.HandleToolResult(context.Background(), "user-id", approvalPost, channel, []string{"tool-use-1"}))
+			streamingService.waitForStreaming()
+
+			require.Len(t, lm.requests, 1)
+			req := lm.requests[0]
+			if tc.wantGuidance {
+				requireRejectionGuidanceIsFinalUserPost(t, req.Posts)
+			} else {
+				assert.Zero(t, countUserMessagesContaining(req.Posts, toolRejectionGuidance),
+					"only user rejections receive rejection guidance")
+			}
+			assert.Subset(t, requestToolResults(req), []string{"restored-result", tc.wantResult})
+			assert.NotContains(t, completionRequestText(req), plantedRejectionArg)
+		})
+	}
 }
 
 func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
@@ -353,216 +373,14 @@ func TestHandleToolResultRejectedOnlyDoesNotFollowUp(t *testing.T) {
 	assert.Empty(t, lm.requests, "rejected-only share-stage must not start a follow-up")
 }
 
-func TestStreamToolFollowUpLatestToolBatchGuidance(t *testing.T) {
-	humanReject := conversation.ContentBlock{
-		Type:   conversation.BlockTypeToolUse,
-		ID:     "human-1",
-		Name:   "jira__get_issue",
-		Input:  json.RawMessage(`{}`),
-		Status: conversation.StatusRejected,
-		Shared: new(true),
-	}
-	humanRejectResult := conversation.ContentBlock{
-		Type:      conversation.BlockTypeToolResult,
-		ToolUseID: "human-1",
-		Content:   toolCallRejectedByUserResult,
-		Status:    conversation.StatusError,
-		Shared:    new(true),
-	}
-	success := conversation.ContentBlock{
-		Type:   conversation.BlockTypeToolUse,
-		ID:     "ok-1",
-		Name:   "jira__get_issue",
-		Input:  json.RawMessage(`{}`),
-		Status: conversation.StatusSuccess,
-		Shared: new(true),
-	}
-	successResult := conversation.ContentBlock{
-		Type:      conversation.BlockTypeToolResult,
-		ToolUseID: "ok-1",
-		Content:   "restored-result",
-		Status:    conversation.StatusSuccess,
-		Shared:    new(true),
-	}
-	execError := conversation.ContentBlock{
-		Type:   conversation.BlockTypeToolUse,
-		ID:     "err-1",
-		Name:   "jira__get_issue",
-		Input:  json.RawMessage(`{}`),
-		Status: conversation.StatusError,
-		Shared: new(true),
-	}
-	execErrorResult := conversation.ContentBlock{
-		Type:      conversation.BlockTypeToolResult,
-		ToolUseID: "err-1",
-		Content:   "jira unavailable",
-		Status:    conversation.StatusError,
-		Shared:    new(true),
-	}
-	skip := conversation.ContentBlock{
-		Type:            conversation.BlockTypeToolUse,
-		ID:              "q-1",
-		Name:            "AskUserQuestion",
-		Status:          conversation.StatusRejected,
-		UserInteraction: llm.UserInteractionSelect,
-		Shared:          new(true),
-	}
-	skipResult := conversation.ContentBlock{
-		Type:      conversation.BlockTypeToolResult,
-		ToolUseID: "q-1",
-		Content:   "User skipped the question",
-		Status:    conversation.StatusError,
-		Shared:    new(true),
-	}
-	policyDenied := conversation.ContentBlock{
-		Type:             conversation.BlockTypeToolUse,
-		ID:               "auto-1",
-		Name:             "jira__get_issue",
-		Input:            json.RawMessage(`{}`),
-		Status:           conversation.StatusRejected,
-		WouldAutoExecute: true,
-		Shared:           new(true),
-	}
-	policyDeniedResult := conversation.ContentBlock{
-		Type:      conversation.BlockTypeToolResult,
-		ToolUseID: "auto-1",
-		Content:   toolCallPolicyDeniedResult,
-		Status:    conversation.StatusError,
-		Shared:    new(true),
-	}
-
-	cases := []struct {
-		name         string
-		rounds       [][]conversation.ContentBlock
-		wantGuidance bool
-	}{
-		{
-			name:         "empty conversation",
-			wantGuidance: false,
-		},
-		{
-			name:         "success only",
-			rounds:       [][]conversation.ContentBlock{{success, successResult}},
-			wantGuidance: false,
-		},
-		{
-			name:         "execution error only",
-			rounds:       [][]conversation.ContentBlock{{execError, execErrorResult}},
-			wantGuidance: false,
-		},
-		{
-			name:         "interaction skip only",
-			rounds:       [][]conversation.ContentBlock{{skip, skipResult}},
-			wantGuidance: false,
-		},
-		{
-			name:         "policy-denied auto-exec only",
-			rounds:       [][]conversation.ContentBlock{{policyDenied, policyDeniedResult}},
-			wantGuidance: false,
-		},
-		{
-			name:         "latest mixed success and human rejection",
-			rounds:       [][]conversation.ContentBlock{{success, humanReject, successResult, humanRejectResult}},
-			wantGuidance: true,
-		},
-		{
-			name: "older human rejection then later success",
-			rounds: [][]conversation.ContentBlock{
-				{humanReject, humanRejectResult},
-				{success, successResult},
-			},
-			wantGuidance: false,
-		},
-		{
-			name: "older human rejection then later execution error",
-			rounds: [][]conversation.ContentBlock{
-				{humanReject, humanRejectResult},
-				{execError, execErrorResult},
-			},
-			wantGuidance: false,
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			convStore, conv := loadedStateConversationStore()
-			seq := 1
-			for i, blocks := range tc.rounds {
-				appendToolRoundTurns(t, convStore, conv.ID, fmt.Sprintf("post-%d", i+1), &seq, blocks)
-			}
-
-			lm := &loadedStateLLM{}
-			streamingService := &loadedStateStreamingService{}
-			c := newRejectionFollowUpConversations(t, convStore, lm, streamingService, false)
-
-			err := c.streamToolFollowUp(
-				context.Background(),
-				loadedStateBot(lm),
-				&model.User{Id: "user-id", Username: "user"},
-				&model.Channel{Id: "dm-channel", Type: model.ChannelTypeDirect, Name: "bot-id__user-id"},
-				&model.Post{Id: "post-1"},
-				conv,
-				true,
-				nil,
-			)
-			require.NoError(t, err)
-			streamingService.waitForStreaming()
-			require.Len(t, lm.requests, 1)
-			if tc.wantGuidance {
-				requireRejectionGuidanceIsFinalUserPost(t, lm.requests[0].Posts)
-			} else {
-				assert.Zero(t, countUserMessagesContaining(lm.requests[0].Posts, llm.ToolRejectionUserMessage))
-			}
-		})
-	}
-}
-
-func appendToolRoundTurns(t *testing.T, convStore *loadedStateFlowStore, convID, postID string, seq *int, blocks []conversation.ContentBlock) {
-	t.Helper()
-
-	var toolUses, results []conversation.ContentBlock
-	for _, block := range blocks {
-		switch block.Type {
-		case conversation.BlockTypeToolUse:
-			toolUses = append(toolUses, block)
-		case conversation.BlockTypeToolResult:
-			results = append(results, block)
-		}
-	}
-
-	useContent, err := json.Marshal(toolUses)
-	require.NoError(t, err)
-	postIDCopy := postID
-	require.NoError(t, convStore.CreateTurn(&store.Turn{
-		ID:             "assistant-" + postID,
-		ConversationID: convID,
-		PostID:         &postIDCopy,
-		Role:           "assistant",
-		Content:        useContent,
-		Sequence:       *seq,
-	}))
-	*seq++
-
-	resultContent, err := json.Marshal(results)
-	require.NoError(t, err)
-	require.NoError(t, convStore.CreateTurn(&store.Turn{
-		ID:             "result-" + postID,
-		ConversationID: convID,
-		Role:           "tool_result",
-		Content:        resultContent,
-		Sequence:       *seq,
-	}))
-	*seq++
-}
-
 func requireRejectionGuidanceIsFinalUserPost(t *testing.T, posts []llm.Post) {
 	t.Helper()
 	require.NotEmpty(t, posts)
-	assert.Equal(t, 1, countUserMessagesContaining(posts, llm.ToolRejectionUserMessage),
+	assert.Equal(t, 1, countUserMessagesContaining(posts, toolRejectionGuidance),
 		"rejection guidance must appear exactly once")
 	last := posts[len(posts)-1]
 	require.Equal(t, llm.PostRoleUser, last.Role, "rejection guidance must be the final user post")
-	require.Equal(t, llm.ToolRejectionUserMessage, last.Message)
+	require.Equal(t, toolRejectionGuidance, last.Message)
 }
 
 func newRejectionFollowUpConversations(
@@ -617,6 +435,16 @@ func completionRequestText(req llm.CompletionRequest) string {
 		}
 	}
 	return b.String()
+}
+
+func requestToolResults(req llm.CompletionRequest) []string {
+	var results []string
+	for _, post := range req.Posts {
+		for _, tc := range post.ToolUse {
+			results = append(results, tc.Result)
+		}
+	}
+	return results
 }
 
 func countUserMessagesContaining(posts []llm.Post, msg string) int {
