@@ -73,7 +73,6 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEnabled: true,
         reasoningEffort: 'medium',
         thinkingBudget: 0,
-        structuredOutputEnabled: false,
         maxToolTurns: 30,
         ...overrides,
     };
@@ -125,5 +124,38 @@ describe('ConfigTab', () => {
         expect(
             (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
         ).toBe(false);
+    });
+
+    test('shows vision and effort reasoning for north without native tools', async () => {
+        const northService: ServiceInfo = {
+            id: 'svc_north',
+            name: 'North',
+            type: 'north',
+            defaultModel: '',
+            outputTokenLimit: 4096,
+            useResponsesAPI: false,
+        };
+
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId: northService.id})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[northService]}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('AI Service')).not.toBeNull());
+        fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
+
+        expect(screen.getByText('Enable Vision')).toBeTruthy();
+        expect(screen.getByText('Enable Tools')).toBeTruthy();
+        expect(screen.getByText('Reasoning')).toBeTruthy();
+        expect(screen.getByText('Reasoning Effort')).toBeTruthy();
+        expect(screen.queryByTestId('native-tool-web_search')).toBeNull();
+        expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
+        expect(screen.queryByText('Structured Output')).toBeNull();
     });
 });
