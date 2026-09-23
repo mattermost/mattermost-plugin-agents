@@ -19,8 +19,8 @@ import {isValidId} from '@/utils/ids';
 import {ServerToolUse} from '@/types/conversation';
 
 import {SearchSources, parseSearchSources} from '../search_sources';
-import {needsViewerDecision} from '../tool_approval_set';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
+import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
 import {
@@ -33,7 +33,7 @@ import {deriveActivity, isTerminalToolStatus} from './activity_items';
 import {LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
-import {AnswerArea, FoldingText, useAnswerHandover} from './answer_handover';
+import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
 import ToolActivityDisplay from './tool_activity_display';
 
@@ -47,16 +47,6 @@ export type AgentProgressPhase =
     'loading_conversation' |
     'preparing_request' |
     'connecting_provider';
-
-/** Pending client tool calls the requester still has to Accept/Reject. */
-function liveRoundNeedsRequesterDecision(round: Round, canApprove: boolean): boolean {
-    if (!canApprove) {
-        return false;
-    }
-    return round.toolCalls.some((call) =>
-        call.status === ToolCallStatus.Pending && !call.would_auto_execute,
-    );
-}
 
 export interface PostUpdateWebsocketMessage {
     post_id: string
@@ -138,7 +128,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
-    // Per-post UI state for the collapsed tool-activity area.
     const [activityExpanded, setActivityExpanded] = useState(false);
 
     // Rounds completed during this stream, before turns land via refetch.
@@ -600,20 +589,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
-    // Only the post anchor (latest persisted round, when nothing live follows
-    // it) gets a real approval stage; every other round renders as 'done'.
-    // A live pending tool_call that has not been persisted yet is also an
-    // anchor: otherwise deriveActivity folds it into the activity row and the
-    // requester loses the approval card until refetch lands.
+    // Only the anchor round gets a real approval stage: the latest persisted
+    // round when nothing live follows it, or a live round with calls awaiting
+    // the requester (so its approval card shows before the refetch lands).
     const persistedAnchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
     const lastRenderedIdx = renderedRounds.length - 1;
     const lastRendered = lastRenderedIdx >= 0 ? renderedRounds[lastRenderedIdx] : null;
     const isPersistedAnchor = lastRenderedIdx >= 0 && lastRenderedIdx === stablePersisted.length - 1;
-    const livePendingForRequester = Boolean(
-        lastRendered &&
-        lastRendered.id === LIVE_ROUND_ID &&
-        liveRoundNeedsRequesterDecision(lastRendered, requesterIsCurrentUser),
-    );
+    const livePendingForRequester = lastRendered?.id === LIVE_ROUND_ID &&
+        selectDecisionToolCalls(lastRendered.toolCalls, 'call', requesterIsCurrentUser).length > 0;
     const anchorRound: Round | null = (isPersistedAnchor || livePendingForRequester) ? lastRendered : null;
     const anchorRoundId = anchorRound?.id ?? null;
 
@@ -632,36 +616,21 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     }, []);
 
-    // A round the viewer must Accept/Reject (or Share/Keep private) stays out
-    // of the activity area so the approval card renders in full, below the
-    // collapsed row and next to the text that asked for it. Onlookers owe no
-    // decision, so for them the round folds in like any other.
-    const awaitingDecision = (anchorRound !== null &&
-        needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser)) ||
-        livePendingForRequester;
-    const pendingDecisionRoundId = awaitingDecision && anchorRound ? anchorRound.id : undefined; // eslint-disable-line no-undefined
+    // A round the viewer owes a decision on stays out of the activity area so
+    // its approval card renders in full. Onlookers owe none, so it folds in.
+    const awaitingDecision = anchorRound !== null &&
+        needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser);
+    const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
-    // A reader who expanded the area asked to watch the whole thing, so
-    // nothing is rerouted for them; see deriveActivity for why the trailing
-    // text of a streaming response belongs in the row at all.
-    const foldTrailingText = isGenerationInProgress && !activityExpanded;
-
-    // Intermediate rounds fold into the activity area; whatever is left over
-    // is the answer and renders as a normal post message.
     const activity = useMemo(
-        () => deriveActivity(renderedRounds, {pendingDecisionRoundId, foldTrailingText}),
-        [renderedRounds, pendingDecisionRoundId, foldTrailingText],
+        () => deriveActivity(renderedRounds, {pendingDecisionRoundId}),
+        [renderedRounds, pendingDecisionRoundId],
     );
 
-    // Text still moves between the main area and the row in two cases the
-    // routing cannot prevent: the first round streams into the main area
-    // before any tool call exists to reroute it, and the whole answer comes
-    // back at the end of the response. Both get animated instead of cutting.
+    // Answer text that turns out to be narration folds away instead of
+    // vanishing. Expanded, the round just moves into the stack in place.
     const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
-    const {foldingText, revealAnswer} = useAnswerHandover(
-        answerText,
-        foldTrailingText && activity.items.length > 0,
-    );
+    const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
 
     const renderRound = useCallback((round: Round) => {
         const isLiveRound = round.id === LIVE_ROUND_ID;
@@ -739,7 +708,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                     postID={props.post.id}
                 />
             )}
-            <AnswerArea $reveal={revealAnswer}>
+            <AnswerArea $afterActivity={activity.items.length > 0}>
                 {activity.answerRounds.map(renderRound)}
             </AnswerArea>
             {searchSources.length > 0 && (
@@ -767,6 +736,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 };
 
 const PostBody = styled.div`
+`;
+
+// Same gap as between stacked rounds, so a round moving from here into the
+// expanded activity stack stays where it is.
+const AnswerArea = styled.div<{$afterActivity: boolean}>`
+    &:not(:empty) {
+        margin-top: ${(props) => (props.$afterActivity ? '8px' : '0')};
+    }
 `;
 
 const SpinnerWrapper = styled.div`

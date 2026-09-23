@@ -15,20 +15,10 @@ export const TOOL_CARD_SELECTOR = '[class*="ToolCallCard"]';
 export type ToolStatusGlyph = 'running' | 'success' | 'error' | 'rejected';
 
 /**
- * Bot posts collapse their tool calls into a single activity row by default;
- * tool cards, arguments, results and the "Auto-approved" badge only exist in
- * the DOM once the row is expanded. Expands every collapsed activity area
- * inside `scope` (already-expanded ones are left alone) and returns the
- * revealed rounds.
- *
- * Assert tool labels against the returned locator rather than the whole post:
- * the collapsed row animates towards the newest item, so for a few hundred
- * milliseconds after expanding it can still name a tool that the stack also
- * shows, which would make a post-wide locator ambiguous.
- *
- * A round awaiting the viewer's decision renders below the activity area
- * instead of inside it, so specs that only click Accept/Reject/Share do not
- * need this.
+ * Expands every collapsed activity area in `scope` and returns the revealed
+ * rounds. Tool cards only exist in the DOM once expanded. Assert labels on the
+ * returned locator: the collapsed row repeats the latest tool's name.
+ * Rounds awaiting the viewer's decision render outside the area already.
  */
 export async function expandToolActivity(scope: Locator): Promise<Locator> {
     const areas = scope.locator(TOOL_ACTIVITY_SELECTOR);
@@ -49,39 +39,25 @@ export async function expandToolActivity(scope: Locator): Promise<Locator> {
     return scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR);
 }
 
-/**
- * Re-collapses an expanded activity area, hiding the round stack again. Unlike
- * `expandToolActivity`, this acts on the first activity area in `scope` only.
- */
+/** Collapses the first activity area in `scope`. */
 export async function collapseToolActivity(scope: Locator): Promise<void> {
     const area = scope.locator(TOOL_ACTIVITY_SELECTOR).first();
     await area.locator(TOOL_ACTIVITY_HEADER_SELECTOR).click();
     await expect(area.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0, { timeout: 10000 });
 }
 
-/**
- * Asserts an activity area exists and is showing only its one-line header. The
- * header check reads the first area in `scope`; the round check covers all of
- * them, since a collapsed post has no round stack anywhere.
- */
+/** Asserts an activity area exists and shows only its one-line header. */
 export async function expectToolActivityCollapsed(scope: Locator): Promise<void> {
     await expect(scope.locator(TOOL_ACTIVITY_HEADER_SELECTOR).first()).toBeVisible({ timeout: 30000 });
     await expect(scope.locator(TOOL_ACTIVITY_ROUNDS_SELECTOR)).toHaveCount(0);
 }
 
-/**
- * Asserts the collapsed row has settled on an item naming `text`. The row
- * steps through items as they arrive, so this retries until it catches up.
- */
+/** Asserts the collapsed row names `text` (the latest tool invocation). */
 export async function expectToolActivityCurrent(scope: Locator, text: string): Promise<void> {
     await expect(scope.locator(TOOL_ACTIVITY_CURRENT_SELECTOR).last()).toContainText(text, { timeout: 30000 });
 }
 
-/**
- * Asserts the finished-response summary, e.g. "Used 1 tool" / "Used 3 tools".
- * Pass `status` to also check the glyph the summary carries, which reports the
- * worst outcome among the tools it counts.
- */
+/** Asserts the "Used N tools" summary and, optionally, its worst-outcome glyph. */
 export async function expectToolActivitySummary(
     scope: Locator,
     toolCount: number,
@@ -97,28 +73,20 @@ export async function expectToolActivitySummary(
 }
 
 /**
- * Asserts no activity area at all — either nothing ran, or the only round is
- * one the viewer owes a decision on, which renders below the activity area.
- *
- * `toHaveCount(0)` succeeds on the first poll if the area has not rendered
- * yet, so callers must wait for a stable post state first (for example a
- * visible approval button or a visible final answer).
+ * Asserts no activity area. Passes on the first poll, so wait for a stable
+ * post state (a visible approval button or final answer) first.
  */
 export async function expectNoToolActivity(scope: Locator): Promise<void> {
     await expect(scope.locator(TOOL_ACTIVITY_SELECTOR)).toHaveCount(0);
 }
 
-/**
- * Everything `post` shows outside its activity area. While a tool-using
- * response streams, its text lives in the collapsed row and not here, so this
- * is what distinguishes the two rather than a post-wide text match.
- */
+/** Everything `post` shows outside its activity area and any text folding into it. */
 export async function mainAreaText(post: Locator): Promise<string> {
     return post.evaluate((el, selector) => {
         const clone = el.cloneNode(true) as HTMLElement;
         clone.querySelectorAll(selector).forEach((node) => node.remove());
         return clone.textContent ?? '';
-    }, TOOL_ACTIVITY_SELECTOR);
+    }, `${TOOL_ACTIVITY_SELECTOR}, [data-testid="llm-bot-folding-text"]`);
 }
 
 /**

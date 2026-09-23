@@ -291,23 +291,24 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await llmBotHelper.expectReasoningText(reasoningText);
     });
 
-    // Once a response has called a tool, putting its next text in the post
-    // body only to pull it back out when the following tool call arrives is
-    // what made the thread jump. It streams into the collapsed row instead,
-    // and reaches the body once the response is over.
-    test('streams the answer into the activity row and only reveals it in the post at the end', async ({page}) => {
+    test('streams the answer into the post body while the row names the finished tool, even when expanded mid-stream', async ({page}) => {
         test.setTimeout(180000);
 
         const {botPost} = await askAimockBot(page, mattermost.url(), midStreamPrompt);
+        const stopButton = page.getByRole('button', {name: /stop/i});
 
-        await expectToolActivityCollapsed(botPost);
-        await expectToolActivityCurrent(botPost, midStreamMarker);
-        expect(await mainAreaText(botPost)).not.toContain(midStreamMarker);
+        await expectToolActivityCurrent(botPost, getChannelInfoLabel);
+        await expect.poll(() => mainAreaText(botPost), {timeout: 60000}).toContain(midStreamMarker);
+        await expect(stopButton).toBeVisible();
 
-        await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 120000});
-        await expect
-            .poll(() => mainAreaText(botPost), {timeout: 30000})
-            .toContain(midStreamMarker);
+        const activityRounds = await expandToolActivity(botPost);
+        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
+        expect(await mainAreaText(botPost)).toContain(midStreamMarker);
+        await expect(stopButton).toBeVisible();
+
+        await expect(stopButton).not.toBeVisible({timeout: 120000});
+        expect(await mainAreaText(botPost)).toContain(midStreamAnswer.trim());
+        await collapseToolActivity(botPost);
         await expectToolActivitySummary(botPost, 1, 'success');
     });
 
@@ -334,7 +335,7 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(stopButton).not.toBeVisible({timeout: 60000});
         await expect(botPost.getByText(stopAnswerStart)).toBeVisible();
         await expect(botPost).not.toContainText(stopAnswer);
-        await expect(botPost.getByText('Starting...')).toHaveCount(0);
+        await expect(botPost.getByText('Working...')).toHaveCount(0);
         await expect(botPost.locator(`${TOOL_STATUS_SELECTOR}[data-status="running"]`)).toHaveCount(0);
         await expect(botPost.getByRole('button', {name: /regenerate/i})).toBeVisible({timeout: 30000});
     });

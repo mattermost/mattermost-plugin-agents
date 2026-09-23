@@ -3,6 +3,8 @@
 
 import {act} from '@testing-library/react';
 
+import type {ServerToolUse} from '@/types/conversation';
+
 import {ToolCall, ToolCallStatus} from '../tool_types';
 
 import type {Round} from './turn_content_utils';
@@ -17,30 +19,29 @@ export function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     };
 }
 
-export function makeRound(id: string, text: string, toolCalls: ToolCall[] = []): Round {
+export function makeServerTool(overrides: Partial<ServerToolUse> = {}): ServerToolUse {
+    return {
+        id: 'srv_1',
+        tool: 'web_search',
+        status: 'success',
+        ...overrides,
+    };
+}
+
+export function makeRound(id: string, text: string, toolCalls: ToolCall[] = [], serverTools: ServerToolUse[] = []): Round {
     return {
         id,
         text,
         toolCalls,
         reasoning: {summary: '', signature: ''},
         annotations: [],
-        serverTools: [],
+        serverTools,
     };
 }
 
-/** Runs every pending timer, for tests that installed jest's fake ones. */
-export function advanceBy(ms: number) {
-    act(() => {
-        jest.advanceTimersByTime(ms);
-    });
-}
-
-/**
- * Settles an animation that retires itself in two steps: the state update
- * that swaps a row only schedules the timer clearing the outgoing one once
- * React has flushed the first.
- */
+/** Lets every pending animation timer fire, for tests using jest's fake timers. */
 export function advanceAnimation() {
-    advanceBy(1000);
-    advanceBy(1000);
+    act(() => {
+        jest.advanceTimersByTime(1000);
+    });
 }

@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 import {useSelector} from 'react-redux';
 
@@ -69,12 +69,9 @@ jest.mock('../post_text', () => {
     };
 });
 
-// Referenced lazily so the factory does not read it before initialization.
-const mockNeedsViewerDecision = jest.fn<boolean, unknown[]>(() => false);
 jest.mock('../tool_approval_set', () => ({
     __esModule: true,
     default: () => null,
-    needsViewerDecision: (...args: unknown[]) => mockNeedsViewerDecision(...args),
 }));
 
 // The preview fetches the source post and profile on mount; stub it out so the
@@ -196,6 +193,26 @@ function postUpdateMessage(data: PostUpdateWebsocketMessage): PluginWebSocketMes
     return {data} as PluginWebSocketMessage<PostUpdateWebsocketMessage>;
 }
 
+// What the post shows outside its activity area and any folding ghost.
+function mainAreaText(): string {
+    const post = screen.getByTestId('llm-bot-post').cloneNode(true) as HTMLElement;
+    post.querySelectorAll('[data-testid="llm-bot-tool-activity"], [data-testid="llm-bot-folding-text"]').forEach((node) => node.remove());
+    return post.textContent ?? '';
+}
+
+// Post text without the collapsed row, whose label repeats the latest invocation.
+function textWithoutActivityHeader(container: HTMLElement): string {
+    const clone = container.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[data-testid="llm-bot-tool-activity-header"]').forEach((node) => node.remove());
+    return clone.textContent ?? '';
+}
+
+function expandToolActivity() {
+    act(() => {
+        fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
+    });
+}
+
 beforeEach(() => {
     mockUseSelector.mockImplementation((selector) => selector({
         entities: {
@@ -219,7 +236,6 @@ beforeEach(() => {
         error: null,
     });
 
-    mockNeedsViewerDecision.mockReturnValue(false);
     mockPostTextRender.mockClear();
 });
 
@@ -462,7 +478,6 @@ describe('LLMBotPost mid-stream text routing', () => {
         jest.useRealTimers();
     });
 
-    // Drives one post over the websocket the way the server does.
     function streamingPost() {
         let listener: PostUpdateHandler | undefined;
         renderPost(makePost(), (postID, listenerID, handler) => {
@@ -475,8 +490,7 @@ describe('LLMBotPost mid-stream text routing', () => {
         });
     }
 
-    // ToolRunner emits the round's calls again with terminal statuses once
-    // they have run; that second event is what closes the round.
+    // ToolRunner re-emits a round's calls with terminal statuses once they ran; that closes the round.
     function resolvedToolCall(id: string, name: string) {
         return {
             control: 'tool_call',
@@ -484,26 +498,20 @@ describe('LLMBotPost mid-stream text routing', () => {
         };
     }
 
-    const currentRow = () => screen.getByTestId('llm-bot-tool-activity-current').textContent;
-
-    // What the post shows outside its activity area — the same contract the
-    // e2e suite asserts, and the one that says whether text is in the main
-    // area or only in the collapsed row.
-    function mainAreaText(): string {
-        const post = screen.getByTestId('llm-bot-post').cloneNode(true) as HTMLElement;
-        post.querySelectorAll('[data-testid="llm-bot-tool-activity"]').forEach((node) => node.remove());
-        return post.textContent ?? '';
+    function serverTool(...uses: Array<{id: string; query: string}>) {
+        return {
+            control: 'server_tool',
+            server_tool: JSON.stringify(uses.map((use) => ({...use, tool: 'web_search', status: 'success'}))),
+        };
     }
 
-    // Nothing has called a tool yet, so there is no way to tell this text from
-    // an answer: it streams into the main area, and has to leave gracefully.
     test('streams the first round into the main area and folds it away when a tool call lands', () => {
         const send = streamingPost();
         send({control: 'start'});
         send({next: 'Let me look that up'});
 
         expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
-        expect(screen.getByText('Let me look that up')).toBeTruthy();
+        expect(mainAreaText()).toContain('Let me look that up');
 
         send(resolvedToolCall('tc_a', 'search_tools'));
 
@@ -512,102 +520,63 @@ describe('LLMBotPost mid-stream text routing', () => {
 
         advanceAnimation();
         expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+        expect(mainAreaText()).not.toContain('Let me look that up');
     });
 
-    // The narration of every round after the first goes straight to the row,
-    // so the main area never moves.
-    test('streams trailing text into the activity row instead of the main area', () => {
+    test('streams the answer after a tool call into the main area as it arrives', () => {
         const send = streamingPost();
         send({control: 'start'});
-        send({next: 'Let me look that up'});
         send(resolvedToolCall('tc_a', 'search_tools'));
-        advanceAnimation();
 
         send({next: 'Here is what'});
+        expect(mainAreaText()).toContain('Here is what');
+
         send({next: 'Here is what I found'});
-
-        expect(mainAreaText()).not.toContain('Here is what I found');
-        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
-
-        advanceAnimation();
-        expect(currentRow()).toBe('Here is what I found');
-    });
-
-    test('hands the trailing text back to the main area when the response ends', () => {
-        const send = streamingPost();
-        send({control: 'start'});
-        send({next: 'Let me look that up'});
-        send(resolvedToolCall('tc_a', 'search_tools'));
-        send({next: 'Here is what I found'});
-
-        expect(mainAreaText()).not.toContain('Here is what I found');
-
-        send({control: 'end'});
-
-        expect(screen.getByText('Here is what I found')).toBeTruthy();
-        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
-    });
-
-    // Stopping mid-response settles it just like a natural end, so the text
-    // held in the row has to be released rather than stranded there.
-    test('hands the trailing text back to the main area when generation is cancelled', () => {
-        const send = streamingPost();
-        send({control: 'start'});
-        send({next: 'Let me look that up'});
-        send(resolvedToolCall('tc_a', 'search_tools'));
-        send({next: 'Here is what I fou'});
-
-        send({control: 'cancel'});
-
-        expect(screen.getByText('Here is what I fou')).toBeTruthy();
-    });
-
-    // A reader who expanded the area has asked to watch the whole thing, so
-    // nothing is rerouted and the text streams where it always did.
-    test('leaves trailing text in the main area while the activity area is expanded', () => {
-        const send = streamingPost();
-        send({control: 'start'});
-        send({next: 'Let me look that up'});
-        send(resolvedToolCall('tc_a', 'search_tools'));
-
-        act(() => {
-            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
-        });
-        send({next: 'Here is what I found'});
-
         expect(mainAreaText()).toContain('Here is what I found');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Search Tools');
     });
 
-    // Collapsing mid-stream pulls the text into the row; it must fold on the
-    // way rather than blink out, and come back on expanding again.
-    test('folds and restores the trailing text as the area is toggled mid-stream', () => {
+    test('folds narration away once the next tool call shows it was not the answer', () => {
         const send = streamingPost();
         send({control: 'start'});
-        send({next: 'Let me look that up'});
         send(resolvedToolCall('tc_a', 'search_tools'));
-        act(() => {
-            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
-        });
-        send({next: 'Here is what I found'});
+        send({next: 'Now let me read the channel'});
+
+        send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_b', name: 'read_channel', description: '', status: ToolCallStatus.Pending}])});
+
+        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('Now let me read the channel');
         advanceAnimation();
-
-        act(() => {
-            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
-        });
-        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('Here is what I found');
-
-        advanceAnimation();
-        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
-        expect(currentRow()).toBe('Here is what I found');
-
-        act(() => {
-            fireEvent.click(screen.getByTestId('llm-bot-tool-activity-header'));
-        });
-        expect(screen.getByText('Here is what I found')).toBeTruthy();
+        expect(mainAreaText()).not.toContain('Now let me read the channel');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
     });
 
-    // A response that never calls a tool has no activity area to reroute
-    // into, so it must keep streaming into the main area untouched.
+    test('moves narration into the expanded stack without a fold', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        expandToolActivity();
+        send({next: 'Now let me read the channel'});
+
+        send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_b', name: 'read_channel', description: '', status: ToolCallStatus.Pending}])});
+
+        expect(screen.queryByTestId('llm-bot-folding-text')).toBeNull();
+        expect(within(screen.getByTestId('llm-bot-tool-activity-rounds')).getByText('Now let me read the channel')).toBeTruthy();
+    });
+
+    test('keeps text after provider tools in the main area until another invocation follows', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send(serverTool({id: 'srv1', query: 'first'}));
+        send({next: 'That found nothing.'});
+
+        expect(mainAreaText()).toContain('That found nothing.');
+
+        send(serverTool({id: 'srv1', query: 'first'}, {id: 'srv2', query: 'second'}));
+
+        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('That found nothing.');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Searched the web for "second"');
+    });
+
     test('leaves a response without tool calls streaming in the main area', () => {
         const send = streamingPost();
         send({control: 'start'});
@@ -689,56 +658,25 @@ describe('LLMBotPost streaming re-renders', () => {
 });
 
 describe('LLMBotPost rounds awaiting a decision', () => {
-    // A response that stopped on a tool call: the anchor round holds both the
-    // text asking to run the tool and the call itself.
-    function conversationAwaitingApproval() {
-        return {
-            id: WELL_FORMED_ID,
-            user_id: 'user_1',
-            bot_id: 'bot_1',
-            channel_id: 'channel_1',
-            root_post_id: 'root_1',
-            title: '',
-            operation: 'conversation',
-            turns: [
-                {
-                    id: 'u1',
-                    post_id: 'user_post',
-                    role: 'user',
-                    sequence: 1,
-                    tokens_in: 0,
-                    tokens_out: 0,
-                    content: [{type: 'text', text: 'post that for me'}],
-                },
-                {
-                    id: 'anchor',
-                    post_id: 'post_1',
-                    role: 'assistant',
-                    sequence: 2,
-                    approval_state: 'call',
-                    tokens_in: 0,
-                    tokens_out: 0,
-                    content: [
-                        {type: 'text', text: 'I will post that'},
-                        {type: 'tool_use', id: 'tc_a', name: 'create_post', status: 'pending'},
-                    ],
-                },
-            ],
-        };
+    // A response stopped on a tool call: the anchor round holds the text asking to run it and the call.
+    function conversationAwaitingApproval(userId = 'user_1', earlierTurns: Turn[] = []) {
+        return makeConversation([
+            makeTurn({id: 'u1', post_id: 'user_post', role: 'user', content: [{type: 'text', text: 'post that for me'}]}),
+            ...earlierTurns,
+            makeTurn({
+                id: 'anchor',
+                sequence: 3,
+                approval_state: 'call',
+                content: [
+                    {type: 'text', text: 'I will post that'},
+                    {type: 'tool_use', id: 'tc_a', name: 'create_post', status: 'pending'},
+                ],
+            }),
+        ], userId);
     }
 
-    beforeEach(() => {
-        mockUseConversation.mockReturnValue({
-            conversation: conversationAwaitingApproval(),
-            loading: false,
-            error: null,
-        });
-    });
-
-    // The approval card needs the request that produced it, so the round
-    // renders in full rather than folding into the collapsed row.
-    test('keeps a round the viewer must decide on out of the activity area', () => {
-        mockNeedsViewerDecision.mockReturnValue(true);
+    test('keeps a round the requester must decide on out of the activity area', () => {
+        mockUseConversation.mockReturnValue({conversation: conversationAwaitingApproval(), loading: false, error: null});
 
         renderPost();
 
@@ -746,57 +684,23 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
     });
 
-    // Onlookers are never asked to decide, so the same round is just activity.
     test('folds the same round into the activity area for a viewer who owes no decision', () => {
-        mockNeedsViewerDecision.mockReturnValue(false);
+        mockUseConversation.mockReturnValue({conversation: conversationAwaitingApproval('someone_else'), loading: false, error: null});
 
         renderPost();
 
         expect(screen.queryByText('I will post that')).toBeNull();
-        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Create Post');
     });
 
-    // A response paused on a decision is not finished, so the row must keep
-    // naming what happened last instead of summarizing as if it were done.
     test('does not summarize the activity row while a decision is pending', () => {
-        mockNeedsViewerDecision.mockReturnValue(true);
         mockUseConversation.mockReturnValue({
-            conversation: {
-                ...conversationAwaitingApproval(),
-                turns: [
-                    {
-                        id: 'u1',
-                        post_id: 'user_post',
-                        role: 'user',
-                        sequence: 1,
-                        tokens_in: 0,
-                        tokens_out: 0,
-                        content: [{type: 'text', text: 'post that for me'}],
-                    },
-                    {
-                        id: 'meta',
-                        post_id: null,
-                        role: 'assistant',
-                        sequence: 2,
-                        tokens_in: 0,
-                        tokens_out: 0,
-                        content: [{type: 'tool_use', id: 'tc_meta', name: 'search_tools', status: 'auto_approved'}],
-                    },
-                    {
-                        id: 'anchor',
-                        post_id: 'post_1',
-                        role: 'assistant',
-                        sequence: 3,
-                        approval_state: 'call',
-                        tokens_in: 0,
-                        tokens_out: 0,
-                        content: [
-                            {type: 'text', text: 'I will post that'},
-                            {type: 'tool_use', id: 'tc_a', name: 'create_post', status: 'pending'},
-                        ],
-                    },
-                ],
-            },
+            conversation: conversationAwaitingApproval('user_1', [makeTurn({
+                id: 'meta',
+                post_id: null,
+                sequence: 2,
+                content: [{type: 'tool_use', id: 'tc_meta', name: 'search_tools', status: 'auto_approved'}],
+            })]),
             loading: false,
             error: null,
         });
@@ -807,31 +711,12 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         expect(screen.queryByText('Used 1 tool')).toBeNull();
     });
 
-    // A pending tool_call can land over the websocket before refetch persists
-    // the round. That live round must stay out of the activity area so the
-    // requester still sees the approval card, not a collapsed "create_post".
+    // A pending tool_call can land over the websocket before the refetch persists the round.
     test('keeps a live pending tool call out of the activity area for the requester', () => {
         mockUseConversation.mockReturnValue({
-            conversation: {
-                id: WELL_FORMED_ID,
-                user_id: 'user_1',
-                bot_id: 'bot_1',
-                channel_id: 'channel_1',
-                root_post_id: 'root_1',
-                title: '',
-                operation: 'conversation',
-                turns: [
-                    {
-                        id: 'u1',
-                        post_id: 'user_post',
-                        role: 'user',
-                        sequence: 1,
-                        tokens_in: 0,
-                        tokens_out: 0,
-                        content: [{type: 'text', text: 'post that for me'}],
-                    },
-                ],
-            },
+            conversation: makeConversation([
+                makeTurn({id: 'u1', post_id: 'user_post', role: 'user', content: [{type: 'text', text: 'post that for me'}]}),
+            ]),
             loading: false,
             error: null,
         });
@@ -843,7 +728,6 @@ describe('LLMBotPost rounds awaiting a decision', () => {
 
         act(() => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
-            listener?.(postUpdateMessage({post_id: 'post_1', next: 'Let me look that up'}));
             listener?.(postUpdateMessage({
                 post_id: 'post_1',
                 control: 'tool_call',
@@ -858,8 +742,7 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         });
 
         expect(screen.getByText('I will post that')).toBeTruthy();
-        expect(screen.getByTestId('llm-bot-tool-activity')).toBeTruthy();
-        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).not.toBe('Create Post');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Search Tools');
     });
 });
 
@@ -898,9 +781,15 @@ describe('LLMBotPost server tool activity rendering', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'All done.'}));
         });
 
-        await expect(screen.findByText('Ran code in the provider sandbox')).resolves.toBeTruthy();
-        expect(screen.getByText('Searched the web for "release notes"')).toBeTruthy();
-        expect(screen.getByText('All done.')).toBeTruthy();
+        await waitFor(() => {
+            expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Ran code in the provider sandbox');
+        });
+        expect(mainAreaText()).toContain('All done.');
+
+        expandToolActivity();
+        const stack = within(screen.getByTestId('llm-bot-tool-activity-rounds'));
+        expect(stack.getByText('Searched the web for "release notes"')).toBeTruthy();
+        expect(stack.getByText('Ran code in the provider sandbox')).toBeTruthy();
     });
 
     test('a fresh stream clears prior server tool activity', async () => {
@@ -985,6 +874,7 @@ describe('LLMBotPost live activity ordering', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', next: "I'll write the script.That found nothing. Retrying."}));
         });
         await expect(screen.findByText('That found nothing. Retrying.')).resolves.toBeTruthy();
+        expandToolActivity();
 
         act(() => {
             listener?.(postUpdateMessage({
@@ -1000,7 +890,7 @@ describe('LLMBotPost live activity ordering', () => {
         await expect(screen.findByText('Done.')).resolves.toBeTruthy();
 
         // Assert real DOM order, not just presence — the bug was purely ordering.
-        const rendered = container.textContent ?? '';
+        const rendered = textWithoutActivityHeader(container);
         const positions = [
             "I'll write the script.",
             'Searched the web for "first"',
@@ -1037,6 +927,7 @@ describe('LLMBotPost live activity ordering', () => {
             }));
         });
         await expect(screen.findByText('Searched the web for "q"')).resolves.toBeTruthy();
+        expandToolActivity();
 
         expect(screen.getAllByText('Only once.')).toHaveLength(1);
         expect((container.textContent ?? '').split('Only once.').length - 1).toBe(1);
@@ -1192,9 +1083,11 @@ describe('LLMBotPost live activity ordering', () => {
         });
 
         // The frozen round's card must pick up the completed query/status.
-        await expect(screen.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
-        expect(screen.queryByText('Searched the web')).toBeNull();
-        expect(screen.getByText('Ran code in the provider sandbox')).toBeTruthy();
+        expandToolActivity();
+        const stack = within(screen.getByTestId('llm-bot-tool-activity-rounds'));
+        await expect(stack.findByText('Searched the web for "release notes"')).resolves.toBeTruthy();
+        expect(stack.queryByText('Searched the web')).toBeNull();
+        expect(stack.getByText('Ran code in the provider sandbox')).toBeTruthy();
     });
 });
 

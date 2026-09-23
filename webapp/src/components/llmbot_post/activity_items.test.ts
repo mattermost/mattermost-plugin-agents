@@ -4,7 +4,7 @@
 import {ToolCallStatus} from '../tool_types';
 
 import {deriveActivity, isTerminalToolStatus} from './activity_items';
-import {makeRound, makeTool} from './test_support';
+import {makeRound, makeServerTool, makeTool} from './test_support';
 
 describe('isTerminalToolStatus', () => {
     test.each([
@@ -14,242 +14,106 @@ describe('isTerminalToolStatus', () => {
         [ToolCallStatus.Error, true],
         [ToolCallStatus.Success, true],
         [ToolCallStatus.AutoApproved, true],
-    ])('status %i is terminal: %s', (status, expected) => {
+    ])('status %s is terminal: %s', (status, expected) => {
         expect(isTerminalToolStatus(status)).toBe(expected);
     });
 });
 
-describe('deriveActivity', () => {
-    // A post that never called a tool must render exactly as it did before
-    // the activity area existed: every round is an answer round.
-    test('produces no activity for a post without tool calls', () => {
-        const rounds = [makeRound('r1', 'just an answer')];
-        const activity = deriveActivity(rounds);
-
-        expect(activity.items).toEqual([]);
-        expect(activity.activityRounds).toEqual([]);
-        expect(activity.answerRounds).toEqual(rounds);
-        expect(activity.toolCount).toBe(0);
-    });
-
-    test('returns empty activity for no rounds at all', () => {
-        const activity = deriveActivity([]);
-
-        expect(activity.items).toEqual([]);
-        expect(activity.activityRounds).toEqual([]);
-        expect(activity.answerRounds).toEqual([]);
-    });
-
-    // The rounds up to and including the last tool round fold into the
-    // activity area; everything after it is the answer.
-    test('splits rounds at the last round that has tool calls', () => {
-        const first = makeRound('r1', 'Let me get the jira tools loaded', [makeTool({id: 'tc_a', name: 'search_tools'})]);
-        const second = makeRound('r2', 'Now let me create the Jira ticket', [makeTool({id: 'tc_b', name: 'CreateJiraIssue'})]);
-        const answer = makeRound('r3', 'Created MM-1.');
-
-        const activity = deriveActivity([first, second, answer]);
-
-        expect(activity.activityRounds).toEqual([first, second]);
-        expect(activity.answerRounds).toEqual([answer]);
-    });
-
-    test('flattens intermediate text and tool calls into one chronological list', () => {
-        const first = makeRound('r1', 'Let me get the jira tools loaded', [
-            makeTool({id: 'tc_a', name: 'search_tools'}),
-            makeTool({id: 'tc_b', name: 'load_tool'}),
-        ]);
-        const second = makeRound('r2', 'Now let me create the Jira ticket', [
-            makeTool({id: 'tc_c', name: 'CreateJiraIssue'}),
-        ]);
-        const answer = makeRound('r3', 'Created MM-1.');
-
-        const activity = deriveActivity([first, second, answer]);
-
-        expect(activity.items.map((item) => item.kind)).toEqual(['text', 'tool', 'tool', 'text', 'tool']);
-        expect(activity.items.map((item) => (item.kind === 'text' ? item.text : item.toolCall.id))).toEqual([
-            'Let me get the jira tools loaded',
-            'tc_a',
-            'tc_b',
-            'Now let me create the Jira ticket',
-            'tc_c',
-        ]);
-        expect(activity.toolCount).toBe(3);
-    });
-
-    // Once the response has settled, a trailing text-only round is the answer
-    // whether or not earlier rounds called tools.
-    test('keeps a settled trailing round out of the activity area', () => {
-        const toolRound = makeRound('r1', 'looking that up', [makeTool({id: 'tc_a'})]);
-        const answer = makeRound('r2', 'here is what I found');
-
-        const activity = deriveActivity([toolRound, answer]);
-
-        expect(activity.activityRounds).toEqual([toolRound]);
-        expect(activity.answerRounds).toEqual([answer]);
-        expect(activity.items).toHaveLength(2);
-    });
-
-    test('omits an empty round text from the item list', () => {
-        const activity = deriveActivity([makeRound('r1', '   ', [makeTool({id: 'tc_a'})])]);
-
-        expect(activity.items).toHaveLength(1);
-        expect(activity.items[0].kind).toBe('tool');
-    });
-
-    // The collapsed row is a single line, so a multi-line snippet must not
-    // carry its line breaks into it.
-    test('collapses whitespace in an intermediate text snippet', () => {
-        const activity = deriveActivity([makeRound('r1', ' Let me\n  look\tthat up ', [makeTool({id: 'tc_a'})])]);
-
-        expect(activity.items[0]).toMatchObject({kind: 'text', text: 'Let me look that up'});
-    });
-
-    // Item ids key the animated row, so they must be stable across the status
-    // changes that a tool call goes through while it runs.
-    test('keys items by round and tool id so a status change does not change the id', () => {
-        const pending = deriveActivity([makeRound('r1', 'x', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})])]);
-        const done = deriveActivity([makeRound('r1', 'x', [makeTool({id: 'tc_a', status: ToolCallStatus.Success})])]);
-
-        expect(pending.items.map((item) => item.id)).toEqual(done.items.map((item) => item.id));
-        expect(pending.items[1].id).toBe('r1:tool:tc_a');
-    });
+describe('deriveActivity round split', () => {
+    const narration = makeRound('r1', 'Let me look that up', [makeTool({id: 'tc_a'})]);
+    const secondTool = makeRound('r2', 'Now the next one', [makeTool({id: 'tc_b'})]);
+    const answer = makeRound('r3', 'Here is the answer');
+    const serverThenAnswer = makeRound('s1', 'Found it: 42', [], [makeServerTool({id: 'srv_a'})]);
+    const serverOnly = makeRound('s2', '', [], [makeServerTool({id: 'srv_b'})]);
 
     test.each([
-        {name: 'pending tool', status: ToolCallStatus.Pending, running: true, error: false, rejected: false},
-        {name: 'accepted tool', status: ToolCallStatus.Accepted, running: true, error: false, rejected: false},
-        {name: 'errored tool', status: ToolCallStatus.Error, running: false, error: true, rejected: false},
-        {name: 'rejected tool', status: ToolCallStatus.Rejected, running: false, error: false, rejected: true},
-        {name: 'auto-approved tool', status: ToolCallStatus.AutoApproved, running: false, error: false, rejected: false},
-    ])('reports outcome flags for a $name', ({status, running, error, rejected}) => {
-        const activity = deriveActivity([makeRound('r1', '', [makeTool({id: 'tc_a', status})])]);
+        {name: 'no rounds', rounds: [], activity: [], answer: []},
+        {name: 'no tools', rounds: [answer], activity: [], answer: ['r3']},
+        {name: 'splits after the last tool round', rounds: [narration, secondTool, answer], activity: ['r1', 'r2'], answer: ['r3']},
+        {name: 'trailing streamed text stays the answer', rounds: [narration, answer], activity: ['r1'], answer: ['r3']},
+        {name: 'text of a round whose last tool is a client call is narration', rounds: [narration], activity: ['r1'], answer: []},
+        {name: 'server-tool round without text folds whole', rounds: [serverOnly, answer], activity: ['s2'], answer: ['r3']},
+        {name: 'text after server tools in an earlier round is narration', rounds: [serverThenAnswer, serverOnly], activity: ['s1', 's2'], answer: []},
+    ])('$name', ({rounds, activity, answer: answerIds}) => {
+        const result = deriveActivity(rounds);
 
-        expect(activity.hasRunningTool).toBe(running);
-        expect(activity.hasError).toBe(error);
-        expect(activity.hasRejected).toBe(rejected);
+        expect(result.activityRounds.map((round) => round.id)).toEqual(activity);
+        expect(result.answerRounds.map((round) => round.id)).toEqual(answerIds);
     });
 
-    // A round the viewer must decide on renders in full below the activity
-    // area, so neither it nor its text may be folded into the row.
-    test('splits before a round the viewer owes a decision on', () => {
-        const first = makeRound('r1', 'Let me look that up', [makeTool({id: 'tc_a', name: 'search_tools'})]);
-        const pending = makeRound('r2', 'I will post that', [makeTool({id: 'tc_b', status: ToolCallStatus.Pending})]);
+    test('keeps the text after the last server tools as the answer', () => {
+        const result = deriveActivity([serverThenAnswer]);
 
-        const activity = deriveActivity([first, pending], {pendingDecisionRoundId: 'r2'});
-
-        expect(activity.activityRounds).toEqual([first]);
-        expect(activity.answerRounds).toEqual([pending]);
-        expect(activity.items.map((item) => item.id)).toEqual(['r1:text', 'r1:tool:tc_a']);
-        expect(activity.toolCount).toBe(1);
+        expect(result.activityRounds).toHaveLength(1);
+        expect(result.activityRounds[0].text).toBe('');
+        expect(result.activityRounds[0].serverTools).toEqual(serverThenAnswer.serverTools);
+        expect(result.answerRounds).toHaveLength(1);
+        expect(result.answerRounds[0].text).toBe('Found it: 42');
+        expect(result.answerRounds[0].serverTools).toEqual([]);
     });
 
-    // Nothing precedes the pending round, so there is no activity area at all
-    // and the post renders as a plain message plus its approval card.
-    test('produces no activity when the only tool round awaits a decision', () => {
-        const pending = makeRound('r1', 'I will post that', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})]);
+    test('returns the same split parts for an unchanged round', () => {
+        const first = deriveActivity([serverThenAnswer]);
+        const second = deriveActivity([serverThenAnswer]);
 
-        const activity = deriveActivity([pending], {pendingDecisionRoundId: 'r1'});
-
-        expect(activity.items).toEqual([]);
-        expect(activity.activityRounds).toEqual([]);
-        expect(activity.answerRounds).toEqual([pending]);
-    });
-
-    // Onlookers owe no decision, so the caller passes no id and the pending
-    // round folds in exactly like a resolved one.
-    test('folds the pending round in when no decision is owed', () => {
-        const pending = makeRound('r1', 'I will post that', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})]);
-
-        const activity = deriveActivity([pending]);
-
-        expect(activity.activityRounds).toEqual([pending]);
-        expect(activity.answerRounds).toEqual([]);
-        expect(activity.hasRunningTool).toBe(true);
-    });
-
-    // Text-only rounds between the last folded tool round and the pending one
-    // belong to the answer, not the activity area.
-    test('keeps text-only rounds before a pending round out of the activity area', () => {
-        const toolRound = makeRound('r1', 'looking', [makeTool({id: 'tc_a'})]);
-        const textOnly = makeRound('r2', 'almost there');
-        const pending = makeRound('r3', 'I will post that', [makeTool({id: 'tc_b', status: ToolCallStatus.Pending})]);
-
-        const activity = deriveActivity([toolRound, textOnly, pending], {pendingDecisionRoundId: 'r3'});
-
-        expect(activity.activityRounds).toEqual([toolRound]);
-        expect(activity.answerRounds).toEqual([textOnly, pending]);
-    });
-
-    // A stale id (the round already resolved and was replaced) must not
-    // silently drop the whole activity area.
-    test('ignores a pending round id that is not in the list', () => {
-        const rounds = [makeRound('r1', 'looking', [makeTool({id: 'tc_a'})])];
-
-        const activity = deriveActivity(rounds, {pendingDecisionRoundId: 'gone'});
-
-        expect(activity.activityRounds).toEqual(rounds);
-        expect(activity.items).toHaveLength(2);
-    });
-
-    test('counts tools across every activity round', () => {
-        const activity = deriveActivity([
-            makeRound('r1', '', [makeTool({id: 'tc_a'}), makeTool({id: 'tc_b'})]),
-            makeRound('r2', '', [makeTool({id: 'tc_c', status: ToolCallStatus.Error})]),
-            makeRound('r3', 'done'),
-        ]);
-
-        expect(activity.toolCount).toBe(3);
-        expect(activity.hasError).toBe(true);
-        expect(activity.hasRunningTool).toBe(false);
+        expect(second.activityRounds[0]).toBe(first.activityRounds[0]);
+        expect(second.answerRounds[0]).toBe(first.answerRounds[0]);
     });
 });
 
-describe('deriveActivity with foldTrailingText', () => {
-    const toolRound = makeRound('r1', 'looking that up', [makeTool({id: 'tc_a'})]);
+describe('deriveActivity with a pending decision', () => {
+    const meta = makeRound('r1', '', [makeTool({id: 'tc_meta'})]);
+    const bridge = makeRound('r2', 'Almost there');
+    const pending = makeRound('r3', 'I will post that', [makeTool({id: 'tc_post', status: ToolCallStatus.Pending})]);
 
-    test('folds a streaming text-only round into the activity area', () => {
-        const streaming = makeRound('live', 'here is what I fou');
+    test.each([
+        {name: 'splits before the pending round', rounds: [meta, pending], activity: ['r1'], answer: ['r3']},
+        {name: 'no activity when the only tool round is pending', rounds: [pending], activity: [], answer: ['r3']},
+        {name: 'text before the pending round stays out', rounds: [meta, bridge, pending], activity: ['r1'], answer: ['r2', 'r3']},
+    ])('$name', ({rounds, activity, answer}) => {
+        const result = deriveActivity(rounds, {pendingDecisionRoundId: 'r3'});
 
-        const activity = deriveActivity([toolRound, streaming], {foldTrailingText: true});
-
-        expect(activity.activityRounds).toEqual([toolRound, streaming]);
-        expect(activity.answerRounds).toEqual([]);
-        expect(activity.items.map((item) => item.id)).toEqual(['r1:text', 'r1:tool:tc_a', 'live:text']);
+        expect(result.activityRounds.map((round) => round.id)).toEqual(activity);
+        expect(result.answerRounds.map((round) => round.id)).toEqual(answer);
     });
 
-    // The item id is what keys the animated row, so a growing snippet has to
-    // keep updating the same item rather than pushing a new one.
-    test('keeps the same item id as the trailing text grows', () => {
-        const short = deriveActivity([toolRound, makeRound('live', 'here is')], {foldTrailingText: true});
-        const longer = deriveActivity([toolRound, makeRound('live', 'here is what I found')], {foldTrailingText: true});
+    test('ignores a pending round id that is not in the list', () => {
+        const result = deriveActivity([meta, pending], {pendingDecisionRoundId: 'missing'});
 
-        expect(longer.items.map((item) => item.id)).toEqual(short.items.map((item) => item.id));
-        expect(longer.items[2]).toMatchObject({kind: 'text', text: 'here is what I found'});
+        expect(result.activityRounds.map((round) => round.id)).toEqual(['r1', 'r3']);
+    });
+});
+
+describe('deriveActivity items', () => {
+    test('lists server tools before client tools within a round, in round order', () => {
+        const result = deriveActivity([
+            makeRound('r1', 'narration', [makeTool({id: 'tc_a'})], [makeServerTool({id: 'srv_a'})]),
+            makeRound('r2', '', [makeTool({id: 'tc_b'}), makeTool({id: 'tc_c'})]),
+        ]);
+
+        expect(result.items.map((item) => item.id)).toEqual(['server:srv_a', 'tool:tc_a', 'tool:tc_b', 'tool:tc_c']);
     });
 
-    // Nothing has called a tool yet, so there is no activity area to route
-    // the text into and the first round streams into the main area as before.
-    test('leaves the first round in the main area while no tool call exists', () => {
-        const streaming = makeRound('live', 'let me look that up');
+    test('keys items by invocation so live and persisted rounds agree', () => {
+        const live = deriveActivity([makeRound('live', '', [makeTool({id: 'tc_a', status: ToolCallStatus.Pending})])]);
+        const persisted = deriveActivity([makeRound('turn_1', '', [makeTool({id: 'tc_a'})])]);
 
-        const activity = deriveActivity([streaming], {foldTrailingText: true});
-
-        expect(activity.activityRounds).toEqual([]);
-        expect(activity.answerRounds).toEqual([streaming]);
-        expect(activity.items).toEqual([]);
+        expect(live.items[0].id).toBe(persisted.items[0].id);
     });
 
-    // The approval card needs the request that produced it, so a round the
-    // viewer owes a decision on is not foldable even mid-response.
-    test('still leaves a pending-decision round and its trailing text alone', () => {
-        const pending = makeRound('r2', 'I will post that', [makeTool({id: 'tc_b', status: ToolCallStatus.Pending})]);
-        const trailing = makeRound('live', 'once you approve');
+    test.each([
+        {name: 'client tool running', tool: makeTool({status: ToolCallStatus.Pending}), running: true, error: false, rejected: false},
+        {name: 'client tool accepted', tool: makeTool({status: ToolCallStatus.Accepted}), running: true, error: false, rejected: false},
+        {name: 'client tool failed', tool: makeTool({status: ToolCallStatus.Error}), running: false, error: true, rejected: false},
+        {name: 'client tool rejected', tool: makeTool({status: ToolCallStatus.Rejected}), running: false, error: false, rejected: true},
+        {name: 'server tool running', server: makeServerTool({status: 'in_progress'}), running: true, error: false, rejected: false},
+        {name: 'server tool failed', server: makeServerTool({status: 'error'}), running: false, error: true, rejected: false},
+        {name: 'server tool done', server: makeServerTool({status: 'success'}), running: false, error: false, rejected: false},
+    ])('reports status for $name', ({tool, server, running, error, rejected}) => {
+        const result = deriveActivity([makeRound('r1', '', tool ? [tool] : [], server ? [server] : [])]);
 
-        const activity = deriveActivity([toolRound, pending, trailing], {
-            pendingDecisionRoundId: 'r2',
-            foldTrailingText: true,
-        });
-
-        expect(activity.activityRounds).toEqual([toolRound]);
-        expect(activity.answerRounds).toEqual([pending, trailing]);
+        expect(result.hasRunningTool).toBe(running);
+        expect(result.hasError).toBe(error);
+        expect(result.hasRejected).toBe(rejected);
     });
 });
