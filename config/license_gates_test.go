@@ -252,7 +252,7 @@ func TestValidateLicenseTransition(t *testing.T) {
 			minLevel: enterprise.LevelEnterprise,
 		},
 		{
-			name: "tool policy changed to a different auto-run value",
+			name: "tool policy widened from DM-only to everywhere",
 			prev: &Config{MCP: MCPConfig{EmbeddedServer: MCPEmbeddedServerConfig{
 				ToolConfigs: []MCPToolConfig{{Name: "read_post", Policy: MCPToolPolicyAutoRunInDM, Enabled: true}},
 			}}},
@@ -260,6 +260,15 @@ func TestValidateLicenseTransition(t *testing.T) {
 				ToolConfigs: []MCPToolConfig{{Name: "read_post", Policy: MCPToolPolicyAutoRunEverywhere, Enabled: true}},
 			}}},
 			minLevel: enterprise.LevelEnterprise,
+		},
+		{
+			name: "tool policy narrowed from everywhere to DM-only is accepted",
+			prev: &Config{MCP: MCPConfig{EmbeddedServer: MCPEmbeddedServerConfig{
+				ToolConfigs: []MCPToolConfig{{Name: "read_post", Policy: MCPToolPolicyAutoRunEverywhere, Enabled: true}},
+			}}},
+			next: Config{MCP: MCPConfig{EmbeddedServer: MCPEmbeddedServerConfig{
+				ToolConfigs: []MCPToolConfig{{Name: "read_post", Policy: MCPToolPolicyAutoRunInDM, Enabled: true}},
+			}}},
 		},
 		{
 			name: "tool policy back to ask is accepted",

@@ -11,7 +11,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
-import {useIsLicensedFor} from '@/license';
+import {useIsBasicsLicensed} from '@/license';
 
 import {useBotlist} from '@/bots';
 
@@ -108,8 +108,7 @@ const AskChannelButton = () => {
     const [showPopover, setShowPopover] = useState(false);
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
-    const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
-    const semanticSearchLicensed = useIsLicensedFor('semantic_search');
+    const isBasicsLicensed = useIsBasicsLicensed();
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
@@ -166,7 +165,7 @@ const AskChannelButton = () => {
         setShowPopover(!showPopover);
     };
 
-    if (!channelSummarizationLicensed && !semanticSearchLicensed) {
+    if (!isBasicsLicensed) {
         return null;
     }
 
@@ -222,8 +221,6 @@ const AskChannelButton = () => {
                         channelName={channelName}
                         onSummarize={handleSummarize}
                         lastViewedAt={initialLastViewedAt}
-                        showAskInput={semanticSearchLicensed}
-                        showSummarizeOptions={channelSummarizationLicensed}
                     />
                 </PopoverWrapper>
             </Overlay>

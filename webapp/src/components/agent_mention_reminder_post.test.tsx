@@ -13,10 +13,6 @@ jest.mock('@/client', () => ({
     doLoopInAgent: jest.fn(),
 }));
 
-jest.mock('@/license', () => ({
-    useIsLicensedFor: jest.fn(() => true),
-}));
-
 const mockedDoLoopInAgent = doLoopInAgent as jest.MockedFunction<typeof doLoopInAgent>;
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
@@ -59,17 +55,6 @@ describe('AgentMentionReminderPost', () => {
     test('falls back to the bot username when no display name is set', () => {
         renderPost({bot_username: 'matty'});
         expect(screen.getByRole('link', {name: 'Click here to loop in @matty'})).not.toBeNull();
-    });
-
-    test('hides the loop-in link when multiplayer channels are not licensed', () => {
-        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
-        useIsLicensedFor.mockReturnValue(false);
-
-        renderPost({bot_username: 'matty', bot_display_name: 'Matty', target_post_id: TARGET_POST_ID});
-
-        expect(screen.queryByRole('link', {name: /Click here to loop in/})).toBeNull();
-        expect(screen.getByText(POST_MESSAGE)).not.toBeNull();
-        useIsLicensedFor.mockReturnValue(true);
     });
 
     test('clicking the link loops in the agent and shows a confirmation', async () => {

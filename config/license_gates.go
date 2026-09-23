@@ -119,12 +119,16 @@ func headersNonEmpty(h map[string]string) bool {
 	return false
 }
 
-func normalizeToolPolicy(policy string) string {
+// toolPolicyReach orders policies by how much they auto-run: ask < auto-run
+// in DMs < auto-run everywhere. Unknown values behave as ask.
+func toolPolicyReach(policy string) int {
 	switch policy {
-	case MCPToolPolicyAutoRunInDM, MCPToolPolicyAutoRunEverywhere, MCPToolPolicyAsk:
-		return policy
+	case MCPToolPolicyAutoRunEverywhere:
+		return 2
+	case MCPToolPolicyAutoRunInDM:
+		return 1
 	default:
-		return MCPToolPolicyAsk
+		return 0
 	}
 }
 
@@ -134,32 +138,25 @@ func normalizeToolPolicy(policy string) string {
 // configuration as baseline rather than as an admin-authored policy.
 type DefaultToolPolicyLookup func(serverBaseURL, toolName string) string
 
+// toolPoliciesNewlyAuto reports whether any tool in next auto-runs more
+// widely than it did in prev (or than its seeded default, for a tool prev
+// does not store). Narrowing or removing a policy is never reported.
 func toolPoliciesNewlyAuto(prev, next []MCPToolConfig, defaultFor func(toolName string) string) bool {
-	prevByName := make(map[string]string, len(prev))
+	prevReach := make(map[string]int, len(prev))
 	for _, tc := range prev {
-		if tc.Name == "" {
-			continue
+		if tc.Name != "" {
+			prevReach[tc.Name] = toolPolicyReach(tc.Policy)
 		}
-		prevByName[tc.Name] = normalizeToolPolicy(tc.Policy)
 	}
 	for _, tc := range next {
 		if tc.Name == "" {
 			continue
 		}
-		nextPolicy := normalizeToolPolicy(tc.Policy)
-		if nextPolicy == MCPToolPolicyAsk {
-			continue
+		baseline, stored := prevReach[tc.Name]
+		if !stored && defaultFor != nil {
+			baseline = toolPolicyReach(defaultFor(tc.Name))
 		}
-		prevPolicy, stored := prevByName[tc.Name]
-		if !stored {
-			prevPolicy = MCPToolPolicyAsk
-			if defaultFor != nil {
-				if seeded := defaultFor(tc.Name); seeded != "" {
-					prevPolicy = normalizeToolPolicy(seeded)
-				}
-			}
-		}
-		if prevPolicy != nextPolicy {
+		if toolPolicyReach(tc.Policy) > baseline {
 			return true
 		}
 	}

@@ -7,7 +7,6 @@ import {FormattedMessage} from 'react-intl';
 
 import {doLoopInAgent} from '@/client';
 import {isValidId} from '@/utils/ids';
-import {useIsLicensedFor} from '@/license';
 
 const Hint = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
@@ -57,8 +56,7 @@ export const AgentMentionReminderPost = ({post}: Props) => {
     const botDisplayName = stringProp(post.props?.bot_display_name).trim() || botUsername;
     const targetPostId = post.props?.target_post_id ?? post.id;
     const loopInPostId = isValidId(targetPostId) ? targetPostId : '';
-    const multiplayerLicensed = useIsLicensedFor('multiplayer_channels');
-    const canLoopIn = post.type === EphemeralPostType && botUsername !== '' && loopInPostId !== '' && multiplayerLicensed;
+    const canLoopIn = post.type === EphemeralPostType && botUsername !== '' && loopInPostId !== '';
 
     const [status, setStatus] = useState<LoopInStatus>('idle');
     const pending = status === 'pending';

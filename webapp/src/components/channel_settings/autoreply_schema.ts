@@ -19,7 +19,6 @@ import {
 import manifest from '@/manifest';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
-import AutoReplyModePicker from './autoreply_mode_picker';
 import {
     normalizeChannelAutoReply,
     setChannelAutoReplyDraft,
@@ -138,8 +137,27 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
             settings: [
                 {
                     name: 'mode',
-                    type: 'custom',
-                    component: AutoReplyModePicker,
+                    type: 'radio',
+                    title: intl.formatMessage({defaultMessage: 'Auto-reply mode'}),
+                    helpText: intl.formatMessage({defaultMessage: 'An automatic reply behaves exactly as if the author had @-mentioned the agent.'}),
+                    default: 'off',
+                    options: [
+                        {
+                            value: 'off',
+                            text: intl.formatMessage({defaultMessage: 'Off'}),
+                            helpText: intl.formatMessage({defaultMessage: 'The agent replies only when @-mentioned.'}),
+                        },
+                        {
+                            value: 'root_posts',
+                            text: intl.formatMessage({defaultMessage: 'Top-level posts only'}),
+                            helpText: intl.formatMessage({defaultMessage: 'The agent automatically replies to new top-level posts, starting a thread.'}),
+                        },
+                        {
+                            value: 'threads',
+                            text: intl.formatMessage({defaultMessage: 'Threads too'}),
+                            helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
+                        },
+                    ],
                 },
                 {
 
