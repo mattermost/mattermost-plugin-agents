@@ -390,7 +390,12 @@ func TestRemoveObsoleteCredentialSettings(t *testing.T) {
 			"openaiapikey":    "sentinel-stored-console-key",
 			"AnthropicAPIKey": "sentinel-stored-manifest-key",
 			"AskSageUsername": "asksage-user",
-		}))
+		})).Once()
+		// The write lands, so the read back after it holds what was written.
+		mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+			"config":          map[string]any{"defaultBotName": "agent"},
+			"AskSageUsername": "asksage-user",
+		})).Once()
 		mockAPI.On("LogInfo", mock.Anything).Maybe()
 
 		var saved map[string]any
@@ -428,7 +433,8 @@ func TestRemoveObsoleteCredentialSettings(t *testing.T) {
 // cleanup writes nothing at all when the stored plugin settings hold none of the
 // keys it removes. The write replaces the plugin's whole settings map, so
 // writing on a configuration that has nothing to remove would be enough to
-// replace the stored settings with an empty map.
+// replace the stored settings with an empty map. With no write attempted there
+// is nothing to read back either, so the configuration is read exactly once.
 func TestRemoveObsoleteCredentialSettingsLeavesStoredSettingsAlone(t *testing.T) {
 	const pluginID = "mattermost-ai"
 
@@ -493,6 +499,102 @@ func TestRemoveObsoleteCredentialSettingsLeavesStoredSettingsAlone(t *testing.T)
 			})
 
 			mockAPI.AssertNotCalled(t, "SavePluginConfig", mock.Anything)
+			mockAPI.AssertNumberOfCalls(t, "GetUnsanitizedConfig", 1)
+		})
+	}
+}
+
+// TestRemoveObsoleteCredentialSettingsReportsWhatPersisted asserts that the
+// outcome the cleanup reports is the one that persisted. A plugin configuration
+// supplied through MM_PLUGINSETTINGS_PLUGINS is restored to its stored value
+// before the server persists it, and the save returns no error when that
+// happens, so the stored settings are read back after the write and a write
+// that left them as they were is reported as the warning an operator can act
+// on. A read back that answers with nothing to look at is no indication that
+// the write did not land, so the write is reported as the save reported it.
+func TestRemoveObsoleteCredentialSettingsReportsWhatPersisted(t *testing.T) {
+	const pluginID = "mattermost-ai"
+
+	storedSettings := map[string]any{
+		"config":          map[string]any{"defaultBotName": "agent"},
+		"openaiapikey":    "sentinel-stored-console-key",
+		"AskSageUsername": "asksage-user",
+	}
+	cleanedSettings := map[string]any{
+		"config":          map[string]any{"defaultBotName": "agent"},
+		"AskSageUsername": "asksage-user",
+	}
+
+	serverConfigWithPlugins := func(plugins map[string]map[string]any) *model.Config {
+		serverCfg := &model.Config{}
+		serverCfg.SetDefaults()
+		serverCfg.PluginSettings.Plugins = plugins
+		return serverCfg
+	}
+
+	testCases := []struct {
+		name       string
+		readBack   *model.Config
+		expectWarn bool
+	}{
+		{
+			name:     "the stored settings no longer hold the keys",
+			readBack: serverConfigWithPlugins(map[string]map[string]any{pluginID: cleanedSettings}),
+		},
+		{
+			name:       "the write is accepted and the stored settings still hold the keys",
+			readBack:   serverConfigWithPlugins(map[string]map[string]any{pluginID: storedSettings}),
+			expectWarn: true,
+		},
+		{
+			name:     "no configuration to read back",
+			readBack: nil,
+		},
+		{
+			name:     "no settings stored for this plugin",
+			readBack: serverConfigWithPlugins(map[string]map[string]any{}),
+		},
+		{
+			name:     "an entry for this plugin holding nothing",
+			readBack: serverConfigWithPlugins(map[string]map[string]any{pluginID: nil}),
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			defer mockAPI.AssertExpectations(t)
+			mockAPI.On("GetUnsanitizedConfig").Return(
+				serverConfigWithPlugins(map[string]map[string]any{pluginID: maps.Clone(storedSettings)})).Once()
+			mockAPI.On("GetUnsanitizedConfig").Return(testCase.readBack).Once()
+			mockAPI.On("SavePluginConfig", mock.Anything).Return(nil).Once()
+
+			var infoMessages, warnMessages []string
+			mockAPI.On("LogInfo", mock.Anything).Run(func(args mock.Arguments) {
+				infoMessages = append(infoMessages, args.String(0))
+			}).Maybe()
+			mockAPI.On("LogWarn", mock.Anything).Run(func(args mock.Arguments) {
+				warnMessages = append(warnMessages, args.String(0))
+			}).Maybe()
+
+			assert.NotPanics(t, func() {
+				removeObsoleteCredentialSettings(pluginapi.NewClient(mockAPI, nil), pluginID)
+			})
+
+			mockAPI.AssertNumberOfCalls(t, "GetUnsanitizedConfig", 2)
+
+			if testCase.expectWarn {
+				require.Len(t, warnMessages, 1,
+					"a write that left the stored settings as they were is reported as a warning")
+				assert.Contains(t, warnMessages[0], "MM_PLUGINSETTINGS_PLUGINS",
+					"the warning names where the keys have to be removed instead")
+				assert.Empty(t, infoMessages,
+					"a removal that did not reach the stored settings is not reported as done")
+				return
+			}
+
+			assert.Len(t, infoMessages, 1, "the write is reported as the save reported it")
+			assert.Empty(t, warnMessages, "there is nothing for an operator to act on")
 		})
 	}
 }
@@ -529,7 +631,11 @@ func TestRemoveObsoleteCredentialSettingsWritesStoredValues(t *testing.T) {
 	mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
 		"config":       storedConfigValue,
 		"openaiapikey": "sentinel-stored-console-key",
-	}))
+	})).Once()
+	// The write lands, so the read back after it holds what was written.
+	mockAPI.On("GetUnsanitizedConfig").Return(serverConfigWithStoredSettings(map[string]any{
+		"config": storedConfigValue,
+	})).Once()
 	// The sanitized reads are made available as well, so a cleanup that took its
 	// values from one of them is caught by the assertions below rather than by a
 	// call the mock has no answer for.

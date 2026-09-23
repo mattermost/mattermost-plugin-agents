@@ -47,6 +47,20 @@ func withoutObsoleteCredentialSettings(stored map[string]any) (map[string]any, b
 	return cleaned, changed
 }
 
+// obsoleteCredentialSettingsStored reports whether the stored plugin settings
+// still hold one of the keys in obsoleteCredentialSettingKeys. A read that
+// returns no configuration, no entry for this plugin, or an entry holding
+// nothing holds none of them.
+func obsoleteCredentialSettingsStored(pluginAPI *pluginapi.Client, pluginID string) bool {
+	serverConfig := pluginAPI.Configuration.GetUnsanitizedConfig()
+	if serverConfig == nil {
+		return false
+	}
+
+	_, present := withoutObsoleteCredentialSettings(serverConfig.PluginSettings.Plugins[pluginID])
+	return present
+}
+
 // removeObsoleteCredentialSettings drops the setting keys the plugin no longer
 // reads from the stored plugin configuration.
 //
@@ -57,6 +71,11 @@ func withoutObsoleteCredentialSettings(stored map[string]any) (map[string]any, b
 // activation on a node that lost the race for the migration lock, a no-op. A
 // failure to persist is logged and does not stop activation, so an installation
 // whose configuration source is read-only keeps working.
+//
+// A write the server accepts does not always land: a plugin configuration
+// supplied through MM_PLUGINSETTINGS_PLUGINS is reverted to the stored value
+// before being persisted, and the server reports no error for it. What was
+// written is read back so the outcome logged is the one that persisted.
 func removeObsoleteCredentialSettings(pluginAPI *pluginapi.Client, pluginID string) {
 	serverConfig := pluginAPI.Configuration.GetUnsanitizedConfig()
 	if serverConfig == nil {
@@ -75,6 +94,11 @@ func removeObsoleteCredentialSettings(pluginAPI *pluginapi.Client, pluginID stri
 
 	if err := pluginAPI.Configuration.SavePluginConfig(cleaned); err != nil {
 		pluginAPI.Log.Warn("Failed to remove keys the plugin no longer reads from the stored plugin configuration", "error", err)
+		return
+	}
+
+	if obsoleteCredentialSettingsStored(pluginAPI, pluginID) {
+		pluginAPI.Log.Warn("Keys the plugin no longer reads are still present in the stored plugin configuration: the plugin configuration is supplied by the environment, so remove them from MM_PLUGINSETTINGS_PLUGINS, or from the equivalent provisioning source, instead")
 		return
 	}
 
