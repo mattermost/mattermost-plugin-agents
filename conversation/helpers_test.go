@@ -62,14 +62,16 @@ func TestToolUseBlocksStatuses(t *testing.T) {
 
 func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, nil, []llm.ToolCall{{
-		ID:           "tc1",
-		Name:         "jira__get_issue",
-		Description:  "Get a Jira issue",
-		Title:        "Get Issue",
-		ServerOrigin: "https://jira.example.com",
-		Arguments:    json.RawMessage(`{"key":"MM-1"}`),
-		MCPBareName:  "get_issue",
-		Status:       llm.ToolCallStatusPending,
+		ID:               "tc1",
+		Name:             "jira__get_issue",
+		Description:      "Get a Jira issue",
+		Title:            "Get Issue",
+		ServerOrigin:     "https://jira.example.com",
+		Arguments:        json.RawMessage(`{"key":"MM-1"}`),
+		MCPBareName:      "get_issue",
+		Status:           llm.ToolCallStatusPending,
+		WouldAutoExecute: true,
+		UserInteraction:  llm.UserInteractionSelect,
 	}}, false)
 
 	require.Len(t, blocks, 1)
@@ -79,6 +81,8 @@ func TestToolUseBlocksPreservesApprovalMetadata(t *testing.T) {
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName)
 	assert.Equal(t, "Get Issue", blocks[0].Title)
 	assert.Equal(t, "Get a Jira issue", blocks[0].Description)
+	assert.True(t, blocks[0].WouldAutoExecute)
+	assert.Equal(t, llm.UserInteractionSelect, blocks[0].UserInteraction)
 }
 
 func TestToolUseBlocksIncludesServerToolActivity(t *testing.T) {

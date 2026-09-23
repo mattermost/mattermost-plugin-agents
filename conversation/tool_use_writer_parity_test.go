@@ -26,19 +26,21 @@ var persistedToolUseFields = []string{
 	"title",
 	"description",
 	"user_interaction",
+	"would_auto_execute",
 }
 
 func parityToolCall() llm.ToolCall {
 	return llm.ToolCall{
-		ID:              "tc-1",
-		Name:            "mattermost__create_post",
-		Description:     "Create a post",
-		Title:           "Create Post",
-		Arguments:       json.RawMessage(`{"channel_id":"c1"}`),
-		Status:          llm.ToolCallStatusSuccess,
-		MCPBareName:     "create_post",
-		UserInteraction: llm.UserInteractionSelect,
-		ServerOrigin:    "embedded://mattermost",
+		ID:               "tc-1",
+		Name:             "mattermost__create_post",
+		Description:      "Create a post",
+		Title:            "Create Post",
+		Arguments:        json.RawMessage(`{"channel_id":"c1"}`),
+		Status:           llm.ToolCallStatusSuccess,
+		MCPBareName:      "create_post",
+		UserInteraction:  llm.UserInteractionSelect,
+		WouldAutoExecute: true,
+		ServerOrigin:     "embedded://mattermost",
 	}
 }
 
