@@ -49,13 +49,11 @@ type Tool struct {
 	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
-	// NormalizeArguments optionally rewrites the model's raw arguments into
-	// the tool's canonical schema shape before the call is broadcast,
-	// persisted, or executed, repairing the deviations models emit (most
-	// commonly a JSON-encoded string where a nested value belongs). Returning
-	// an error fails the call with that message so the model can retry.
-	// Leave nil for tools that need no repair.
-	NormalizeArguments func(json.RawMessage) (json.RawMessage, error)
+	// ValidateArguments optionally rejects the model's raw arguments before
+	// the call is approved, executed, or shown to the user. An error fails the
+	// call with that message so the model can retry. Needed for tools whose
+	// arguments are not consumed until after a user round trip.
+	ValidateArguments func(json.RawMessage) error
 
 	// AutoExecute marks a built-in tool that runs without user approval, like
 	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side

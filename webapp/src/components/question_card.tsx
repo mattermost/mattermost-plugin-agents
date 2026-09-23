@@ -23,126 +23,41 @@ export interface QuestionArgs {
     allowFreeForm: boolean;
 }
 
-// How far parseQuestionArgs digs through nested JSON-encoded strings.
-const maxArgumentUnwrapDepth = 3;
-
-// unwrapJSONString returns the payload of a JSON-encoded string when that
-// payload is itself JSON. Models and providers sometimes stringify a nested
-// value — most often the option list — instead of emitting it inline. The
-// server repairs these shapes before persisting (see
-// mmtools.NormalizeAskUserQuestionArguments); repeating the rules here keeps
-// questions asked before that landed renderable.
-function unwrapJSONString(value: unknown): unknown {
-    if (typeof value !== 'string') {
+// parseQuestionArgs extracts a renderable question from tool call arguments.
+// Returns null when the arguments are missing or malformed (e.g. redacted for
+// non-requesters) so the caller can fall back to the generic tool card.
+export function parseQuestionArgs(args: ToolCall['arguments']): QuestionArgs | null {
+    if (args == null || typeof args !== 'object' || Array.isArray(args)) {
         return null;
     }
-    try {
-        return JSON.parse(value.trim());
-    } catch {
+    const obj = args as {[key: string]: unknown};
+    const question = obj.question;
+    const options = obj.options;
+    if (typeof question !== 'string' || question === '' || !Array.isArray(options) || options.length === 0) {
         return null;
     }
-}
-
-function parseOption(value: unknown): QuestionOption | null {
-    let candidate = value;
-    for (let depth = 0; typeof candidate === 'string' && depth < maxArgumentUnwrapDepth; depth++) {
-        const unwrapped = unwrapJSONString(candidate);
-
-        // A bare string that is not JSON is an unambiguous label.
-        if (unwrapped == null) {
-            return candidate === '' ? null : {label: candidate};
-        }
-        candidate = unwrapped;
-    }
-    if (candidate == null || typeof candidate !== 'object' || Array.isArray(candidate)) {
-        return null;
-    }
-    const optObj = candidate as {[key: string]: unknown};
-    if (typeof optObj.label !== 'string' || optObj.label === '') {
-        return null;
-    }
-    return {
-        label: optObj.label,
-        description: typeof optObj.description === 'string' ? optObj.description : undefined, // eslint-disable-line no-undefined
-    };
-}
-
-function parseOptions(value: unknown): QuestionOption[] | null {
-    let candidate = value;
-    for (let depth = 0; typeof candidate === 'string' && depth < maxArgumentUnwrapDepth; depth++) {
-        candidate = unwrapJSONString(candidate);
-    }
-
-    if (candidate == null || typeof candidate !== 'object') {
-        return null;
-    }
-
-    // A lone option object the model forgot to wrap in an array.
-    const list = Array.isArray(candidate) ? candidate : [candidate];
-    const parsed: QuestionOption[] = [];
-    for (const entry of list) {
-        const option = parseOption(entry);
-        if (option == null) {
+    const parsedOptions: QuestionOption[] = [];
+    for (const opt of options) {
+        if (opt == null || typeof opt !== 'object' || Array.isArray(opt)) {
             return null;
         }
-        parsed.push(option);
-    }
-    return parsed.length === 0 ? null : parsed;
-}
-
-// parseBool reads a boolean flag the model may have stringified or written as
-// a number. An uncoercible value returns null so the caller keeps the schema
-// default: a mangled flag must not cost the user an answerable question.
-function parseBool(value: unknown): boolean | null {
-    if (typeof value === 'boolean') {
-        return value;
-    }
-    if (typeof value === 'number') {
-        return value !== 0;
-    }
-    if (typeof value === 'string') {
-        switch (value.trim().toLowerCase()) {
-        case 'true':
-        case 'yes':
-        case '1':
-            return true;
-        case 'false':
-        case 'no':
-        case '0':
-            return false;
+        const optObj = opt as {[key: string]: unknown};
+        if (typeof optObj.label !== 'string' || optObj.label === '') {
+            return null;
         }
-    }
-    return null;
-}
-
-// parseQuestionArgs extracts a renderable question from tool call arguments.
-// Returns null when the arguments are missing or beyond repair (e.g. redacted
-// for non-requesters) so the caller can fall back to the generic tool card.
-export function parseQuestionArgs(args: ToolCall['arguments']): QuestionArgs | null {
-    let obj: unknown = args;
-    for (let depth = 0; typeof obj === 'string' && depth < maxArgumentUnwrapDepth; depth++) {
-        obj = unwrapJSONString(obj);
-    }
-    if (obj == null || typeof obj !== 'object' || Array.isArray(obj)) {
-        return null;
-    }
-    const argsObj = obj as {[key: string]: unknown};
-    const question = argsObj.question;
-    if (typeof question !== 'string' || question === '') {
-        return null;
-    }
-    const options = parseOptions(argsObj.options);
-    if (options == null) {
-        return null;
+        parsedOptions.push({
+            label: optObj.label,
+            description: typeof optObj.description === 'string' ? optObj.description : undefined, // eslint-disable-line no-undefined
+        });
     }
     return {
         question,
-        options,
-        multiSelect: parseBool(argsObj.multi_select) === true,
+        options: parsedOptions,
+        multiSelect: obj.multi_select === true,
 
         // Mirror the server pointer semantics (mmtools.AskUserQuestionArgs):
         // an absent key means enabled, an explicit false disables.
-        allowFreeForm: parseBool(argsObj.allow_free_form) !== false,
+        allowFreeForm: obj.allow_free_form !== false,
     };
 }
 

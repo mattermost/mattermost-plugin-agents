@@ -6,7 +6,6 @@ package toolrunner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"testing"
 
@@ -385,7 +384,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 	assert.Zero(t, resolverCalls)
 	require.Len(t, result.ToolTurns, 1)
 	require.Len(t, result.ToolTurns[0].ToolResults, 3)
-	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): jira__get_issue, ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained rejected tool call(s): jira__get_issue, ghost_tool")
 	assert.Contains(t, result.ToolTurns[0].ToolResults[1].Result, `load_tool`)
 	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[2].Result)
 }
@@ -440,105 +439,73 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 	assert.Empty(t, result.ToolTurns)
 }
 
-// TestToolRunner_NormalizesToolCallArguments covers the NormalizeArguments
-// hook on a user-interaction tool, which is where it matters most: a call the
-// hook repairs must reach the user with canonical arguments, and one it cannot
-// repair must be failed here rather than paused as an approval card no answer
-// could ever resolve.
-func TestToolRunner_NormalizesToolCallArguments(t *testing.T) {
-	newStore := func() *llm.ToolStore {
-		store := llm.NewToolStore()
-		store.AddTools([]llm.Tool{{
+func TestToolRunner_InvalidArgumentsFailBatchAndModelRetries(t *testing.T) {
+	inner := &testLLM{responses: []testResponse{
+		{events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "q1", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":"not a list"}`)},
+				{ID: "tc1", Name: "safe_tool", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		}},
+		{events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "q2", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":["A"]}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		}},
+	}}
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{
+		{
 			Name:            "AskUserQuestion",
 			UserInteraction: llm.UserInteractionSelect,
-			NormalizeArguments: func(args json.RawMessage) (json.RawMessage, error) {
-				var wrapper struct {
-					Options string `json:"options"`
+			ValidateArguments: func(args json.RawMessage) error {
+				var parsed struct {
+					Options []string `json:"options"`
 				}
-				if err := json.Unmarshal(args, &wrapper); err != nil {
-					return args, nil
-				}
-				if !json.Valid(json.RawMessage(wrapper.Options)) {
-					return nil, errors.New("options are unusable")
-				}
-				return json.RawMessage(`{"options":` + wrapper.Options + `}`), nil
+				return json.Unmarshal(args, &parsed)
 			},
+		},
+		{
+			Name: "safe_tool",
 			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
-				t.Fatal("user-interaction tool must not execute")
+				t.Fatal("a call batched with invalid arguments must not execute")
 				return "", nil
 			},
-		}})
-		return store
+		},
+	})
+
+	var decided []string
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "ask"}},
+		Context: &llm.Context{Tools: store},
+	}, func(tc llm.ToolCall) bool {
+		decided = append(decided, tc.ID)
+		return false
+	}, nil)
+	require.NoError(t, err)
+
+	var lastEmitted []llm.ToolCall
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeToolCalls {
+			lastEmitted = event.Value.([]llm.ToolCall)
+		}
 	}
 
-	t.Run("repaired arguments reach the user", func(t *testing.T) {
-		inner := &testLLM{responses: []testResponse{{
-			events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "q1", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":"[{\"label\":\"A\"}]"}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			},
-		}}}
+	require.Len(t, result.ToolTurns, 1)
+	failed := result.ToolTurns[0].ToolResults
+	require.Len(t, failed, 2)
+	assert.True(t, failed[0].IsError)
+	assert.Contains(t, failed[0].Result, "invalid arguments for tool AskUserQuestion")
+	assert.True(t, failed[1].IsError)
+	assert.True(t, llm.IsBatchSkippedToolResult(failed[1].Result))
 
-		result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
-			Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "ask"}},
-			Context: &llm.Context{Tools: newStore()},
-		}, neverExecute, nil)
-		require.NoError(t, err)
-
-		var pendingCalls []llm.ToolCall
-		for event := range result.Stream.Stream {
-			if event.Type == llm.EventTypeToolCalls {
-				pendingCalls = append(pendingCalls, event.Value.([]llm.ToolCall)...)
-			}
-		}
-		require.Len(t, pendingCalls, 1)
-		assert.JSONEq(t, `{"options":[{"label":"A"}]}`, string(pendingCalls[0].Arguments))
-		assert.Empty(t, result.ToolTurns)
-	})
-
-	t.Run("unrepairable arguments fail the call and let the model retry", func(t *testing.T) {
-		inner := &testLLM{responses: []testResponse{
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
-					{ID: "q1", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":"<parameter name=\"label\">B"}`)},
-					{ID: "tc1", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":"[{\"label\":\"A\"}]"}`)},
-				}},
-				{Type: llm.EventTypeEnd},
-			}},
-			{events: []llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "Recovered"},
-				{Type: llm.EventTypeEnd},
-			}},
-		}}
-
-		result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
-			Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "ask"}},
-			Context: &llm.Context{Tools: newStore()},
-		}, func(llm.ToolCall) bool {
-			t.Fatal("a batch with unusable arguments must not reach the approval decision")
-			return false
-		}, nil)
-		require.NoError(t, err)
-
-		text, readErr := result.Stream.ReadAll()
-		require.NoError(t, readErr)
-		assert.Equal(t, "Recovered", text)
-
-		require.Len(t, result.ToolTurns, 1)
-		require.Len(t, result.ToolTurns[0].ToolResults, 2)
-		assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
-		assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "options are unusable")
-		assert.True(t, result.ToolTurns[0].ToolResults[1].IsError)
-		assert.Contains(t, result.ToolTurns[0].ToolResults[1].Result, "invalid arguments: AskUserQuestion")
-
-		// The model must see the failure so it can ask again.
-		require.Len(t, inner.capturedRequests, 2)
-		botPost := inner.capturedRequests[1].Posts[len(inner.capturedRequests[1].Posts)-1]
-		require.Len(t, botPost.ToolUse, 2)
-		assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
-	})
+	require.Len(t, inner.capturedRequests, 2, "the model must see the failure so it can retry")
+	assert.Equal(t, []string{"q2"}, decided, "only the valid retry may reach the approval decision")
+	require.Len(t, lastEmitted, 1)
+	assert.Equal(t, "q2", lastEmitted[0].ID)
+	assert.Equal(t, llm.ToolCallStatusPending, lastEmitted[0].Status)
 }
 
 func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {

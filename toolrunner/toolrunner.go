@@ -233,8 +233,7 @@ func (r *ToolRunner) runLoop(
 		}
 
 		store := toolStoreFromRequest(request)
-		if containsUnavailableTools(toolCalls, store) {
-			toolResults := unavailableToolBatchResults(toolCalls, store, request.Context)
+		if toolResults := rejectedToolBatchResults(toolCalls, store, request.Context); toolResults != nil {
 			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
 			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
 
@@ -248,25 +247,6 @@ func (r *ToolRunner) runLoop(
 		}
 
 		toolCalls = enrichToolCallsForApproval(toolCalls, store)
-
-		// Repair the argument shapes models emit instead of the declared
-		// schema. A call left unusable can never execute, and a pending
-		// user-interaction call would reach the user as a card no answer can
-		// resolve, so fail it here and let the model retry.
-		toolCalls, invalidArgs := normalizeToolCallArguments(toolCalls, store)
-		if len(invalidArgs) > 0 {
-			toolResults := invalidArgumentBatchResults(toolCalls, invalidArgs)
-			resolvedToolCalls := buildResolvedToolCalls(toolCalls, toolResults)
-			appendToolTurnAndPost(result, &request, resp.text, resp.reasoningData, resp.serverTools, resp.segments, resolvedToolCalls, toolResults, resp.usage)
-
-			output <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: resolvedToolCalls}
-
-			if llm.CountTrailingFailedToolCalls(request.Posts) >= llm.MaxConsecutiveToolCallFailures {
-				request.Posts = llm.EnsureToolRetryLimitSystemMessage(request.Posts)
-				currentOpts = append(currentOpts, llm.WithToolsDisabled())
-			}
-			continue
-		}
 
 		// Check shouldExecute for ALL tool calls.
 		allApproved := true
@@ -471,67 +451,56 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 	return toolResults
 }
 
-func toolCallAvailable(store *llm.ToolStore, tc llm.ToolCall) bool {
+// rejectToolCall reports why a call cannot proceed: its tool is unavailable,
+// or the tool's ValidateArguments hook rejects the arguments.
+func rejectToolCall(tc llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) (string, bool) {
 	if store == nil {
-		return false
+		return "unknown tool " + tc.Name, true
 	}
-	_, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
-	return ok
-}
-
-func unavailableToolNames(toolCalls []llm.ToolCall, store *llm.ToolStore) []string {
-	unavailable := make([]string, 0)
-	for _, tc := range toolCalls {
-		if !toolCallAvailable(store, tc) {
-			unavailable = append(unavailable, tc.Name)
+	lookup, ok := store.LookupTool(tc.Name, tc.ServerOrigin)
+	if !ok {
+		if store.IsUnloadedMCPTool(tc.Name) {
+			llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
+			return mcp.UnloadedMCPToolUserHint(tc.Name), true
+		}
+		return "unknown tool " + tc.Name, true
+	}
+	if lookup.Tool.ValidateArguments != nil {
+		if err := lookup.Tool.ValidateArguments(tc.Arguments); err != nil {
+			return fmt.Sprintf("invalid arguments for tool %s: %s. Call the tool again with arguments matching its schema.", tc.Name, err), true
 		}
 	}
-	return unavailable
+	return "", false
 }
 
-func containsUnavailableTools(toolCalls []llm.ToolCall, store *llm.ToolStore) bool {
-	for _, tc := range toolCalls {
-		if !toolCallAvailable(store, tc) {
-			return true
-		}
-	}
-	return false
-}
-
-func unavailableToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
-	unavailableNames := unavailableToolNames(toolCalls, store)
-	unavailableSet := make(map[string]struct{}, len(unavailableNames))
-	for _, name := range unavailableNames {
-		unavailableSet[name] = struct{}{}
-	}
-
+// rejectedToolBatchResults returns results for the whole batch when any call is
+// rejected: rejected calls fail with the reason and the rest are skipped, so
+// the model retries the batch. Returns nil when every call can proceed.
+func rejectedToolBatchResults(toolCalls []llm.ToolCall, store *llm.ToolStore, llmContext *llm.Context) []ToolResult {
 	toolResults := make([]ToolResult, len(toolCalls))
+	rejected := make([]bool, len(toolCalls))
+	var rejectedNames []string
 	for i, tc := range toolCalls {
-		if _, ok := unavailableSet[tc.Name]; ok {
-			if store != nil && store.IsUnloadedMCPTool(tc.Name) {
-				llmContext.ObserveMCPDynamicToolEvent("unloaded_tool_error", "error")
-				toolResults[i] = ToolResult{
-					ToolCallID: tc.ID,
-					Name:       tc.Name,
-					Result:     mcp.UnloadedMCPToolUserHint(tc.Name),
-					IsError:    true,
-				}
-				continue
-			}
-
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     "unknown tool " + tc.Name,
-				IsError:    true,
-			}
+		reason, isRejected := rejectToolCall(tc, store, llmContext)
+		if !isRejected {
 			continue
 		}
+		rejected[i] = true
+		rejectedNames = append(rejectedNames, tc.Name)
+		toolResults[i] = ToolResult{ToolCallID: tc.ID, Name: tc.Name, Result: reason, IsError: true}
+	}
+	if len(rejectedNames) == 0 {
+		return nil
+	}
 
+	for i, tc := range toolCalls {
+		if rejected[i] {
+			continue
+		}
 		toolResults[i] = ToolResult{
 			ToolCallID: tc.ID,
 			Name:       tc.Name,
-			Result:     llm.BatchSkippedToolResult(tc.Name, unavailableNames),
+			Result:     llm.BatchSkippedToolResult(tc.Name, rejectedNames),
 			IsError:    true,
 		}
 	}
@@ -561,64 +530,6 @@ func recordMCPDynamicSearchLoadCallSuccess(llmContext *llm.Context, toolCalls []
 			llmContext.ObserveMCPDynamicToolEvent("search_load_call_success", "success")
 		}
 	}
-}
-
-// normalizeToolCallArguments applies each tool's NormalizeArguments hook,
-// returning the rewritten calls plus, keyed by tool call ID, the errors for
-// calls whose arguments could not be repaired.
-func normalizeToolCallArguments(toolCalls []llm.ToolCall, store *llm.ToolStore) ([]llm.ToolCall, map[string]error) {
-	normalized := make([]llm.ToolCall, len(toolCalls))
-	copy(normalized, toolCalls)
-
-	var invalid map[string]error
-	for i := range normalized {
-		lookup, ok := store.LookupTool(normalized[i].Name, normalized[i].ServerOrigin)
-		if !ok || lookup.Tool.NormalizeArguments == nil {
-			continue
-		}
-		args, err := lookup.Tool.NormalizeArguments(normalized[i].Arguments)
-		if err != nil {
-			if invalid == nil {
-				invalid = make(map[string]error, len(normalized))
-			}
-			invalid[normalized[i].ID] = err
-			continue
-		}
-		normalized[i].Arguments = args
-	}
-	return normalized, invalid
-}
-
-// invalidArgumentBatchResults errors every call whose arguments could not be
-// repaired and skips the rest of the batch, mirroring how an unavailable tool
-// halts a round so the model retries the whole batch.
-func invalidArgumentBatchResults(toolCalls []llm.ToolCall, invalid map[string]error) []ToolResult {
-	invalidNames := make([]string, 0, len(invalid))
-	for _, tc := range toolCalls {
-		if _, bad := invalid[tc.ID]; bad {
-			invalidNames = append(invalidNames, tc.Name)
-		}
-	}
-
-	toolResults := make([]ToolResult, len(toolCalls))
-	for i, tc := range toolCalls {
-		if err, bad := invalid[tc.ID]; bad {
-			toolResults[i] = ToolResult{
-				ToolCallID: tc.ID,
-				Name:       tc.Name,
-				Result:     err.Error() + ". Call the tool again with arguments matching its schema.",
-				IsError:    true,
-			}
-			continue
-		}
-		toolResults[i] = ToolResult{
-			ToolCallID: tc.ID,
-			Name:       tc.Name,
-			Result:     llm.BatchSkippedForInvalidArgumentsToolResult(tc.Name, invalidNames),
-			IsError:    true,
-		}
-	}
-	return toolResults
 }
 
 func enrichToolCallsForApproval(toolCalls []llm.ToolCall, store *llm.ToolStore) []llm.ToolCall {

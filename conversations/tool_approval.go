@@ -215,7 +215,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Validate answers for accepted interaction blocks before mutating any
 	// state, so a malformed or missing answer leaves the question pending and
 	// answerable instead of burning it as an error result.
-	interactionResults, unanswerable, err := resolveInteractionAnswers(pendingBlocks, acceptedToolIDs, toolAnswers)
+	interactionResults, err := resolveInteractionAnswers(pendingBlocks, acceptedToolIDs, toolAnswers)
 	if err != nil {
 		return err
 	}
@@ -243,25 +243,15 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
+			block.Status = conversation.StatusSuccess
 			block.Shared = new(true)
 			executedAny = true
-			if reason, cannotAnswer := unanswerable[block.ID]; cannotAnswer {
-				block.Status = conversation.StatusError
-				toolResults = append(toolResults, toolrunner.ToolResult{
-					ToolCallID: block.ID,
-					Name:       block.Name,
-					Result:     reason,
-					IsError:    true,
-				})
-			} else {
-				block.Status = conversation.StatusSuccess
-				toolResults = append(toolResults, toolrunner.ToolResult{
-					ToolCallID: block.ID,
-					Name:       block.Name,
-					Result:     interactionResults[block.ID],
-					IsError:    false,
-				})
-			}
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     interactionResults[block.ID],
+				IsError:    false,
+			})
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
@@ -422,18 +412,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
-// pending user-interaction block. It returns the tool result content for the
-// answers that resolved, plus the model-facing failure message for blocks
-// whose own arguments are unusable, both keyed by block ID.
-//
-// An invalid or missing answer to an answerable question fails the whole
-// request with ErrInvalidToolAnswer before any state is mutated, leaving the
-// question pending. A question the model built wrong cannot be rescued by
-// answering again, so it is reported separately for the caller to resolve as
-// an error result the model can retry from.
-func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (map[string]string, map[string]string, error) {
+// pending user-interaction block and returns the tool result content keyed by
+// block ID. Any invalid or missing answer fails the whole request with
+// ErrInvalidToolAnswer before any state is mutated.
+func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (map[string]string, error) {
 	results := make(map[string]string)
-	unanswerable := make(map[string]string)
 	for _, b := range blocks {
 		if b.Type != conversation.BlockTypeToolUse || b.UserInteraction == "" {
 			continue
@@ -445,16 +428,12 @@ func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolI
 			continue
 		}
 		result, err := mmtools.ResolveUserInteractionAnswer(b.UserInteraction, b.Input, toolAnswers[b.ID])
-		switch {
-		case errors.Is(err, mmtools.ErrUnanswerableQuestion):
-			unanswerable[b.ID] = err.Error() + ". Ask again with arguments matching the tool schema."
-		case err != nil:
-			return nil, nil, fmt.Errorf("%w: %s", ErrInvalidToolAnswer, err.Error())
-		default:
-			results[b.ID] = result
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidToolAnswer, err.Error())
 		}
+		results[b.ID] = result
 	}
-	return results, unanswerable, nil
+	return results, nil
 }
 
 // HandleToolResult handles user approval of the second-stage tool-result sharing.
