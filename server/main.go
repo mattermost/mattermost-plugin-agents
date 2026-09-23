@@ -70,6 +70,11 @@ type Plugin struct {
 	configMigrated       bool
 
 	accessChecker *accesscontrol.Checker
+
+	// licenseChangeListeners re-apply license-dependent runtime state (active
+	// agents, embedding search, MCP connections) when the server license
+	// changes.
+	licenseChangeListeners []func()
 }
 
 type pluginLogger struct {
@@ -105,6 +110,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 }
 
 func (p *Plugin) OnActivate() error {
+	p.licenseChangeListeners = nil
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI, p.API)
@@ -291,6 +297,13 @@ func (p *Plugin) OnActivate() error {
 		migrateAndRefresh("config_update")
 	})
 
+	p.licenseChangeListeners = append(p.licenseChangeListeners, func() {
+		bots.ForceRefreshOnNextEnsure()
+		if ensureErr := bots.EnsureBots(); ensureErr != nil {
+			pluginAPI.Log.Error("failed to ensure bots on license change", "error", ensureErr)
+		}
+	})
+
 	if ensureBotsErr := bots.EnsureBots(); ensureBotsErr != nil {
 		// If we fail to ensure bots, we log the error but do not return
 		// as it would leave the plugin in a state where it can't be configured from the system console.
@@ -395,8 +408,8 @@ func (p *Plugin) OnActivate() error {
 		nil, // conversation service wired in a later step
 	)
 
-	// Register update listener for embedding search config changes
-	p.configuration.RegisterUpdateListener(func() {
+	// Reinitialize embedding search on config changes and license changes.
+	reinitEmbeddingSearch := func(trigger string) {
 		newEmbeddingsSearch, initErr := search.InitEmbeddingsSearch(
 			dbClient.DB,
 			p.configuration.EmbeddingSearchConfig(),
@@ -404,7 +417,7 @@ func (p *Plugin) OnActivate() error {
 			indexer.DeferredIndexRebuildActive(mmClient),
 		)
 		if initErr != nil {
-			pluginAPI.Log.Error("Failed to reinitialize embedding search on config change", "error", initErr)
+			pluginAPI.Log.Error("Failed to reinitialize embedding search", "trigger", trigger, "error", initErr)
 			// Disable search on failure
 			searchAvailability.Set(nil)
 			lastSearchInitError.Store(initErr.Error())
@@ -415,8 +428,10 @@ func (p *Plugin) OnActivate() error {
 		// queries while IndexSearch allows reindexing.
 		searchAvailability.Set(newEmbeddingsSearch)
 		lastSearchInitError.Store("")
-		pluginAPI.Log.Info("Embedding search reinitialized on config change")
-	})
+		pluginAPI.Log.Info("Embedding search reinitialized", "trigger", trigger)
+	}
+	p.configuration.RegisterUpdateListener(func() { reinitEmbeddingSearch("config_change") })
+	p.licenseChangeListeners = append(p.licenseChangeListeners, func() { reinitEmbeddingSearch("license_change") })
 
 	webSearchService := mmtools.NewWebSearchService(func() *config.Config {
 		return p.configuration.Config()
@@ -478,9 +493,11 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
-	p.configuration.RegisterUpdateListener(func() {
+	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
-	})
+	}
+	p.configuration.RegisterUpdateListener(reinitMCP)
+	p.licenseChangeListeners = append(p.licenseChangeListeners, reinitMCP)
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(
 		pluginAPI,
@@ -664,6 +681,14 @@ func (p *Plugin) applyTelemetryConfig() {
 		p.pluginAPI.Log.Info("OpenTelemetry tracing disabled")
 	} else {
 		p.pluginAPI.Log.Info("OpenTelemetry tracing initialized", "mode", string(mode))
+	}
+}
+
+// OnLicenseChanged re-applies license-dependent runtime state. Request-time
+// gates read the license on every call; this covers state built ahead of time.
+func (p *Plugin) OnLicenseChanged(_, _ *model.License) {
+	for _, listener := range p.licenseChangeListeners {
+		listener()
 	}
 }
 

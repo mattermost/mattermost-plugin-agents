@@ -187,6 +187,52 @@ func TestEnsureBotsDeactivatesCapInactiveDBAgents(t *testing.T) {
 	mockAPI.AssertCalled(t, "UpdateBotActive", "mm-db", false)
 }
 
+// TestEnsureBotsReappliesCapAfterLicenseChange pins the license-change refresh:
+// the plugin's OnLicenseChanged hook forces a re-ensure, which must apply the
+// cap of the new level to already-running bots, in both directions.
+func TestEnsureBotsReappliesCapAfterLicenseChange(t *testing.T) {
+	cfg := &mockConfig{
+		bots: []llm.BotConfig{
+			validBot("file-1", "filebot1", "svc1"),
+			validBot("file-2", "filebot2", "svc1"),
+		},
+		services: []llm.ServiceConfig{validOpenAIService("svc1")},
+	}
+
+	level := enterprise.LevelProfessional
+	mockAPI := &plugintest.API{}
+	client := pluginapi.NewClient(mockAPI, nil)
+	mockAPI.On("GetLicense").Return(func() *model.License { return enterprisetest.LicenseFor(level) }).Maybe()
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	allowBotsLogging(mockAPI)
+	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{
+		{UserId: "mm-1", Username: "filebot1"},
+		{UserId: "mm-2", Username: "filebot2"},
+	}, nil).Maybe()
+	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 1}, nil).Maybe()
+	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(&model.Bot{}, nil).Maybe()
+	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	require.NoError(t, mmBots.EnsureBots())
+	require.Len(t, mmBots.GetAllBots(), 2)
+
+	for _, step := range []struct {
+		level  enterprise.Level
+		active int
+	}{
+		{enterprise.LevelUnlicensed, 1},
+		{enterprise.LevelProfessional, 2},
+	} {
+		level = step.level
+		mmBots.ForceRefreshOnNextEnsure()
+		require.NoError(t, mmBots.EnsureBots())
+		require.Len(t, mmBots.GetAllBots(), step.active, "level %s", step.level)
+	}
+}
+
 func TestReconcileTokenUsageSinksHonorsLicense(t *testing.T) {
 	cfg := &mockConfig{bots: nil, services: nil}
 	cfg.enableTokenLogging = true
