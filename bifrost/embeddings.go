@@ -75,12 +75,12 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 		Provider: p.provider,
 		Model:    p.model,
 		Input: &schemas.EmbeddingInput{
-			Text: Ptr(text),
+			Text: new(text),
 		},
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 
@@ -130,7 +130,7 @@ func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []s
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 

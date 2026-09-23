@@ -80,19 +80,10 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	}
 
 	// 4. Privacy filtering and display sanitization
-	var turnResponses []TurnResponse
-	if userID != conv.UserID {
-		turnResponses, err = filterTurnsForNonRequester(turns)
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to filter turns: %w", err))
-			return
-		}
-	} else {
-		turnResponses, err = turnsToResponse(turns)
-		if err != nil {
-			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
-			return
-		}
+	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
+	if err != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to sanitize turns: %w", err))
+		return
 	}
 
 	// 5. Build response
@@ -117,42 +108,18 @@ func approvalStateForTurn(turn store.Turn, allTurns []store.Turn) string {
 	return conversation.ComputePostApprovalState(allTurns, *turn.PostID)
 }
 
-// filterTurnsForNonRequester applies privacy filtering and display sanitization
-// to turn content for a user who is not the conversation owner.
-func filterTurnsForNonRequester(turns []store.Turn) ([]TurnResponse, error) {
+// turnsToResponse converts store turns to response objects with display
+// sanitization, first applying privacy filtering when the requesting user is
+// not the conversation owner.
+func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResponse, error) {
 	result := make([]TurnResponse, len(turns))
 	for i, turn := range turns {
 		var blocks []conversation.ContentBlock
 		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
 		}
-		filtered := conversation.FilterForNonRequester(blocks)
-		sanitized := conversation.SanitizeForDisplay(filtered)
-		sanitizedJSON, err := json.Marshal(sanitized)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal filtered content: %w", err)
-		}
-		result[i] = TurnResponse{
-			ID:            turn.ID,
-			PostID:        turn.PostID,
-			Role:          turn.Role,
-			Content:       sanitizedJSON,
-			TokensIn:      turn.TokensIn,
-			TokensOut:     turn.TokensOut,
-			Sequence:      turn.Sequence,
-			ApprovalState: approvalStateForTurn(turn, turns),
-		}
-	}
-	return result, nil
-}
-
-// turnsToResponse converts store turns to response objects with display sanitization.
-func turnsToResponse(turns []store.Turn) ([]TurnResponse, error) {
-	result := make([]TurnResponse, len(turns))
-	for i, turn := range turns {
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turn.Content, &blocks); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal turn content: %w", err)
+		if filterForNonRequester {
+			blocks = conversation.FilterForNonRequester(blocks)
 		}
 		sanitized := conversation.SanitizeForDisplay(blocks)
 		sanitizedJSON, err := json.Marshal(sanitized)

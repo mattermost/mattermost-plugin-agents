@@ -120,6 +120,8 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
+
 ### Ask agents to create files
 
 You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.
@@ -170,7 +172,7 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content. Images that exceed the provider's documented maximum dimensions are omitted and replaced with a short note so the rest of the conversation can continue.
 
 In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 

@@ -19,6 +19,16 @@ import (
 // upstream pluginapi.KV.Get returns (nil err, empty bytes) for missing keys.
 var ErrKVNotFound = errors.New("kv key not found")
 
+// ErrFileActionForbidden is returned before an admin-level file read when the
+// requesting session is absent or denied by the server's file policy.
+var ErrFileActionForbidden = errors.New("file action is not permitted")
+
+// FileActionPermissionAPI is the narrow raw plugin API surface needed to
+// enforce session-scoped file download policy.
+type FileActionPermissionAPI interface {
+	HasPermissionToFileAction(sessionID, fileID, action string) bool
+}
+
 type Client interface {
 	GetUser(userID string) (*model.User, error)
 	GetPost(postID string) (*model.Post, error)
@@ -32,37 +42,43 @@ type Client interface {
 	GetTeam(teamID string) (*model.Team, error)
 	GetChannel(channelID string) (*model.Channel, error)
 	GetDirectChannel(userID1, userID2 string) (*model.Channel, error)
-	PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast)
+	PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast)
 	GetConfig() *model.Config
-	LogError(msg string, keyValuePairs ...interface{})
-	LogWarn(msg string, keyValuePairs ...interface{})
-	KVGet(key string, value interface{}) error
-	KVSet(key string, value interface{}) error
-	KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error
-	KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error)
-	KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error)
+	LogError(msg string, keyValuePairs ...any)
+	LogWarn(msg string, keyValuePairs ...any)
+	KVGet(key string, value any) error
+	KVSet(key string, value any) error
+	KVSetWithExpiry(key string, value any, ttl time.Duration) error
+	KVCompareAndSet(key string, oldValue, newValue any) (bool, error)
+	KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error)
 	KVDelete(key string) error
 	GetUserByUsername(username string) (*model.User, error)
 	GetUserStatus(userID string) (*model.Status, error)
 	HasPermissionTo(userID string, permission *model.Permission) bool
 	GetPluginStatus(pluginID string) (*model.PluginStatus, error)
 	PluginHTTP(req *http.Request) *http.Response
-	LogDebug(msg string, keyValuePairs ...interface{})
+	LogDebug(msg string, keyValuePairs ...any)
 	GetChannelByName(teamID, name string, includeDeleted bool) (*model.Channel, error)
 	HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool
+	HasPermissionToFileAction(sessionID, fileID, action string) bool
 	GetFileInfo(fileID string) (*model.FileInfo, error)
 	GetFile(fileID string) (io.ReadCloser, error)
 	UploadFile(content io.Reader, fileName, channelID string) (*model.FileInfo, error)
 	SendEphemeralPost(userID string, post *model.Post)
 }
 
-func NewClient(pluginAPI *pluginapi.Client) Client {
+func NewClient(pluginAPI *pluginapi.Client, fileActionAPI ...FileActionPermissionAPI) Client {
+	var policyAPI FileActionPermissionAPI
+	if len(fileActionAPI) > 0 {
+		policyAPI = fileActionAPI[0]
+	}
 	return &client{
 		PostService:          pluginAPI.Post,
 		UserService:          pluginAPI.User,
 		FrontendService:      pluginAPI.Frontend,
 		ConfigurationService: pluginAPI.Configuration,
 		pluginAPI:            pluginAPI,
+		fileActionAPI:        policyAPI,
 	}
 }
 
@@ -71,7 +87,8 @@ type client struct {
 	pluginapi.UserService
 	pluginapi.FrontendService
 	pluginapi.ConfigurationService
-	pluginAPI *pluginapi.Client
+	pluginAPI     *pluginapi.Client
+	fileActionAPI FileActionPermissionAPI
 }
 
 func (m *client) GetUser(userID string) (*model.User, error) {
@@ -90,17 +107,17 @@ func (m *client) GetDirectChannel(userID1, userID2 string) (*model.Channel, erro
 	return m.pluginAPI.Channel.GetDirect(userID1, userID2)
 }
 
-func (m *client) LogError(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogError(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Error(msg, keyValuePairs...)
 }
 
-func (m *client) LogWarn(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogWarn(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Warn(msg, keyValuePairs...)
 }
 
 // KVGet reads raw bytes from pluginapi so it can translate the upstream
 // "(nil err, empty bytes)" reply for a missing key into ErrKVNotFound.
-func (m *client) KVGet(key string, value interface{}) error {
+func (m *client) KVGet(key string, value any) error {
 	var raw []byte
 	if err := m.pluginAPI.KV.Get(key, &raw); err != nil {
 		return err
@@ -122,12 +139,12 @@ func IsKVNotFound(err error) bool {
 	return errors.Is(err, ErrKVNotFound)
 }
 
-func (m *client) KVSet(key string, value interface{}) error {
+func (m *client) KVSet(key string, value any) error {
 	_, err := m.pluginAPI.KV.Set(key, value)
 	return err
 }
 
-func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duration) error {
+func (m *client) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
 	_, err := m.pluginAPI.KV.Set(key, value, pluginapi.SetExpiry(ttl))
 	return err
 }
@@ -135,7 +152,7 @@ func (m *client) KVSetWithExpiry(key string, value interface{}, ttl time.Duratio
 // KVCompareAndSet performs an atomic compare-and-set. If oldValue is nil, the
 // write only succeeds when the key does not currently exist. Returns true when
 // the write was applied, false when the current value differed from oldValue.
-func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+func (m *client) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue))
 }
 
@@ -143,7 +160,7 @@ func (m *client) KVCompareAndSet(key string, oldValue, newValue interface{}) (bo
 // the written value. It is used to acquire self-expiring leases: pass a nil
 // oldValue so the write only succeeds when the key is absent (or its previous
 // lease has expired).
-func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, ttl time.Duration) (bool, error) {
+func (m *client) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, ttl time.Duration) (bool, error) {
 	return m.pluginAPI.KV.Set(key, newValue, pluginapi.SetAtomic(oldValue), pluginapi.SetExpiry(ttl))
 }
 
@@ -167,7 +184,7 @@ func (m *client) PluginHTTP(req *http.Request) *http.Response {
 	return m.pluginAPI.Plugin.HTTP(req)
 }
 
-func (m *client) LogDebug(msg string, keyValuePairs ...interface{}) {
+func (m *client) LogDebug(msg string, keyValuePairs ...any) {
 	m.pluginAPI.Log.Debug(msg, keyValuePairs...)
 }
 
@@ -179,12 +196,27 @@ func (m *client) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	return m.pluginAPI.File.GetInfo(fileID)
 }
 
+func (m *client) HasPermissionToFileAction(sessionID, fileID, action string) bool {
+	return m.fileActionAPI != nil && m.fileActionAPI.HasPermissionToFileAction(sessionID, fileID, action)
+}
+
 func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 	file, err := m.pluginAPI.File.Get(fileID)
 	if err != nil {
 		return nil, err
 	}
 	return io.NopCloser(file), nil
+}
+
+// checkFileDownloadPermission gates admin-level file metadata and content
+// reads using the requesting session. It intentionally does not accept a user
+// ID: channel RBAC remains a separate, additive check at each call site.
+func checkFileDownloadPermission(mm Client, sessionID, fileID string) error {
+	allowed := mm.HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment)
+	if sessionID == "" || !allowed {
+		return ErrFileActionForbidden
+	}
+	return nil
 }
 
 func (m *client) UploadFile(content io.Reader, fileName, channelID string) (*model.FileInfo, error) {

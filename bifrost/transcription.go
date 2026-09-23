@@ -79,7 +79,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 			File: data,
 		},
 		Params: &schemas.TranscriptionParameters{
-			ResponseFormat: Ptr("vtt"), // Use VTT format for timed transcription
+			ResponseFormat: new("vtt"), // Use VTT format for timed transcription
 		},
 	}
 

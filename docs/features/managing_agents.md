@@ -36,9 +36,9 @@ The **System Console > AI Bots** page no longer hosts the agent editor. Instead,
 The Agents page itself shows:
 
 - A header with the page title and a **Create agent** button (visible only to users who can create agents — see [Permissions and license](#permissions-and-license)).
-- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created).
+- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created that they can still see).
 - A search box that filters by display name or username.
-- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge if the agent's configured AI service is missing.
+- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge when the agent's configured AI service is missing or orphaned *and* the viewer can still see the agent (primarily system admins; see [Who can see which agents](#who-can-see-which-agents)).
 - A row-level overflow menu (`⋯`) with **Edit** and **Delete** actions for users who can manage that agent. Selecting the row itself also opens the editor for users who can manage the agent.
 
 ## Permissions and license
@@ -64,6 +64,15 @@ The Agents page applies these rules consistently between the UI and the API:
 - The same checks gate the underlying `POST /agents`, `PUT /agents/:id`, and `DELETE /agents/:id` API routes, so direct API calls cannot bypass the UI rules.
 
 By default, regular users do not have `manage_own_agent`. Grant it through your existing Mattermost role/permission model to delegate agent creation — typically under **System Console > User Management > Permissions** (exact path varies by Mattermost server version).
+
+### Who can see which agents
+
+Manage permission alone does not decide list visibility. Agents (and the AI services shown when binding an agent) are filtered by what the signed-in user can use:
+
+- **System administrators** can see agents even when a service ABAC policy would deny them personally, so they can rebind services or restore access.
+- **All other users** — including creators and delegated agent admins — only see agents they can use under both agent access and the agent's AI service access. Agents whose service they cannot use are hidden, not shown with a deny badge.
+
+If a non–system-admin agent admin loses access to an agent's service under ABAC, that agent disappears from their Agents page until a system admin restores service access or changes the binding. See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac) in the Admin Guide.
 
 ### License
 
@@ -100,9 +109,10 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
 | **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking can both stay enabled; because Anthropic doesn't support both on the same request, requests that ask for structured JSON output skip extended thinking while all other requests keep using it. |
 
-Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, thinking budget, and structured output fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
+Structured output is not configured on the agent. How a request-time JSON schema is fulfilled (native provider structured output versus a prompt-based fallback) is controlled by the **Structured output** policy on the service, configured in **System Console > Plugins > Agents**; see [Structured output](../admin_guide.md#structured-output) in the Admin Guide. The deprecated per-agent `structuredOutputEnabled` API property and database column are still accepted for compatibility but are ignored at runtime.
+
+Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, and thinking budget fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
 
 If the form is invalid when you select **Save**, validation errors are shown inline (display name required, username required and must match the allowed pattern, AI Service required) and the editor returns to the Configuration tab.
 
@@ -119,7 +129,8 @@ The Access tab controls who can interact with the agent and who can administer i
   - **All users** (default): anyone in the workspace.
   - **Allow only**: only listed users, or members of listed teams.
   - **Block**: everyone except listed users or members of listed teams.
-- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list.
+  - **Attribute-based (access policy)**: an ABAC policy is the only user-access gate (allow/block lists are ignored). See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac).
+- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list. Agent admins still only *see* the agent when they can use its AI service (system admins are the exception — see [Who can see which agents](#who-can-see-which-agents)).
 
 These rules are enforced both for `@mentions` in channels and for direct conversations with the agent. They are enforced in the server in `bots/permissions.go`, so they apply uniformly to UI flows, slash commands, and tool-driven access.
 
@@ -130,7 +141,8 @@ The MCPs tab is available only when **Enable Tools** is on (Configuration tab). 
 - **Dynamic tool loading**: enabled by default for new agents and for existing agents that do not yet have this setting. The agent starts with MCP discovery and loading helpers, then loads full MCP tool schemas only when needed. Disable this to use the full MCP tool list for this agent up front. Once a tool is loaded in a conversation, it can be used in later turns in that same conversation without repeating the search/load prelude.
 - **Automatically enable all MCP tools**: the agent has access to every MCP tool available in the server right now and to any MCP tools added later. This is the default for new agents and the setting used by all migrated legacy bots.
 - When the auto-grant is off, pick the specific MCP tools to enable. Tools that are no longer present on the server are dropped from the agent's allowlist when you save.
-- For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event).
+- For OAuth-backed MCP servers, you can also start the per-user **Connect** flow directly from this tab. Enabling a server that is currently disconnected stores a wildcard grant — once you finish the OAuth flow, the agent gets every tool that server exposes. The tab refreshes automatically when you connect or disconnect (`mcp_connection_updated` websocket event). **Connect** is not shown while **Use service accounts for authentication** is on; the tab lists that agent's service-account catalog instead of your personal connections.
+- **Use service accounts for authentication** switches the agent from per-user credentials to admin-configured service account credentials for **external** MCP servers. External MCP servers without service account headers configured in the System Console are excluded from the agent (fail closed). Mattermost (embedded) and plugin tools run with each requesting user's own permissions, and users are never asked to connect accounts. The MCPs tab then shows **Connected** for servers whose service account credentials work, and **No service account credentials** for servers that have none. Turning it on shows a warning because it flattens permissions on those external servers — anyone who can use the agent acts with the agent's shared access there — so restrict usage on the **Access** tab. Only system administrators can turn this setting on. While it is enabled, some fields are system-admin-only; see [What's editable vs locked](#whats-editable-vs-locked). Anyone who can manage the agent can still turn the setting off or delete the agent. Requires the same license as remote MCP servers. See [Service account authentication](../admin_guide.md#service-account-authentication) in the Admin Guide.
 
 Dynamic tool loading and the auto-grant are separate controls: dynamic loading decides when schemas are shown to the model, while the auto-grant decides which MCP tools the agent is allowed to use.
 
@@ -151,7 +163,14 @@ API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:
 
 ### What's editable vs locked
 
-- **Display name**, **avatar**, **service**, **model**, **max tool turns**, **custom instructions**, **vision**, **tools**, **native tools**, **reasoning**, **structured output**, **channel access**, **user access**, **agent admins**, and the **MCP tool grants** can all be changed at any time.
+While **Use service accounts for authentication** is off, anyone who can manage the agent may edit every field except the permanent username (below).
+
+While **Use service accounts for authentication** is enabled:
+
+- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
+- **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
+- Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
+
 - **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
 
 ### Unsaved-changes warning
@@ -267,7 +286,9 @@ The signed-in user is not the agent's creator, not in **Agent admins**, and does
 
 ### Agent shows "Service unavailable" badge
 
-The agent's `serviceID` no longer matches any service in **System Console > Plugins > Agents**. Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+The agent's configured AI service is missing or orphaned (for example its `serviceID` no longer matches any service in **System Console > Plugins > Agents**). Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+
+This badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent. System admins (and rare edge cases where the viewer can still see the agent) may still see **Service unavailable** for a truly missing service.
 
 ### Saving an agent returns "This username is already taken"
 
@@ -291,7 +312,9 @@ The agent has **Enable Tools** turned off in the Configuration tab. Turn it back
 
 ### MCP server is shown but tools list is empty
 
-For OAuth-backed MCP servers, each user must complete the OAuth flow before tools are visible. Use the **Connect** button on the MCPs tab — or in the Agents RHS **Tools** popover — to start the flow. Until you connect, you can still toggle the server on; this stores a wildcard grant so the agent gets every tool the server exposes once you authenticate. See [OAuth-backed MCP servers](../admin_guide.md#oauth-backed-mcp-servers) for details.
+For agents using per-user authentication with OAuth-backed MCP servers, each user must complete the OAuth flow before tools are visible. Use the **Connect** button on the MCPs tab — or in the Agents RHS **Tools** popover — to start the flow. Until you connect, you can still toggle the server on; this stores a wildcard grant so the agent gets every tool the server exposes once you authenticate. See [OAuth-backed MCP servers](../admin_guide.md#oauth-backed-mcp-servers) for details.
+
+For agents with **Use service accounts for authentication** enabled, an empty tools list with **No service account credentials** means that server has no Service Account Authentication headers in System Console MCP settings and is excluded from the agent. **Couldn't connect** means those headers are present but the server rejected them — check the header name/value split (the value should not repeat the header name) and the plugin logs.
 
 ### Agent change isn't visible on another cluster node
 

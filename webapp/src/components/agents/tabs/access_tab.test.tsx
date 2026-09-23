@@ -1,0 +1,354 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React from 'react';
+import {fireEvent, render, screen, within} from '@testing-library/react';
+import {IntlProvider} from 'react-intl';
+
+import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
+import {DefaultMaxToolTurns} from '@/types/agents';
+
+import {AgentDraft} from '../agent_config_view';
+
+import AccessTab from './access_tab';
+
+jest.mock('react-intl', () => {
+    const actual = jest.requireActual('react-intl');
+    return {
+        ...actual,
+        useIntl: () => ({
+            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        }),
+        FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
+});
+
+jest.mock('@/client', () => ({
+    getProfilesByIds: jest.fn().mockResolvedValue([]),
+    getTeamsByIds: jest.fn().mockResolvedValue([]),
+    getAutocompleteAllUsers: jest.fn().mockResolvedValue({users: []}),
+    searchTeams: jest.fn().mockResolvedValue([]),
+    getProfilePictureUrl: jest.fn().mockReturnValue(''),
+    getTeamIconUrl: jest.fn().mockReturnValue(''),
+}));
+
+jest.mock('@/components/select', () => ({
+    SelectUser: ({disabled}: {disabled?: boolean}) => (
+        <input
+            role='combobox'
+            disabled={disabled}
+        />
+    ),
+    SelectChannel: ({disabled}: {disabled?: boolean}) => (
+        <input
+            role='combobox'
+            disabled={disabled}
+        />
+    ),
+}));
+
+jest.mock('@/components/access_control/policy_editor', () => ({
+    __esModule: true,
+    default: (props: {resourceId: string; allowSimplified: boolean; allowAdvanced: boolean; hideWhenEmpty?: boolean}) => (
+        <div
+            data-testid='policy-editor'
+            data-resource-id={props.resourceId}
+            data-allow-simplified={String(props.allowSimplified)}
+            data-allow-advanced={String(props.allowAdvanced)}
+            data-hide-when-empty={String(Boolean(props.hideWhenEmpty))}
+        >
+            <button type='button'>{'Edit policy'}</button>
+        </div>
+    ),
+}));
+
+function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
+    return {
+        displayName: 'Test Agent',
+        username: 'testagent',
+        serviceId: 'svc_1',
+        customInstructions: '',
+        channelAccessLevel: ChannelAccessLevel.All,
+        channelIds: [],
+        userAccessLevel: UserAccessLevel.All,
+        userIds: [],
+        teamIds: [],
+        adminUserIds: [],
+        enabledTools: [],
+        autoEnableNewMCPTools: true,
+        mcpDynamicToolLoading: true,
+        useServiceAccountAuth: true,
+        model: '',
+        enableVision: true,
+        disableTools: false,
+        enabledNativeTools: ['web_search'],
+        reasoningEnabled: true,
+        reasoningEffort: 'medium',
+        thinkingBudget: 0,
+        maxToolTurns: DefaultMaxToolTurns,
+        ...overrides,
+    };
+}
+
+type RenderOptions = {
+    draft?: Partial<AgentDraft>;
+    serviceAccountFieldsLocked?: boolean;
+    baselineUserAccessLevel?: UserAccessLevel;
+    agentId?: string;
+    abacSupported?: boolean;
+    isSystemAdmin?: boolean;
+};
+
+function tabElement(options: RenderOptions, onChange: jest.Mock) {
+    const draft = makeDraft(options.draft);
+    return (
+        <IntlProvider locale='en'>
+            <AccessTab
+                draft={draft}
+                baselineUserAccessLevel={options.baselineUserAccessLevel ?? draft.userAccessLevel}
+                onChange={onChange}
+                serviceAccountFieldsLocked={options.serviceAccountFieldsLocked ?? false}
+                agentId={options.agentId}
+                abacSupported={options.abacSupported ?? true}
+                isSystemAdmin={options.isSystemAdmin ?? false}
+            />
+        </IntlProvider>
+    );
+}
+
+function renderTab(options: RenderOptions = {}) {
+    const onChange = jest.fn();
+    const result = render(tabElement(options, onChange));
+    return {...result, onChange};
+}
+
+function formRowForLabel(label: string): HTMLElement {
+    const labelEl = screen.getByText(label, {selector: 'label'});
+    const row = labelEl.parentElement;
+    if (!row) {
+        throw new Error(`No form row for label: ${label}`);
+    }
+    return row;
+}
+
+function agentAdminsCombobox(): HTMLInputElement {
+    // Disabled react-select inputs are omitted from getByRole's accessibility tree.
+    const input = formRowForLabel('Agent admins').querySelector('input[role="combobox"]');
+    if (!input) {
+        throw new Error('Agent admins combobox not found');
+    }
+    return input as HTMLInputElement;
+}
+
+// The radio labels render as bare text nodes inside the options grid, so
+// visibility is asserted via the radio input values.
+function findAttributeBasedRadio(): HTMLInputElement | undefined {
+    return screen.getAllByRole('radio').
+        map((radio) => radio as HTMLInputElement).
+        find((radio) => radio.value === String(UserAccessLevel.AttributeBased));
+}
+
+describe('AccessTab', () => {
+    test('disables channel access, user access, and agent admins when service-account fields are locked', () => {
+        renderTab({serviceAccountFieldsLocked: true});
+
+        const channelRadios = within(formRowForLabel('Channel access')).getAllByRole('radio');
+        expect(channelRadios.length).toBeGreaterThan(0);
+        for (const radio of channelRadios) {
+            expect((radio as HTMLInputElement).disabled).toBe(true);
+        }
+
+        const userRadios = within(formRowForLabel('User access')).getAllByRole('radio');
+        expect(userRadios.length).toBeGreaterThan(0);
+        for (const radio of userRadios) {
+            expect((radio as HTMLInputElement).disabled).toBe(true);
+        }
+
+        expect(agentAdminsCombobox().disabled).toBe(true);
+    });
+
+    test('leaves channel access, user access, and agent admins enabled when unlocked', () => {
+        renderTab();
+
+        for (const radio of within(formRowForLabel('Channel access')).getAllByRole('radio')) {
+            expect((radio as HTMLInputElement).disabled).toBe(false);
+        }
+        for (const radio of within(formRowForLabel('User access')).getAllByRole('radio')) {
+            expect((radio as HTMLInputElement).disabled).toBe(false);
+        }
+
+        expect(agentAdminsCombobox().disabled).toBe(false);
+    });
+
+    test('hides the attribute-based option when ABAC is unsupported', () => {
+        renderTab({abacSupported: false});
+        expect(findAttributeBasedRadio()).toBeUndefined();
+    });
+
+    test('shows the attribute-based option when ABAC is supported', () => {
+        renderTab();
+        expect(findAttributeBasedRadio()).toBeDefined();
+    });
+
+    test('keeps the option visible for an already attribute-based agent on a downgraded server, with a warning', () => {
+        renderTab({
+            abacSupported: false,
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(findAttributeBasedRadio()).toBeDefined();
+        expect(screen.getByText('Attribute-based access is configured but not available on this server; users are currently denied access.')).toBeTruthy();
+        expect(screen.queryByTestId('policy-editor')).toBeNull();
+    });
+
+    test('selecting attribute-based reports the new level', () => {
+        const {onChange} = renderTab();
+        const attributeBasedRadio = findAttributeBasedRadio();
+        expect(attributeBasedRadio).toBeDefined();
+
+        fireEvent.click(attributeBasedRadio as HTMLInputElement);
+        expect(onChange).toHaveBeenCalledWith({userAccessLevel: UserAccessLevel.AttributeBased});
+    });
+
+    test('hides the user allow/block list in attribute-based mode', () => {
+        renderTab({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.queryByText('Allow list')).toBeNull();
+        expect(screen.queryByText('Block list')).toBeNull();
+    });
+
+    test('shows the save-first note instead of the editor while creating', () => {
+        renderTab({
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.getByText('Save the agent first, then define who can use it. Until a policy is defined, all users can use this agent.')).toBeTruthy();
+        expect(screen.queryByTestId('policy-editor')).toBeNull();
+    });
+
+    test('renders the policy editor for a saved agent, simplified-only for non-admins', () => {
+        renderTab({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        const editor = screen.getByTestId('policy-editor');
+        expect(editor.getAttribute('data-resource-id')).toBe('agentid');
+        expect(editor.getAttribute('data-allow-simplified')).toBe('true');
+        expect(editor.getAttribute('data-allow-advanced')).toBe('false');
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('false');
+        expect((screen.getByRole('button', {name: 'Edit policy'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    test('keeps the policy visible but disables editing when service-account fields are locked', () => {
+        renderTab({
+            serviceAccountFieldsLocked: true,
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.getByTestId('policy-editor')).not.toBeNull();
+        const policyFieldset = screen.getByTestId('policy-editor').closest('fieldset');
+        expect(policyFieldset).not.toBeNull();
+        expect((policyFieldset as HTMLFieldSetElement).disabled).toBe(true);
+    });
+
+    test('enables the advanced editor for system admins', () => {
+        renderTab({
+            agentId: 'agentid',
+            isSystemAdmin: true,
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.getByTestId('policy-editor').getAttribute('data-allow-advanced')).toBe('true');
+    });
+
+    it('keeps a retained policy editor visible in legacy access modes', () => {
+        renderTab({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.Allow,
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        });
+
+        const editor = screen.getByTestId('policy-editor');
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+        expect(screen.getByText('Allow list')).toBeTruthy();
+    });
+
+    it('does not remount the policy editor when access mode or privileges change', () => {
+        const onChange = jest.fn();
+        const result = render(tabElement({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        }, onChange));
+        const editor = screen.getByTestId('policy-editor');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            isSystemAdmin: true,
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-allow-advanced')).toBe('true');
+    });
+
+    it('does not mount a retained-policy editor while creating', () => {
+        renderTab({
+            draft: {userAccessLevel: UserAccessLevel.All},
+        });
+        expect(screen.queryByTestId('policy-editor')).toBeNull();
+    });
+
+    it('shows a warning and keeps the retained policy visible but locked when switching away before save', () => {
+        const onChange = jest.fn();
+        const result = render(tabElement({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        }, onChange));
+        const editor = screen.getByTestId('policy-editor');
+
+        result.rerender(tabElement({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.Allow},
+        }, onChange));
+
+        expect(screen.getByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeTruthy();
+        expect(screen.getByTestId('policy-editor')).toBe(editor);
+        expect(editor.getAttribute('data-hide-when-empty')).toBe('true');
+        const policyFieldset = editor.closest('fieldset');
+        expect(policyFieldset).not.toBeNull();
+        expect((policyFieldset as HTMLFieldSetElement).disabled).toBe(true);
+    });
+
+    it('does not show the switch-away warning when staying on attribute-based access', () => {
+        renderTab({
+            agentId: 'agentid',
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(screen.queryByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeNull();
+    });
+
+    it('does not show the switch-away warning when creating a new agent', () => {
+        renderTab({
+            baselineUserAccessLevel: UserAccessLevel.AttributeBased,
+            draft: {userAccessLevel: UserAccessLevel.All},
+        });
+
+        expect(screen.queryByText("Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above.")).toBeNull();
+    });
+});

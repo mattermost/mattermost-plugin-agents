@@ -158,6 +158,10 @@ const defaultConfig: Config = {
             resultLimit: 5,
             apiURL: '',
         },
+        searxng: {
+            baseURL: '',
+            resultLimit: 5,
+        },
     },
 };
 
@@ -226,7 +230,12 @@ const Config = (props: Props) => {
     useEffect(() => {
         const save = async () => {
             try {
-                await savePluginConfig(localConfig);
+                const saved = await savePluginConfig(localConfig);
+
+                // Adopt the normalized saved config so server-minted
+                // service/MCP IDs (and the UI gated on them) appear
+                // immediately instead of after a page reload.
+                setLocalConfig({...defaultConfig, ...saved});
                 return {};
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
@@ -243,13 +252,11 @@ const Config = (props: Props) => {
         props.setSaveNeeded();
     }, [props.setSaveNeeded]);
 
+    // No id is assigned client-side: the backend mints the stable service ID
+    // on save (normalizeAdminConfig).
     const addFirstService = () => {
-        const id = crypto.randomUUID();
         updateConfig({
-            services: [{
-                ...firstNewService,
-                id,
-            }],
+            services: [{...firstNewService}],
         });
     };
 

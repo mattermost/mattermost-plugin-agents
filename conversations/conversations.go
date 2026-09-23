@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -113,8 +114,20 @@ type DMConversationResult struct {
 
 // CreateOrGetDMConversation creates or retrieves a conversation for a DM.
 // This is separated from ProcessDMRequest so the conversation_id can be
-// set on the response post before it is created.
+// set on the response post before it is created. Callers without a session
+// fail closed on attachments.
 func (c *Conversations) CreateOrGetDMConversation(
+	botID string,
+	postingUser *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	llmCtx *llm.Context,
+) (*DMConversationResult, error) {
+	return c.createOrGetDMConversation("", botID, postingUser, channel, post, llmCtx)
+}
+
+func (c *Conversations) createOrGetDMConversation(
+	sessionID string,
 	botID string,
 	postingUser *model.User,
 	channel *model.Channel,
@@ -149,6 +162,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		channelID := channel.Id
 		result, err := c.convService.CreateConversation(conversation.CreateConversationParams{
 			UserID:       postingUser.Id,
+			SessionID:    sessionID,
 			BotID:        botID,
 			ChannelID:    &channelID,
 			RootPostID:   &postID,
@@ -166,6 +180,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
+		SessionID:    sessionID,
 		BotID:        botID,
 		ChannelID:    channel.Id,
 		RootPostID:   post.RootId,
@@ -200,6 +215,17 @@ func (c *Conversations) ProcessDMRequest(
 	llmCtx *llm.Context,
 	maxToolTurns int,
 ) (*DMStreamResult, error) {
+	return c.processDMRequest(ctx, convID, lm, llmCtx, maxToolTurns, nil)
+}
+
+func (c *Conversations) processDMRequest(
+	ctx stdcontext.Context,
+	convID string,
+	lm llm.LanguageModel,
+	llmCtx *llm.Context,
+	maxToolTurns int,
+	beforeProvider func(),
+) (*DMStreamResult, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "process dm request")
 	defer span.End()
 
@@ -214,17 +240,23 @@ func (c *Conversations) ProcessDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
+	completionReq, err := c.convService.BuildCompletionRequest(
+		conv,
+		llmCtx,
+		conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
 
-	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxToolTurns))
-	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmCtx, true), func(turns []toolrunner.ToolTurn) {
-		if writeErr := c.convService.WriteToolTurns(convID, turns, true); writeErr != nil {
-			c.mmClient.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convID)
-		}
-	})
+	if beforeProvider != nil {
+		beforeProvider()
+	}
+	runResult, err := c.runToolLoop(ctx, lm, maxToolTurns, *completionReq,
+		c.shouldAutoExecuteTool(llmCtx, true),
+		convID,
+		func([]toolrunner.ToolTurn) bool { return true },
+		nil, "Failed to write tool turns", "conversation_id", convID)
 	if err != nil {
 		return nil, fmt.Errorf("tool runner failed: %w", err)
 	}
@@ -235,6 +267,36 @@ func (c *Conversations) ProcessDMRequest(
 	}
 
 	return &DMStreamResult{Stream: stream}, nil
+}
+
+// runToolLoop runs the ToolRunner over req, persisting each intermediate tool
+// round to the conversation as it completes. sharedForTurns decides the shared
+// flag written with each round; writeFailMsg (plus writeFailArgs) is logged
+// when persisting a round fails.
+func (c *Conversations) runToolLoop(
+	ctx stdcontext.Context,
+	lm llm.LanguageModel,
+	maxRounds int,
+	req llm.CompletionRequest,
+	shouldExecute func(llm.ToolCall) bool,
+	convID string,
+	sharedForTurns func([]toolrunner.ToolTurn) bool,
+	opts []llm.LanguageModelOption,
+	writeFailMsg string,
+	writeFailArgs ...any,
+) (*toolrunner.ToolRunResult, error) {
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds))
+	return runner.Run(ctx, req, shouldExecute, func(turns []toolrunner.ToolTurn) {
+		if writeErr := c.convService.WriteToolTurns(convID, turns, sharedForTurns(turns)); writeErr != nil {
+			c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
+		}
+	}, opts...)
+}
+
+// channelMentionToolCallingEnabled reports whether the admin config allows
+// tool calling for channel mentions.
+func (c *Conversations) channelMentionToolCallingEnabled() bool {
+	return c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling()
 }
 
 // shouldAutoExecuteTool returns a callback that decides whether a tool call

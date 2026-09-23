@@ -147,7 +147,7 @@ func TestStartRebuildVectorIndexRejects(t *testing.T) {
 			mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
 			if tt.overwrite {
-				mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
+				mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v any) bool {
 					status, ok := v.(JobStatus)
 					return ok && status.Operation == JobOperationRebuildVectorIndex
 				})).Return(true, nil)

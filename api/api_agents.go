@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -24,6 +26,10 @@ import (
 )
 
 var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
+
+// errServiceAccountAuthRequiresAdmin is returned when a caller without
+// PermissionManageSystem tries to save an agent with the service account flag on.
+var errServiceAccountAuthRequiresAdmin = errors.New("only system administrators can save an agent with service account authentication enabled; turn the setting off to make other changes")
 
 // WebsocketEventBotsInvalidate is the event name for PublishWebSocketEvent (webapp: custom_mattermost-ai_<name>).
 const WebsocketEventBotsInvalidate = "bots_invalidate"
@@ -43,6 +49,18 @@ type agentErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// statusForAccessErr: policy denials are 403; saving as attribute-based without ABAC is 400.
+func statusForAccessErr(err error) int {
+	switch {
+	case errors.Is(err, accesscontrol.ErrAccessDenied):
+		return http.StatusForbidden
+	case errors.Is(err, accesscontrol.ErrABACUnavailable):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // abortAgentRequest writes a JSON error response with the given status code so
 // the webapp can surface the message instead of falling back to a generic
 // "Failed to save agent. Please try again." The error is also recorded on the
@@ -56,60 +74,78 @@ func abortAgentRequest(c *gin.Context, status int, err error) {
 	c.AbortWithStatusJSON(status, agentErrorResponse{Error: publicMsg})
 }
 
-// CreateAgentRequest is the JSON body for POST /agents. Field values are stored as given (no server-side fill-in).
-// MCP tool access is controlled by two independent fields:
+// AgentRequestFields are the request fields common to agent create and update.
+// Field values are stored as given (no server-side fill-in). MCP tool access is
+// controlled by two independent fields:
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
 //   - Otherwise, the agent gets only the tools listed in enabledMCPTools (empty/missing = no MCP tools).
+type AgentRequestFields struct {
+	DisplayName           string               `json:"displayName" binding:"required"`
+	ServiceID             string               `json:"serviceID" binding:"required"`
+	CustomInstructions    string               `json:"customInstructions"`
+	ChannelAccessLevel    int                  `json:"channelAccessLevel"`
+	ChannelIDs            []string             `json:"channelIDs"`
+	UserAccessLevel       int                  `json:"userAccessLevel"`
+	UserIDs               []string             `json:"userIDs"`
+	TeamIDs               []string             `json:"teamIDs"`
+	AdminUserIDs          []string             `json:"adminUserIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth bool                 `json:"useServiceAccountAuth"`
+	Model                 string               `json:"model"`
+	EnableVision          bool                 `json:"enableVision"`
+	DisableTools          bool                 `json:"disableTools"`
+	EnabledNativeTools    []string             `json:"enabledNativeTools"`
+	ReasoningEnabled      bool                 `json:"reasoningEnabled"`
+	ReasoningEffort       string               `json:"reasoningEffort"`
+	ThinkingBudget        int                  `json:"thinkingBudget"`
+	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
+	// compatibility with existing callers, but ignored at runtime. Structured
+	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+	MaxToolTurns            int  `json:"maxToolTurns"`
+}
+
+// applyTo overwrites the request-controlled fields on cfg.
+func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
+	cfg.DisplayName = r.DisplayName
+	cfg.ServiceID = r.ServiceID
+	cfg.CustomInstructions = r.CustomInstructions
+	cfg.ChannelAccessLevel = llm.ChannelAccessLevel(r.ChannelAccessLevel)
+	cfg.ChannelIDs = r.ChannelIDs
+	cfg.UserAccessLevel = llm.UserAccessLevel(r.UserAccessLevel)
+	cfg.UserIDs = r.UserIDs
+	cfg.TeamIDs = r.TeamIDs
+	cfg.AdminUserIDs = r.AdminUserIDs
+	cfg.EnabledMCPTools = r.EnabledMCPTools
+	cfg.AutoEnableNewMCPTools = r.AutoEnableNewMCPTools
+	cfg.MCPDynamicToolLoading = r.MCPDynamicToolLoading
+	cfg.UseServiceAccountAuth = r.UseServiceAccountAuth
+	cfg.Model = r.Model
+	cfg.EnableVision = r.EnableVision
+	cfg.DisableTools = r.DisableTools
+	cfg.EnabledNativeTools = r.EnabledNativeTools
+	cfg.ReasoningEnabled = r.ReasoningEnabled
+	cfg.ReasoningEffort = r.ReasoningEffort
+	cfg.ThinkingBudget = r.ThinkingBudget
+	// Persisted verbatim so existing callers keep round-tripping; the runtime
+	// reads ServiceConfig.StructuredOutputPolicy instead.
+	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled //nolint:staticcheck
+	cfg.MaxToolTurns = r.MaxToolTurns
+}
+
+// CreateAgentRequest is the JSON body for POST /agents.
 type CreateAgentRequest struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	Username                string               `json:"username" binding:"required"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	AgentRequestFields
+	Username string `json:"username" binding:"required"`
 }
 
 // UpdateAgentRequest is the JSON body for PUT /agents/:agentid (full document replace, same shape as create).
 // Username cannot change after create (enforced in the handler).
 type UpdateAgentRequest struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	Username                string               `json:"username"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	AgentRequestFields
+	Username string `json:"username"`
 
 	usernameProvided bool
 }
@@ -169,43 +205,6 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	return true
 }
 
-// canManageAgent reports whether userID may update or delete cfg: agent admin, PermissionManageOthersAgent,
-// or (agent with empty CreatorID) PermissionManageSystem for migrated legacy bots.
-func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string) bool {
-	if cfg == nil {
-		return false
-	}
-	if cfg.IsAdmin(userID) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	if cfg.CreatorID == "" && client.User.HasPermissionTo(userID, model.PermissionManageSystem) {
-		return true
-	}
-	return false
-}
-
-// canCreateAgent returns true if the user may create new agents via POST /agents.
-func canCreateAgent(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
-// canConfigureAgentServices reports whether userID may list services or fetch models (ManageOwnAgent, ManageOthersAgent, or ManageSystem).
-func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
-	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
-		return true
-	}
-	if client.User.HasPermissionTo(userID, model.PermissionManageOthersAgent) {
-		return true
-	}
-	return client.User.HasPermissionTo(userID, model.PermissionManageSystem)
-}
-
 // loadPluginConfigForAgents loads plugin config; on failure it aborts with 500.
 func (a *API) loadPluginConfigForAgents(c *gin.Context) (*config.Config, bool) {
 	cfg, err := a.configStore.GetConfig()
@@ -243,58 +242,19 @@ func (a *API) validateAgentServiceID(c *gin.Context, serviceID string) (*config.
 
 // buildAgentConfigForCreate builds a new llm.BotConfig from req and the new bot/user IDs.
 func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string) *llm.BotConfig {
-	return &llm.BotConfig{
-		BotUserID:               botUserID,
-		CreatorID:               userID,
-		DisplayName:             req.DisplayName,
-		Name:                    req.Username,
-		ServiceID:               req.ServiceID,
-		CustomInstructions:      req.CustomInstructions,
-		ChannelAccessLevel:      llm.ChannelAccessLevel(req.ChannelAccessLevel),
-		ChannelIDs:              req.ChannelIDs,
-		UserAccessLevel:         llm.UserAccessLevel(req.UserAccessLevel),
-		UserIDs:                 req.UserIDs,
-		TeamIDs:                 req.TeamIDs,
-		AdminUserIDs:            req.AdminUserIDs,
-		EnabledMCPTools:         req.EnabledMCPTools,
-		AutoEnableNewMCPTools:   req.AutoEnableNewMCPTools,
-		MCPDynamicToolLoading:   req.MCPDynamicToolLoading,
-		Model:                   req.Model,
-		EnableVision:            req.EnableVision,
-		DisableTools:            req.DisableTools,
-		EnabledNativeTools:      req.EnabledNativeTools,
-		ReasoningEnabled:        req.ReasoningEnabled,
-		ReasoningEffort:         req.ReasoningEffort,
-		ThinkingBudget:          req.ThinkingBudget,
-		StructuredOutputEnabled: req.StructuredOutputEnabled,
-		MaxToolTurns:            req.MaxToolTurns,
+	cfg := &llm.BotConfig{
+		BotUserID: botUserID,
+		CreatorID: userID,
+		Name:      req.Username,
 	}
+	req.applyTo(cfg)
+	return cfg
 }
 
 // applyAgentUpdateRequest overwrites mutable fields on cfg from req; returns whether DisplayName changed.
 func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displayNameChanged bool) {
 	displayNameChanged = cfg.DisplayName != req.DisplayName
-	cfg.DisplayName = req.DisplayName
-	cfg.ServiceID = req.ServiceID
-	cfg.CustomInstructions = req.CustomInstructions
-	cfg.ChannelAccessLevel = llm.ChannelAccessLevel(req.ChannelAccessLevel)
-	cfg.ChannelIDs = req.ChannelIDs
-	cfg.UserAccessLevel = llm.UserAccessLevel(req.UserAccessLevel)
-	cfg.UserIDs = req.UserIDs
-	cfg.TeamIDs = req.TeamIDs
-	cfg.AdminUserIDs = req.AdminUserIDs
-	cfg.EnabledMCPTools = req.EnabledMCPTools
-	cfg.AutoEnableNewMCPTools = req.AutoEnableNewMCPTools
-	cfg.MCPDynamicToolLoading = req.MCPDynamicToolLoading
-	cfg.Model = req.Model
-	cfg.EnableVision = req.EnableVision
-	cfg.DisableTools = req.DisableTools
-	cfg.EnabledNativeTools = req.EnabledNativeTools
-	cfg.ReasoningEnabled = req.ReasoningEnabled
-	cfg.ReasoningEffort = req.ReasoningEffort
-	cfg.ThinkingBudget = req.ThinkingBudget
-	cfg.StructuredOutputEnabled = req.StructuredOutputEnabled
-	cfg.MaxToolTurns = req.MaxToolTurns
+	req.applyTo(cfg)
 	return displayNameChanged
 }
 
@@ -317,7 +277,7 @@ func (a *API) refreshBotsAndNotify() error {
 	}
 	if a.mmClient != nil {
 		// PublishWebSocketEvent requires a non-nil broadcast (server dereferences it).
-		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
+		a.mmClient.PublishWebSocketEvent(WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
 	}
 	return ensureErr
 }
@@ -339,12 +299,16 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	var req CreateAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
 
@@ -367,6 +331,11 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	// invalid request does not leave an orphan bot user behind.
 	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		return
+	}
+
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, buildAgentConfigForCreate(req, userID, ""), nil); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
 	}
 
@@ -415,7 +384,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 
 	accessible := make([]*llm.BotConfig, 0, len(agents))
 	for _, cfg := range agents {
-		if a.canUserAccessAgent(cfg, userID) {
+		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
 		}
 	}
@@ -450,12 +419,39 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	if !a.canUserAccessAgent(cfg, userID) {
+	if !a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
 
 	c.JSON(http.StatusOK, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
+}
+
+// loadManageableAgent loads agentID and verifies userID may manage it, aborting
+// with 500/404/403 as appropriate. The agent name (plus any params added by
+// enrichAudit, which may be nil) is recorded before the authorization check so
+// 403 fail records identify the target.
+func (a *API) loadManageableAgent(c *gin.Context, agentID, userID, forbiddenMsg string, enrichAudit func(*llm.BotConfig)) (*llm.BotConfig, bool) {
+	cfg, err := a.agentStore.GetAgent(agentID)
+	if err != nil {
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
+		return nil, false
+	}
+	if cfg == nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return nil, false
+	}
+
+	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
+	if enrichAudit != nil {
+		enrichAudit(cfg)
+	}
+
+	if !canManageAgent(a.pluginAPI, cfg, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errors.New(forbiddenMsg))
+		return nil, false
+	}
+	return cfg, true
 }
 
 // handleUpdateAgent handles PUT /agents/:agentid (full replace).
@@ -466,20 +462,8 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 	// Identify the target early so 404/403 fail records carry it.
 	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
-	cfg, err := a.agentStore.GetAgent(agentID)
-	if err != nil {
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
-		return
-	}
-	if cfg == nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
-
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
+	cfg, ok := a.loadManageableAgent(c, agentID, userID, "not authorized to modify this agent", nil)
+	if !ok {
 		return
 	}
 
@@ -487,12 +471,20 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	var req UpdateAgentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		var maxBytesErr *http.MaxBytesError
-		if errors.As(err, &maxBytesErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
 			return
 		}
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
+	proposed := *cfg
+	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
+
+	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return
 	}
 
@@ -504,11 +496,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// Snapshot before apply: applyAgentUpdateRequest replaces field values on
-	// cfg (it never mutates the slices in place), so a shallow copy is enough
-	// for the before/after field diff.
+	// Snapshot the stored config for the audit field diff, then adopt the
+	// already-applied proposed update (apply-then-compare ACL above).
 	prev := *cfg
-	displayNameChanged := applyAgentUpdateRequest(cfg, req)
+	cfg = &proposed
 
 	// Audit which fields the update changed — never their values, since
 	// customInstructions carries prompt content.
@@ -521,9 +512,32 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return
+	}
+
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
 		return
+	}
+
+	// Switching away from attribute-based access: delete the agent policy.
+	// If policy deletion fails with an unexpected error, rollback the agent
+	// store to prev so the agent is not left in an inconsistent state where
+	// legacy access claims everyone is allowed but a dangling policy continues
+	// to deny users.
+	if prev.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
+		cfg.UserAccessLevel != llm.UserAccessLevelAttributeBased {
+		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
+
+		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
+				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
+			}
+			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
+			return
+		}
 	}
 
 	ensureErr := a.refreshBotsAndNotify()
@@ -548,27 +562,22 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	// Identify the target early so 404/403 fail records carry it.
 	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
-	cfg, err := a.agentStore.GetAgent(agentID)
-	if err != nil {
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
-		return
-	}
-	if cfg == nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
-	audit.AddParam(auditRec(c), "bot_user_id", cfg.BotUserID)
-
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to delete this agent"))
+	cfg, ok := a.loadManageableAgent(c, agentID, userID, "not authorized to delete this agent", func(cfg *llm.BotConfig) {
+		audit.AddParam(auditRec(c), "bot_user_id", cfg.BotUserID)
+	})
+	if !ok {
 		return
 	}
 
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return
+	}
+
+	// Best-effort policy cleanup: agent deletion must not fail on it. A stale
+	// policy on a deleted agent gates nothing.
+	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+		a.pluginAPI.Log.Error("Failed to delete access policy for deleted agent", "agent_id", cfg.ID, "error", err.Error())
 	}
 
 	ensureErr := a.refreshBotsAndNotify()
@@ -592,20 +601,8 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	// about the image itself is ever recorded.
 	audit.AddParam(auditRec(c), audit.KeyAgentID, audit.TruncateID(agentID))
 
-	cfg, err := a.agentStore.GetAgent(agentID)
-	if err != nil {
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to get agent: %w", err))
-		return
-	}
-	if cfg == nil {
-		c.AbortWithStatus(http.StatusNotFound)
-		return
-	}
-
-	audit.AddParam(auditRec(c), audit.KeyAgentName, cfg.Name)
-
-	if !canManageAgent(a.pluginAPI, cfg, userID) {
-		abortAgentRequest(c, http.StatusForbidden, errors.New("not authorized to modify this agent"))
+	cfg, ok := a.loadManageableAgent(c, agentID, userID, "not authorized to modify this agent", nil)
+	if !ok {
 		return
 	}
 
@@ -636,6 +633,11 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// canBypassServicePolicies: system admins author the policies and must see the full catalog.
+func (a *API) canBypassServicePolicies(userID string) bool {
+	return a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -655,8 +657,14 @@ func (a *API) handleListServices(c *gin.Context) {
 		return
 	}
 
+	bypassPolicies := a.canBypassServicePolicies(userID)
 	services := make([]ServiceInfo, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
+		if !bypassPolicies {
+			if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+				continue
+			}
+		}
 		services = append(services, ServiceInfo{
 			ID:               svc.ID,
 			Name:             svc.Name,
@@ -711,12 +719,21 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
+	// Same gate as GET /services.
+	if !a.canBypassServicePolicies(userID) {
+		if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+			abortAgentRequest(c, http.StatusForbidden, errors.New("you do not have access to the selected service"))
+			return
+		}
+	}
+
 	supportsModelFetching := svc.Type == llm.ServiceTypeAnthropic ||
 		svc.Type == llm.ServiceTypeOpenAI ||
 		svc.Type == llm.ServiceTypeAzure ||
 		svc.Type == llm.ServiceTypeOpenAICompatible ||
 		svc.Type == llm.ServiceTypeGemini ||
-		svc.Type == llm.ServiceTypeVertex
+		svc.Type == llm.ServiceTypeVertex ||
+		svc.Type == llm.ServiceTypeNorth
 	if !supportsModelFetching {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
 		return
@@ -726,7 +743,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	switch svc.Type {
 	case llm.ServiceTypeOpenAICompatible:
 		hasRequiredCredentials = svc.APIKey != "" || svc.APIURL != ""
-	case llm.ServiceTypeAzure:
+	case llm.ServiceTypeAzure, llm.ServiceTypeNorth:
 		hasRequiredCredentials = svc.APIKey != "" && svc.APIURL != ""
 	case llm.ServiceTypeVertex:
 		// Vertex uses GCP project + region; service-account JSON is optional (ADC).
@@ -737,7 +754,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(*svc)
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), *svc)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
@@ -746,16 +763,31 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
-func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
+// canUserAccessAgent reports whether userID may see the agent on list/get.
+// System admins see agents even when CanUseService would deny (they author
+// policies). Everyone else must pass the agent gate and CanUseService for the
+// primary service. Denied fallback hops are truncated per request, not here.
+func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
+
+	agentOK := false
 	if cfg.IsAdmin(userID) {
+		agentOK = true
+	} else {
+		// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
+		legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
+		agentOK = a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
+	}
+	if !agentOK {
+		return false
+	}
+
+	if a.canBypassServicePolicies(userID) {
 		return true
 	}
-	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
-	return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) == nil
+	return a.accessChecker.CanUseService(ctx, userID, cfg.ServiceID) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent

@@ -6,7 +6,6 @@ package conversations
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -68,15 +67,9 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 	if bot == nil {
 		return fmt.Errorf("auto-reply bot no longer exists: %w", ErrNoResponse)
 	}
-	if err := c.bots.CheckUsageRestrictions(post.UserId, bot, channel); err != nil {
+	if err := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); err != nil {
 		return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", err, ErrNoResponse)
 	}
 
-	autoPost := post.Clone()
-	autoPost.Message = "@" + bot.GetMMBot().Username
-	if message := strings.TrimSpace(post.Message); message != "" {
-		autoPost.Message += " " + message
-	}
-
-	return c.handleMentions(ctx, bot, autoPost, postingUser, channel)
+	return c.handleMentions(ctx, bot, cloneWithAgentMention(post, bot.GetMMBot().Username), postingUser, channel)
 }

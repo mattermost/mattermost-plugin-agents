@@ -644,7 +644,7 @@ func TestStrictRegistryAfterMCPToolPredicate(t *testing.T) {
 	require.Equal(t, "tool not found", result.Error)
 }
 
-func TestStrictModeEmptyMCPProviderStillAddsMetaTools(t *testing.T) {
+func TestStrictModeEmptyMCPProviderOmitsMetaTools(t *testing.T) {
 	builder := newTestBuilder(t,
 		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 		nil,
@@ -658,8 +658,9 @@ func TestStrictModeEmptyMCPProviderStillAddsMetaTools(t *testing.T) {
 
 	context := buildToolsContext(builder, bot)
 
-	require.ElementsMatch(t, []string{"builtin", mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
-	require.Empty(t, searchToolNames(t, context.Tools, "jira"))
+	// No authorized MCP catalog: search_tools/load_tool are omitted entirely
+	// rather than advertised over an empty registry.
+	require.ElementsMatch(t, []string{"builtin"}, toolNames(context.Tools))
 }
 
 func TestDisableToolsStillReturnsNoTools(t *testing.T) {
@@ -708,7 +709,9 @@ func TestStrictModePreservesAuthErrors(t *testing.T) {
 
 	context := buildToolsContext(builder, bot)
 
-	require.ElementsMatch(t, []string{mcp.SearchToolsName, mcp.LoadToolName}, toolNames(context.Tools))
+	// The catalog is empty (server needs auth), so meta-tools are omitted —
+	// but the auth errors must still surface so the user can reconnect.
+	require.Empty(t, toolNames(context.Tools))
 	authErrors := context.Tools.GetAuthErrors()
 	require.Len(t, authErrors, 1)
 	require.Equal(t, origin, authErrors[0].ServerOrigin)

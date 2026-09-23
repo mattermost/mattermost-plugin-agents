@@ -32,6 +32,10 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+
+    // AttributeBased makes the ABAC resource policy the sole user-access
+    // gate; user/team lists are ignored in this mode. Wire value 4.
+    AttributeBased,
 }
 
 export type LLMBotConfig = {
@@ -54,7 +58,6 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
-    structuredOutputEnabled?: boolean
 }
 
 // Component for configuring native tools (OpenAI / Anthropic / Google).
@@ -62,6 +65,7 @@ export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
     provider?: 'openai' | 'anthropic' | 'google'
+    disabled?: boolean
 }
 
 const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
@@ -169,6 +173,7 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                                 testId={`native-tool-${tool.id}`}
                                 label={tool.label}
                                 checked={(props.enabledTools || []).includes(tool.id)}
+                                disabled={props.disabled}
                                 onChange={(checked) => setToolEnabled(tool.id, checked)}
                             />
                         </FieldControlRow>
@@ -212,7 +217,8 @@ const Bot = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -224,12 +230,16 @@ const Bot = (props: Props) => {
 
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region
         // - others: API key
         let hasRequiredCredentials: string | boolean = false;
         switch (selectedService.type) {
         case 'openaicompatible':
             hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(selectedService.apiKey && selectedService.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
@@ -381,7 +391,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;
@@ -448,17 +458,6 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
-                                    {(selectedService.type === 'anthropic' || ['openai', 'openaicompatible', 'azure'].includes(selectedService.type)) && (
-                                        <BooleanItem
-                                            label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                            value={props.bot.structuredOutputEnabled ?? false}
-                                            onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
-                                            helpText={selectedService.type === 'anthropic' ?
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.'}) :
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                            }
-                                        />
-                                    )}
                                 </>
                             );
                         })()}

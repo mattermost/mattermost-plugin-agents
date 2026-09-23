@@ -10,8 +10,7 @@ import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
-import {MCPServerConfig, MCPToolConfig} from './mcp_servers';
-import {MCPServerInfo} from './mcp_tools_viewer';
+import {MCPServerConfig, MCPServerInfo, MCPToolConfig} from './mcp_types';
 import MCPToolConfigRow from './mcp_tool_config_row';
 
 type MCPServerToolRowProps = {

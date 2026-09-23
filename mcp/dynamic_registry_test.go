@@ -12,6 +12,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Len, List, and Lookup are test-only observation helpers for registry state;
+// production code reaches tools through Search/ClosestMatches.
+func (r *ToolRegistry) Len() int {
+	if r == nil {
+		return 0
+	}
+	return len(r.tools)
+}
+
+func (r *ToolRegistry) List() []ToolRegistryEntry {
+	if r == nil || len(r.order) == 0 {
+		return nil
+	}
+
+	entries := make([]ToolRegistryEntry, 0, len(r.order))
+	for _, name := range r.order {
+		entries = append(entries, r.tools[name])
+	}
+	return entries
+}
+
+func (r *ToolRegistry) Lookup(name string) (ToolRegistryEntry, bool) {
+	if r == nil {
+		return ToolRegistryEntry{}, false
+	}
+
+	entry, ok := r.tools[name]
+	return entry, ok
+}
+
 func TestToolRegistryLookupAndList(t *testing.T) {
 	tools := []llm.Tool{
 		testRegistryTool("mattermost__search_users", "Search users", "https://mattermost.example.com"),

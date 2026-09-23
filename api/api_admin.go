@@ -9,13 +9,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -56,7 +57,7 @@ func (a *API) handleReindexPosts(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			c.JSON(http.StatusConflict, jobStatus)
 			return
 		default:
@@ -116,8 +117,8 @@ func (a *API) handleCancelJob(c *gin.Context) {
 			})
 			return
 		}
-		switch err.Error() {
-		case "not running":
+		switch {
+		case errors.Is(err, indexer.ErrNotRunning):
 			audit.AddParam(auditRec(c), "job_status", "not_running")
 			c.JSON(http.StatusBadRequest, gin.H{
 				"status": "not_running",
@@ -151,12 +152,12 @@ func (a *API) handleCatchUpIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrCatchUpIncompatible):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			// The blocking job's status is the useful context on this fail path.
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
-		case err.Error() == "no previous index found, run a full reindex first":
+		case errors.Is(err, indexer.ErrNoPreviousIndex):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		default:
@@ -182,7 +183,7 @@ func (a *API) handleRebuildVectorIndex(c *gin.Context) {
 		case errors.Is(err, indexer.ErrRebuildIncompatible), errors.Is(err, indexer.ErrRebuildIncompleteReindex):
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
-		case err.Error() == "job already running":
+		case errors.Is(err, indexer.ErrJobAlreadyRunning):
 			audit.AddParam(auditRec(c), "job_status", jobStatus.Status)
 			c.JSON(http.StatusConflict, jobStatus)
 			return
@@ -206,7 +207,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 
 	result, err := a.indexerService.CheckIndexHealth(c.Request.Context())
 	if err != nil {
-		if err.Error() == "search functionality is not configured" {
+		if errors.Is(err, indexer.ErrNotConfigured) {
 			c.JSON(http.StatusOK, a.notConfiguredHealthCheck())
 			return
 		}
@@ -222,7 +223,7 @@ func (a *API) handleIndexHealthCheck(c *gin.Context) {
 		ModelName:          cfg.GetModelName(),
 		HNSWM:              cfg.GetHNSWM(),
 		VectorElementType:  cfg.GetVectorElementType(),
-		IndexRetentionDays: utils.Ptr(cfg.GetIndexRetentionDays()),
+		IndexRetentionDays: new(cfg.GetIndexRetentionDays()),
 	})
 	result.ModelCompatible = compat.Compatible
 	result.ModelNeedsReindex = compat.NeedsReindex
@@ -284,6 +285,8 @@ type MCPServerInfo struct {
 	Enabled    bool   `json:"enabled"`
 	// ToolConfigs is populated for plugin rows only.
 	ToolConfigs []mcp.ToolConfig `json:"toolConfigs,omitempty"`
+	// ID is the stable ABAC policy identity when present.
+	ID string `json:"id,omitempty"`
 }
 
 // MCPToolsResponse represents the response structure for MCP tools endpoint
@@ -291,7 +294,24 @@ type MCPToolsResponse struct {
 	Servers []MCPServerInfo `json:"servers"`
 }
 
-// handleGetMCPTools discovers and returns tools from all configured MCP servers
+const maxConcurrentMCPDiscoveries = 32
+
+// mcpDiscoveryRow is one row of the admin MCP tools response together with the
+// probe that fills in its tools. discover is nil for rows rendered without
+// contacting the server: disabled plugin servers, and servers excluded by a
+// duplicate-name or duplicate-URL conflict.
+type mcpDiscoveryRow struct {
+	info     MCPServerInfo
+	discover func() ([]MCPToolInfo, error)
+	// tools and err hold discover's outcome.
+	tools []MCPToolInfo
+	err   error
+}
+
+// handleGetMCPTools discovers and returns tools from all configured MCP servers.
+// Every server is probed concurrently, so the response arrives in roughly the
+// time of the slowest server rather than the sum of all of them; rows keep their
+// configured order regardless of which server answers first.
 func (a *API) handleGetMCPTools(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
@@ -300,101 +320,163 @@ func (a *API) handleGetMCPTools(c *gin.Context) {
 		return
 	}
 
-	mcpConfig := a.config.MCP()
+	rows := a.buildMCPDiscoveryRows(c.Request.Context(), userID)
 
-	response := MCPToolsResponse{
-		Servers: make([]MCPServerInfo, 0, len(mcpConfig.Servers)+1),
-	}
-
-	embeddedServer := a.mcpClientManager.GetEmbeddedServer()
-	if embeddedServer != nil {
-		serverInfo := MCPServerInfo{
-			Name:       mcp.EmbeddedServerName,
-			URL:        mcp.EmbeddedClientKey,
-			Tools:      []MCPToolInfo{},
-			Error:      nil,
-			ServerType: "embedded",
-			Enabled:    true,
-		}
-
-		// Embedded MCP is always available after PR #617, even if older configs still
-		// have the legacy toggle stored as false.
-		tools, err := a.discoverEmbeddedServerTools(c.Request.Context(), userID, mcpConfig.EmbeddedServer, embeddedServer)
-		if err != nil {
-			errMsg := err.Error()
-			serverInfo.Error = &errMsg
-		} else {
-			serverInfo.Tools = tools
-		}
-
-		response.Servers = append(response.Servers, serverInfo)
-	}
-
-	// Discover tools from each configured remote server
-	for _, serverConfig := range mcpConfig.Servers {
-		if !serverConfig.Enabled {
+	slots := make(chan struct{}, maxConcurrentMCPDiscoveries)
+	var wg sync.WaitGroup
+	for i := range rows {
+		if rows[i].discover == nil {
 			continue
 		}
-		serverInfo := MCPServerInfo{
-			Name:       serverConfig.Name,
-			URL:        serverConfig.BaseURL,
-			Tools:      []MCPToolInfo{},
-			Error:      nil,
-			ServerType: "remote",
-			Enabled:    serverConfig.Enabled,
-		}
-
-		// Try to connect to the server and discover tools
-		tools, err := a.discoverRemoteServerTools(c.Request.Context(), userID, serverConfig)
-		if err != nil {
-			var oauthErr *mcp.OAuthNeededError
-			if errors.As(err, &oauthErr) {
-				serverInfo.NeedsOAuth = true
-				serverInfo.OAuthURL = oauthErr.AuthURL()
-			} else {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			}
-		} else {
-			serverInfo.Tools = tools
-		}
-
-		response.Servers = append(response.Servers, serverInfo)
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			rows[i].tools, rows[i].err = rows[i].discover()
+		})
 	}
+	wg.Wait()
 
-	// Render disabled plugin entries (with an empty tool list) so the admin UI
-	// can re-enable them. Skip orphans hydrated from persisted config without
-	// a live source-plugin registration; surfacing them as "session not found"
-	// rows is misleading, and their persisted policy is preserved on disk
-	// regardless of whether they appear here.
-	for _, cfg := range a.mcpClientManager.ListPluginServers() {
-		if !a.mcpClientManager.IsPluginRegistered(cfg.PluginID) {
-			continue
+	response := MCPToolsResponse{Servers: make([]MCPServerInfo, 0, len(rows))}
+	for _, row := range rows {
+		info := row.info
+		if row.discover != nil {
+			applyMCPDiscoveryResult(&info, row.tools, row.err)
 		}
-		serverInfo := MCPServerInfo{
-			Name:        cfg.Name,
-			URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
-			Tools:       []MCPToolInfo{},
-			Error:       nil,
-			ServerType:  "plugin",
-			Enabled:     cfg.Enabled,
-			ToolConfigs: cfg.ToolConfigs,
-		}
-
-		if cfg.Enabled {
-			tools, err := a.discoverPluginServerTools(c.Request.Context(), userID, cfg)
-			if err != nil {
-				errMsg := err.Error()
-				serverInfo.Error = &errMsg
-			} else {
-				serverInfo.Tools = tools
-			}
-		}
-
-		response.Servers = append(response.Servers, serverInfo)
+		response.Servers = append(response.Servers, info)
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// buildMCPDiscoveryRows snapshots every server the admin UI should render, in
+// response order, before any network work starts.
+func (a *API) buildMCPDiscoveryRows(ctx context.Context, userID string) []mcpDiscoveryRow {
+	mcpConfig := a.config.MCP()
+	rows := make([]mcpDiscoveryRow, 0, len(mcpConfig.Servers)+1)
+
+	if embeddedServer := a.mcpClientManager.GetEmbeddedServer(); embeddedServer != nil {
+		embeddedConfig := mcpConfig.EmbeddedServer
+		rows = append(rows, mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:       mcp.EmbeddedServerName,
+				URL:        mcp.EmbeddedClientKey,
+				Tools:      []MCPToolInfo{},
+				ServerType: "embedded",
+				// Embedded MCP is always available after PR #617, even if older
+				// configs still have the legacy toggle stored as false.
+				Enabled: true,
+				ID:      embeddedConfig.ID,
+			},
+			discover: func() ([]MCPToolInfo, error) {
+				return a.discoverEmbeddedServerTools(ctx, userID, embeddedConfig, embeddedServer)
+			},
+		})
+	}
+
+	// Conflicting entries are excluded from the runtime because they share a
+	// client-map key or tools-cache entry; report the conflict here so an admin
+	// can see why the server is not working.
+	conflictMessages := make(map[int]string)
+	for _, conflict := range mcpConfig.ServerConflicts() {
+		conflictMessages[conflict.Index] = conflict.Error()
+	}
+
+	for i, serverConfig := range mcpConfig.Servers {
+		if !serverConfig.Enabled {
+			continue
+		}
+
+		row := mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:       serverConfig.Name,
+				URL:        serverConfig.BaseURL,
+				Tools:      []MCPToolInfo{},
+				ServerType: "remote",
+				Enabled:    serverConfig.Enabled,
+				ID:         serverConfig.ID,
+			},
+		}
+		if message, conflicting := conflictMessages[i]; conflicting {
+			row.info.Error = &message
+		} else {
+			row.discover = func() ([]MCPToolInfo, error) {
+				return a.discoverRemoteServerTools(ctx, userID, serverConfig)
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	// Render disabled plugin entries (with an empty tool list) so the admin UI
+	// can re-enable them. Skip config-only orphans without a live source-plugin
+	// registration; their persisted identity and policy remain on disk.
+	for _, cfg := range a.mcpClientManager.ListPluginServers() {
+		if !isPluginMCPServerRegistered(a.mcpClientManager, cfg.PluginID) {
+			continue
+		}
+
+		row := mcpDiscoveryRow{
+			info: MCPServerInfo{
+				Name:        cfg.Name,
+				URL:         fmt.Sprintf("plugin://%s%s", cfg.PluginID, cfg.Path),
+				Tools:       []MCPToolInfo{},
+				ServerType:  "plugin",
+				Enabled:     cfg.Enabled,
+				ToolConfigs: cfg.ToolConfigs,
+				ID:          cfg.ID,
+			},
+		}
+		if cfg.Enabled {
+			row.discover = func() ([]MCPToolInfo, error) {
+				return a.discoverPluginServerTools(ctx, userID, cfg)
+			}
+		}
+		rows = append(rows, row)
+	}
+
+	return rows
+}
+
+func isPluginMCPServerRegistered(manager MCPClientManager, pluginID string) bool {
+	registry, ok := manager.(interface {
+		IsPluginRegistered(string) bool
+	})
+	if ok {
+		return registry.IsPluginRegistered(pluginID)
+	}
+	for _, cfg := range manager.ListPluginServers() {
+		if cfg.PluginID == pluginID {
+			return true
+		}
+	}
+	return false
+}
+
+func applyMCPDiscoveryResult(info *MCPServerInfo, tools []MCPToolInfo, err error) {
+	if err == nil {
+		info.Tools = tools
+		return
+	}
+
+	if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
+		info.NeedsOAuth = true
+		info.OAuthURL = oauthErr.AuthURL()
+		return
+	}
+
+	info.Error = new(err.Error())
+}
+
+// toMCPToolInfos converts discovered mcp tool metadata to the API response shape.
+func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
+	tools := make([]MCPToolInfo, 0, len(toolInfos))
+	for _, toolInfo := range toolInfos {
+		tools = append(tools, MCPToolInfo{
+			Name:        toolInfo.Name,
+			Description: toolInfo.Description,
+			InputSchema: toolInfo.InputSchema,
+		})
+	}
+	return tools
 }
 
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
@@ -404,16 +486,7 @@ func (a *API) discoverRemoteServerTools(ctx context.Context, userID string, serv
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // discoverEmbeddedServerTools connects to the embedded MCP server and discovers its tools
@@ -425,16 +498,7 @@ func (a *API) discoverEmbeddedServerTools(ctx context.Context, requestingAdminID
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // ClearMCPToolsCacheResponse represents the response for clearing the cache
@@ -477,16 +541,7 @@ func (a *API) discoverPluginServerTools(ctx context.Context, userID string, cfg 
 		return nil, err
 	}
 
-	tools := make([]MCPToolInfo, 0, len(toolInfos))
-	for _, toolInfo := range toolInfos {
-		tools = append(tools, MCPToolInfo{
-			Name:        toolInfo.Name,
-			Description: toolInfo.Description,
-			InputSchema: toolInfo.InputSchema,
-		})
-	}
-
-	return tools, nil
+	return toMCPToolInfos(toolInfos), nil
 }
 
 // UpdatePluginServerRequest is the body shape for PUT /admin/mcp/plugin-servers/:pluginID.
@@ -520,7 +575,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 	audit.AddParam(auditRec(c), "tool_configs_changed", req.ToolConfigs != nil)
 
 	live, foundLive := a.mcpClientManager.GetPluginServer(pluginID)
-	if !foundLive {
+	if !foundLive || !isPluginMCPServerRegistered(a.mcpClientManager, pluginID) {
 		c.AbortWithError(http.StatusNotFound, fmt.Errorf("plugin MCP server %q is not registered", pluginID))
 		return
 	}
@@ -533,40 +588,57 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		updated.ToolConfigs = *req.ToolConfigs
 	}
 
-	// Effective final value after partial-update merge, not the raw request.
+	// Best-effort fallback; overwritten below when persisted state is available.
 	audit.AddParam(auditRec(c), "enabled", updated.Enabled)
 
-	existing, getErr := a.configStore.GetConfig()
-	if getErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to load config for plugin-server save: %w", getErr))
-		return
-	}
-	if existing == nil {
-		c.AbortWithError(http.StatusInternalServerError, errors.New("no plugin configuration available"))
-		return
-	}
-	// Clone to avoid mutating the store's cached pointer.
-	cfg := existing.Clone()
-
-	// Merge by PluginID against the persisted list rather than overwriting
-	// with the in-memory snapshot, which would silently drop entries for
-	// plugins that are persisted but currently inactive in memory.
-	merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
-	mergedIdx := -1
-	for i := range merged {
-		if merged[i].PluginID == updated.PluginID {
-			mergedIdx = i
-			break
+	// Apply the request to the freshest persisted entry inside the UpdateConfig
+	// transform; rebasing onto the live snapshot read above would let two
+	// concurrent field updates overwrite each other.
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			// Replacing a nil persisted config with a zero-value baseline
+			// would clobber unrelated settings on the next save.
+			return config.Config{}, errors.New("no plugin configuration available")
 		}
-	}
-	if mergedIdx >= 0 {
-		merged[mergedIdx] = updated
-	} else {
-		merged = append(merged, updated)
-	}
-	cfg.MCP.PluginServers = merged
+		// Clone to avoid mutating the store's cached pointer.
+		cfg := prev.Clone()
 
-	if err := a.configStore.SaveConfig(*cfg); err != nil {
+		// Merge by PluginID against the persisted list rather than overwriting
+		// with the in-memory snapshot, which would silently drop entries for
+		// plugins that are persisted but currently inactive in memory.
+		merged := append([]mcp.PluginServerConfig(nil), cfg.MCP.PluginServers...)
+		mergedIdx := -1
+		for i := range merged {
+			if merged[i].PluginID == pluginID {
+				mergedIdx = i
+				break
+			}
+		}
+
+		// Live entry owns Name/Path/ExposeExternal; persisted admin fields
+		// (Enabled, ToolConfigs, ID) overlay via the shared merge helper.
+		base := live
+		if mergedIdx >= 0 {
+			base = mcp.ApplyPersistedPluginServerFields(base, merged[mergedIdx])
+		}
+		if req.Enabled != nil {
+			base.Enabled = *req.Enabled
+		}
+		if req.ToolConfigs != nil {
+			base.ToolConfigs = *req.ToolConfigs
+		}
+		updated = base
+		audit.AddParam(auditRec(c), "enabled", updated.Enabled)
+
+		if mergedIdx >= 0 {
+			merged[mergedIdx] = base
+		} else {
+			merged = append(merged, base)
+		}
+		cfg.MCP.PluginServers = merged
+		return *cfg, nil
+	})
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return
 	}
@@ -580,8 +652,13 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.UpdatePluginServer(updated)
-	a.configUpdater.Update(cfg)
+	// Patch admin fields rather than replace the whole object, so plugin-owned
+	// fields survive a concurrent re-registration. A missing entry means the
+	// plugin unregistered; it is hydrated again on its next registration.
+	if patched, ok := a.mcpClientManager.UpdatePluginServerAdminFields(pluginID, updated.Enabled, updated.ToolConfigs); ok {
+		updated = patched
+	}
+	a.configUpdater.Update(&saved)
 
 	// Rebuild when either old or new state was external so removed tools
 	// disappear from the aggregate server.

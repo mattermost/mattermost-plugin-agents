@@ -160,7 +160,7 @@ export class LLMBotPostHelper {
     getReasoningDisplay(postId?: string): Locator {
         const baseLocator = postId ? this.getLLMBotPost(postId) : this.getLLMBotPost();
         // Scope to reasoning rows that actually render the Thinking label.
-        // This avoids matching the precontent "Starting..." placeholder row,
+        // This avoids matching the precontent "Working..." placeholder row,
         // which reuses the MinimalReasoningContainer styles.
         return baseLocator.locator(this.reasoningSelector).filter({hasText: 'Thinking'}).first();
     }
@@ -194,7 +194,7 @@ export class LLMBotPostHelper {
      */
     getReasoningSpinner(postId?: string): Locator {
         // Scope spinner lookup to the actual reasoning row to avoid matching
-        // the precontent "Starting..." spinner.
+        // the precontent "Working..." spinner.
         return this.getReasoningDisplay(postId).locator('div[class*="LoadingSpinner"]').first();
     }
 

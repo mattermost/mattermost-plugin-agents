@@ -84,7 +84,7 @@ func toolLicenseTestBuilder(t *testing.T, licensed bool) *llmcontext.Builder {
 	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}
@@ -114,7 +114,7 @@ func toolLicenseConversations(t *testing.T, convStore *loadedStateFlowStore, lic
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := toolLicenseChecker(t, licensed)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{toolLicenseTestBot()})
 
 	mmClient := mocks.NewMockClient(t)

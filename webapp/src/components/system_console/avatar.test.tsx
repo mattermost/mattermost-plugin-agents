@@ -5,10 +5,8 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-// Same module id avatar.tsx imports. The suite-wide asset mapper stubs pngs;
-// asserting against this value is stable whether the file runs alone or with
-// the rest of the suite.
-// @ts-ignore it exists
+// Suite-wide mapper stubs pngs; import the same module id avatar.tsx uses.
+//@ts-ignore it exists
 import aiIcon from 'src/../../assets/bot_icon.png';
 
 import AvatarItem from './avatar';

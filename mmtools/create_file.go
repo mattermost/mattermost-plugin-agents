@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	otelcodes "go.opentelemetry.io/otel/codes"
 
@@ -81,36 +79,23 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 	if client == nil {
 		return "file creation is not available", errors.New("mattermost client unavailable for CreateFile")
 	}
-	if llmCtx == nil || llmCtx.Channel == nil || llmCtx.Channel.Id == "" {
-		return "file creation is not available in this context because there is no conversation channel to hold the file", errors.New("CreateFile requires a channel-scoped context")
-	}
-	// Every flow that catalogs CreateFile sets RequestingUser; a nil value is
-	// a bug, so fail closed rather than skip the permission check below.
-	if llmCtx.RequestingUser == nil || llmCtx.RequestingUser.Id == "" {
-		return "file creation is not available in this context", errors.New("CreateFile requires a requesting user")
+	if policyErr := uploadPolicyAllowed(client, llmCtx); policyErr != nil {
+		return createFilePolicyUserMessage(policyErr), fmt.Errorf("CreateFile rejected: %w", policyErr)
 	}
 
-	name := filepath.Base(strings.TrimSpace(args.FileName))
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
-		return "file_name must be a plain file name with an optional extension, e.g. report.md or data.csv", errors.New("invalid CreateFile file name")
+	name, nameErr := validateUploadFileName(args.FileName)
+	if errors.Is(nameErr, errUploadFileNameTooLong) {
+		return fmt.Sprintf("file_name must be at most %d characters", maxCreateFileNameLength), fmt.Errorf("CreateFile: %w", nameErr)
 	}
-	if utf8.RuneCountInString(name) > maxCreateFileNameLength {
-		return fmt.Sprintf("file_name must be at most %d characters", maxCreateFileNameLength), errors.New("CreateFile file name too long")
+	if nameErr != nil {
+		return "file_name must be a plain file name with an optional extension, e.g. report.md or data.csv", fmt.Errorf("CreateFile: %w", nameErr)
 	}
 
 	if args.Content == "" {
 		return "content must not be empty", errors.New("CreateFile content empty")
 	}
 
-	// UploadFile goes through the admin-level plugin API, which skips the
-	// per-user checks of the api4 upload endpoint, so enforce the server
-	// attachment policy, size limit, and the requesting user's upload
-	// permission here. A nil EnableFileAttachments means enabled (server default).
-	cfg := client.GetConfig()
-	if cfg != nil && cfg.FileSettings.EnableFileAttachments != nil && !*cfg.FileSettings.EnableFileAttachments {
-		return "file attachments are disabled on this server", errors.New("CreateFile rejected: file attachments are disabled by server config")
-	}
-	if limit := createFileContentLimit(cfg); int64(len(args.Content)) > limit {
+	if limit := createFileContentLimit(client.GetConfig()); int64(len(args.Content)) > limit {
 		return fmt.Sprintf("content exceeds the %d-byte file size limit; split the content into multiple smaller files", limit), errors.New("CreateFile content too large")
 	}
 
@@ -118,10 +103,6 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 	// the conversation flow) so excess calls are rejected before uploading.
 	if slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn); len(llmCtx.CreatedFilesList()) >= slots {
 		return fmt.Sprintf("no more files can be attached to this reply (limit %d per post); do not create more files in this reply", maxCreatedFilesPerTurn), errors.New("CreateFile per-reply cap reached")
-	}
-
-	if !client.HasPermissionToChannel(llmCtx.RequestingUser.Id, llmCtx.Channel.Id, model.PermissionUploadFile) {
-		return "you do not have permission to attach files in this channel", errors.New("CreateFile rejected: requesting user lacks upload permission in the channel")
 	}
 
 	_, span := telemetry.Tracer().Start(ctx, "create file upload")
@@ -145,6 +126,21 @@ func resolveCreateFile(ctx context.Context, client mmapi.Client, llmCtx *llm.Con
 		return "file upload failed", fmt.Errorf("failed to marshal CreateFile result: %w", err)
 	}
 	return string(result), nil
+}
+
+// createFilePolicyUserMessage maps a shared upload-policy failure to the
+// tool-result message returned to the model.
+func createFilePolicyUserMessage(err error) string {
+	switch {
+	case errors.Is(err, errUploadNoChannel):
+		return "file creation is not available in this context because there is no conversation channel to hold the file"
+	case errors.Is(err, errUploadDisabled):
+		return "file attachments are disabled on this server"
+	case errors.Is(err, errUploadNoPermission):
+		return "you do not have permission to attach files in this channel"
+	default: // errUploadNoUser
+		return "file creation is not available in this context"
+	}
 }
 
 // createFileContentLimit returns the server's max file size, falling back to

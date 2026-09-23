@@ -16,11 +16,6 @@ type GetPostReactionsArgs struct {
 	PostID string `json:"post_id" jsonschema:"The ID of the post,minLength=26,maxLength=26"`
 }
 
-// GetBulkReactionsArgs represents arguments for the get_bulk_reactions tool.
-type GetBulkReactionsArgs struct {
-	PostIDs []string `json:"post_ids" jsonschema:"The IDs of the posts to fetch reactions for"`
-}
-
 // ListCustomEmojiArgs represents arguments for the list_custom_emoji tool.
 type ListCustomEmojiArgs struct {
 	Page    int `json:"page,omitempty" jsonschema:"Page number for pagination (default: 0),minimum=0"`
@@ -46,7 +41,6 @@ type RemoveReactionArgs struct {
 
 const (
 	getPostReactionsDescription  = "List the emoji reactions on a post and who reacted. Parameters: post_id (required). Returns each emoji with its count and reacting usernames."
-	getBulkReactionsDescription  = "Fetch reactions for many posts at once. Parameters: post_ids (required list). Returns reactions grouped per post."
 	listCustomEmojiDescription   = "List the server's custom emoji. Parameters: page, per_page. Returns each emoji's name and ID."
 	searchCustomEmojiDescription = "Search custom emoji by name. Parameters: term (required). Returns matching custom emoji."
 	addReactionDescription       = "Add an emoji reaction to a post. Parameters: post_id (required), emoji_name (required, no colons)."
@@ -56,42 +50,11 @@ const (
 // getReactionTools returns the reaction and custom-emoji tools.
 func (p *MattermostToolProvider) getReactionTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "get_post_reactions",
-			Description: getPostReactionsDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetPostReactionsArgs](string(p.accessMode)),
-			Resolver:    typed("get_post_reactions", p.toolGetPostReactions),
-		},
-		{
-			Name:        "get_bulk_reactions",
-			Description: getBulkReactionsDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetBulkReactionsArgs](string(p.accessMode)),
-			Resolver:    typed("get_bulk_reactions", p.toolGetBulkReactions),
-		},
-		{
-			Name:        "list_custom_emoji",
-			Description: listCustomEmojiDescription,
-			Schema:      NewJSONSchemaForAccessMode[ListCustomEmojiArgs](string(p.accessMode)),
-			Resolver:    typed("list_custom_emoji", p.toolListCustomEmoji),
-		},
-		{
-			Name:        "search_custom_emoji",
-			Description: searchCustomEmojiDescription,
-			Schema:      NewJSONSchemaForAccessMode[SearchCustomEmojiArgs](string(p.accessMode)),
-			Resolver:    typed("search_custom_emoji", p.toolSearchCustomEmoji),
-		},
-		{
-			Name:        "add_reaction",
-			Description: addReactionDescription,
-			Schema:      NewJSONSchemaForAccessMode[AddReactionArgs](string(p.accessMode)),
-			Resolver:    typed("add_reaction", p.toolAddReaction),
-		},
-		{
-			Name:        "remove_reaction",
-			Description: removeReactionDescription,
-			Schema:      NewJSONSchemaForAccessMode[RemoveReactionArgs](string(p.accessMode)),
-			Resolver:    typed("remove_reaction", p.toolRemoveReaction),
-		},
+		mcpTool(p, "get_post_reactions", getPostReactionsDescription, p.toolGetPostReactions),
+		mcpTool(p, "list_custom_emoji", listCustomEmojiDescription, p.toolListCustomEmoji),
+		mcpTool(p, "search_custom_emoji", searchCustomEmojiDescription, p.toolSearchCustomEmoji),
+		mcpTool(p, "add_reaction", addReactionDescription, p.toolAddReaction),
+		mcpTool(p, "remove_reaction", removeReactionDescription, p.toolRemoveReaction),
 	}
 }
 
@@ -110,37 +73,6 @@ func (p *MattermostToolProvider) toolGetPostReactions(mcpContext *MCPToolContext
 
 	var result strings.Builder
 	format.WriteReactions(&result, args.PostID, reactions, usernames)
-	return result.String(), nil
-}
-
-// toolGetBulkReactions implements the get_bulk_reactions tool.
-func (p *MattermostToolProvider) toolGetBulkReactions(mcpContext *MCPToolContext, args GetBulkReactionsArgs) (string, error) {
-	if len(args.PostIDs) == 0 {
-		return "", fmt.Errorf("post_ids cannot be empty")
-	}
-	for _, id := range args.PostIDs {
-		if err := requireID("post_ids", id); err != nil {
-			return "", err
-		}
-	}
-
-	byPost, _, err := mcpContext.Client.GetBulkReactions(mcpContext.Ctx, args.PostIDs)
-	if err != nil {
-		return "", fmt.Errorf("error fetching reactions: %w", err)
-	}
-
-	// Collect all reactions for a single username lookup.
-	all := make([]*model.Reaction, 0)
-	for _, reactions := range byPost {
-		all = append(all, reactions...)
-	}
-	usernames := p.reactionUsernames(mcpContext, all)
-
-	var result strings.Builder
-	for _, postID := range args.PostIDs {
-		format.WriteReactions(&result, postID, byPost[postID], usernames)
-		result.WriteString("\n")
-	}
 	return result.String(), nil
 }
 
@@ -261,7 +193,7 @@ func (p *MattermostToolProvider) formatEmojiList(mcpContext *MCPToolContext, emo
 	}
 
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d custom emoji:\n\n", len(emojis)))
+	fmt.Fprintf(&result, "Found %d custom emoji:\n\n", len(emojis))
 	for i, emoji := range emojis {
 		format.WriteEmoji(&result, format.EmojiEntry{
 			HeaderLabel: fmt.Sprintf("Emoji %d", i+1),

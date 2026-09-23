@@ -277,7 +277,7 @@ func TestOAuthMetadataEndpoints(t *testing.T) {
 			body, err := io.ReadAll(resp.Body)
 			require.NoError(t, err)
 
-			var metadata map[string]interface{}
+			var metadata map[string]any
 			err = json.Unmarshal(body, &metadata)
 			require.NoError(t, err)
 

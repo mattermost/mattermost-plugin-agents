@@ -7,7 +7,7 @@ import styled, {css, keyframes} from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
-import {toolDisplayName} from '@/utils/tool_names';
+import {toolDisplayName} from '@/utils/tool_identity';
 
 import ToolStatusIcon from '../tool_status_icon';
 import {ToolCallStatus} from '../tool_types';
@@ -186,7 +186,7 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
             return (
                 <>
                     <ToolStatusIcon status={item.toolCall.status}/>
-                    <ActivityLabel>{toolDisplayName(item.toolCall.name)}</ActivityLabel>
+                    <ActivityLabel>{toolDisplayName(item.toolCall)}</ActivityLabel>
                 </>
             );
         default: {

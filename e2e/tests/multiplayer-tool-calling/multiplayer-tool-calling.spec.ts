@@ -42,7 +42,7 @@ const getChannelInfoToolLabel = 'Get Channel Info';
 // A tool card only offers expansion when the viewer may see its arguments and
 // results, which is what the chevron in its header signals.
 const TOOL_CARD_CHEVRON_SELECTOR = '[class*="StyledChevronIcon"]';
-const TOOL_CARD_ARGUMENTS_SELECTOR = '[class*="ToolCallArguments"]';
+const TOOL_CARD_ARGUMENTS_SELECTOR = '[class*="FieldList"], [class*="NoParams"]';
 
 const multiplayerCustomInstructions = [
     'You have access to Mattermost tools including create_post and get_channel_info.',
@@ -407,14 +407,13 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             await waitForAnyButtonInThread(invokerPage, ['Accept', 'Share', 'Keep private']);
 
             const onlookerRhs = onlookerPage.locator('#rhsContainer');
-            await expect(onlookerRhs.locator('[data-testid="llm-bot-post"]').last()).toBeVisible({timeout: 30000});
+            const onlookerBot = onlookerRhs.locator('[data-testid="llm-bot-post"]').last();
+            await expect(onlookerBot).toBeVisible({timeout: 30000});
 
             // Onlookers owe no decision, so the pending call folds into the
             // activity area instead of rendering as an approval card.
-            await expectToolActivityCurrent(
-                onlookerRhs.locator('[data-testid="llm-bot-post"]').last(),
-                getChannelInfoToolLabel,
-            );
+            await expectToolActivityCurrent(onlookerBot, getChannelInfoToolLabel);
+            await expect(onlookerBot.getByText('Working...', {exact: true})).toHaveCount(0);
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Reject'})).not.toBeVisible();
 

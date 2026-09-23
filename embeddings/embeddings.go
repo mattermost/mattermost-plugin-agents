@@ -54,14 +54,11 @@ const MaxSearchResults = 1000
 
 // SearchOptions contains parameters for search operations
 type SearchOptions struct {
-	Limit         int
-	Offset        int
-	MinScore      float32
-	TeamID        string
-	ChannelID     string
-	UserID        string // User ID for permission checks
-	CreatedAfter  int64
-	CreatedBefore int64
+	Limit     int
+	Offset    int
+	TeamID    string
+	ChannelID string
+	UserID    string // User ID for permission checks
 }
 
 // EmbeddingSearch defines the high-level interface for storing and searching using embeddings
@@ -203,16 +200,22 @@ func (c *EmbeddingSearchConfig) GetReindexWorkers() int {
 	return min(c.ReindexWorkers, MaxReindexWorkers)
 }
 
+// ClampHNSWM clamps an HNSW m to pgvector's [2, 100] range, with unset (<=0)
+// falling back to the default.
+func ClampHNSWM(m int) int {
+	if m <= 0 {
+		return DefaultHNSWM
+	}
+	if m < MinHNSWM {
+		return MinHNSWM
+	}
+	return min(m, MaxHNSWM)
+}
+
 // GetHNSWM returns the configured HNSW m, clamped to pgvector's [2, 100]
 // range, with unset (<=0) falling back to the default.
 func (c *EmbeddingSearchConfig) GetHNSWM() int {
-	if c.HNSWM <= 0 {
-		return DefaultHNSWM
-	}
-	if c.HNSWM < MinHNSWM {
-		return MinHNSWM
-	}
-	return min(c.HNSWM, MaxHNSWM)
+	return ClampHNSWM(c.HNSWM)
 }
 
 // NormalizeVectorElementType keeps only "halfvec"; anything else (including

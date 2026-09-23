@@ -6,8 +6,13 @@ package bifrost
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"net"
 	"net/http"
@@ -92,7 +97,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2048),
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
@@ -136,7 +141,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
+			checkEffort:      new("high"),
 		},
 		{
 			name:             "Gemini with thinking budget prefers MaxTokens",
@@ -145,14 +150,14 @@ func TestBuildChatReasoning(t *testing.T) {
 			thinkingBudget:   4096,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(4096),
+			checkMaxTokens:   new(4096),
 		},
 		{
 			name:             "Gemini default effort when nothing set",
 			provider:         schemas.Gemini,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
+			checkEffort:      new("medium"),
 		},
 		{
 			name:             "Vertex with thinking budget prefers MaxTokens",
@@ -160,7 +165,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   2000,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2000),
+			checkMaxTokens:   new(2000),
 		},
 		{
 			name:             "ReasoningDisabled returns nil",
@@ -182,7 +187,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   8192,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(8191),
+			checkMaxTokens:   new(8191),
 		},
 		{
 			name:             "no valid budget below the minimum returns nil",
@@ -204,7 +209,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			checkEffort:      Ptr("high"),
+			checkEffort:      new("high"),
 		},
 	}
 
@@ -332,8 +337,8 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 		}},
 	}
 
-	first := b.createMultimodalContent(post)
-	second := b.createMultimodalContent(post)
+	first := b.createMultimodalContent(post, 0)
+	second := b.createMultimodalContent(post, 0)
 
 	require.Len(t, first, 2)
 	require.Len(t, second, 2)
@@ -341,6 +346,229 @@ func TestCreateMultimodalContentUsesReusableFileData(t *testing.T) {
 	require.NotNil(t, second[1].ImageURLStruct)
 	assert.Equal(t, first[1].ImageURLStruct.URL, second[1].ImageURLStruct.URL)
 	assert.Contains(t, second[1].ImageURLStruct.URL, "UE5HREFUQQ==")
+}
+
+func TestCreateMultimodalContentOmitsOversizedImages(t *testing.T) {
+	tests := []struct {
+		name        string
+		maxDim      int
+		mimeType    string
+		width       int
+		height      int
+		wantOmitted bool
+	}{
+		{
+			name:        "image at Anthropic dimension limit is included",
+			maxDim:      anthropicMaxImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicMaxImageDimension,
+			height:      1,
+			wantOmitted: false,
+		},
+		{
+			name:        "PNG wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicMaxImageDimension + 1,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "image taller than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
+			mimeType:    "image/png",
+			width:       1,
+			height:      anthropicMaxImageDimension + 1,
+			wantOmitted: true,
+		},
+		{
+			name:        "JPEG wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
+			mimeType:    "image/jpeg",
+			width:       anthropicMaxImageDimension + 1,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "GIF wider than Anthropic dimension limit is omitted",
+			maxDim:      anthropicMaxImageDimension,
+			mimeType:    "image/gif",
+			width:       anthropicMaxImageDimension + 1,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "image between many-image and single-image Anthropic limits is omitted at 2000",
+			maxDim:      anthropicManyImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicManyImageDimension + 1,
+			height:      1,
+			wantOmitted: true,
+		},
+		{
+			name:        "OpenAI image just over 8000 is still included",
+			maxDim:      openaiMaxImageDimension,
+			mimeType:    "image/png",
+			width:       anthropicMaxImageDimension + 1,
+			height:      1,
+			wantOmitted: false,
+		},
+		{
+			name:        "zero max dimension disables omission",
+			maxDim:      0,
+			mimeType:    "image/png",
+			width:       20000,
+			height:      1,
+			wantOmitted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data := encodeTestImage(t, tt.mimeType, tt.width, tt.height)
+
+			b := &LLM{}
+			parts := b.createMultimodalContent(llm.Post{
+				Role:    llm.PostRoleUser,
+				Message: "summarize this image",
+				Files: []llm.File{{
+					MimeType: tt.mimeType,
+					Size:     int64(len(data)),
+					Data:     data,
+				}},
+			}, tt.maxDim)
+
+			require.Len(t, parts, 2)
+			if tt.wantOmitted {
+				assert.Equal(t, schemas.ChatContentBlockTypeText, parts[1].Type)
+				assert.Nil(t, parts[1].ImageURLStruct)
+				require.NotNil(t, parts[1].Text)
+				assert.Contains(t, *parts[1].Text, "Image omitted")
+				assert.Contains(t, *parts[1].Text, fmt.Sprintf("%dx%d", tt.width, tt.height))
+				assert.Contains(t, *parts[1].Text, fmt.Sprintf("%d pixels per dimension", tt.maxDim))
+				return
+			}
+
+			assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[1].Type)
+			assert.Nil(t, parts[1].Text)
+			require.NotNil(t, parts[1].ImageURLStruct)
+			assert.Contains(t, parts[1].ImageURLStruct.URL, "data:"+tt.mimeType+";base64,")
+		})
+	}
+
+	t.Run("continues processing valid images after an oversized image", func(t *testing.T) {
+		validPNG := encodeTestImage(t, "image/png", 10, 10)
+		oversizedPNG := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
+		validJPEG := encodeTestImage(t, "image/jpeg", 10, 10)
+		parts := (&LLM{}).createMultimodalContent(llm.Post{
+			Role:    llm.PostRoleUser,
+			Message: "summarize these images",
+			Files: []llm.File{
+				{MimeType: "image/png", Data: validPNG},
+				{MimeType: "image/png", Data: oversizedPNG},
+				{MimeType: "image/jpeg", Data: validJPEG},
+			},
+		}, anthropicMaxImageDimension)
+
+		require.Len(t, parts, 4)
+		assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[1].Type)
+		assert.Equal(t, schemas.ChatContentBlockTypeText, parts[2].Type)
+		assert.Equal(t, schemas.ChatContentBlockType("image_url"), parts[3].Type)
+		assert.Contains(t, parts[1].ImageURLStruct.URL, "data:image/png;base64,")
+		assert.Contains(t, *parts[2].Text, "Image omitted")
+		assert.Contains(t, parts[3].ImageURLStruct.URL, "data:image/jpeg;base64,")
+	})
+}
+
+func TestConvertMessagesAppliesProviderImageLimit(t *testing.T) {
+	overManyImage := encodeTestImage(t, "image/png", anthropicManyImageDimension+1, 1)
+	overAnthropic := encodeTestImage(t, "image/png", anthropicMaxImageDimension+1, 1)
+
+	files := make([]llm.File, anthropicManyImageThreshold+1)
+	for i := range files {
+		files[i] = llm.File{MimeType: "image/png", Data: overManyImage}
+	}
+
+	tests := []struct {
+		name        string
+		provider    schemas.ModelProvider
+		posts       []llm.Post
+		wantOmitted bool
+	}{
+		{
+			name:     "Anthropic omits above 8000 on a short request",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   []llm.File{{MimeType: "image/png", Data: overAnthropic}},
+			}},
+			wantOmitted: true,
+		},
+		{
+			name:     "Anthropic many-image request omits at 2000",
+			provider: schemas.Anthropic,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   files,
+			}},
+			wantOmitted: true,
+		},
+		{
+			name:     "Gemini does not omit an 8001px image",
+			provider: schemas.Gemini,
+			posts: []llm.Post{{
+				Role:    llm.PostRoleUser,
+				Message: "look",
+				Files:   []llm.File{{MimeType: "image/png", Data: overAnthropic}},
+			}},
+			wantOmitted: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts, llm.LanguageModelConfig{})
+			require.Len(t, messages, 1)
+			require.NotNil(t, messages[0].Content)
+			blocks := messages[0].Content.ContentBlocks
+			require.Greater(t, len(blocks), 1)
+
+			foundOmitted := false
+			for _, block := range blocks[1:] {
+				if block.Type == schemas.ChatContentBlockTypeText && block.Text != nil &&
+					strings.Contains(*block.Text, "Image omitted") {
+					foundOmitted = true
+				}
+			}
+			assert.Equal(t, tt.wantOmitted, foundOmitted)
+		})
+	}
+}
+
+func encodeTestImage(t *testing.T, mimeType string, width, height int) []byte {
+	t.Helper()
+
+	if mimeType == "image/webp" {
+		data, err := base64.StdEncoding.DecodeString("UklGRiIAAABXRUJQVlA4TBUAAAAv0UcAAAcQ0f/+B4CE8P+9FtH/lA4A")
+		require.NoError(t, err)
+		return data
+	}
+
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	var data bytes.Buffer
+	switch mimeType {
+	case "image/gif":
+		require.NoError(t, gif.Encode(&data, img, nil))
+	case "image/jpeg":
+		require.NoError(t, jpeg.Encode(&data, img, nil))
+	case "image/png":
+		require.NoError(t, png.Encode(&data, img))
+	default:
+		require.Fail(t, "unsupported test image MIME type", mimeType)
+	}
+	return data.Bytes()
 }
 
 // TestConvertToBifrostRequestOpus47Reasoning verifies that when our
@@ -427,7 +655,7 @@ func TestPromptCaching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{provider: tt.provider, fallbacks: tt.fallbacks}
+			b := &LLM{provider: tt.provider, fallbacks: testHops(tt.fallbacks, nil)}
 			cfg := llm.LanguageModelConfig{Model: "test-model", MaxGeneratedTokens: 100}
 
 			chatReq := b.convertToBifrostRequest(request, cfg)
@@ -708,8 +936,8 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Gemini with thinking budget prefers max_tokens and summary",
@@ -718,16 +946,16 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			thinkingBudget:   4096,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(4096),
-			checkSummary:     Ptr("auto"),
+			checkMaxTokens:   new(4096),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Gemini default effort when nothing set",
 			provider:         schemas.Gemini,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("medium"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Vertex with thinking budget",
@@ -735,15 +963,15 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   2000,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2000),
-			checkSummary:     Ptr("auto"),
+			checkMaxTokens:   new(2000),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Anthropic uses MaxTokens, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(2048),
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "Anthropic budget >= maxTokens is clamped below max_tokens",
@@ -751,7 +979,7 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			thinkingBudget:   8192,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   Ptr(8191),
+			checkMaxTokens:   new(8191),
 		},
 		{
 			name:             "Anthropic with no valid budget below the minimum returns nil",
@@ -766,16 +994,16 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Azure uses Effort with summary",
 			provider:         schemas.Azure,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkEffort:      Ptr("medium"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("medium"),
+			checkSummary:     new("auto"),
 		},
 		{
 			name:             "Mistral returns nil (no reasoning_effort support)",
@@ -826,8 +1054,8 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			reasoningEnabled: true,
 			reasoningEffort:  "high",
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			checkEffort:      Ptr("high"),
-			checkSummary:     Ptr("auto"),
+			checkEffort:      new("high"),
+			checkSummary:     new("auto"),
 		},
 	}
 
@@ -1149,7 +1377,7 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("hello")},
 				},
 			},
 			expected: 1,
@@ -1159,11 +1387,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("msg1")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("msg2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("msg2")},
 				},
 			},
 			expected: 1,
@@ -1178,19 +1406,19 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("resp1")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool1")}},
+							{ID: new("tc1"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: new("tool1")}},
 						},
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("resp2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("resp2")},
 					ChatAssistantMessage: &schemas.ChatAssistantMessage{
 						ToolCalls: []schemas.ChatAssistantMessageToolCall{
-							{ID: Ptr("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: Ptr("tool2")}},
+							{ID: new("tc2"), Function: schemas.ChatAssistantMessageToolCallFunction{Name: new("tool2")}},
 						},
 					},
 				},
@@ -1207,11 +1435,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("question")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("question")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleAssistant,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("answer")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("answer")},
 				},
 			},
 			expected: 2,
@@ -1221,16 +1449,16 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result1")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("result1")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc1"),
+						ToolCallID: new("tc1"),
 					},
 				},
 				{
 					Role:    schemas.ChatMessageRoleTool,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("result2")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("result2")},
 					ChatToolMessage: &schemas.ChatToolMessage{
-						ToolCallID: Ptr("tc2"),
+						ToolCallID: new("tc2"),
 					},
 				},
 			},
@@ -1241,11 +1469,11 @@ func TestMergeConsecutiveSameRoleMessages(t *testing.T) {
 			messages: []schemas.ChatMessage{
 				{
 					Role:    schemas.ChatMessageRoleSystem,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("system prompt")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("system prompt")},
 				},
 				{
 					Role:    schemas.ChatMessageRoleUser,
-					Content: &schemas.ChatMessageContent{ContentStr: Ptr("hello")},
+					Content: &schemas.ChatMessageContent{ContentStr: new("hello")},
 				},
 			},
 			expected: 2,
@@ -1323,9 +1551,6 @@ func TestNormalizeOpenAIBaseURL(t *testing.T) {
 	}
 }
 
-func intPtr(i int) *int       { return &i }
-func strPtr(s string) *string { return &s }
-
 func TestConvertBifrostAnnotation(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1351,11 +1576,11 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "OpenAI fields used when present",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:       "url_citation",
-				StartIndex: intPtr(10),
-				EndIndex:   intPtr(50),
-				URL:        strPtr("https://example.com"),
-				Title:      strPtr("Example"),
-				Text:       strPtr("cited text"),
+				StartIndex: new(10),
+				EndIndex:   new(50),
+				URL:        new("https://example.com"),
+				Title:      new("Example"),
+				Text:       new("cited text"),
 			},
 			index: 1,
 			expected: &llm.Annotation{
@@ -1372,8 +1597,8 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "nil StartIndex and EndIndex default to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type:  "url_citation",
-				URL:   strPtr("https://anthropic.com"),
-				Title: strPtr("Anthropic"),
+				URL:   new("https://anthropic.com"),
+				Title: new("Anthropic"),
 			},
 			index: 3,
 			expected: &llm.Annotation{
@@ -1387,7 +1612,7 @@ func TestConvertBifrostAnnotation(t *testing.T) {
 			name: "all position fields nil defaults to zero",
 			ann: &schemas.ResponsesOutputMessageContentTextAnnotation{
 				Type: "url_citation",
-				URL:  strPtr("https://example.com"),
+				URL:  new("https://example.com"),
 			},
 			index: 1,
 			expected: &llm.Annotation{
@@ -1555,10 +1780,10 @@ func TestConvertToBifrostRequestStructuredOutput(t *testing.T) {
 				require.NotNil(t, req.Params.ResponseFormat)
 				data, err := json.Marshal(*req.Params.ResponseFormat)
 				require.NoError(t, err)
-				var format map[string]interface{}
+				var format map[string]any
 				require.NoError(t, json.Unmarshal(data, &format))
 				assert.Equal(t, "json_schema", format["type"])
-				jsonSchema, ok := format["json_schema"].(map[string]interface{})
+				jsonSchema, ok := format["json_schema"].(map[string]any)
 				require.True(t, ok)
 				assert.Equal(t, "response", jsonSchema["name"])
 				assert.Equal(t, true, jsonSchema["strict"])
@@ -1798,7 +2023,7 @@ func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
 				provider:        schemas.OpenAI,
 				defaultModel:    "gpt-4o",
 				useResponsesAPI: tt.useResponsesAPI,
-				fallbacks:       tt.fallbacks,
+				fallbacks:       testHops(tt.fallbacks, nil),
 			}
 
 			var got []schemas.Fallback
@@ -1812,6 +2037,67 @@ func TestConvertToBifrostRequest_FallbacksAttached(t *testing.T) {
 
 			// The request must carry exactly the configured chain (nil when none).
 			assert.Equal(t, tt.fallbacks, got)
+		})
+	}
+}
+
+// testHops pairs fallbacks with service IDs; a nil ids leaves serviceID empty.
+func testHops(fallbacks []schemas.Fallback, ids []string) []fallbackHop {
+	var hops []fallbackHop
+	for i, fb := range fallbacks {
+		hop := fallbackHop{fallback: fb}
+		if ids != nil {
+			hop.serviceID = ids[i]
+		}
+		hops = append(hops, hop)
+	}
+	return hops
+}
+
+func TestConvertToBifrostRequest_RestrictedFallbacks(t *testing.T) {
+	configured := []schemas.Fallback{
+		{Provider: schemas.Anthropic, Model: "claude-sonnet-4-20250514"},
+		{Provider: schemas.Bedrock, Model: "anthropic.claude-3-sonnet-20240229-v1:0"},
+		{Provider: schemas.Gemini, Model: "gemini-2.5-pro"},
+	}
+	ids := []string{"svc-b", "svc-c", "svc-d"}
+	tests := []struct {
+		name      string
+		allowed   []string
+		want      []schemas.Fallback
+		responses bool
+	}{
+		{name: "chat, prefix of one", allowed: []string{"svc-b"}, want: configured[:1]},
+		{name: "chat, full prefix", allowed: ids, want: configured},
+		{name: "chat, empty prefix", allowed: nil, want: nil},
+		{name: "chat, skip-over denied hop drops later", allowed: []string{"svc-c"}, want: nil},
+		{name: "chat, denied middle hop truncates rather than skips", allowed: []string{"svc-b", "svc-d"}, want: configured[:1]},
+		{name: "responses, prefix of one", allowed: []string{"svc-b"}, want: configured[:1], responses: true},
+		{name: "responses, empty prefix", allowed: nil, want: nil, responses: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:        schemas.OpenAI,
+				defaultModel:    "gpt-4o",
+				useResponsesAPI: tt.responses,
+				fallbacks:       testHops(configured, ids),
+			}
+			request := llm.CompletionRequest{
+				RestrictFallbacks:         true,
+				AllowedFallbackServiceIDs: tt.allowed,
+			}
+
+			var got []schemas.Fallback
+			if tt.responses {
+				req, err := b.convertToBifrostResponsesRequest(request, b.GetDefaultConfig())
+				require.NoError(t, err)
+				got = req.Fallbacks
+			} else {
+				got = b.convertToBifrostRequest(request, b.GetDefaultConfig()).Fallbacks
+			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
@@ -1868,8 +2154,9 @@ func TestNewFromServiceConfig_WithFallbackServices(t *testing.T) {
 	defer llmInstance.Shutdown()
 
 	require.Len(t, llmInstance.fallbacks, 1)
-	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].fallback.Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
+	assert.Equal(t, "svc-anthropic", llmInstance.fallbacks[0].serviceID)
 }
 
 func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
@@ -1905,19 +2192,93 @@ func TestNewFromServiceConfig_MultipleFallbacks(t *testing.T) {
 
 	require.Len(t, llmInstance.fallbacks, 2)
 	// The Anthropic fallback has its own base provider type, so it keeps it.
-	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].Provider)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, schemas.Anthropic, llmInstance.fallbacks[0].fallback.Provider)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
 	// The local OpenAI-compatible fallback maps to the OpenAI provider, which the
 	// primary already occupies. It must therefore be registered under a slot
 	// DISTINCT from the primary's base OpenAI slot so it keeps its own base
 	// URL/key at fallback time (proven end to end by
 	// TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint). We
 	// assert distinctness rather than the internal custom-provider name string.
-	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].Provider,
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[1].fallback.Provider,
 		"a same-base fallback must not collide on the primary's provider slot")
-	assert.NotEqual(t, llmInstance.fallbacks[0].Provider, llmInstance.fallbacks[1].Provider,
+	assert.NotEqual(t, llmInstance.fallbacks[0].fallback.Provider, llmInstance.fallbacks[1].fallback.Provider,
 		"each fallback must occupy a distinct slot")
-	assert.Equal(t, "llama3", llmInstance.fallbacks[1].Model)
+	assert.Equal(t, "llama3", llmInstance.fallbacks[1].fallback.Model)
+}
+
+func TestNewFromServiceConfig_NorthCoexistsWithOpenAI(t *testing.T) {
+	tests := []struct {
+		name     string
+		primary  llm.ServiceConfig
+		fallback llm.ServiceConfig
+	}{
+		{
+			name: "north primary openai fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+		},
+		{
+			name: "openai primary north fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-openai",
+				Type:         llm.ServiceTypeOpenAI,
+				APIKey:       "openai-key",
+				DefaultModel: "gpt-4o",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+		},
+		{
+			name: "north primary openai-compatible fallback",
+			primary: llm.ServiceConfig{
+				ID:           "svc-north",
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "north-key",
+				APIURL:       "http://host",
+				DefaultModel: "command-a",
+			},
+			fallback: llm.ServiceConfig{
+				ID:           "svc-local",
+				Type:         llm.ServiceTypeOpenAICompatible,
+				APIURL:       "http://localhost:11434/v1",
+				DefaultModel: "llama3",
+			},
+		},
+	}
+
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "svc-primary"}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			llmInstance, err := NewFromServiceConfig(tt.primary, bot, []llm.ServiceConfig{tt.fallback})
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			require.Len(t, llmInstance.fallbacks, 1)
+			assert.Equal(t, schemas.OpenAI, llmInstance.provider)
+			assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].fallback.Provider,
+				"a north service sharing the OpenAI base type with another service must occupy a distinct custom-provider slot")
+			assert.Equal(t, tt.fallback.ID, llmInstance.fallbacks[0].serviceID)
+			assert.Equal(t, customProviderName(schemas.OpenAI, tt.fallback.ID), llmInstance.fallbacks[0].fallback.Provider)
+		})
+	}
 }
 
 // TestNewFromServiceConfig_ErrorsOnUnmappableFallbackInChain pins the contract
@@ -1986,7 +2347,7 @@ func TestNewFromServiceConfig_BotModelOverrideDoesNotAffectFallback(t *testing.T
 
 	// Fallback model uses the fallback service's DefaultModel, not the bot override
 	require.Len(t, llmInstance.fallbacks, 1)
-	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].Model)
+	assert.Equal(t, "claude-sonnet-4-20250514", llmInstance.fallbacks[0].fallback.Model)
 }
 
 func TestNewFromServiceConfig_BotModelOverrideCapsOutputTokens(t *testing.T) {
@@ -2050,6 +2411,12 @@ func chatCompletionSSE(w http.ResponseWriter, content string) {
 	fmt.Fprint(w, "data: [DONE]\n\n")
 }
 
+func responsesSSE(w http.ResponseWriter, content string) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprintf(w, "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"sequence_number\":1,\"delta\":%q}\n\n", content)
+	fmt.Fprint(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"sequence_number\":2,\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"completed\"}}\n\n")
+}
+
 func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 	var chatHit, responsesHit atomic.Bool
 
@@ -2097,6 +2464,122 @@ func TestOpenAICompatibleResponsesToggleIsHardRoutingGate(t *testing.T) {
 	assert.Equal(t, "from-chat-completions", result)
 	assert.True(t, chatHit.Load(), "request must use /v1/chat/completions")
 	assert.False(t, responsesHit.Load(), "request must not use /v1/responses")
+}
+
+func TestNewFromServiceConfig_NorthFallbackDisablesStore(t *testing.T) {
+	var cloudHits, northHits atomic.Int32
+	var northPath atomic.Value
+	var northBody []byte
+
+	cloudServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cloudHits.Add(1)
+		http.Error(w, `{"error":{"message":"service unavailable"}}`, http.StatusInternalServerError)
+	}))
+	defer cloudServer.Close()
+
+	northServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		northHits.Add(1)
+		northPath.Store(r.URL.Path)
+		northBody, _ = io.ReadAll(r.Body)
+		if !strings.HasSuffix(r.URL.Path, "/v1/responses") {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		responsesSSE(w, "from-north")
+	}))
+	defer northServer.Close()
+
+	primarySvc := llm.ServiceConfig{
+		ID:                "cloud-openai",
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "cloud-key",
+		APIURL:            cloudServer.URL,
+		DefaultModel:      "gpt-4o",
+		FallbackServiceID: "north-fallback",
+	}
+	northSvc := llm.ServiceConfig{
+		ID:           "north-fallback",
+		Type:         llm.ServiceTypeNorth,
+		APIKey:       "north-key",
+		APIURL:       northServer.URL,
+		DefaultModel: "command-a",
+	}
+	bot := llm.BotConfig{ID: "bot-1", Name: "ai", DisplayName: "AI", ServiceID: "cloud-openai"}
+
+	llmInstance, err := NewFromServiceConfig(primarySvc, bot, []llm.ServiceConfig{northSvc})
+	require.NoError(t, err)
+	defer llmInstance.Shutdown()
+
+	result, err := llmInstance.ChatCompletionNoStream(context.Background(), llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
+	})
+
+	require.NoError(t, err, "failover to the North fallback should succeed")
+	assert.Equal(t, "from-north", result)
+	assert.Positive(t, cloudHits.Load(), "openai primary should have been attempted before falling back")
+	assert.Positive(t, northHits.Load(), "north fallback should have received the request")
+	require.Equal(t, "/api/v1/responses", northPath.Load(), "north fallback must be called on /v1/responses")
+
+	require.NotEmpty(t, northBody, "the outbound North /v1/responses body must be captured")
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(northBody, &payload))
+	store, hasStore := payload["store"]
+	require.True(t, hasStore, "north fallback must send a store field")
+	assert.Equal(t, false, store)
+}
+
+func TestNorthResponsesRequestDisablesStorage(t *testing.T) {
+	tests := []struct {
+		name           string
+		serviceType    string
+		wantStoreFalse bool
+	}{
+		{name: "north sends store false", serviceType: llm.ServiceTypeNorth, wantStoreFalse: true},
+		{name: "openai omits store", serviceType: llm.ServiceTypeOpenAI, wantStoreFalse: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var recordedBody []byte
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !strings.HasSuffix(r.URL.Path, "/v1/responses") {
+					http.Error(w, "unexpected path", http.StatusNotFound)
+					return
+				}
+				recordedBody, _ = io.ReadAll(r.Body)
+				responsesSSE(w, "ok")
+			}))
+			defer server.Close()
+
+			service := llm.ServiceConfig{
+				ID:           "svc-1",
+				Type:         tt.serviceType,
+				APIKey:       "key",
+				APIURL:       server.URL,
+				DefaultModel: "test-model",
+			}
+			llmInstance, err := NewFromServiceConfig(service, llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}, nil)
+			require.NoError(t, err)
+			defer llmInstance.Shutdown()
+
+			_, _ = llmInstance.ChatCompletionNoStream(
+				context.Background(),
+				llm.CompletionRequest{Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}}},
+				llm.WithToolsDisabled(),
+			)
+
+			require.NotEmpty(t, recordedBody, "the outbound /v1/responses body must be captured")
+			var payload map[string]any
+			require.NoError(t, json.Unmarshal(recordedBody, &payload))
+			store, hasStore := payload["store"]
+			if tt.wantStoreFalse {
+				require.True(t, hasStore, "north must send a store field")
+				assert.Equal(t, false, store)
+			} else {
+				assert.False(t, hasStore, "openai must not send a store field")
+			}
+		})
+	}
 }
 
 // TestNewFromServiceConfig_OpenAICompatibleFallbackRoutesToOwnEndpoint is the
@@ -2459,6 +2942,19 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			expectedChatOnly: false,
 		},
 		{
+			name: "North normalizes URL and is not chat-only",
+			svc: llm.ServiceConfig{
+				Type:         llm.ServiceTypeNorth,
+				APIKey:       "key",
+				APIURL:       "http://host/api/v1",
+				DefaultModel: "command-a",
+			},
+			expectedProvider: schemas.OpenAI,
+			expectedModel:    "command-a",
+			expectedAPIURL:   "http://host/api",
+			expectedChatOnly: false,
+		},
+		{
 			name: "unsupported service type",
 			svc: llm.ServiceConfig{
 				Type: "unknown-type",
@@ -2479,6 +2975,7 @@ func TestServiceConfigToFallbackEntry(t *testing.T) {
 			assert.Equal(t, tt.expectedModel, entry.DefaultModel)
 			assert.Equal(t, tt.expectedAPIURL, entry.APIURL)
 			assert.Equal(t, tt.expectedChatOnly, entry.ChatOnly)
+			assert.Equal(t, tt.svc.Type == llm.ServiceTypeNorth, entry.DisableStore)
 		})
 	}
 }
@@ -2619,7 +3116,7 @@ func TestNewFromServiceConfig_ChatOnlyFallbackGetsCustomProviderWithoutCollision
 	// bare OpenAI provider so the chat-only AllowedRequests gate can be attached
 	// (see TestProviderAccount_ChatOnlyCustomConfig). Assert distinctness, not the
 	// internal custom-provider name string.
-	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].Provider,
+	assert.NotEqual(t, schemas.OpenAI, llmInstance.fallbacks[0].fallback.Provider,
 		"a chat-only fallback must get its own custom-provider slot to carry the downgrade gate")
 }
 
@@ -3053,7 +3550,7 @@ func TestCountTokensKeepsFunctionTools(t *testing.T) {
 
 	tools := llm.NewToolStore()
 	tools.AddTools([]llm.Tool{
-		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]interface{}{"type": "object"}},
+		{Name: "get_weather", Description: "Returns weather for a city", Schema: map[string]any{"type": "object"}},
 	})
 
 	count, err := llmClient.CountTokens(context.Background(), llm.CompletionRequest{

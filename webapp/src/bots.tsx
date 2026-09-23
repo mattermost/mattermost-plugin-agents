@@ -34,6 +34,9 @@ export interface LLMBot {
     enabledMCPTools: EnabledMCPTool[] | null;
     autoEnableNewMCPTools: boolean;
 
+    // Optional so the UI degrades to the non-SA UX when the server predates the field.
+    useServiceAccountAuth?: boolean;
+
     // isDefault marks the system-wide default agent. Optional: older servers
     // omit it, in which case we fall back to list ordering.
     isDefault?: boolean;

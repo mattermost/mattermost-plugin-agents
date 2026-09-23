@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/mock"
@@ -26,13 +27,16 @@ import (
 )
 
 const (
-	autoReplyBotUserID    = "arbot-user-id"
 	autoReplyBotUsername  = "arbot"
-	autoReplyBot2UserID   = "secondbot-user-id"
 	autoReplyBot2Username = "secondbot"
-	autoReplyUserID       = "aruser-id"
-	autoReplyOtherUserID  = "arother-id"
-	autoReplyForeignBotID = "arforeignbot-id"
+	// Well-formed 26-char IDs: the agent access gate denies a user ID no policy
+	// can be evaluated against, so mentions and auto-reply never reach their
+	// own logic. Usernames stay short so @mention strings stay readable.
+	autoReplyBotUserID    = "arbotuserid1234567890123ab"
+	autoReplyBot2UserID   = "secondbotid1234567890123ab"
+	autoReplyUserID       = "aruserid1234567890123456ab"
+	autoReplyOtherUserID  = "arotherid123456789012345ab"
+	autoReplyForeignBotID = "arforeignbot1234567890123a"
 	autoReplyChannelID    = "archannel-id"
 	autoReplyTeamID       = "arteam-id"
 	autoReplyRootID       = "arroot-id"
@@ -60,6 +64,8 @@ type autoReplyTestEnv struct {
 	mmClient      *fakeMMClient
 	mockAPI       *plugintest.API
 	botService    *bots.MMBots
+	fakeLLM       *dmTestLLM
+	mcpMgr        *testMCPClientManager
 	settings      *fakeAutoReplySettings
 	channel       *model.Channel
 }
@@ -97,7 +103,7 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: autoReplyTeamID, Name: "team"}, nil).Maybe()
 	for i := 1; i <= 10; i++ {
-		args := make([]interface{}, i)
+		args := make([]any, i)
 		for j := range args {
 			args[j] = mock.Anything
 		}
@@ -109,7 +115,7 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
-	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, &http.Client{}, nil)
+	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	fLLM := newDMTestLLM(llmResponses...)
 	registered := make([]*bots.Bot, 0, len(botConfigs))
 	for _, cfg := range botConfigs {
@@ -135,7 +141,8 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 		allowCreatePost: true,
 	}
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, nil, &mockConfigProvider{})
+	mcpMgr := &testMCPClientManager{}
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{}, mcpMgr, &mockConfigProvider{})
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
@@ -165,6 +172,8 @@ func setupAutoReplyTestEnv(t *testing.T, botConfigs []llm.BotConfig, llmResponse
 		mmClient:      mmClient,
 		mockAPI:       mockAPI,
 		botService:    botService,
+		fakeLLM:       fLLM,
+		mcpMgr:        mcpMgr,
 		settings:      settings,
 		channel:       channel,
 	}
@@ -641,7 +650,7 @@ func TestAutoReplySynthesizedMention(t *testing.T) {
 			})
 
 			post := tc.buildPost(env)
-			env.conversations.MessageHasBeenPosted(nil, post)
+			env.conversations.MessageHasBeenPosted(&plugin.Context{SessionId: model.NewId()}, post)
 
 			require.Len(t, env.mmClient.createdPosts, 1, "expected the auto-reply to fire")
 			blocks := singleConversationUserBlocks(t, env)

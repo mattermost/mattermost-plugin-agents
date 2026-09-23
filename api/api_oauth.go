@@ -171,7 +171,7 @@ func (a *API) publishMCPConnectionUpdated(userID string, session *mcp.OAuthSessi
 		return
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"status": "connected",
 	}
 	if session != nil {

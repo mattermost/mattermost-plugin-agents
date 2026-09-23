@@ -8,14 +8,14 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // BenchmarkStreamToPost benchmarks the core StreamToPost function with varying sizes.
 func BenchmarkStreamToPost(b *testing.B) {
 	bundle := i18n.Init()
-	scenarios := llm.BenchmarkScenarios()
+	scenarios := llmtest.BenchmarkScenarios()
 	client := &benchmarkClient{}
 
 	for _, sc := range scenarios {

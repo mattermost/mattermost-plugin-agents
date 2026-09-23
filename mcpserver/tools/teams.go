@@ -50,50 +50,30 @@ const (
 // getTeamTools returns all team-related tools
 func (p *MattermostToolProvider) getTeamTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "get_team_info",
-			Description: getTeamInfoDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetTeamInfoArgs](string(p.accessMode)),
-			Resolver:    typed("get_team_info", p.toolGetTeamInfo),
-		},
-		{
-			Name:        "get_team_members",
-			Description: getTeamMembersDescription,
-			Schema:      NewJSONSchemaForAccessMode[GetTeamMembersArgs](string(p.accessMode)),
-			Resolver:    typed("get_team_members", p.toolGetTeamMembers),
-		},
-		{
-			Name:        "add_team_member",
-			Description: "Add a user to a team (team membership). Parameters: user_id (required), team_id (required). Returns confirmation message.",
-			Schema:      NewJSONSchemaForAccessMode[AddTeamMemberArgs](string(p.accessMode)),
-			Resolver:    typed("add_team_member", p.toolAddTeamMember),
-		},
-		{Name: "get_team_member", Description: getTeamMemberDescription, Schema: NewJSONSchemaForAccessMode[GetTeamMemberArgs](string(p.accessMode)), Resolver: typed("get_team_member", p.toolGetTeamMember)},
-		{Name: "get_team_stats", Description: getTeamStatsDescription, Schema: NewJSONSchemaForAccessMode[GetTeamStatsArgs](string(p.accessMode)), Resolver: typed("get_team_stats", p.toolGetTeamStats)},
-		{Name: "get_user_teams", Description: getUserTeamsDescription, Schema: NewJSONSchemaForAccessMode[GetUserTeamsArgs](string(p.accessMode)), Resolver: typed("get_user_teams", p.toolGetUserTeams)},
-		{Name: "get_users_in_team", Description: getUsersInTeamDescription, Schema: NewJSONSchemaForAccessMode[GetUsersInTeamArgs](string(p.accessMode)), Resolver: typed("get_users_in_team", p.toolGetUsersInTeam)},
-		{Name: "get_users_not_in_team", Description: getUsersNotInTeamDescription, Schema: NewJSONSchemaForAccessMode[GetUsersNotInTeamArgs](string(p.accessMode)), Resolver: typed("get_users_not_in_team", p.toolGetUsersNotInTeam)},
-		{Name: "get_new_users_in_team", Description: getNewUsersInTeamDescription, Schema: NewJSONSchemaForAccessMode[GetNewUsersInTeamArgs](string(p.accessMode)), Resolver: typed("get_new_users_in_team", p.toolGetNewUsersInTeam)},
-		{Name: "get_dm_common_teams", Description: getDMCommonTeamsDescription, Schema: NewJSONSchemaForAccessMode[GetDMCommonTeamsArgs](string(p.accessMode)), Resolver: typed("get_dm_common_teams", p.toolGetDMCommonTeams)},
-		{Name: "search_teams", Description: searchTeamsDescription, Schema: NewJSONSchemaForAccessMode[SearchTeamsArgs](string(p.accessMode)), Resolver: typed("search_teams", p.toolSearchTeams)},
-		{Name: "search_users_in_team", Description: searchUsersInTeamDescription, Schema: NewJSONSchemaForAccessMode[SearchUsersInTeamArgs](string(p.accessMode)), Resolver: typed("search_users_in_team", p.toolSearchUsersInTeam)},
-		{Name: "add_team_members", Description: addTeamMembersDescription, Schema: NewJSONSchemaForAccessMode[AddTeamMembersArgs](string(p.accessMode)), Resolver: typed("add_team_members", p.toolAddTeamMembers)},
-		{Name: "remove_team_member", Description: removeTeamMemberDescription, Schema: NewJSONSchemaForAccessMode[RemoveTeamMemberArgs](string(p.accessMode)), Resolver: typed("remove_team_member", p.toolRemoveTeamMember)},
-		{Name: "update_team", Description: updateTeamDescription, Schema: NewJSONSchemaForAccessMode[UpdateTeamArgs](string(p.accessMode)), Resolver: typed("update_team", p.toolUpdateTeam)},
-		{Name: "invite_users_to_team", Description: inviteUsersToTeamDescription, Schema: NewJSONSchemaForAccessMode[InviteUsersToTeamArgs](string(p.accessMode)), Resolver: typed("invite_users_to_team", p.toolInviteUsersToTeam)},
-		{Name: "invite_users_to_team_and_channels", Description: inviteUsersToTeamAndChannelsDescription, Schema: NewJSONSchemaForAccessMode[InviteUsersToTeamAndChannelsArgs](string(p.accessMode)), Resolver: typed("invite_users_to_team_and_channels", p.toolInviteUsersToTeamAndChannels)},
+		mcpTool(p, "get_team_info", getTeamInfoDescription, p.toolGetTeamInfo),
+		mcpTool(p, "get_team_members", getTeamMembersDescription, p.toolGetTeamMembers),
+		mcpTool(p, "add_team_member", "Add a user to a team (team membership). Parameters: user_id (required), team_id (required). Returns confirmation message.", p.toolAddTeamMember),
+		mcpTool(p, "get_team_member", getTeamMemberDescription, p.toolGetTeamMember),
+		mcpTool(p, "get_team_stats", getTeamStatsDescription, p.toolGetTeamStats),
+		mcpTool(p, "get_user_teams", getUserTeamsDescription, p.toolGetUserTeams),
+		mcpTool(p, "get_users_in_team", getUsersInTeamDescription, p.toolGetUsersInTeam),
+		mcpTool(p, "get_users_not_in_team", getUsersNotInTeamDescription, p.toolGetUsersNotInTeam),
+		mcpTool(p, "get_new_users_in_team", getNewUsersInTeamDescription, p.toolGetNewUsersInTeam),
+		mcpTool(p, "get_dm_common_teams", getDMCommonTeamsDescription, p.toolGetDMCommonTeams),
+		mcpTool(p, "search_teams", searchTeamsDescription, p.toolSearchTeams),
+		mcpTool(p, "search_users_in_team", searchUsersInTeamDescription, p.toolSearchUsersInTeam),
+		mcpTool(p, "add_team_members", addTeamMembersDescription, p.toolAddTeamMembers),
+		mcpTool(p, "remove_team_member", removeTeamMemberDescription, p.toolRemoveTeamMember),
+		mcpTool(p, "update_team", updateTeamDescription, p.toolUpdateTeam),
+		mcpTool(p, "invite_users_to_team", inviteUsersToTeamDescription, p.toolInviteUsersToTeam),
+		mcpTool(p, "invite_users_to_team_and_channels", inviteUsersToTeamAndChannelsDescription, p.toolInviteUsersToTeamAndChannels),
 	}
 }
 
 // getDevTeamTools returns development team-related tools for MCP
 func (p *MattermostToolProvider) getDevTeamTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "create_team",
-			Description: "Create a new team (dev mode only)",
-			Schema:      NewJSONSchemaForAccessMode[CreateTeamArgs](string(p.accessMode)),
-			Resolver:    typed("create_team", p.toolCreateTeam),
-		},
+		mcpTool(p, "create_team", "Create a new team (dev mode only)", p.toolCreateTeam),
 	}
 }
 
@@ -226,9 +206,9 @@ func (p *MattermostToolProvider) resolveTeamByName(mcpContext *MCPToolContext, n
 // formatTeamDisambiguation builds a message listing multiple team matches for the LLM to choose from.
 func formatTeamDisambiguation(searchTerm string, teams []*model.Team) string {
 	var msg strings.Builder
-	msg.WriteString(fmt.Sprintf("Multiple teams match '%s'. Please specify which one by calling get_team_info with team_id:\n\n", searchTerm))
+	fmt.Fprintf(&msg, "Multiple teams match '%s'. Please specify which one by calling get_team_info with team_id:\n\n", searchTerm)
 	for _, t := range teams {
-		msg.WriteString(fmt.Sprintf("- '%s' (URL name: %s, ID: %s)\n", t.DisplayName, t.Name, t.Id))
+		fmt.Fprintf(&msg, "- '%s' (URL name: %s, ID: %s)\n", t.DisplayName, t.Name, t.Id)
 	}
 	return msg.String()
 }
@@ -268,15 +248,7 @@ func (p *MattermostToolProvider) toolGetTeamMembers(mcpContext *MCPToolContext, 
 		return "no members found in this team", nil
 	}
 
-	rendered := make([]renderMember, len(members))
-	for i, member := range members {
-		rendered[i] = renderMember{
-			userID: member.UserId,
-			role:   format.MemberRole(member.SchemeAdmin, member.SchemeGuest, member.SchemeUser),
-		}
-	}
-
-	return p.renderMembers(ctx, client, "Team Members", args.Page, rendered, excludeBots), nil
+	return p.renderMembers(ctx, client, "Team Members", args.Page, teamRenderMembers(members), excludeBots), nil
 }
 
 // toolCreateTeam implements the create_team tool using the context client
@@ -485,13 +457,9 @@ func (p *MattermostToolProvider) toolGetTeamMember(mcpContext *MCPToolContext, a
 	if err := optionalID("user_id", args.UserID); err != nil {
 		return "", err
 	}
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	member, _, err := mcpContext.Client.GetTeamMember(mcpContext.Ctx, args.TeamID, userID, "")
@@ -526,13 +494,9 @@ func (p *MattermostToolProvider) toolGetUserTeams(mcpContext *MCPToolContext, ar
 	if err := optionalID("user_id", args.UserID); err != nil {
 		return "", err
 	}
-	userID := args.UserID
-	if userID == "" {
-		resolved, err := p.resolveUserID(mcpContext)
-		if err != nil {
-			return "", err
-		}
-		userID = resolved
+	userID, err := p.resolveUserIDOrDefault(mcpContext, args.UserID)
+	if err != nil {
+		return "", err
 	}
 
 	teams, _, err := mcpContext.Client.GetTeamsForUser(mcpContext.Ctx, userID, "")
@@ -672,13 +636,8 @@ func (p *MattermostToolProvider) toolAddTeamMembers(mcpContext *MCPToolContext, 
 	if err := requireID("team_id", args.TeamID); err != nil {
 		return "", err
 	}
-	if len(args.UserIDs) == 0 {
-		return "", fmt.Errorf("user_ids cannot be empty")
-	}
-	for _, id := range args.UserIDs {
-		if err := requireID("user_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("user_ids", args.UserIDs); err != nil {
+		return "", err
 	}
 
 	// Use the graceful path so one invalid or already-a-member user does not
@@ -749,13 +708,8 @@ func (p *MattermostToolProvider) toolInviteUsersToTeamAndChannels(mcpContext *MC
 	if len(args.Emails) == 0 {
 		return "", fmt.Errorf("emails cannot be empty")
 	}
-	if len(args.ChannelIDs) == 0 {
-		return "", fmt.Errorf("channel_ids cannot be empty")
-	}
-	for _, id := range args.ChannelIDs {
-		if err := requireID("channel_ids", id); err != nil {
-			return "", err
-		}
+	if err := requireIDs("channel_ids", args.ChannelIDs); err != nil {
+		return "", err
 	}
 
 	invites, _, err := mcpContext.Client.InviteUsersToTeamAndChannelsGracefully(mcpContext.Ctx, args.TeamID, args.Emails, args.ChannelIDs, args.Message)
@@ -771,7 +725,7 @@ func formatTeamList(teams []*model.Team) string {
 		return "no teams found"
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Found %d team(s):\n\n", len(teams)))
+	fmt.Fprintf(&result, "Found %d team(s):\n\n", len(teams))
 	for _, team := range teams {
 		format.WriteTeam(&result, format.TeamEntry{Team: team, MemberCount: -1})
 		result.WriteString("\n")
@@ -785,12 +739,12 @@ func formatTeamMemberAddResults(teamID string, members []*model.TeamMemberWithEr
 		return fmt.Sprintf("no users added to team %s", teamID)
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Add team member results for team %s (%d):\n", teamID, len(members)))
+	fmt.Fprintf(&result, "Add team member results for team %s (%d):\n", teamID, len(members))
 	for _, member := range members {
 		if member.Error != nil {
-			result.WriteString(fmt.Sprintf("- %s: failed (%s)\n", member.UserId, member.Error.Message))
+			fmt.Fprintf(&result, "- %s: failed (%s)\n", member.UserId, member.Error.Message)
 		} else {
-			result.WriteString(fmt.Sprintf("- %s: added\n", member.UserId))
+			fmt.Fprintf(&result, "- %s: added\n", member.UserId)
 		}
 	}
 	return result.String()
@@ -802,12 +756,12 @@ func formatInviteResults(invites []*model.EmailInviteWithError) string {
 		return "invitations sent"
 	}
 	var result strings.Builder
-	result.WriteString(fmt.Sprintf("Invitation results (%d):\n", len(invites)))
+	fmt.Fprintf(&result, "Invitation results (%d):\n", len(invites))
 	for _, invite := range invites {
 		if invite.Error != nil {
-			result.WriteString(fmt.Sprintf("- %s: failed (%s)\n", invite.Email, invite.Error.Message))
+			fmt.Fprintf(&result, "- %s: failed (%s)\n", invite.Email, invite.Error.Message)
 		} else {
-			result.WriteString(fmt.Sprintf("- %s: invited\n", invite.Email))
+			fmt.Fprintf(&result, "- %s: invited\n", invite.Email)
 		}
 	}
 	return result.String()

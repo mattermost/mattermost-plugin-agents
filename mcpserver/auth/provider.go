@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -24,6 +25,20 @@ const (
 	// UserIDContextKey is used to store the user ID in context for HTTP callbacks
 	UserIDContextKey ContextKey = "user_id"
 )
+
+// WithSessionID returns a context carrying the authenticated Mattermost
+// session used for policy checks.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, SessionIDContextKey, sessionID)
+}
+
+// SessionIDFromContext returns the authenticated Mattermost session ID, or an
+// empty string when the request has no session. Callers must fail closed when
+// the result is empty.
+func SessionIDFromContext(ctx context.Context) string {
+	sessionID, _ := ctx.Value(SessionIDContextKey).(string)
+	return sessionID
+}
 
 // TokenResolver is a function that resolves a sessionID to a token
 type TokenResolver func(sessionID string) (string, error)
@@ -46,4 +61,31 @@ type UserIdentityProvider interface {
 
 	// GetAuthenticatedUser returns the authenticated Mattermost user for the current context
 	GetAuthenticatedUser(ctx context.Context) (*model.User, error)
+}
+
+// providerBase holds what every authentication provider needs: the Mattermost
+// server URL for API communication and a logger.
+type providerBase struct {
+	mmServerURL string
+	logger      logger.Logger
+}
+
+// newProviderBase uses internalURL for API communication if provided,
+// otherwise falls back to externalURL.
+func newProviderBase(externalURL, internalURL string, logger logger.Logger) providerBase {
+	mmServerURL := internalURL
+	if mmServerURL == "" {
+		mmServerURL = externalURL
+	}
+	return providerBase{
+		mmServerURL: mmServerURL,
+		logger:      logger,
+	}
+}
+
+// validateAuth implements AuthenticationProvider.ValidateAuth for providers
+// whose GetAuthenticatedMattermostClient performs all validation.
+func validateAuth(ctx context.Context, p AuthenticationProvider) error {
+	_, err := p.GetAuthenticatedMattermostClient(ctx)
+	return err
 }

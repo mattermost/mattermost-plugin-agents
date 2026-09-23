@@ -6,6 +6,8 @@ package config
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 func TestEnableTokenUsageSinks(t *testing.T) {
@@ -27,11 +29,11 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "token usage logging disabled overrides env settings",
 			cfg: &Config{
 				EnableTokenUsageLogging:     false,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(true),
 			},
-			pluginEnv:  stringPtr("true"),
-			fileEnv:    stringPtr("true"),
+			pluginEnv:  new("true"),
+			fileEnv:    new("true"),
 			wantPlugin: false,
 			wantFile:   false,
 		},
@@ -39,8 +41,8 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "legacy defaults apply when env vars are not set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(false),
 			},
 			wantPlugin: false,
 			wantFile:   true,
@@ -49,10 +51,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "only plugin env var set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(false),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(false),
+				EnableTokenUsageLogToFile:   new(false),
 			},
-			pluginEnv:  stringPtr("true"),
+			pluginEnv:  new("true"),
 			wantPlugin: true,
 			wantFile:   true,
 		},
@@ -60,10 +62,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			name: "only file env var set",
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(true),
-				EnableTokenUsageLogToFile:   boolPtr(false),
+				EnableTokenUsageLogToPlugin: new(true),
+				EnableTokenUsageLogToFile:   new(false),
 			},
-			fileEnv:    stringPtr("false"),
+			fileEnv:    new("false"),
 			wantPlugin: false,
 			wantFile:   false,
 		},
@@ -72,10 +74,10 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			cfg: &Config{
 				EnableTokenUsageLogging:     true,
 				EnableTokenUsageLogToPlugin: nil,
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToFile:   new(true),
 			},
-			pluginEnv:  stringPtr("true"),
-			fileEnv:    stringPtr("false"),
+			pluginEnv:  new("true"),
+			fileEnv:    new("false"),
 			wantPlugin: true,
 			wantFile:   false,
 		},
@@ -84,8 +86,8 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 			cfg: &Config{
 				EnableTokenUsageLogging: true,
 			},
-			pluginEnv:  stringPtr("notabool"),
-			fileEnv:    stringPtr("notabool"),
+			pluginEnv:  new("notabool"),
+			fileEnv:    new("notabool"),
 			wantPlugin: false,
 			wantFile:   true,
 		},
@@ -112,6 +114,75 @@ func TestEnableTokenUsageSinks(t *testing.T) {
 
 			if got := container.EnableTokenUsageLogToFile(); got != tt.wantFile {
 				t.Fatalf("EnableTokenUsageLogToFile() = %t, want %t", got, tt.wantFile)
+			}
+		})
+	}
+}
+
+func TestContainerConfigNeverNil(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, c *Container)
+	}{
+		{
+			name:  "zero-value container",
+			setup: func(*testing.T, *Container) {},
+		},
+		{
+			name:  "Update with nil",
+			setup: func(_ *testing.T, c *Container) { c.Update(nil) },
+		},
+		{
+			name: "StorePersistedConfigWithoutNotify with nil",
+			setup: func(t *testing.T, c *Container) {
+				if err := c.StorePersistedConfigWithoutNotify(nil); err != nil {
+					t.Fatalf("StorePersistedConfigWithoutNotify(nil) error = %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			tt.setup(t, container)
+
+			if container.Config() == nil {
+				t.Fatal("Config() returned nil")
+			}
+			if got := container.GetDefaultBotName(); got != "" {
+				t.Fatalf("GetDefaultBotName() = %q, want empty", got)
+			}
+		})
+	}
+}
+
+func TestContainerUpdateNotifiesListeners(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+	}{
+		{name: "config", cfg: &Config{DefaultBotName: "agent"}},
+		{name: "nil config", cfg: nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			calls := 0
+			container.RegisterUpdateListener(func() { calls++ })
+
+			container.Update(tt.cfg)
+
+			if calls != 1 {
+				t.Fatalf("listener called %d times, want 1", calls)
+			}
+			want := ""
+			if tt.cfg != nil {
+				want = tt.cfg.DefaultBotName
+			}
+			if got := container.GetDefaultBotName(); got != want {
+				t.Fatalf("GetDefaultBotName() = %q, want %q", got, want)
 			}
 		})
 	}
@@ -222,8 +293,8 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 			name: "explicit sink values are serialized",
 			cfg: Config{
 				EnableTokenUsageLogging:     true,
-				EnableTokenUsageLogToPlugin: boolPtr(false),
-				EnableTokenUsageLogToFile:   boolPtr(true),
+				EnableTokenUsageLogToPlugin: new(false),
+				EnableTokenUsageLogToFile:   new(true),
 			},
 			expectPluginField: true,
 			expectFileField:   true,
@@ -255,10 +326,76 @@ func TestTokenUsageSinkConfigMarshal(t *testing.T) {
 	}
 }
 
-func boolPtr(value bool) *bool {
-	return &value
+func TestContainerGetServices(t *testing.T) {
+	tests := []struct {
+		name        string
+		cfg         *Config
+		wantIDs     []string
+		wantNilCopy bool
+	}{
+		{
+			// Update(nil) stores a zero-value config (Container never holds
+			// nil), whose empty Services slice clones to nil.
+			name:        "nil configuration yields a nil services snapshot",
+			cfg:         nil,
+			wantNilCopy: true,
+		},
+		{
+			name:    "no services returns an empty snapshot",
+			cfg:     &Config{},
+			wantIDs: []string{},
+		},
+		{
+			name: "returns every configured service in order",
+			cfg: &Config{Services: []llm.ServiceConfig{
+				{ID: "s1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+				{ID: "s2", Type: llm.ServiceTypeAnthropic, APIKey: "key"},
+			}},
+			wantIDs: []string{"s1", "s2"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			container := &Container{}
+			container.Update(tt.cfg)
+
+			services := container.GetServices()
+			if tt.wantNilCopy {
+				if services != nil {
+					t.Fatalf("GetServices() = %v, want nil", services)
+				}
+				return
+			}
+
+			if len(services) != len(tt.wantIDs) {
+				t.Fatalf("GetServices() returned %d services, want %d", len(services), len(tt.wantIDs))
+			}
+			for i, wantID := range tt.wantIDs {
+				if services[i].ID != wantID {
+					t.Fatalf("service %d = %q, want %q", i, services[i].ID, wantID)
+				}
+			}
+		})
+	}
 }
 
-func stringPtr(value string) *string {
-	return &value
+func TestContainerGetServicesReturnsIndependentSlice(t *testing.T) {
+	container := &Container{}
+	container.Update(&Config{Services: []llm.ServiceConfig{
+		{ID: "s1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
+	}})
+
+	services := container.GetServices()
+	services[0].ID = "mutated"
+	services = append(services, llm.ServiceConfig{ID: "extra"})
+	_ = services
+
+	fresh := container.GetServices()
+	if len(fresh) != 1 {
+		t.Fatalf("GetServices() returned %d services after caller mutation, want 1", len(fresh))
+	}
+	if fresh[0].ID != "s1" {
+		t.Fatalf("stored service ID = %q, want %q", fresh[0].ID, "s1")
+	}
 }

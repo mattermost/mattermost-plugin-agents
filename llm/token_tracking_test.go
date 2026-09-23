@@ -131,8 +131,17 @@ func makeTestTokenUsageSinks(loggingEnabled bool, pluginLogger TokenUsagePluginL
 }
 
 func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
+	agentIdentity := TokenUsageIdentity{
+		BotUsername:  "fallback-bot",
+		ServiceID:    "svc-1",
+		ServiceName:  "Primary OpenAI",
+		DefaultModel: "identity-model",
+		ServiceType:  "openai",
+	}
+
 	tests := []struct {
 		name               string
+		identity           TokenUsageIdentity
 		request            CompletionRequest
 		opts               []LanguageModelOption
 		stream             *TextStreamResult
@@ -141,7 +150,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 		expectedLogFields  map[string]any
 	}{
 		{
-			name: "aggregates usage and emits rich dimensions",
+			name:     "aggregates usage and emits rich dimensions",
+			identity: agentIdentity,
 			request: CompletionRequest{
 				Context: &Context{
 					RequestingUser: &model.User{Id: "user-123"},
@@ -157,7 +167,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				OperationSubType: SubTypeStreaming,
 			},
 			opts: []LanguageModelOption{
-				WithModel("override-model"),
+				func(cfg *LanguageModelConfig) { cfg.Model = "override-model" },
 			},
 			stream: makeStream(
 				TextStreamEvent{Type: EventTypeText, Value: "hello"},
@@ -186,8 +196,12 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "testbot",
 				"bot_username":      "testbot",
 				"agent_user_id":     "bot-user-id",
+				"acting_user_id":    "user-123",
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             "override-model",
 				"service_type":      "openai",
+				"service_id":        "svc-1",
+				"service_name":      "Primary OpenAI",
 				"operation":         OperationConversation,
 				"operation_subtype": SubTypeStreaming,
 				"input_tokens":      int64(12),
@@ -196,7 +210,42 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name: "uses unknown defaults for nil context with stream subtype default",
+			name: "service account requests are attributed to the agent bot",
+			request: CompletionRequest{
+				Context: &Context{
+					RequestingUser: &model.User{Id: "user-123"},
+					Channel:        &model.Channel{Id: "channel-789", Type: model.ChannelTypeOpen},
+					BotUsername:    "testbot",
+					BotUserID:      "bot-user-id",
+					ToolAuthMode:   ToolAuthModeServiceAccount,
+				},
+				Operation:        OperationConversation,
+				OperationSubType: SubTypeStreaming,
+			},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 4, OutputTokens: 6}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "testbot",
+					teamID:       TokenUsageUnknown,
+					userID:       "user-123",
+					inputTokens:  4,
+					outputTokens: 6,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"user_id":        "user-123",
+				"agent_user_id":  "bot-user-id",
+				"acting_user_id": "bot-user-id",
+				"tool_auth_mode": ToolAuthModeServiceAccount,
+			},
+		},
+		{
+			name:     "uses unknown defaults for nil context with stream subtype default",
+			identity: TokenUsageIdentity{BotUsername: "fallback-bot"},
 			request: CompletionRequest{
 				Operation: "",
 			},
@@ -225,8 +274,12 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 				"agent_username":    "fallback-bot",
 				"bot_username":      "fallback-bot",
 				"agent_user_id":     TokenUsageUnknown,
+				"acting_user_id":    TokenUsageUnknown,
+				"tool_auth_mode":    ToolAuthModeUser,
 				"model":             TokenUsageUnknown,
 				"service_type":      TokenUsageUnknown,
+				"service_id":        TokenUsageUnknown,
+				"service_name":      TokenUsageUnknown,
 				"operation":         TokenUsageUnknown,
 				"operation_subtype": SubTypeStreaming,
 				"input_tokens":      int64(1),
@@ -235,7 +288,106 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name: "maps DM channels to dm team dimension",
+			name:     "identity supplies model and service type when the context has none",
+			identity: agentIdentity,
+			request: CompletionRequest{
+				Context:   &Context{BotUsername: "agentbot"},
+				Operation: OperationConversation,
+			},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1, OutputTokens: 1}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "agentbot",
+					teamID:       TokenUsageUnknown,
+					userID:       TokenUsageUnknown,
+					inputTokens:  1,
+					outputTokens: 1,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"agent_name":     "agentbot",
+				"agent_username": "agentbot",
+				"model":          "identity-model",
+				"service_type":   "openai",
+				"service_id":     "svc-1",
+				"service_name":   "Primary OpenAI",
+			},
+		},
+		{
+			name: "service-only identity blanks every agent dimension",
+			identity: TokenUsageIdentity{
+				ServiceID:    "svc-bridge",
+				ServiceName:  "Bridge Service",
+				DefaultModel: "claude-sonnet-4-5",
+				ServiceType:  "anthropic",
+			},
+			request: CompletionRequest{
+				Context: &Context{
+					RequestingUser: &model.User{Id: "user-9"},
+				},
+				Operation: OperationBridgeService,
+			},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 7, OutputTokens: 8}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "",
+					teamID:       TokenUsageUnknown,
+					userID:       "user-9",
+					inputTokens:  7,
+					outputTokens: 8,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"agent_name":     "",
+				"agent_username": "",
+				"bot_username":   "",
+				"agent_user_id":  "",
+				"user_id":        "user-9",
+				"model":          "claude-sonnet-4-5",
+				"service_type":   "anthropic",
+				"service_id":     "svc-bridge",
+				"service_name":   "Bridge Service",
+				"operation":      OperationBridgeService,
+			},
+		},
+		{
+			name: "known service with a blank name logs a blank service name",
+			identity: TokenUsageIdentity{
+				ServiceID:    "svc-unnamed",
+				DefaultModel: "gpt-4o",
+				ServiceType:  "openai",
+			},
+			request: CompletionRequest{Operation: OperationBridgeService},
+			stream: makeStream(
+				TextStreamEvent{Type: EventTypeUsage, Value: TokenUsage{InputTokens: 1, OutputTokens: 1}},
+				TextStreamEvent{Type: EventTypeEnd, Value: nil},
+			),
+			expectedEventTypes: []EventType{EventTypeEnd},
+			expectedMetrics: []observedTokenUsage{
+				{
+					botName:      "",
+					teamID:       TokenUsageUnknown,
+					userID:       TokenUsageUnknown,
+					inputTokens:  1,
+					outputTokens: 1,
+				},
+			},
+			expectedLogFields: map[string]any{
+				"service_id":   "svc-unnamed",
+				"service_name": "",
+			},
+		},
+		{
+			name:     "maps DM channels to dm team dimension",
+			identity: TokenUsageIdentity{BotUsername: "fallback-bot"},
 			request: CompletionRequest{
 				Context: &Context{
 					RequestingUser: &model.User{Id: "dm-user"},
@@ -267,8 +419,9 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name:    "ignores invalid usage payloads",
-			request: CompletionRequest{},
+			name:     "ignores invalid usage payloads",
+			identity: TokenUsageIdentity{BotUsername: "fallback-bot"},
+			request:  CompletionRequest{},
 			stream: makeStream(
 				TextStreamEvent{Type: EventTypeUsage, Value: "invalid-usage"},
 				TextStreamEvent{Type: EventTypeEnd, Value: nil},
@@ -283,7 +436,7 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 			metrics := &observedMetrics{}
 			pluginLogger := &observedPluginLogger{}
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, metrics)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, tc.identity, sinks, metrics)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(tc.stream, nil).Once()
 
@@ -322,6 +475,8 @@ func TestTokenTrackingWrapper_ChatCompletion_TableDriven(t *testing.T) {
 func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 	dimensions := tokenUsageDimensions{
 		userID:           "user-1",
+		actingUserID:     "bot-user-1",
+		toolAuthMode:     ToolAuthModeServiceAccount,
 		teamID:           "team-1",
 		channelID:        "channel-1",
 		channelType:      "open",
@@ -330,6 +485,8 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 		botUserID:        "bot-user-1",
 		model:            "claude-sonnet-4-5",
 		serviceType:      "anthropic",
+		serviceID:        "svc-1",
+		serviceName:      "Primary Anthropic",
 		operation:        OperationConversation,
 		operationSubType: SubTypeStreaming,
 	}
@@ -381,7 +538,137 @@ func TestBuildTokenUsageLogKeyValuePairs(t *testing.T) {
 			assert.Equal(t, TokenUsageLogEvent, keyed["event"])
 			assert.Equal(t, TokenUsageLogSchemaVersion, keyed["schema_version"])
 			assert.Equal(t, "user-1", keyed["user_id"])
+			assert.Equal(t, "bot-user-1", keyed["acting_user_id"])
+			assert.Equal(t, ToolAuthModeServiceAccount, keyed["tool_auth_mode"])
 			assert.Equal(t, "claude-sonnet-4-5", keyed["model"])
+			assert.Equal(t, "svc-1", keyed["service_id"])
+			assert.Equal(t, "Primary Anthropic", keyed["service_name"])
+		})
+	}
+}
+
+func TestExtractTokenUsageDimensions(t *testing.T) {
+	agentContext := &Context{
+		BotName:        "Context Agent",
+		BotUsername:    "contextbot",
+		BotUserID:      "context-bot-id",
+		BotModel:       "context-model",
+		BotServiceType: "anthropic",
+	}
+
+	tests := []struct {
+		name        string
+		identity    TokenUsageIdentity
+		request     CompletionRequest
+		optionModel string
+		want        tokenUsageDimensions
+	}{
+		{
+			name: "context wins over identity for model and service type",
+			identity: TokenUsageIdentity{
+				BotUsername:  "identitybot",
+				ServiceID:    "svc-1",
+				ServiceName:  "Primary",
+				DefaultModel: "identity-model",
+				ServiceType:  "openai",
+			},
+			request: CompletionRequest{Context: agentContext},
+			want: tokenUsageDimensions{
+				botName:     "Context Agent",
+				botUsername: "contextbot",
+				botUserID:   "context-bot-id",
+				model:       "context-model",
+				serviceType: "anthropic",
+				serviceID:   "svc-1",
+				serviceName: "Primary",
+			},
+		},
+		{
+			name: "per-call model overrides both context and identity",
+			identity: TokenUsageIdentity{
+				BotUsername:  "identitybot",
+				ServiceID:    "svc-1",
+				DefaultModel: "identity-model",
+				ServiceType:  "openai",
+			},
+			request:     CompletionRequest{Context: agentContext},
+			optionModel: "option-model",
+			want: tokenUsageDimensions{
+				botName:     "Context Agent",
+				botUsername: "contextbot",
+				botUserID:   "context-bot-id",
+				model:       "option-model",
+				serviceType: "anthropic",
+				serviceID:   "svc-1",
+				serviceName: "",
+			},
+		},
+		{
+			name: "identity fills model and service type when the context is empty",
+			identity: TokenUsageIdentity{
+				BotUsername:  "identitybot",
+				ServiceID:    "svc-2",
+				ServiceName:  "Secondary",
+				DefaultModel: "identity-model",
+				ServiceType:  "gemini",
+			},
+			request: CompletionRequest{},
+			want: tokenUsageDimensions{
+				botName:     "identitybot",
+				botUsername: "identitybot",
+				botUserID:   TokenUsageUnknown,
+				model:       "identity-model",
+				serviceType: "gemini",
+				serviceID:   "svc-2",
+				serviceName: "Secondary",
+			},
+		},
+		{
+			name:     "missing service identity normalizes both service fields to unknown",
+			identity: TokenUsageIdentity{BotUsername: "identitybot"},
+			request:  CompletionRequest{},
+			want: tokenUsageDimensions{
+				botName:     "identitybot",
+				botUsername: "identitybot",
+				botUserID:   TokenUsageUnknown,
+				model:       TokenUsageUnknown,
+				serviceType: TokenUsageUnknown,
+				serviceID:   TokenUsageUnknown,
+				serviceName: TokenUsageUnknown,
+			},
+		},
+		{
+			name: "service-only identity blanks the agent dimensions",
+			identity: TokenUsageIdentity{
+				ServiceID:    "svc-3",
+				ServiceName:  "Bridge",
+				DefaultModel: "gpt-4o",
+				ServiceType:  "openai",
+			},
+			request: CompletionRequest{},
+			want: tokenUsageDimensions{
+				botName:     "",
+				botUsername: "",
+				botUserID:   "",
+				model:       "gpt-4o",
+				serviceType: "openai",
+				serviceID:   "svc-3",
+				serviceName: "Bridge",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractTokenUsageDimensions(tt.request, tt.identity, tt.optionModel)
+
+			assert.Equal(t, tt.want.botName, got.botName, "agent_name")
+			assert.Equal(t, tt.want.botUsername, got.botUsername, "agent_username")
+			assert.Equal(t, tt.want.botUserID, got.botUserID, "agent_user_id")
+			assert.Equal(t, tt.want.model, got.model, "model")
+			assert.Equal(t, tt.want.serviceType, got.serviceType, "service_type")
+			assert.Equal(t, tt.want.serviceID, got.serviceID, "service_id")
+			assert.Equal(t, tt.want.serviceName, got.serviceName, "service_name")
 		})
 	}
 }
@@ -424,7 +711,7 @@ func TestTokenTrackingWrapper_DefaultOperationSubType(t *testing.T) {
 			mockLLM := &MockLanguageModel{}
 			pluginLogger := &observedPluginLogger{}
 			sinks := makeTestTokenUsageSinks(true, pluginLogger, nil)
-			wrapper := NewTokenUsageLoggingWrapper(mockLLM, "fallback-bot", sinks, nil)
+			wrapper := NewTokenUsageLoggingWrapper(mockLLM, TokenUsageIdentity{BotUsername: "fallback-bot"}, sinks, nil)
 
 			mockLLM.On("ChatCompletion", mock.Anything, mock.Anything, mock.Anything).Return(
 				makeStream(
@@ -455,7 +742,7 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 	t.Run("delegates to streaming method", func(t *testing.T) {
 		mockLLM := &MockLanguageModel{}
 		sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
-		wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-bot", sinks, nil)
+		wrapper := NewTokenUsageLoggingWrapper(mockLLM, TokenUsageIdentity{BotUsername: "test-bot"}, sinks, nil)
 
 		mockStream := make(chan TextStreamEvent, 3)
 		mockStream <- TextStreamEvent{Type: EventTypeText, Value: "Hello world"}
@@ -478,7 +765,7 @@ func TestTokenTrackingWrapper_ChatCompletionNoStream(t *testing.T) {
 func TestTokenTrackingWrapper_DelegatedMethods(t *testing.T) {
 	mockLLM := &MockLanguageModel{}
 	sinks := makeTestTokenUsageSinks(true, &observedPluginLogger{}, nil)
-	wrapper := NewTokenUsageLoggingWrapper(mockLLM, "test-llm", sinks, nil)
+	wrapper := NewTokenUsageLoggingWrapper(mockLLM, TokenUsageIdentity{BotUsername: "test-llm"}, sinks, nil)
 
 	t.Run("CountTokens delegates to wrapped model", func(t *testing.T) {
 		req := CompletionRequest{Posts: []Post{{Role: PostRoleUser, Message: "test text"}}}

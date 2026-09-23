@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -127,13 +128,17 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
 		referencedRecordingFileID := referenceRecordingFileIDProp.(string)
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
 
-		fileInfo, getErr := c.mmClient.GetFileInfo(referencedRecordingFileID)
+		fileInfo, getErr := mm.GetFileInfo(referencedRecordingFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
-		reader, getErr := c.mmClient.GetFile(post.FileIds[0])
+		if len(post.FileIds) == 0 {
+			return errors.New("no transcription file on regen post")
+		}
+		reader, getErr := mm.GetFile(post.FileIds[0])
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -174,7 +179,8 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if fileIDErr != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", fileIDErr)
 		}
-		transcriptionFileReader, fileErr := c.mmClient.GetFile(transcriptionFileID)
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
+		transcriptionFileReader, fileErr := mm.GetFile(transcriptionFileID)
 		if fileErr != nil {
 			return fmt.Errorf("unable to read calls file: %w", fileErr)
 		}
@@ -259,17 +265,7 @@ func (c *Conversations) regenerateViaConversation(
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	toolsDisabled := !isDM
-	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
-		toolsDisabled = false
-	}
-	if llmContext != nil {
-		if toolsDisabled && llmContext.Tools != nil {
-			llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
-		} else {
-			llmContext.DisabledToolsInfo = nil
-		}
-	}
+	toolsDisabled := applyToolAvailability(llmContext, isDM, c.channelMentionToolCallingEnabled())
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
@@ -277,6 +273,7 @@ func (c *Conversations) regenerateViaConversation(
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
 		ExcludeAfterPostID:       post.Id,
 		AllowUnsharedToolContent: isDM,
+		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
@@ -295,25 +292,15 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
-	runResult, runErr := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
-		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
-		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
-			c.mmClient.LogError("Failed to write tool turns on regen", "error", writeErr)
-		}
-	}, opts...)
+	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+		c.shouldAutoExecuteTool(llmContext, isDM),
+		conv.ID,
+		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },
+		c.toolsDisabledLLMOptions(bot, toolsDisabled), "Failed to write tool turns on regen")
 
 	if runErr != nil {
 		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(runResult.Stream, post, nil, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, bot, runResult.Stream, post, nil, llmContext, llmContext), nil
 }
