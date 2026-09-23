@@ -235,6 +235,7 @@ func (b *LLM) convertToBifrostRequest(request llm.CompletionRequest, cfg llm.Lan
 // convertMessages converts llm.Post messages to Bifrost ChatMessage format.
 func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []schemas.ChatMessage {
 	messages := make([]schemas.ChatMessage, 0, len(posts))
+	maxDim := maxImageDimension(b.provider, countRequestImages(posts))
 
 	for _, post := range posts {
 		var msg schemas.ChatMessage
@@ -251,7 +252,7 @@ func (b *LLM) convertMessages(posts []llm.Post, cfg llm.LanguageModelConfig) []s
 		case llm.PostRoleUser:
 			if len(post.Files) > 0 {
 				// Multimodal message with images
-				parts := b.createMultimodalContent(post)
+				parts := b.createMultimodalContent(post, maxDim)
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
@@ -414,8 +415,8 @@ func messageToContentBlocks(msg *schemas.ChatMessage) []schemas.ChatContentBlock
 }
 
 // createMultimodalContent creates content blocks for messages with images.
-func (b *LLM) createMultimodalContent(post llm.Post) []schemas.ChatContentBlock {
-	return multimodalContent(post,
+func (b *LLM) createMultimodalContent(post llm.Post, maxDim int) []schemas.ChatContentBlock {
+	return multimodalContent(post, maxDim,
 		func(text string) schemas.ChatContentBlock {
 			return schemas.ChatContentBlock{
 				Type: schemas.ChatContentBlockTypeText,

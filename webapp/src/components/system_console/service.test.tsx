@@ -372,3 +372,135 @@ describe('ServiceFields fallback selector', () => {
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
 });
+
+describe('ServiceFields structured output policy selector', () => {
+    beforeEach(() => {
+        // A stable empty array keeps the model-fetch effect from looping.
+        fetchModels.mockResolvedValue([]);
+    });
+
+    async function renderPolicy(service: LLMService) {
+        const {onChange, ...result} = renderFields(service);
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        const policySelect = screen.getByText('Auto (recommended)').closest('select') as HTMLSelectElement;
+        return {...result, onChange, policySelect};
+    }
+
+    it('offers auto, native and prompt fallback with help text explaining the fallback chain', async () => {
+        const {policySelect} = await renderPolicy(baseService);
+
+        expect(Array.from(policySelect.options).map((o) => o.value)).toEqual(['', 'native', 'prompt_fallback']);
+        expect(Array.from(policySelect.options).map((o) => o.textContent)).toEqual([
+            'Auto (recommended)',
+            'Native supported',
+            'Prompt fallback',
+        ]);
+        expect(screen.getByText(/combined across this service's fallback chain/)).not.toBeNull();
+    });
+
+    const storedValueCases: {description: string; service: LLMService; selected: string}[] = [
+        {description: 'a service saved before the policy field existed', service: baseService, selected: ''},
+        {description: 'an empty stored value', service: {...baseService, structuredOutputPolicy: ''}, selected: ''},
+        {description: 'an explicit auto value', service: {...baseService, structuredOutputPolicy: 'auto'}, selected: ''},
+        {description: 'a native value', service: {...baseService, structuredOutputPolicy: 'native'}, selected: 'native'},
+        {description: 'a prompt fallback value', service: {...baseService, structuredOutputPolicy: 'prompt_fallback'}, selected: 'prompt_fallback'},
+        {description: 'a value only a newer server knows about', service: {...baseService, structuredOutputPolicy: 'something_new'}, selected: ''},
+    ];
+
+    it.each(storedValueCases)('selects "$selected" for $description', async ({service, selected}) => {
+        const {policySelect} = await renderPolicy(service);
+
+        // Assert on the selected option: select.value reads as the empty string
+        // both when Auto is selected and when nothing is selected at all.
+        expect(policySelect.selectedIndex).not.toBe(-1);
+        expect(policySelect.options[policySelect.selectedIndex].value).toBe(selected);
+    });
+
+    const writeCases = [
+        {selected: 'native'},
+        {selected: 'prompt_fallback'},
+
+        // Auto is stored as the empty string so untouched services need no migration.
+        {selected: ''},
+    ];
+
+    it.each(writeCases)('writes "$selected" to the service when selected', async ({selected}) => {
+        const {policySelect, onChange} = await renderPolicy({...baseService, structuredOutputPolicy: 'native'});
+        fireEvent.change(policySelect, {target: {value: selected}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({structuredOutputPolicy: selected}));
+    });
+});
+
+describe('ServiceFields Cohere North', () => {
+    const northService: LLMService = {
+        ...baseService,
+        name: 'North',
+        type: 'north',
+        apiKey: '',
+        apiURL: '',
+        defaultModel: '',
+        useResponsesAPI: false,
+    };
+
+    beforeEach(() => {
+        fetchModels.mockResolvedValue([]);
+    });
+
+    it('shows North-specific URL and service token fields, hides org id and Responses API toggle', () => {
+        renderFields(northService);
+
+        expect(screen.getByText('North instance URL')).toBeTruthy();
+        expect(screen.getByText('The base URL of your Cohere North instance, for example https://north.example.com')).toBeTruthy();
+        expect(screen.getByText('Service token')).toBeTruthy();
+        expect(screen.getByText("A long-lived North service token. Generate one from your North instance's developer page.")).toBeTruthy();
+        expect(screen.getByText('Streaming Timeout Seconds')).toBeTruthy();
+        expect(screen.queryByText('Organization ID')).toBeNull();
+        expect(screen.queryByText('Use Responses API')).toBeNull();
+        expect(screen.queryByText('Account ID')).toBeNull();
+    });
+
+    it('does not prefill the default model', () => {
+        renderFields(northService);
+
+        const defaultModelInput = screen.getByPlaceholderText('Default model') as HTMLInputElement;
+        expect(defaultModelInput.value).toBe('');
+    });
+
+    it('does not fetch models until both service token and instance URL are set', async () => {
+        const {rerender, onChange} = renderFields({...northService, apiKey: 'token'});
+
+        await waitFor(() => expect(screen.getByText('Default model')).toBeTruthy());
+        expect(fetchModels).not.toHaveBeenCalled();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <ServiceFields
+                    service={{...northService, apiKey: 'token', apiURL: 'https://north.example.com'}}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        expect(fetchModels).toHaveBeenCalledWith(
+            'north',
+            'token',
+            'https://north.example.com',
+            '',
+            expect.anything(),
+        );
+    });
+
+    it('forces useResponsesAPI on when switching to north', () => {
+        const {onChange} = renderFields(baseService);
+        const typeSelect = screen.getByText('Anthropic').closest('select') as HTMLSelectElement;
+        fireEvent.change(typeSelect, {target: {value: 'north'}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({type: 'north', useResponsesAPI: true}));
+    });
+
+    it('still offers the service-level structured output policy', () => {
+        renderFields(northService);
+        expect(screen.getByText('Structured output')).toBeTruthy();
+        expect(screen.getByText('Auto (recommended)')).toBeTruthy();
+    });
+});

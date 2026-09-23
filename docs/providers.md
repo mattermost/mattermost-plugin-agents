@@ -11,6 +11,7 @@ The Mattermost Agents plugin currently supports these LLM providers:
 - Anthropic
 - AWS Bedrock
 - Cohere
+- Cohere North
 - Mistral
 - Scale AI
 - Azure OpenAI
@@ -107,6 +108,54 @@ Obtain a [Cohere API key](https://dashboard.cohere.com/api-keys), then select **
 |---------|----------|-------------|
 | **API Key** | Yes | Your Cohere API key |
 | **Default Model** | Yes | The model to use by default (see [Cohere's model documentation](https://docs.cohere.com/docs/models)) |
+
+## Cohere North
+
+Cohere North is Cohere's enterprise agent platform. This integration uses North's OpenAI Responses-compatible endpoint so existing Mattermost agents can use a North-hosted model as their backend. It does not yet bind to North-side Agents, knowledge libraries, or citations.
+
+### Authentication
+
+1. In Mattermost, select **Cohere North** in the **Service** dropdown (type id `north`).
+2. Enter your North instance URL in the **North instance URL** field (for example, `https://north.example.com`). The plugin appends `/api` automatically. Entering a URL that already ends with `/api` or `/api/v1` also works.
+3. Enter a **Service token**. Obtain it from the North web UI by appending `/developer` to the instance URL (for example, `https://north.example.com/developer`) and using **Retrieve your token**. Tokens are user-bound and expire; use a dedicated service account and rotate the token before expiry. This version supports a single admin-configured token; per-user tokens are not supported.
+4. Enter a model identifier in the **Default Model** field. The model name must be entered explicitly (for example, `command-a-03-2025`). Use `command-a-vision-07-2025` when the agent needs image input.
+
+**Fetch models** works on North instances that expose the v2 models listing. On older instances the request fails and you type the model name yourself.
+
+### Configuration Options
+
+| Setting | Required | Description |
+|---------|----------|-------------|
+| **North instance URL** | Yes | Base URL of your North instance (for example, `https://north.example.com`). The plugin appends `/api` if needed. |
+| **Service token** | Yes | North auth token from the instance `/developer` page. Stored as a secret. Use a dedicated service account and rotate before expiry. |
+| **Default Model** | Yes | The model to use by default (for example, `command-a-03-2025`, or `command-a-vision-07-2025` for image input). |
+| **Input Token Limit** | No | Optional override for the maximum input context size, in tokens. |
+| **Output Token Limit** | No | Optional override for the maximum output the plugin will request. |
+| **Streaming Timeout Seconds** | No | Timeout in seconds for streaming responses. |
+| **Fallback Service** | No | Optional service to use when this service is unavailable. |
+
+### Capabilities
+
+Supported:
+
+- Streaming
+- Tool calling (Mattermost and MCP tools)
+- Image input (enable **Vision** on the agent; use a vision-capable model such as `command-a-vision-07-2025`)
+- Reasoning via effort level
+
+Not supported:
+
+- Provider-native tools (web search, code interpreter)
+- Transcription
+- Embeddings
+
+### Special Considerations
+
+Requests are sent with `store: false`, so agent conversations are not persisted in the token owner's North conversation history.
+
+North can only be used as a fallback for a primary service that uses the Responses API and has no provider-native tools enabled; otherwise the agent fails to start with a configuration error.
+
+North applies its own system context on top of the agent's instructions, and its usage accounting includes that overhead.
 
 ## Mistral
 

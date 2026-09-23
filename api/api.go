@@ -32,6 +32,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -55,6 +56,11 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+
+	// GetServices returns a snapshot of the stored service configurations, in
+	// configuration order. The bridge service endpoints operate on this
+	// snapshot directly rather than going through an agent.
+	GetServices() []llm.ServiceConfig
 }
 
 type MCPClientManager interface {
@@ -280,6 +286,10 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	if c != nil {
+		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
+	}
+
 	router := gin.Default()
 	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
@@ -702,6 +712,11 @@ func (a *API) handleFetchModels(c *gin.Context) {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("vertexProjectID and region are required for Vertex AI"))
 			return
 		}
+	case llm.ServiceTypeNorth:
+		if req.APIKey == "" || req.APIURL == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey and apiURL are required for north"))
+			return
+		}
 	default:
 		if req.APIKey == "" {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
@@ -714,7 +729,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(llm.ServiceConfig{
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), llm.ServiceConfig{
 		Type:                  req.ServiceType,
 		APIKey:                req.APIKey,
 		APIURL:                req.APIURL,

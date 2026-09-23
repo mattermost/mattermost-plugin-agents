@@ -54,13 +54,14 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     }
 
     // Determine if this service supports reasoning.
-    //   - OpenAI direct always uses the Responses API.
+    //   - OpenAI direct and Cohere North always use the Responses API.
     //   - Anthropic uses extended thinking with a token budget.
     //   - Gemini / Vertex AI map reasoning to Google's thinkingConfig via Bifrost,
     //     accepting both a thinking budget and an effort level.
     const isAnthropic = props.service.type === 'anthropic';
     const isOpenAIWithResponses =
         props.service.type === 'openai' ||
+        props.service.type === 'north' ||
         (['openaicompatible', 'azure'].includes(props.service.type) && props.service.useResponsesAPI);
     const isGoogle = props.service.type === 'gemini' || props.service.type === 'vertex';
 
