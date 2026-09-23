@@ -113,7 +113,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                             userIDs={props.userIDs}
                             teamIDs={props.teamIDs}
                             onChangeIDs={props.onChangeIDs}
-                            disabled={props.disabled || !accessLicensed}
+                            disabled={props.disabled}
                         />
                         <HelpText>
                             {props.level === UserAccessLevel.Allow ? (
@@ -196,7 +196,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         <SelectChannel
                             channelIDs={props.channelIDs}
                             onChangeChannelIDs={props.onChangeChannelIDs}
-                            disabled={props.disabled || !accessLicensed}
+                            disabled={props.disabled}
                         />
                         <HelpText>
                             {props.level === ChannelAccessLevel.Allow ? (

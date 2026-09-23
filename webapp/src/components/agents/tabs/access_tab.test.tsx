@@ -256,6 +256,10 @@ describe('AccessTab', () => {
             map((radio) => radio as HTMLInputElement).
             find((radio) => radio.value === String(UserAccessLevel.Allow));
         expect(allowRadio?.disabled).toBe(false);
+
+        // The existing list stays editable so entries can be removed.
+        const userPicker = within(formRowForLabel('User access')).getByRole('combobox') as HTMLInputElement;
+        expect(userPicker.disabled).toBe(false);
     });
 
     test('keeps the option visible for an already attribute-based agent on a downgraded server, with a warning', () => {

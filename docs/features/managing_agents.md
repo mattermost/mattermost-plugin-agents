@@ -82,7 +82,7 @@ The number of agents that can be active depends on the license level. Configurat
 - **Professional**: three agents.
 - **Enterprise, Entry and Enterprise Advanced**: unlimited agents (subject to permissions).
 
-Agent access controls (restricting an agent to named users, teams or channels, and the corresponding block lists) are available at Professional and above; attribute-based access is available at Enterprise Advanced; service-account authentication is available at Enterprise and above. Resetting any of these to their open defaults is always permitted.
+Agent access controls (restricting an agent to named users, teams or channels, and the corresponding block lists) are available at Professional and above; attribute-based access is available at Enterprise Advanced; service-account authentication is available at Enterprise and above. Resetting any of these to their open defaults is always permitted, and an agent that already has user, team or channel lists can have those lists edited at any level.
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
 

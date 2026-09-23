@@ -65,26 +65,15 @@ func BotHasAccessControls(cfg llm.BotConfig) bool {
 	return false
 }
 
-func accessControlFieldsEqual(a, b llm.BotConfig) bool {
-	return a.ChannelAccessLevel == b.ChannelAccessLevel &&
-		a.UserAccessLevel == b.UserAccessLevel &&
-		slices.Equal(a.ChannelIDs, b.ChannelIDs) &&
-		slices.Equal(a.UserIDs, b.UserIDs) &&
-		slices.Equal(a.TeamIDs, b.TeamIDs)
-}
-
-// AccessControlsNewlyRestricted reports whether next newly carries named
-// access controls relative to prev (nil prev = create / empty defaults). A
-// transition to ChannelAccessLevelAll + UserAccessLevelAll with empty lists
-// is never newly restricted.
+// AccessControlsNewlyRestricted reports whether next carries named access
+// controls while prev (nil = create / empty defaults) carried none. Editing
+// the lists of an agent that already has access controls, and opening them
+// back up, are not new restrictions.
 func AccessControlsNewlyRestricted(prev *llm.BotConfig, next llm.BotConfig) bool {
 	if !BotHasAccessControls(next) {
 		return false
 	}
-	if prev == nil {
-		return true
-	}
-	return !accessControlFieldsEqual(*prev, next)
+	return prev == nil || !BotHasAccessControls(*prev)
 }
 
 func check(level enterprise.Level, capability enterprise.Capability) error {

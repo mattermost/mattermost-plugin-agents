@@ -326,6 +326,12 @@ func TestAccessControlsNewlyRestricted(t *testing.T) {
 		ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 		ChannelIDs:         []string{"ch1"},
 	}
+	blocked := func(userIDs ...string) llm.BotConfig {
+		return llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll, UserAccessLevel: llm.UserAccessLevelBlock, UserIDs: userIDs}
+	}
+	twoBlocked := blocked("u1", "u2")
+	oneBlocked := blocked("u1")
+	twoBlockedReordered := blocked("u2", "u1")
 
 	tests := []struct {
 		name string
@@ -338,6 +344,9 @@ func TestAccessControlsNewlyRestricted(t *testing.T) {
 		{name: "unchanged restrictions", prev: &restricted, next: restricted, want: false},
 		{name: "opening restrictions", prev: &restricted, next: open, want: false},
 		{name: "newly restricted", prev: &open, next: restricted, want: true},
+		{name: "removing an entry from a restricted list", prev: &twoBlocked, next: oneBlocked, want: false},
+		{name: "reordering a restricted list", prev: &twoBlocked, next: twoBlockedReordered, want: false},
+		{name: "retargeting a restricted list", prev: &restricted, next: llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAllow, ChannelIDs: []string{"ch2"}}, want: false},
 		{name: "attribute-based is not named access controls", next: llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAttributeBased}, want: false},
 	}
 
