@@ -281,7 +281,10 @@ export const RunOpenAIMocks = async (network: StartedNetwork): Promise<OpenAIMoc
  * Follows OpenAI's chat.completions streaming format.
  */
 export function buildToolCallResponse(toolCallId: string, toolName: string, args: string): string {
-	const escapedArgs = args.replace(/"/g, '\\"');
+	// slice off the quotes JSON.stringify adds: naive quote replacement would
+	// corrupt arguments that themselves contain backslashes, such as a nested
+	// JSON string.
+	const escapedArgs = JSON.stringify(args).slice(1, -1);
 	const chunks = [
 		`data: {"id":"chatcmpl-tc1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"role":"assistant","content":null,"tool_calls":[{"index":0,"id":"${toolCallId}","type":"function","function":{"name":"${toolName}","arguments":""}}]},"finish_reason":null}]}`,
 		`data: {"id":"chatcmpl-tc1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"${escapedArgs}"}}]},"finish_reason":null}]}`,

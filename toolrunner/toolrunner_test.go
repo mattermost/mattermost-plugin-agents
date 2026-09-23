@@ -665,7 +665,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	require.Len(t, result.ToolTurns, 1)
 	require.Len(t, result.ToolTurns[0].ToolResults, 2)
 	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
-	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained rejected tool call(s): ghost_tool")
 	assert.True(t, result.ToolTurns[0].ToolResults[1].IsError)
 	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[1].Result)
 
