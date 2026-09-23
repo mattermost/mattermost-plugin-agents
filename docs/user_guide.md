@@ -59,7 +59,7 @@ To configure auto-reply, select the channel name to open the channel dropdown, s
 
 An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
 
-> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced. See [license requirements](admin_guide.md#license-requirements) for details.
+> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
 
 ### Use custom prompt templates
 

@@ -88,221 +88,91 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 	}
 }
 
-func TestAgentAccessControlsLicenseGate(t *testing.T) {
+func TestCreateAgentLicenseGates(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 
-	restricted := map[string]any{
-		"channelAccessLevel": int(llm.ChannelAccessLevelAllow),
-		"channelIDs":         []string{"ch1"},
+	tests := []struct {
+		name     string
+		fields   map[string]any
+		minLevel enterprise.Level
+	}{
+		{name: "access controls", fields: map[string]any{"channelAccessLevel": int(llm.ChannelAccessLevelAllow), "channelIDs": []string{"ch1"}}, minLevel: enterprise.LevelProfessional},
+		{name: "provider web search", fields: map[string]any{"enabledNativeTools": []string{llm.NativeToolWebSearch}}, minLevel: enterprise.LevelProfessional},
+		{name: "service-account auth", fields: map[string]any{"useServiceAccountAuth": true}, minLevel: enterprise.LevelEnterprise},
+		{name: "second LLM service", fields: map[string]any{"serviceID": "svc-2"}, minLevel: enterprise.LevelEnterprise},
+		{name: "attribute-based access", fields: map[string]any{"userAccessLevel": int(llm.UserAccessLevelAttributeBased)}, minLevel: enterprise.LevelEnterpriseAdvanced},
 	}
 
-	for _, level := range enterprisetest.AllLevels {
-		t.Run("create "+level.String(), func(t *testing.T) {
-			e := setupAgentTestEnvironment(t)
-			defer e.Cleanup(t)
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.OverrideLicense(enterprisetest.LicenseFor(level))
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-				UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
-			}, nil).Maybe()
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	for _, tc := range tests {
+		for _, level := range enterprisetest.AllLevels {
+			t.Run(tc.name+"/"+level.String(), func(t *testing.T) {
+				e := setupAgentTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.OverrideLicense(enterprisetest.LicenseFor(level))
+				store := e.api.configStore.(*mockConfigStore)
+				store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Other", Type: "openai"})
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true).Maybe()
+				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
+					UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
+				}, nil).Maybe()
+				e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(restricted), testUserID)
-			if level >= enterprise.LevelProfessional {
-				require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
-				return
-			}
-			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
-			var body licenseErrorResponse
-			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
-			assert.Equal(t, enterprise.LevelProfessional.Key(), body.LicenseRequired)
-		})
-	}
-
-	t.Run("update opening restrictions is accepted when unlicensed", func(t *testing.T) {
-		e := setupAgentTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-		e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelUnlicensed))
-		e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-		stored := &llm.BotConfig{
-			ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-			DisplayName: "Original", Name: "original", ServiceID: "svc-1",
-			ChannelAccessLevel: llm.ChannelAccessLevelAllow, ChannelIDs: []string{"ch1"},
+				recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(tc.fields), testUserID)
+				if level >= tc.minLevel {
+					// Attribute-based access also needs ABAC on the server, so
+					// a licensed save can still fail validation; it must not
+					// fail for licensing.
+					require.NotEqual(t, http.StatusForbidden, recorder.Result().StatusCode)
+					return
+				}
+				require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+				var body licenseErrorResponse
+				require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
+				assert.Equal(t, tc.minLevel.Key(), body.LicenseRequired)
+			})
 		}
-		e.agentStore.agents["agent-1"] = stored
-		body := updateAgentBodyFromStored(stored, map[string]any{
-			"channelAccessLevel": int(llm.ChannelAccessLevelAll),
-			"channelIDs":         []string{},
-		})
-		recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
-		require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-	})
-}
-
-func TestAgentAttributeBasedLicenseGate(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-
-	for _, level := range enterprisetest.AllLevels {
-		t.Run(level.String(), func(t *testing.T) {
-			e := setupAgentTestEnvironment(t)
-			defer e.Cleanup(t)
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.OverrideLicense(enterprisetest.LicenseFor(level))
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-				UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
-			}, nil).Maybe()
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
-				"userAccessLevel": int(llm.UserAccessLevelAttributeBased),
-			}), testUserID)
-			if level >= enterprise.LevelEnterpriseAdvanced {
-				// Advanced still needs ABAC to be available on the server; the
-				// passthrough checker reports no_policy so the save may 400.
-				require.NotEqual(t, http.StatusForbidden, recorder.Result().StatusCode)
-				return
-			}
-			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
-			var body licenseErrorResponse
-			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
-			assert.Equal(t, enterprise.LevelEnterpriseAdvanced.Key(), body.LicenseRequired)
-		})
 	}
 }
 
-func TestAgentServiceAccountAuthLicenseGate(t *testing.T) {
+// TestUpdateAgentLicensedSettingsStayEditableWhenUnlicensed pins that turning
+// a gated setting off, and saving an agent whose stored gated settings are
+// unchanged, never needs a license.
+func TestUpdateAgentLicensedSettingsStayEditableWhenUnlicensed(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 
-	for _, level := range enterprisetest.AllLevels {
-		t.Run(level.String(), func(t *testing.T) {
-			e := setupAgentTestEnvironment(t)
-			defer e.Cleanup(t)
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.OverrideLicense(enterprisetest.LicenseFor(level))
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true)
-			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-				UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
-			}, nil).Maybe()
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
-				"useServiceAccountAuth": true,
-			}), testUserID)
-			if level >= enterprise.LevelEnterprise {
-				require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
-				return
-			}
-			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
-			var body licenseErrorResponse
-			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
-			assert.Equal(t, enterprise.LevelEnterprise.Key(), body.LicenseRequired)
-		})
+	tests := []struct {
+		name   string
+		stored llm.BotConfig
+		change map[string]any
+	}{
+		{name: "opening access controls", stored: llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAllow, ChannelIDs: []string{"ch1"}}, change: map[string]any{"channelAccessLevel": int(llm.ChannelAccessLevelAll), "channelIDs": []string{}}},
+		{name: "turning service-account auth off", stored: llm.BotConfig{UseServiceAccountAuth: true}, change: map[string]any{"useServiceAccountAuth": false}},
+		{name: "renaming an agent on a non-active service", stored: llm.BotConfig{ServiceID: "svc-2"}, change: map[string]any{"displayName": "Renamed"}},
 	}
 
-	t.Run("turning off is accepted when unlicensed", func(t *testing.T) {
-		e := setupAgentTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-		e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelUnlicensed))
-		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true).Maybe()
-		e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-		stored := &llm.BotConfig{
-			ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-			DisplayName: "Original", Name: "original", ServiceID: "svc-1",
-			UseServiceAccountAuth: true,
-		}
-		e.agentStore.agents["agent-1"] = stored
-		body := updateAgentBodyFromStored(stored, map[string]any{"useServiceAccountAuth": false})
-		recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
-		require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-	})
-}
-
-func TestAgentProviderWebSearchLicenseGate(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-
-	for _, level := range enterprisetest.AllLevels {
-		t.Run(level.String(), func(t *testing.T) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
 			e := setupAgentTestEnvironment(t)
 			defer e.Cleanup(t)
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.OverrideLicense(enterprisetest.LicenseFor(level))
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-				UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
-			}, nil).Maybe()
-			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
-				"enabledNativeTools": []string{llm.NativeToolWebSearch},
-			}), testUserID)
-			if level >= enterprise.LevelProfessional {
-				require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
-				return
-			}
-			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
-		})
-	}
-}
-
-func TestAgentServiceIDLicenseGate(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-
-	for _, level := range enterprisetest.AllLevels {
-		t.Run(level.String(), func(t *testing.T) {
-			e := setupAgentTestEnvironment(t)
-			defer e.Cleanup(t)
-			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-			e.OverrideLicense(enterprisetest.LicenseFor(level))
+			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelUnlicensed))
 			store := e.api.configStore.(*mockConfigStore)
 			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Other", Type: "openai"})
-			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{
-				UserId: "bot-user-id-created", Username: "my-agent", DisplayName: "My Agent",
-			}, nil).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true).Maybe()
+			e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(map[string]any{
-				"serviceID": "svc-2",
-			}), testUserID)
-			if level >= enterprise.LevelEnterprise {
-				require.Equal(t, http.StatusCreated, recorder.Result().StatusCode)
-				return
+			stored := tc.stored
+			stored.ID, stored.CreatorID, stored.BotUserID = "agent-1", testUserID, "bot-1"
+			stored.DisplayName, stored.Name = "Original", "original"
+			if stored.ServiceID == "" {
+				stored.ServiceID = "svc-1"
 			}
-			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
-			var body licenseErrorResponse
-			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
-			assert.Equal(t, enterprise.LevelEnterprise.Key(), body.LicenseRequired)
+			e.agentStore.agents["agent-1"] = &stored
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", updateAgentBodyFromStored(&stored, tc.change), testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 		})
 	}
-
-	t.Run("unchanged non-active service is accepted", func(t *testing.T) {
-		e := setupAgentTestEnvironment(t)
-		defer e.Cleanup(t)
-		e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
-		e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelUnlicensed))
-		store := e.api.configStore.(*mockConfigStore)
-		store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Other", Type: "openai"})
-		e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
-		e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-
-		stored := &llm.BotConfig{
-			ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
-			DisplayName: "Original", Name: "original", ServiceID: "svc-2",
-		}
-		e.agentStore.agents["agent-1"] = stored
-		body := updateAgentBodyFromStored(stored, map[string]any{"displayName": "Renamed"})
-		recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
-		require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
-	})
 }
 
 func TestListAgentsQuotaHeadersByLicense(t *testing.T) {
