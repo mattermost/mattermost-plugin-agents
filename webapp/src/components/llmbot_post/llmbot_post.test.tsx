@@ -563,6 +563,17 @@ describe('LLMBotPost mid-stream text routing', () => {
         expect(within(screen.getByTestId('llm-bot-tool-activity-rounds')).getByText('Now let me read the channel')).toBeTruthy();
     });
 
+    test('folds the first round away when a provider tool starts after it', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send({next: 'I will search the web'});
+        send(serverTool({id: 'srv1', query: 'release notes'}));
+
+        expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('I will search the web');
+        advanceAnimation();
+        expect(mainAreaText()).not.toContain('I will search the web');
+    });
+
     test('keeps text after provider tools in the main area until another invocation follows', () => {
         const send = streamingPost();
         send({control: 'start'});
