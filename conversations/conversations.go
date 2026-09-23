@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -113,8 +114,20 @@ type DMConversationResult struct {
 
 // CreateOrGetDMConversation creates or retrieves a conversation for a DM.
 // This is separated from ProcessDMRequest so the conversation_id can be
-// set on the response post before it is created.
+// set on the response post before it is created. Callers without a session
+// fail closed on attachments.
 func (c *Conversations) CreateOrGetDMConversation(
+	botID string,
+	postingUser *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	llmCtx *llm.Context,
+) (*DMConversationResult, error) {
+	return c.createOrGetDMConversation("", botID, postingUser, channel, post, llmCtx)
+}
+
+func (c *Conversations) createOrGetDMConversation(
+	sessionID string,
 	botID string,
 	postingUser *model.User,
 	channel *model.Channel,
@@ -149,6 +162,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 		channelID := channel.Id
 		result, err := c.convService.CreateConversation(conversation.CreateConversationParams{
 			UserID:       postingUser.Id,
+			SessionID:    sessionID,
 			BotID:        botID,
 			ChannelID:    &channelID,
 			RootPostID:   &postID,
@@ -166,6 +180,7 @@ func (c *Conversations) CreateOrGetDMConversation(
 
 	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
+		SessionID:    sessionID,
 		BotID:        botID,
 		ChannelID:    channel.Id,
 		RootPostID:   post.RootId,
@@ -225,7 +240,11 @@ func (c *Conversations) processDMRequest(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get conversation: %w", err)
 	}
-	completionReq, err := c.convService.BuildCompletionRequest(conv, llmCtx)
+	completionReq, err := c.convService.BuildCompletionRequest(
+		conv,
+		llmCtx,
+		conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build completion request: %w", err)
 	}
