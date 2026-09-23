@@ -71,7 +71,7 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Type** | LLM provider (OpenAI, Anthropic, AWS Bedrock, Cohere, Cohere North, Mistral, Scale AI, Azure OpenAI, OpenAI-compatible) |
 | **API Key** | Your provider's API key (requirements vary by provider) |
 | **Default Model** | Default model to use for this service |
-| **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. |
+| **Fallback Service** | Optional service to use when this service is unavailable. Defaults to **No fallback**. Available at Enterprise Advanced (see [license requirements](#license-requirements)). |
 | **Input Token Limit** | Maximum tokens allowed in input. When provider metadata includes an input limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an input limit, the field stays editable and Mattermost uses the saved manual value. Set this manually for models without provider metadata if you want Mattermost to enforce a request-size limit before sending upstream. A value of `0` means Mattermost does not apply client-side truncation. |
 | **Output Token Limit** | Maximum tokens allowed in output. When provider metadata includes an output limit for the selected model, Mattermost auto-populates this field, disables it, and shows **Auto-detected from provider**. If the selected model is unknown or the provider does not report an output limit, the field stays editable and Mattermost uses the saved manual value. |
 | **Streaming Timeout Seconds** | Timeout in seconds for streaming responses |
@@ -938,7 +938,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | | Free | Professional | Enterprise | Ent. Advanced |
 |---|---|---|---|---|
 | AI agents | 1 | 3 | unlimited | unlimited |
-| Bring your own LLM, incl. local models | ✅ 1 provider | ✅ 1 provider | ✅ multi + fallback | ✅ multi + fallback |
+| Bring your own LLM, incl. local models | ✅ 1 provider | ✅ 1 provider | ✅ multi | ✅ multi + fallback |
 | Vision / document understanding | ✅ | ✅ | ✅ | ✅ |
 | Personal custom prompts | ✅ | ✅ | ✅ | ✅ |
 | Built-in Mattermost tools | read-only | read-only | read + write | read + write |
@@ -962,7 +962,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 How each row is enforced:
 
 - **AI agents** counts configuration-file bots and user-created agents together as one pool. When a workspace holds more agents than its level allows, the plugin activates configuration-file bots first (in configuration order), then user-created agents (oldest first), up to the cap. Remaining agents stay stored but inactive and are named in the server log. Creating an agent beyond the cap returns a licensing error that names the level that raises the cap.
-- **Bring your own LLM** — Free and Professional workspaces use one LLM service: the first service in the **Services** list. Agents that reference another service, and fallback chains, are inactive at those levels and are named in the server log. Enterprise and above route agents to any service and follow fallback chains.
+- **Bring your own LLM** — Free and Professional workspaces use one LLM service: the first service in the **Services** list. Agents that reference another service are inactive at those levels and are named in the server log, and LLM Bridge service calls address only that service. Enterprise and above route agents and LLM Bridge calls to any configured service. Fallback chains are followed at Enterprise Advanced; at lower levels a configured fallback stays stored but requests use the primary service only.
 - **Built-in Mattermost tools** — read-only tools (retrieving messages, channels, users, teams, files and search results) are available at every level. Tools that change state in Mattermost (posting, reacting, editing, creating or modifying channels, bookmarks, scheduled posts and similar) are available at Enterprise and above; below that they are absent from the tool list and calls to them return a licensing message.
 - **Tool approval policies** — admin-configured per-tool execution policies apply at Enterprise and above. Below that, embedded Mattermost tools use the product defaults and every other tool asks before running. A tool that an administrator has disabled stays disabled at every level.
 - **Shared prompt libraries** — personal prompts are available at every level. Publishing a prompt to other users, and discovering or using prompts published by others, is available at Enterprise and above.

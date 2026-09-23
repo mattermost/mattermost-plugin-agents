@@ -34,8 +34,8 @@ jest.mock('../../client', () => ({
 
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
-    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
-    requiredLevelFor: jest.fn(() => 2),
+    useLicenseLevelName: jest.fn(() => (level: number) => ['Free', 'Professional', 'Enterprise', 'Enterprise Advanced'][level]),
+    requiredLevelFor: jest.fn((capability: string) => (capability === 'model_fallback' ? 3 : 2)),
 }));
 
 jest.mock('../access_control/console_policy_section', () => ({
@@ -383,13 +383,13 @@ describe('ServiceFields fallback selector', () => {
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
 
-    it('disables selecting a fallback below Enterprise while still allowing clearing one', async () => {
+    it('disables selecting a fallback below Enterprise Advanced while still allowing clearing one', async () => {
         const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
         useIsLicensedFor.mockReturnValue(false);
 
         const empty = await renderFallback(current, [current, other]);
         expect(empty.fallbackSelect.disabled).toBe(true);
-        expect(screen.getByText('Enterprise')).toBeTruthy();
+        expect(screen.getByText('Enterprise Advanced')).toBeTruthy();
         empty.unmount();
 
         const third: LLMService = {...baseService, id: 'svc-third', name: 'Tertiary Service'};

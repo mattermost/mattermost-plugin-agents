@@ -270,10 +270,10 @@ func validateServiceTransition(from, next Config, level enterprise.Level) error 
 			continue
 		}
 		prev, found := prevSvcs[svc.ID]
-		if found && prev.FallbackServiceID != "" {
+		if found && prev.FallbackServiceID == svc.FallbackServiceID {
 			continue
 		}
-		if err := check(level, enterprise.CapMultipleLLMServices); err != nil {
+		if err := check(level, enterprise.CapModelFallback); err != nil {
 			return err
 		}
 	}

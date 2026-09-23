@@ -270,9 +270,9 @@ func (b *MMBots) resolveServiceCfgs(botCfgs []llm.BotConfig) map[string]llm.Serv
 				result[botCfg.ServiceID] = svc
 			}
 		}
-		// Fallback chains are available at Enterprise and above. Exclude them
+		// Fallback chains are available at Enterprise Advanced. Exclude them
 		// from change detection so the snapshot matches getLLM.
-		if !b.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
+		if !b.licenseChecker.Allows(enterprise.CapModelFallback) {
 			continue
 		}
 		// Include fallback chain services so changes to them trigger re-init.
@@ -532,9 +532,9 @@ func (b *MMBots) EnsureBots() error {
 
 		b.ensureDefaultProfileImage(bot)
 
-		// Fallback chains are available at Enterprise and above.
+		// Fallback chains are available at Enterprise Advanced.
 		var fallbackServices []llm.ServiceConfig
-		if b.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
+		if b.licenseChecker.Allows(enterprise.CapModelFallback) {
 			var ferr error
 			fallbackServices, ferr = llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
 			if ferr != nil {

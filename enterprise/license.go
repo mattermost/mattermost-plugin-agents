@@ -74,6 +74,7 @@ const (
 	CapMCPServiceAccount     Capability = "mcp_service_account"
 	CapSharedPrompts         Capability = "shared_prompts"
 	CapMultipleLLMServices   Capability = "multiple_llm_services"
+	CapModelFallback         Capability = "model_fallback"
 	CapStateChangingTools    Capability = "state_changing_tools"
 	CapChannelAutoReply      Capability = "channel_auto_reply"
 	CapAttributeBasedAccess  Capability = "attribute_based_access"
@@ -95,7 +96,7 @@ var capabilities = map[Capability]capabilitySpec{
 	CapAgentAccessControls:  {LevelProfessional, "Agent access controls"},
 	CapTokenAccounting:      {LevelProfessional, "Token accounting"},
 
-	CapMultipleLLMServices:  {LevelEnterprise, "Multiple LLM services and fallback chains"},
+	CapMultipleLLMServices:  {LevelEnterprise, "Multiple LLM services"},
 	CapStateChangingTools:   {LevelEnterprise, "State-changing Mattermost tools"},
 	CapSovereignWebSearch:   {LevelEnterprise, "Sovereign web search"},
 	CapToolApprovalPolicies: {LevelEnterprise, "Tool approval policies"},
@@ -107,6 +108,7 @@ var capabilities = map[Capability]capabilitySpec{
 
 	CapChannelAutoReply:     {LevelEnterpriseAdvanced, "Channel agent auto-reply"},
 	CapAttributeBasedAccess: {LevelEnterpriseAdvanced, "Attribute-based access control"},
+	CapModelFallback:        {LevelEnterpriseAdvanced, "LLM fallback chains"},
 }
 
 // RequiredLevel returns the minimum level at which capability is available. Unknown
@@ -261,8 +263,8 @@ func ServiceLimitFor(level Level) (limit int, ok bool) {
 	return BaseServiceLimit, true
 }
 
-// IsMultiLLMLicensed reports whether multiple LLM services, per-agent service
-// routing and fallback chains are available.
+// IsMultiLLMLicensed reports whether multiple LLM services and per-agent
+// service routing are available.
 func (e *LicenseChecker) IsMultiLLMLicensed() bool {
 	return e.Allows(CapMultipleLLMServices)
 }

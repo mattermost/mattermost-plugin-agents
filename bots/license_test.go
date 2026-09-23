@@ -128,7 +128,7 @@ func TestSnapshotBotsSkipsInactiveServicesBelowEnterprise(t *testing.T) {
 	}
 }
 
-func TestResolveServiceCfgsOmitsFallbacksBelowEnterprise(t *testing.T) {
+func TestResolveServiceCfgsOmitsFallbacksBelowEnterpriseAdvanced(t *testing.T) {
 	cfg := &mockConfig{
 		bots: []llm.BotConfig{validBot("b1", "bot1", "svc1")},
 		services: []llm.ServiceConfig{
@@ -146,7 +146,7 @@ func TestResolveServiceCfgsOmitsFallbacksBelowEnterprise(t *testing.T) {
 			_, _, services, err := mmBots.snapshotBotsAndServices()
 			require.NoError(t, err)
 			require.Contains(t, services, "svc1")
-			if level >= enterprise.LevelEnterprise {
+			if level >= enterprise.LevelEnterpriseAdvanced {
 				assert.Contains(t, services, "svc2")
 			} else {
 				assert.NotContains(t, services, "svc2")

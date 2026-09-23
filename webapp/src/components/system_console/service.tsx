@@ -107,8 +107,8 @@ type ServiceFieldsProps = {
 export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
-    const fallbackLicensed = useIsLicensedFor('multiple_llm_services');
-    const fallbackChip = useLicenseChipProps('multiple_llm_services');
+    const fallbackLicensed = useIsLicensedFor('model_fallback');
+    const fallbackChip = useLicenseChipProps('model_fallback');
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'north';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';

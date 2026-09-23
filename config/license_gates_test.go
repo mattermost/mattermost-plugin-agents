@@ -76,7 +76,18 @@ func TestValidateLicenseTransition(t *testing.T) {
 			name:     "newly non-empty fallback",
 			prev:     &Config{Services: []llm.ServiceConfig{{ID: "s1"}}},
 			next:     Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s2"}}},
-			minLevel: enterprise.LevelEnterprise,
+			minLevel: enterprise.LevelEnterpriseAdvanced,
+		},
+		{
+			name:     "retargeting a fallback",
+			prev:     &Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s2"}}},
+			next:     Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s3"}}},
+			minLevel: enterprise.LevelEnterpriseAdvanced,
+		},
+		{
+			name: "unchanged fallback is accepted",
+			prev: &Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s2"}}},
+			next: Config{Services: []llm.ServiceConfig{{ID: "s1", FallbackServiceID: "s2"}}},
 		},
 		{
 			name: "clearing fallback is accepted",

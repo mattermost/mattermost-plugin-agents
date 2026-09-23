@@ -32,6 +32,7 @@ export type Capability =
     | 'agent_access_controls'
     | 'token_accounting'
     | 'multiple_llm_services'
+    | 'model_fallback'
     | 'state_changing_tools'
     | 'sovereign_web_search'
     | 'tool_approval_policies'
@@ -64,6 +65,7 @@ export const capabilityMinLevel: Record<Capability, LicenseLevel> = {
 
     channel_auto_reply: LicenseLevel.EnterpriseAdvanced,
     attribute_based_access: LicenseLevel.EnterpriseAdvanced,
+    model_fallback: LicenseLevel.EnterpriseAdvanced,
 };
 
 // Agent and LLM service caps per level; null means uncapped.
@@ -169,8 +171,8 @@ export function useLicenseLevelName(): (level: LicenseLevel) => string {
     };
 }
 
-// useIsMultiLLMLicensed reports whether multiple LLM services, per-agent
-// service routing and fallback chains are available.
+// useIsMultiLLMLicensed reports whether multiple LLM services and per-agent
+// service routing are available.
 export function useIsMultiLLMLicensed() {
     return useIsLicensedFor('multiple_llm_services');
 }

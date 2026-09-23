@@ -1043,7 +1043,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterpriseAdvanced}).Maybe()
 	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
 	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()

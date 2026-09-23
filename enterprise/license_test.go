@@ -132,6 +132,7 @@ func TestCapabilityMatrix(t *testing.T) {
 		{CapAgentAccessControls, LevelProfessional},
 		{CapTokenAccounting, LevelProfessional},
 		{CapMultipleLLMServices, LevelEnterprise},
+		{CapModelFallback, LevelEnterpriseAdvanced},
 		{CapStateChangingTools, LevelEnterprise},
 		{CapSovereignWebSearch, LevelEnterprise},
 		{CapToolApprovalPolicies, LevelEnterprise},
