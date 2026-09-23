@@ -22,7 +22,7 @@ const config = {
             shippedProposals: true,
         }],
         ['@babel/preset-react', {
-            useBuiltIns: true,
+            runtime: 'automatic',
         }],
         ['@babel/typescript', {
             allExtensions: true,
@@ -52,6 +52,16 @@ config.env = {
     test: {
         presets: config.presets,
         plugins: config.plugins,
+    },
+
+    // Selected by webpack's babel-loader envName for `npm run debug`.
+    development: {
+        presets: [
+            ['@babel/preset-react', {
+                runtime: 'automatic',
+                development: true,
+            }],
+        ],
     },
 };
 config.env.test.presets[0][1].modules = 'auto';
