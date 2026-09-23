@@ -162,7 +162,10 @@ describe('ToolProviderPopover', () => {
         expect(screen.queryByText(unavailableTooltip)).toBeNull();
     });
 
-    test('hides Connect when remote MCP is not licensed and still shows Disconnect', async () => {
+    test.each([
+        {authenticated: false, expectDisconnect: false},
+        {authenticated: true, expectDisconnect: true},
+    ])('hides Connect when remote MCP is not licensed (authenticated=$authenticated)', async ({authenticated, expectDisconnect}) => {
         const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
         useIsLicensedFor.mockReturnValue(false);
 
@@ -170,7 +173,7 @@ describe('ToolProviderPopover', () => {
             name: 'OAuth Server',
             serverOrigin: 'https://oauth.example.com/mcp',
             kind: 'remote',
-            authenticated: false,
+            authenticated,
             needsOAuth: true,
             authURL: 'http://localhost/oauth/start',
             serviceAccountConfigured: false,
@@ -182,6 +185,7 @@ describe('ToolProviderPopover', () => {
         await openToolsMenu();
         await screen.findByText('OAuth Server');
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Disconnect'}) !== null).toBe(expectDisconnect);
         useIsLicensedFor.mockReturnValue(true);
     });
 

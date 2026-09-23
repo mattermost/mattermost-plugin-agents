@@ -319,10 +319,11 @@ const ConfigTab = (props: Props) => {
                             {intl.formatMessage({defaultMessage: 'Unknown service (deleted)'})}
                         </SelectionItemOption>
                     )}
-                    {services.map((svc) => (
+                    {services.map((svc, index) => (
                         <SelectionItemOption
                             key={svc.id}
                             value={svc.id}
+                            disabled={serviceLimit !== null && index >= serviceLimit}
                         >
                             {svc.name || svc.type}
                         </SelectionItemOption>

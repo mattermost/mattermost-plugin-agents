@@ -238,17 +238,15 @@ export default class Plugin {
         if (registry.registerPostActionComponent) {
             registry.registerPostActionComponent(PostMenu);
         } else {
-            if (licenseAllows(store.getState(), 'thread_summarization')) {
-                registry.registerPostDropdownMenuAction(<><span className='icon'><IconThreadSummarization/></span><FormattedMessage defaultMessage='Summarize Thread'/></>, (postId: string) => {
-                    const state = store.getState();
-                    const team = state.entities.teams.teams[state.entities.teams.currentTeamId];
-                    window.WebappUtils.browserHistory.push('/' + team.name + '/messages/@ai');
-                    doThreadAnalysis(postId, 'summarize_thread', '');
-                    if (rhs) {
-                        store.dispatch(rhs.showRHSPlugin);
-                    }
-                });
-            }
+            registry.registerPostDropdownMenuAction(<><span className='icon'><IconThreadSummarization/></span><FormattedMessage defaultMessage='Summarize Thread'/></>, (postId: string) => {
+                const state = store.getState();
+                const team = state.entities.teams.teams[state.entities.teams.currentTeamId];
+                window.WebappUtils.browserHistory.push('/' + team.name + '/messages/@ai');
+                doThreadAnalysis(postId, 'summarize_thread', '');
+                if (rhs) {
+                    store.dispatch(rhs.showRHSPlugin);
+                }
+            }, () => licenseAllows(store.getState(), 'thread_summarization'));
             registry.registerPostDropdownMenuAction(<><span className='icon'><IconReactForMe/></span><FormattedMessage defaultMessage='React for me'/></>, doReaction);
         }
 

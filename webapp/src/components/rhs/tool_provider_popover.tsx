@@ -182,7 +182,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         ) : (
                             <ProviderActions>
                                 {unavailable && <MCPUnavailableBadge/>}
-                                {!unavailable && server.needsOAuth && (
+                                {!unavailable && server.authenticated && server.needsOAuth && (
                                     <DisconnectButton onClick={() => handleDisconnect(server.name)}>
                                         <FormattedMessage defaultMessage='Disconnect'/>
                                     </DisconnectButton>

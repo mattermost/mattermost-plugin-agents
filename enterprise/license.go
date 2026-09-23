@@ -299,7 +299,11 @@ type agentLimitError struct {
 }
 
 func (e *agentLimitError) Error() string {
-	return fmt.Sprintf("the current license level allows %d AI agents; more agents require a Mattermost %s license", e.Limit, e.lic.RequiredLevel)
+	noun := "AI agents"
+	if e.Limit == 1 {
+		noun = "AI agent"
+	}
+	return fmt.Sprintf("the current license level allows %d %s; more agents require a Mattermost %s license", e.Limit, noun, e.lic.RequiredLevel)
 }
 
 func (e *agentLimitError) Unwrap() error {

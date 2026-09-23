@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -32,10 +33,15 @@ func TestHandleMCPRegisterLicenseGate(t *testing.T) {
 			defer e.Cleanup(t)
 			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
 			e.OverrideLicense(enterprisetest.LicenseFor(level))
+			records := e.CaptureAuditRecords()
 
 			req := mcpRegisterRequest(t, validCfg)
 			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
 			resp := serveAndReturn(e, req)
+
+			require.Len(t, *records, 1)
+			require.Equal(t, testCallerPluginID, (*records)[0].EventData.Parameters[audit.KeyCallerPluginID],
+				"the caller is attributed on success and on license denial")
 
 			if level >= enterprise.LevelEnterprise {
 				require.Equal(t, http.StatusOK, resp.StatusCode)

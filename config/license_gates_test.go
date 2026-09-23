@@ -298,7 +298,7 @@ func TestValidateLicenseTransition(t *testing.T) {
 					require.Error(t, err)
 					require.True(t, errors.Is(err, enterprise.ErrNotLicensed))
 					if tc.quota {
-						require.Contains(t, err.Error(), "AI agents")
+						require.Contains(t, err.Error(), "AI agent")
 						return
 					}
 					var licErr *enterprise.LicenseError

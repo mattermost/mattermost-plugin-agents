@@ -23,13 +23,18 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 
 	tests := []struct {
-		name        string
-		level       enterprise.Level
-		existing    int
-		configBots  int
+		name       string
+		level      enterprise.Level
+		existing   int
+		configBots int
+		// onInactive agents reference the second configured service, which
+		// is inactive below Enterprise and so takes no slot in the cap.
+		onInactive  int
 		wantCreated bool
 	}{
 		{name: "unlicensed first agent", level: enterprise.LevelUnlicensed, existing: 0, wantCreated: true},
+		{name: "unlicensed with an agent on an inactive service", level: enterprise.LevelUnlicensed, onInactive: 1, wantCreated: true},
+		{name: "professional with agents on an inactive service", level: enterprise.LevelProfessional, existing: 2, onInactive: 2, wantCreated: true},
 		{name: "unlicensed at cap", level: enterprise.LevelUnlicensed, existing: 1, wantCreated: false},
 		{name: "unlicensed with a config bot", level: enterprise.LevelUnlicensed, configBots: 1, wantCreated: false},
 		{name: "professional under cap", level: enterprise.LevelProfessional, existing: 2, wantCreated: true},
@@ -52,12 +57,17 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 			}, nil).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			for i := 0; i < tc.existing; i++ {
-				id := model.NewId()
-				e.agentStore.agents[id] = &llm.BotConfig{ID: id, Name: "existing-" + id, DisplayName: "Existing", CreatorID: "other"}
+			store := e.api.configStore.(*mockConfigStore)
+			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai"})
+			addAgents := func(n int, serviceID string) {
+				for i := 0; i < n; i++ {
+					id := model.NewId()
+					e.agentStore.agents[id] = &llm.BotConfig{ID: id, Name: "existing" + id, DisplayName: "Existing", CreatorID: "other", ServiceID: serviceID}
+				}
 			}
+			addAgents(tc.existing, "svc-1")
+			addAgents(tc.onInactive, "svc-2")
 			if tc.configBots > 0 {
-				store := e.api.configStore.(*mockConfigStore)
 				for i := 0; i < tc.configBots; i++ {
 					store.cfg.Bots = append(store.cfg.Bots, llm.BotConfig{
 						ID: "cfg-bot", Name: "cfgbot", DisplayName: "Cfg Bot", ServiceID: "svc-1",
@@ -73,7 +83,7 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 			var body licenseErrorResponse
 			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&body))
-			assert.Contains(t, body.Error, "AI agents")
+			assert.Contains(t, body.Error, "AI agent")
 			assert.NotEmpty(t, body.LicenseRequired)
 		})
 	}

@@ -519,7 +519,7 @@ func TestCreateAgentFreeTierBlocksWhenQuotaReached(t *testing.T) {
 
 	// One existing agent is already at the free-tier quota.
 	e.agentStore.agents["existing"] = &llm.BotConfig{
-		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 	}
 
 	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
@@ -534,8 +534,8 @@ func TestListAgentsIncludesActiveCountHeaderWhenUnlicensed(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
-		ID: "agent-1", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: llm.UserAccessLevelNone,
+		ID: "agent-1", CreatorID: "other-user", Name: "private-agent", DisplayName: "Private Agent",
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
@@ -557,7 +557,7 @@ func TestListAgentsOmitsActiveCountHeaderWhenCountFails(t *testing.T) {
 	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.countErr = errors.New("boom")
+	e.api.configStore = &mockConfigStore{getErr: errors.New("boom")}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
 	resp := recorder.Result()
@@ -2034,7 +2034,7 @@ func TestAuditCreateAgent(t *testing.T) {
 				mockUnlicensed(e.mockAPI)
 				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 				e.agentStore.agents["existing"] = &llm.BotConfig{
-					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 				}
 			},
 			body:           createAgentBody(nil),

@@ -200,39 +200,47 @@ func (a *API) pluginConfigOrEmpty() *config.Config {
 	return cfg
 }
 
-func validConfigBotCount(cfg *config.Config) int {
+// licensedAgentPoolCount counts the agents that take a slot in the agent cap:
+// valid configuration-file bots and user-created agents whose LLM service is
+// active at level. It mirrors the runtime selection in bots.selectActiveBots,
+// so agents left inactive on another service never block creating one that
+// works.
+func licensedAgentPoolCount(cfg *config.Config, dbAgents []*llm.BotConfig, level enterprise.Level) int {
 	if cfg == nil {
-		return 0
+		cfg = &config.Config{}
+	}
+	active := config.ActiveServiceIDs(cfg, level)
+	counts := func(bot llm.BotConfig) bool {
+		return bot.IsValid() && slices.Contains(active, bot.ServiceID)
 	}
 	n := 0
 	for _, bot := range cfg.Bots {
-		if bot.IsValid() {
+		if counts(bot) {
+			n++
+		}
+	}
+	for _, agent := range dbAgents {
+		if agent != nil && counts(*agent) {
 			n++
 		}
 	}
 	return n
 }
 
-// combinedAgentPoolCount is the number of valid configuration-file bots plus
-// non-deleted user-created agents. This is the pool compared against AgentLimit.
-func (a *API) combinedAgentPoolCount() (int, error) {
-	dbCount := 0
-	if a.agentStore != nil {
-		var err error
-		dbCount, err = a.agentStore.CountActiveAgents()
-		if err != nil {
-			return 0, err
-		}
-	}
-	configCount := 0
+// combinedAgentPoolCount is licensedAgentPoolCount over the stored plugin
+// configuration and dbAgents.
+func (a *API) combinedAgentPoolCount(dbAgents []*llm.BotConfig) (int, error) {
+	cfg := &config.Config{}
 	if a.configStore != nil {
-		cfg, err := a.configStore.GetConfig()
+		stored, err := a.configStore.GetConfig()
 		if err != nil {
 			return 0, err
 		}
-		configCount = validConfigBotCount(cfg)
+		if stored != nil {
+			cfg = stored
+		}
 	}
-	return configCount + dbCount, nil
+	return licensedAgentPoolCount(cfg, dbAgents, a.licenseChecker.Level()), nil
 }
 
 // checkAgentCreateQuota allows unlimited creation when agents are uncapped;
@@ -243,7 +251,12 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 	if !capped {
 		return true
 	}
-	count, err := a.combinedAgentPoolCount()
+	dbAgents, err := a.agentStore.ListAgents()
+	if err != nil {
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
+		return false
+	}
+	count, err := a.combinedAgentPoolCount(dbAgents)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
@@ -492,7 +505,7 @@ func (a *API) handleListAgents(c *gin.Context) {
 	// list. A failure here must not fail the list request: just omit the
 	// headers and let the create API enforce the limit.
 	if limit, capped := a.licenseChecker.AgentLimit(); capped {
-		count, err := a.combinedAgentPoolCount()
+		count, err := a.combinedAgentPoolCount(agents)
 		if err != nil {
 			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
 		} else {

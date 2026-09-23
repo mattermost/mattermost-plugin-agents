@@ -200,6 +200,8 @@ describe('ConfigTab license gating', () => {
 
         await screen.findByText('AI Service');
         expect(screen.getByText(/Only the first configured service is active/)).not.toBeNull();
+        expect((screen.getByRole('option', {name: openaiService.name}) as HTMLOptionElement).disabled).toBe(false);
+        expect((screen.getByRole('option', {name: 'Other'}) as HTMLOptionElement).disabled).toBe(true);
     });
 
     test('lets an unlicensed admin turn native web search off but not on', async () => {

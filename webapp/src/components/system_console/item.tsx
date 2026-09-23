@@ -54,6 +54,13 @@ export const FieldControlRow = styled.div`
 	}
 `;
 
+// FieldExtra keeps adornments such as the license chip at their natural width
+// instead of the row's full-width rule for direct div children.
+const FieldExtra = styled.span`
+	display: inline-flex;
+	flex: 0 0 auto;
+`;
+
 export const FieldErrorText = styled.div`
 	color: var(--dnd-indicator, #D24B4E);
 	font-size: 12px;
@@ -147,7 +154,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                     >
                         {props.children}
                     </SelectField>
-                    {props.extra}
+                    {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -676,7 +683,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         onChange={() => props.onChange(false)}
                     />
                     <FormattedMessage defaultMessage='false'/>
-                    {props.extra}
+                    {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>

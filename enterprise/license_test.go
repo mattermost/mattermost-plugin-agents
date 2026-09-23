@@ -220,7 +220,7 @@ func TestAgentLimitError(t *testing.T) {
 		{
 			name:     "unlicensed names the free cap and Professional",
 			level:    LevelUnlicensed,
-			contains: []string{"1 AI agents", "Professional"},
+			contains: []string{"1 AI agent;", "Professional"},
 			required: LevelProfessional,
 		},
 		{
