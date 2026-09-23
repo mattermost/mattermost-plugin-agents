@@ -51,7 +51,6 @@ const mockSetSiteURL = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: (...args: unknown[]) => mockGetAIBots(...args),
     setSiteURL: (...args: unknown[]) => mockSetSiteURL(...args),
-    getAIDirectChannel: jest.fn(),
     doReaction: jest.fn(),
     doRunSearch: jest.fn(),
     doThreadAnalysis: jest.fn(),

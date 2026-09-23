@@ -23,7 +23,7 @@ import RHS from './components/rhs/rhs';
 import CustomPromptsDropdown from './components/custom_prompts/custom_prompts_dropdown';
 import CustomPromptsManagement from './components/custom_prompts/custom_prompts_management';
 import Config from './components/system_console/config';
-import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis, getAIDirectChannel} from './client';
+import {setSiteURL, doReaction, doRunSearch, doThreadAnalysis} from './client';
 
 import {setOpenRHSAction} from './redux_actions';
 import PostEventListener from './websocket';
@@ -166,27 +166,6 @@ export default class Plugin {
             rhs = registry.registerRightHandSidebarComponent(RHS, RHSTitle);
             setOpenRHSAction(rhs.showRHSPlugin);
         }
-
-        let currentUserId = store.getState().entities.users.currentUserId;
-        if (currentUserId) {
-            getAIDirectChannel(currentUserId).then((botChannelId) => {
-                store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-            });
-        }
-
-        store.subscribe(() => {
-            const state = store.getState();
-            if (state && state.entities.users.currentUserId !== currentUserId) {
-                currentUserId = state.entities.users.currentUserId;
-                if (currentUserId) {
-                    getAIDirectChannel(currentUserId).then((botChannelId) => {
-                        store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId} as any);
-                    });
-                } else {
-                    store.dispatch({type: 'SET_AI_BOT_CHANNEL', botChannelId: ''} as any);
-                }
-            }
-        });
 
         // Handle all post-related websocket events with one handler
         registry.registerWebSocketEventHandler('custom_mattermost-ai_postupdate', this.postEventListener.handlePostUpdateWebsockets);

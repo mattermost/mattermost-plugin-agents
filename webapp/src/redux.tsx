@@ -21,7 +21,6 @@ export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
-        botChannelId,
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
@@ -87,15 +86,6 @@ function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
     case 'SET_ALLOW_UNSAFE_LINKS':
         return action.allowUnsafeLinks;
-    default:
-        return state;
-    }
-}
-
-function botChannelId(state = '', action: any) {
-    switch (action.type) {
-    case 'SET_AI_BOT_CHANNEL':
-        return action.botChannelId;
     default:
         return state;
     }
