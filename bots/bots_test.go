@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -82,6 +83,7 @@ func (m *mockConfig) GetTranscriptGenerator() string {
 func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
 	t.Helper()
 	mockAPI := &plugintest.API{}
+	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
 	client := pluginapi.NewClient(mockAPI, nil)
 	allowBotsLogging(mockAPI)
 	licenseChecker := enterprise.NewLicenseChecker(client)

@@ -214,6 +214,11 @@ const savedAgent = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
+
+    // The server still returns the deprecated per-agent structured output flag;
+    // structured output is now a per-service policy. Keeping it on the fixture
+    // exercises the path where the response carries it and the UI must not
+    // adopt it or send it back.
     structuredOutputEnabled: false,
     maxToolTurns: 30,
 } satisfies UserAgent;
@@ -311,7 +316,6 @@ describe('AgentConfigView', () => {
             reasoningEnabled: true,
             reasoningEffort: 'medium',
             thinkingBudget: 0,
-            structuredOutputEnabled: false,
             maxToolTurns: 30,
         };
 
@@ -370,7 +374,6 @@ describe('AgentConfigView', () => {
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: false,
                         maxToolTurns: 30,
                     }}
                     services={services}
@@ -414,7 +417,6 @@ describe('AgentConfigView', () => {
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: false,
                         maxToolTurns: 0,
                     }}
                     services={services}
@@ -461,6 +463,46 @@ describe('AgentConfigView', () => {
             mcpDynamicToolLoading: false,
             useServiceAccountAuth: true,
         }));
+    });
+
+    // Structured output moved to a per-service policy owned by administrators.
+    // Sending the deprecated per-agent flag would resurrect the old behaviour
+    // for every agent saved from this UI.
+    test('omits the deprecated structured output flag from the create payload', async () => {
+        mockCreateAgent.mockResolvedValue(savedAgent);
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByText('Select service'));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        const payload = mockCreateAgent.mock.calls[0][0] as Record<string, unknown>;
+        expect('structuredOutputEnabled' in payload).toBe(false);
+    });
+
+    test('omits the deprecated structured output flag from the update payload even when the agent response carries it', async () => {
+        mockUpdateAgent.mockResolvedValue(savedAgent);
+
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={savedAgent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Renamed Agent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        const payload = mockUpdateAgent.mock.calls[0][1] as Record<string, unknown>;
+        expect('structuredOutputEnabled' in payload).toBe(false);
     });
 
     test('defaults missing edit response dynamic tool loading to true on update', async () => {
@@ -521,7 +563,6 @@ describe('AgentConfigView', () => {
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
-                        structuredOutputEnabled: false,
                         maxToolTurns: 30,
                     }}
                     services={services}

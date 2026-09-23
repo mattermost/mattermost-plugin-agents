@@ -35,6 +35,9 @@ func requestFailedError(statusCode int, responseBody []byte) error {
 
 // AgentCompletion makes a non-streaming completion request to a specific agent by Bot ID.
 // The agent parameter should be the Mattermost Bot User ID (an immutable identifier).
+// The agent's stored configuration applies, and UserID and ChannelID in the request are
+// permission inputs: when set, the bridge checks that user's (and channel's) access to
+// the agent.
 func (c *Client) AgentCompletion(agent string, request CompletionRequest) (string, error) {
 	requestURL, err := buildAgentCompletionURL(agent, false)
 	if err != nil {
@@ -43,8 +46,23 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 	return c.doCompletionRequest(requestURL, request)
 }
 
-// ServiceCompletion makes a non-streaming completion request to a specific service.
-// The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
+// ServiceCompletion makes a non-streaming completion request to a specific configured
+// service. The service parameter can be either a service ID or a service name
+// (e.g., "openai", "anthropic").
+//
+// The bridge resolves the stored service configuration directly, without going through
+// an agent: an exact ID match is tried first, then a name match, so an ID always wins
+// over a service that merely has the same value as its name. When several configured
+// services share an ID or a name, the first matching entry in stored configuration order
+// is used. A service with a blank name is reachable by ID only. Unresolvable values fail
+// with "service not found: <value>".
+//
+// The service's own default model is used. No agent configuration applies (no model
+// override, reasoning, native tools, custom instructions, or agent access restrictions),
+// and no user or channel permission check runs — inter-plugin trust of the bridge is the
+// security boundary for these endpoints. Tools are disabled, allowed_tools is rejected,
+// and tool_hooks are ignored. Token usage is logged with the resolved service's identity
+// (service_id and service_name); the agent dimensions are blank for service-only calls.
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
 	requestURL, err := buildServiceCompletionURL(service, false)
 	if err != nil {
@@ -64,8 +82,10 @@ func (c *Client) AgentCompletionStream(agent string, request CompletionRequest) 
 	return c.doStreamingRequest(requestURL, request)
 }
 
-// ServiceCompletionStream makes a streaming completion request to a specific service.
-// The service parameter can be either a service ID or name (e.g., "openai", "anthropic").
+// ServiceCompletionStream makes a streaming completion request to a specific configured
+// service. The service parameter can be either a service ID or a service name
+// (e.g., "openai", "anthropic"); resolution and the absence of agent settings and
+// permission checks match ServiceCompletion.
 // Returns a TextStreamResult with a Stream channel for processing events.
 func (c *Client) ServiceCompletionStream(service string, request CompletionRequest) (*llm.TextStreamResult, error) {
 	requestURL, err := buildServiceCompletionURL(service, true)

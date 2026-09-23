@@ -202,6 +202,15 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
 	}
 
+	// Runs after the ID migration (it matches agents to services by ID) and
+	// before runtime config is loaded, so every node — including a follower
+	// that found nothing left to migrate — loads the migrated policies and
+	// builds its first language model from them.
+	_, structuredOutputMigrated, err := migrateAgentStructuredOutputToServicePolicy(p.API, pluginAPI, p.store)
+	if err != nil {
+		pluginAPI.Log.Error("failed to migrate deprecated agent structured output to service policies", "error", err)
+	}
+
 	// Load the fully migrated config from DB into memory and set migrated flag.
 	dbConfig, err := p.store.GetConfig()
 	if err != nil {
@@ -212,10 +221,12 @@ func (p *Plugin) OnActivate() error {
 	}
 	p.configMigrated = true
 
-	if idsMigrated {
+	if idsMigrated || structuredOutputMigrated {
 		if pubErr := p.PublishConfigUpdate(); pubErr != nil {
-			pluginAPI.Log.Error("Failed to publish config update after ID migration", "error", pubErr.Error())
+			pluginAPI.Log.Error("Failed to publish config update after migration", "error", pubErr.Error())
 		}
+	}
+	if idsMigrated {
 		if pubErr := p.PublishAgentUpdate(); pubErr != nil {
 			pluginAPI.Log.Error("Failed to publish agent update after ID migration", "error", pubErr.Error())
 		}
@@ -239,13 +250,33 @@ func (p *Plugin) OnActivate() error {
 		if migErr != nil {
 			pluginAPI.Log.Error("failed to migrate legacy config bots to user agents", "context", context, "error", migErr)
 		}
-		if migrated {
-			bots.ForceRefreshOnNextEnsure()
-			if ensureErr := bots.EnsureBots(); ensureErr != nil {
-				pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
-			} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
-				pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
+		if !migrated {
+			return
+		}
+
+		// Legacy bots that arrived after activation were not seen by the
+		// activation-time structured output migration; their copies in the
+		// agents table still carry the deprecated toggle, so pick it up now,
+		// before any UI save can clear it. Stored without notify because this
+		// may already be running inside a config update listener.
+		saved, policiesMigrated, policyErr := migrateAgentStructuredOutputToServicePolicy(p.API, pluginAPI, p.store)
+		if policyErr != nil {
+			pluginAPI.Log.Error("failed to migrate deprecated agent structured output to service policies", "context", context, "error", policyErr)
+		} else if policiesMigrated {
+			if storeErr := p.configuration.StorePersistedConfigWithoutNotify(&saved); storeErr != nil {
+				pluginAPI.Log.Error("failed to store config after structured output migration", "context", context, "error", storeErr)
 			}
+			bots.ReconcileServiceLLMs(p.configuration.GetServices())
+			if pubErr := p.PublishConfigUpdate(); pubErr != nil {
+				pluginAPI.Log.Error("Failed to publish config update after structured output migration", "error", pubErr.Error())
+			}
+		}
+
+		bots.ForceRefreshOnNextEnsure()
+		if ensureErr := bots.EnsureBots(); ensureErr != nil {
+			pluginAPI.Log.Error("failed to ensure bots after legacy bot migration", "context", context, "error", ensureErr)
+		} else if pubErr := p.PublishAgentUpdate(); pubErr != nil {
+			pluginAPI.Log.Error("Failed to publish agent update cluster event", "error", pubErr.Error())
 		}
 	}
 
@@ -253,6 +284,10 @@ func (p *Plugin) OnActivate() error {
 		if ensureErr := bots.EnsureBots(); ensureErr != nil {
 			pluginAPI.Log.Error("failed to ensure bots on configuration update", "error", ensureErr)
 		}
+		// Drop cached service-backed LLMs whose configuration changed. Local
+		// saves and HA updates both flow through config.Container.Update, so
+		// this listener covers every node.
+		bots.ReconcileServiceLLMs(p.configuration.GetServices())
 		migrateAndRefresh("config_update")
 	})
 
@@ -576,6 +611,12 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
+	// fail before bots is assigned, so guard against a nil registry.
+	if p.bots != nil {
+		p.bots.ShutdownServiceLLMs()
+	}
 
 	// Clean up MCP client manager if it exists
 	p.mcpClientManager.Close()
