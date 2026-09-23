@@ -66,58 +66,18 @@ func BotHasAccessControls(cfg llm.BotConfig) bool {
 }
 
 // AccessControlsNewlyRestricted reports whether next carries named access
-// controls while prev (nil = create / empty defaults) carried none. Editing
+// controls while prev (the zero value for a new agent) carried none. Editing
 // the lists of an agent that already has access controls, and opening them
 // back up, are not new restrictions.
-func AccessControlsNewlyRestricted(prev *llm.BotConfig, next llm.BotConfig) bool {
-	if !BotHasAccessControls(next) {
-		return false
-	}
-	return prev == nil || !BotHasAccessControls(*prev)
+func AccessControlsNewlyRestricted(prev, next llm.BotConfig) bool {
+	return BotHasAccessControls(next) && !BotHasAccessControls(prev)
 }
 
-func check(level enterprise.Level, capability enterprise.Capability) error {
-	if level >= enterprise.RequiredLevel(capability) {
-		return nil
-	}
-	return enterprise.NewLicenseError(capability, level)
-}
-
-func emptyIfNil(prev *Config) Config {
-	if prev == nil {
-		return Config{}
-	}
-	return *prev
-}
-
-func botByID(bots []llm.BotConfig) map[string]llm.BotConfig {
-	out := make(map[string]llm.BotConfig, len(bots))
-	for _, bot := range bots {
-		if bot.ID != "" {
-			out[bot.ID] = bot
-		}
-	}
-	return out
-}
-
-func serviceByID(services []llm.ServiceConfig) map[string]llm.ServiceConfig {
-	out := make(map[string]llm.ServiceConfig, len(services))
-	for _, svc := range services {
-		if svc.ID != "" {
-			out[svc.ID] = svc
-		}
-	}
-	return out
-}
-
-func headersNonEmpty(h map[string]string) bool {
-	for k, v := range h {
-		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
-			return true
-		}
-	}
-	return false
-}
+// DefaultToolPolicyLookup returns the product-default policy for a tool on a
+// server (empty when the product has no default beyond "ask"). It lets the
+// gate treat the vetted defaults the System Console seeds into the saved
+// configuration as baseline rather than as an admin-authored policy.
+type DefaultToolPolicyLookup func(serverBaseURL, toolName string) string
 
 // toolPolicyReach orders policies by how much they auto-run: ask < auto-run
 // in DMs < auto-run everywhere. Unknown values behave as ask.
@@ -132,26 +92,15 @@ func toolPolicyReach(policy string) int {
 	}
 }
 
-// DefaultToolPolicyLookup returns the product-default policy for a tool on a
-// server (empty when the product has no default beyond "ask"). It lets the
-// gate treat the vetted defaults the System Console seeds into the saved
-// configuration as baseline rather than as an admin-authored policy.
-type DefaultToolPolicyLookup func(serverBaseURL, toolName string) string
-
 // toolPoliciesNewlyAuto reports whether any tool in next auto-runs more
 // widely than it did in prev (or than its seeded default, for a tool prev
 // does not store). Narrowing or removing a policy is never reported.
 func toolPoliciesNewlyAuto(prev, next []MCPToolConfig, defaultFor func(toolName string) string) bool {
 	prevReach := make(map[string]int, len(prev))
 	for _, tc := range prev {
-		if tc.Name != "" {
-			prevReach[tc.Name] = toolPolicyReach(tc.Policy)
-		}
+		prevReach[tc.Name] = toolPolicyReach(tc.Policy)
 	}
 	for _, tc := range next {
-		if tc.Name == "" {
-			continue
-		}
 		baseline, stored := prevReach[tc.Name]
 		if !stored && defaultFor != nil {
 			baseline = toolPolicyReach(defaultFor(tc.Name))
@@ -163,212 +112,125 @@ func toolPoliciesNewlyAuto(prev, next []MCPToolConfig, defaultFor func(toolName 
 	return false
 }
 
-func indexMCPServers(servers []MCPServerConfig) (byID, byName map[string]MCPServerConfig) {
-	byID = make(map[string]MCPServerConfig, len(servers))
-	byName = make(map[string]MCPServerConfig, len(servers))
-	for _, s := range servers {
-		if s.ID != "" {
-			byID[s.ID] = s
-		}
-		if s.Name != "" {
-			byName[s.Name] = s
+func headersNonEmpty(h map[string]string) bool {
+	for k, v := range h {
+		if strings.TrimSpace(k) != "" && strings.TrimSpace(v) != "" {
+			return true
 		}
 	}
-	return byID, byName
+	return false
 }
 
-func prevMCPServer(s MCPServerConfig, byID, byName map[string]MCPServerConfig) (MCPServerConfig, bool) {
-	if s.ID != "" {
-		if prev, ok := byID[s.ID]; ok {
-			return prev, true
+// byKey indexes items by key, skipping empty keys.
+func byKey[T any](items []T, key func(T) string) map[string]T {
+	out := make(map[string]T, len(items))
+	for _, item := range items {
+		if k := key(item); k != "" {
+			out[k] = item
 		}
 	}
-	if s.Name != "" {
-		if prev, ok := byName[s.Name]; ok {
-			return prev, true
-		}
-	}
-	return MCPServerConfig{}, false
+	return out
+}
+
+// gate pairs a transition in the configuration with the capability it needs.
+type gate struct {
+	newlyOn    bool
+	capability enterprise.Capability
 }
 
 // ValidateLicenseTransition returns a *enterprise.LicenseError (or agent-limit
-// error) for the first gated item that next newly enables or increases relative
-// to prev. prev may be nil, which is treated as empty. Transitions to off /
+// error) for a gated item that next newly enables or increases relative to
+// prev. prev may be nil, which is treated as empty. Transitions to off /
 // fewer / cleared are never denied.
 func ValidateLicenseTransition(prev *Config, next Config, checker levelProvider, defaultPolicy DefaultToolPolicyLookup) error {
 	level := enterprise.LevelUnlicensed
 	if checker != nil {
 		level = checker.Level()
 	}
-	from := emptyIfNil(prev)
-
-	if err := validateServiceTransition(from, next, level); err != nil {
-		return err
-	}
-	if err := validateBotCountTransition(from, next, level); err != nil {
-		return err
-	}
-	if err := validateConfigBotFields(from, next, level); err != nil {
-		return err
-	}
-	if next.EnableTokenUsageLogging && !from.EnableTokenUsageLogging {
-		if err := check(level, enterprise.CapTokenAccounting); err != nil {
-			return err
-		}
-	}
-	if next.AllowNativeWebSearchInChannels && !from.AllowNativeWebSearchInChannels {
-		if err := check(level, enterprise.CapProviderWebSearch); err != nil {
-			return err
-		}
-	}
-	if next.WebSearch.Enabled && !from.WebSearch.Enabled {
-		if err := check(level, enterprise.CapSovereignWebSearch); err != nil {
-			return err
-		}
-	}
-	if next.EmbeddingSearchConfig.Type != "" && from.EmbeddingSearchConfig.Type == "" {
-		if err := check(level, enterprise.CapSemanticSearch); err != nil {
-			return err
-		}
-	}
-	if (next.EnableCallSummary && !from.EnableCallSummary) ||
-		(next.TranscriptGenerator != "" && from.TranscriptGenerator == "") {
-		if err := check(level, enterprise.CapMeetings); err != nil {
-			return err
-		}
-	}
-	if err := validateMCPTransition(from, next, level, defaultPolicy); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateServiceTransition(from, next Config, level enterprise.Level) error {
-	if limit, ok := enterprise.ServiceLimitFor(level); ok {
-		if len(next.Services) > limit && len(next.Services) > len(from.Services) {
-			return check(level, enterprise.CapMultipleLLMServices)
-		}
+	var from Config
+	if prev != nil {
+		from = *prev
 	}
 
-	prevSvcs := serviceByID(from.Services)
-	for _, svc := range next.Services {
-		if svc.FallbackServiceID == "" {
-			continue
-		}
-		prev, found := prevSvcs[svc.ID]
-		if found && prev.FallbackServiceID == svc.FallbackServiceID {
-			continue
-		}
-		if err := check(level, enterprise.CapModelFallback); err != nil {
-			return err
-		}
+	if limit, capped := enterprise.ServiceLimitFor(level); capped && len(next.Services) > limit && len(next.Services) > len(from.Services) {
+		return enterprise.NewLicenseError(enterprise.CapMultipleLLMServices, level)
 	}
-	return nil
-}
-
-func validateBotCountTransition(from, next Config, level enterprise.Level) error {
-	limit, ok := enterprise.AgentLimitFor(level)
-	if !ok {
-		return nil
-	}
-	if len(next.Bots) > limit && len(next.Bots) > len(from.Bots) {
+	if limit, capped := enterprise.AgentLimitFor(level); capped && len(next.Bots) > limit && len(next.Bots) > len(from.Bots) {
 		return enterprise.AgentLimitError(level)
 	}
-	return nil
-}
 
-func validateConfigBotFields(from, next Config, level enterprise.Level) error {
-	prevBots := botByID(from.Bots)
-	for _, bot := range next.Bots {
-		var prev *llm.BotConfig
-		if p, ok := prevBots[bot.ID]; ok {
-			copied := p
-			prev = &copied
-		}
-
-		if bot.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
-			(prev == nil || prev.UserAccessLevel != llm.UserAccessLevelAttributeBased) {
-			if err := check(level, enterprise.CapAttributeBasedAccess); err != nil {
-				return err
-			}
-		}
-		if AccessControlsNewlyRestricted(prev, bot) {
-			if err := check(level, enterprise.CapAgentAccessControls); err != nil {
-				return err
-			}
-		}
-		if bot.UseServiceAccountAuth && (prev == nil || !prev.UseServiceAccountAuth) {
-			if err := check(level, enterprise.CapMCPServiceAccount); err != nil {
-				return err
-			}
-		}
-		if BotHasProviderWebSearch(bot) && (prev == nil || !BotHasProviderWebSearch(*prev)) {
-			if err := check(level, enterprise.CapProviderWebSearch); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func validateMCPTransition(from, next Config, level enterprise.Level, defaultPolicy DefaultToolPolicyLookup) error {
 	defaultFor := func(serverBaseURL string) func(string) string {
 		if defaultPolicy == nil {
 			return nil
 		}
 		return func(toolName string) string { return defaultPolicy(serverBaseURL, toolName) }
 	}
-	if next.MCP.EnablePluginServer && !from.MCP.EnablePluginServer {
-		if err := check(level, enterprise.CapRemoteMCP); err != nil {
-			return err
-		}
+
+	gates := []gate{
+		{next.EnableTokenUsageLogging && !from.EnableTokenUsageLogging, enterprise.CapTokenAccounting},
+		{next.AllowNativeWebSearchInChannels && !from.AllowNativeWebSearchInChannels, enterprise.CapProviderWebSearch},
+		{next.WebSearch.Enabled && !from.WebSearch.Enabled, enterprise.CapSovereignWebSearch},
+		{next.EmbeddingSearchConfig.Type != "" && from.EmbeddingSearchConfig.Type == "", enterprise.CapSemanticSearch},
+		{(next.EnableCallSummary && !from.EnableCallSummary) || (next.TranscriptGenerator != "" && from.TranscriptGenerator == ""), enterprise.CapMeetings},
+		{next.MCP.EnablePluginServer && !from.MCP.EnablePluginServer, enterprise.CapRemoteMCP},
+		{toolPoliciesNewlyAuto(from.MCP.EmbeddedServer.ToolConfigs, next.MCP.EmbeddedServer.ToolConfigs, defaultFor(MCPEmbeddedServerOrigin)), enterprise.CapToolApprovalPolicies},
 	}
 
-	prevByID, prevByName := indexMCPServers(from.MCP.Servers)
+	prevServices := byKey(from.Services, func(s llm.ServiceConfig) string { return s.ID })
+	for _, svc := range next.Services {
+		prevFallback := prevServices[svc.ID].FallbackServiceID
+		gates = append(gates, gate{svc.FallbackServiceID != "" && svc.FallbackServiceID != prevFallback, enterprise.CapModelFallback})
+	}
+
+	prevBots := byKey(from.Bots, func(b llm.BotConfig) string { return b.ID })
+	for _, bot := range next.Bots {
+		gates = append(gates, agentGates(prevBots[bot.ID], bot)...)
+	}
+
+	// New servers carry freshly minted IDs by the time this runs, so an ID
+	// missing from prev is a newly added server.
+	prevServers := byKey(from.MCP.Servers, func(s MCPServerConfig) string { return s.ID })
 	for _, srv := range next.MCP.Servers {
-		prev, found := prevMCPServer(srv, prevByID, prevByName)
-		if !found || (srv.Enabled && !prev.Enabled) {
-			if err := check(level, enterprise.CapRemoteMCP); err != nil {
-				return err
-			}
-		}
-		if headersNonEmpty(srv.ServiceAccountHeaders) && (!found || !headersNonEmpty(prev.ServiceAccountHeaders)) {
-			if err := check(level, enterprise.CapMCPServiceAccount); err != nil {
-				return err
-			}
-		}
-		var prevTools []MCPToolConfig
-		if found {
-			prevTools = prev.ToolConfigs
-		}
-		if toolPoliciesNewlyAuto(prevTools, srv.ToolConfigs, defaultFor(srv.BaseURL)) {
-			if err := check(level, enterprise.CapToolApprovalPolicies); err != nil {
-				return err
-			}
-		}
+		prevSrv, found := prevServers[srv.ID]
+		gates = append(gates,
+			gate{!found || (srv.Enabled && !prevSrv.Enabled), enterprise.CapRemoteMCP},
+			gate{headersNonEmpty(srv.ServiceAccountHeaders) && !headersNonEmpty(prevSrv.ServiceAccountHeaders), enterprise.CapMCPServiceAccount},
+			gate{toolPoliciesNewlyAuto(prevSrv.ToolConfigs, srv.ToolConfigs, defaultFor(srv.BaseURL)), enterprise.CapToolApprovalPolicies},
+		)
 	}
 
-	if toolPoliciesNewlyAuto(from.MCP.EmbeddedServer.ToolConfigs, next.MCP.EmbeddedServer.ToolConfigs, defaultFor(MCPEmbeddedServerOrigin)) {
-		if err := check(level, enterprise.CapToolApprovalPolicies); err != nil {
-			return err
-		}
-	}
-
-	prevPluginByID := make(map[string]PluginServerConfig, len(from.MCP.PluginServers))
-	for _, ps := range from.MCP.PluginServers {
-		if ps.ID != "" {
-			prevPluginByID[ps.ID] = ps
-		}
-	}
+	prevPlugins := byKey(from.MCP.PluginServers, func(p PluginServerConfig) string { return p.PluginID })
 	for _, ps := range next.MCP.PluginServers {
-		var prevTools []MCPToolConfig
-		if prev, ok := prevPluginByID[ps.ID]; ok {
-			prevTools = prev.ToolConfigs
-		}
-		if toolPoliciesNewlyAuto(prevTools, ps.ToolConfigs, defaultFor(PluginServerOrigin(ps.PluginID))) {
-			if err := check(level, enterprise.CapToolApprovalPolicies); err != nil {
-				return err
-			}
+		prevPS, found := prevPlugins[ps.PluginID]
+		gates = append(gates,
+			gate{found && ps.Enabled && !prevPS.Enabled, enterprise.CapRemoteMCP},
+			gate{toolPoliciesNewlyAuto(prevPS.ToolConfigs, ps.ToolConfigs, defaultFor(PluginServerOrigin(ps.PluginID))), enterprise.CapToolApprovalPolicies},
+		)
+	}
+
+	return firstDenied(gates, level)
+}
+
+// ValidateAgentTransition returns a *enterprise.LicenseError when next newly
+// enables an agent setting unavailable at level. prev is the stored agent, or
+// the zero value for a new one.
+func ValidateAgentTransition(prev, next llm.BotConfig, level enterprise.Level) error {
+	return firstDenied(agentGates(prev, next), level)
+}
+
+func agentGates(prev, next llm.BotConfig) []gate {
+	return []gate{
+		{next.UserAccessLevel == llm.UserAccessLevelAttributeBased && prev.UserAccessLevel != llm.UserAccessLevelAttributeBased, enterprise.CapAttributeBasedAccess},
+		{AccessControlsNewlyRestricted(prev, next), enterprise.CapAgentAccessControls},
+		{next.UseServiceAccountAuth && !prev.UseServiceAccountAuth, enterprise.CapMCPServiceAccount},
+		{BotHasProviderWebSearch(next) && !BotHasProviderWebSearch(prev), enterprise.CapProviderWebSearch},
+	}
+}
+
+func firstDenied(gates []gate, level enterprise.Level) error {
+	for _, g := range gates {
+		if g.newlyOn && level < enterprise.RequiredLevel(g.capability) {
+			return enterprise.NewLicenseError(g.capability, level)
 		}
 	}
 	return nil

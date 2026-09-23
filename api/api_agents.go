@@ -267,41 +267,20 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 // checkAgentLicenseGates denies create/update requests that newly enable a
 // gated BotConfig field. prev is nil on create (compared against defaults).
 func (a *API) checkAgentLicenseGates(c *gin.Context, proposed llm.BotConfig, prev *llm.BotConfig) bool {
-	if proposed.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
-		(prev == nil || prev.UserAccessLevel != llm.UserAccessLevelAttributeBased) {
-		if err := a.licenseChecker.Check(enterprise.CapAttributeBasedAccess); err != nil {
-			abortNotLicensed(c, err)
-			return false
-		}
+	var before llm.BotConfig
+	if prev != nil {
+		before = *prev
 	}
-	if config.AccessControlsNewlyRestricted(prev, proposed) {
-		if err := a.licenseChecker.Check(enterprise.CapAgentAccessControls); err != nil {
-			abortNotLicensed(c, err)
-			return false
-		}
+	level := a.licenseChecker.Level()
+	if err := config.ValidateAgentTransition(before, proposed, level); err != nil {
+		abortNotLicensed(c, err)
+		return false
 	}
-	if proposed.UseServiceAccountAuth && (prev == nil || !prev.UseServiceAccountAuth) {
-		if err := a.licenseChecker.Check(enterprise.CapMCPServiceAccount); err != nil {
-			abortNotLicensed(c, err)
+	// Below Enterprise only the active service may be newly selected.
+	if !a.licenseChecker.Allows(enterprise.CapMultipleLLMServices) && (prev == nil || prev.ServiceID != proposed.ServiceID) {
+		if !slices.Contains(config.ActiveServiceIDs(a.pluginConfigOrEmpty(), level), proposed.ServiceID) {
+			abortNotLicensed(c, enterprise.NewLicenseError(enterprise.CapMultipleLLMServices, level))
 			return false
-		}
-	}
-	if config.BotHasProviderWebSearch(proposed) && (prev == nil || !config.BotHasProviderWebSearch(*prev)) {
-		if err := a.licenseChecker.Check(enterprise.CapProviderWebSearch); err != nil {
-			abortNotLicensed(c, err)
-			return false
-		}
-	}
-	if !a.licenseChecker.Allows(enterprise.CapMultipleLLMServices) {
-		unchanged := prev != nil && prev.ServiceID == proposed.ServiceID
-		if !unchanged {
-			active := config.ActiveServiceIDs(a.pluginConfigOrEmpty(), a.licenseChecker.Level())
-			if !slices.Contains(active, proposed.ServiceID) {
-				if err := a.licenseChecker.Check(enterprise.CapMultipleLLMServices); err != nil {
-					abortNotLicensed(c, err)
-					return false
-				}
-			}
 		}
 	}
 	return true

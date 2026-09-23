@@ -344,18 +344,18 @@ func TestAccessControlsNewlyRestricted(t *testing.T) {
 
 	tests := []struct {
 		name string
-		prev *llm.BotConfig
+		prev llm.BotConfig
 		next llm.BotConfig
 		want bool
 	}{
 		{name: "create with open defaults", next: open, want: false},
 		{name: "create with restrictions", next: restricted, want: true},
-		{name: "unchanged restrictions", prev: &restricted, next: restricted, want: false},
-		{name: "opening restrictions", prev: &restricted, next: open, want: false},
-		{name: "newly restricted", prev: &open, next: restricted, want: true},
-		{name: "removing an entry from a restricted list", prev: &twoBlocked, next: oneBlocked, want: false},
-		{name: "reordering a restricted list", prev: &twoBlocked, next: twoBlockedReordered, want: false},
-		{name: "retargeting a restricted list", prev: &restricted, next: llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAllow, ChannelIDs: []string{"ch2"}}, want: false},
+		{name: "unchanged restrictions", prev: restricted, next: restricted, want: false},
+		{name: "opening restrictions", prev: restricted, next: open, want: false},
+		{name: "newly restricted", prev: open, next: restricted, want: true},
+		{name: "removing an entry from a restricted list", prev: twoBlocked, next: oneBlocked, want: false},
+		{name: "reordering a restricted list", prev: twoBlocked, next: twoBlockedReordered, want: false},
+		{name: "retargeting a restricted list", prev: restricted, next: llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAllow, ChannelIDs: []string{"ch2"}}, want: false},
 		{name: "attribute-based is not named access controls", next: llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAttributeBased}, want: false},
 	}
 
