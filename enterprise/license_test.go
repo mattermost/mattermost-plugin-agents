@@ -79,8 +79,6 @@ func TestLicenseCheckerFailsClosed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, LevelUnlicensed, tc.checker.Level())
 			require.False(t, tc.checker.Allows(CapMultiplayerChannels))
-			require.False(t, tc.checker.IsBasicsLicensed())
-			require.False(t, tc.checker.IsMultiLLMLicensed())
 			limit, capped := tc.checker.AgentLimit()
 			require.True(t, capped)
 			require.Equal(t, FreeAgentLimit, limit)

@@ -46,7 +46,6 @@ jest.mock('react-redux', () => ({
 
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
-    useIsBasicsLicensed: jest.fn(() => true),
     useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
     requiredLevelFor: jest.fn(() => 2),
 }));

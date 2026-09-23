@@ -59,39 +59,22 @@ jest.mock('@/redux_actions', () => ({
 }));
 
 jest.mock('./channel_summarize_popover', () => ({
-    ChannelSummarizePopover: (props: {showAskInput?: boolean; showSummarizeOptions?: boolean}) => (
-        <div
-            data-testid='channel-summarize-popover'
-            data-show-ask={String(Boolean(props.showAskInput))}
-            data-show-summarize={String(Boolean(props.showSummarizeOptions))}
-        />
-    ),
+    ChannelSummarizePopover: () => <div data-testid='channel-summarize-popover'/>,
 }));
 
 describe('AskChannelButton license gating', () => {
     const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
 
-    beforeEach(() => {
-        useIsLicensedFor.mockReturnValue(true);
-    });
-
-    test('renders the channel button when either summarization or search is licensed', () => {
-        useIsLicensedFor.mockImplementation((capability: string) => capability === 'channel_summarization');
+    test.each([
+        {licensed: true, rendered: true},
+        {licensed: false, rendered: false},
+    ])('channel summarization licensed=$licensed renders=$rendered', ({licensed, rendered}) => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability === 'channel_summarization' && licensed);
         render(
             <IntlProvider locale='en'>
                 <AskChannelButton/>
             </IntlProvider>,
         );
-        expect(screen.getByTestId('ask-channel-button')).not.toBeNull();
-    });
-
-    test('hides the channel button when neither summarization nor search is licensed', () => {
-        useIsLicensedFor.mockReturnValue(false);
-        render(
-            <IntlProvider locale='en'>
-                <AskChannelButton/>
-            </IntlProvider>,
-        );
-        expect(screen.queryByTestId('ask-channel-button')).toBeNull();
+        expect(screen.queryByTestId('ask-channel-button') !== null).toBe(rendered);
     });
 });

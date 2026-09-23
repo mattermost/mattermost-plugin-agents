@@ -40,7 +40,7 @@ func mockLicenseState(mockAPI *plugintest.API, licensed bool) {
 	}
 }
 
-// toolLicenseChecker returns a LicenseChecker whose IsBasicsLicensed reports
+// toolLicenseChecker returns a LicenseChecker whose Enterprise-level check reports
 // the requested state.
 func toolLicenseChecker(t *testing.T, licensed bool) *enterprise.LicenseChecker {
 	t.Helper()

@@ -99,7 +99,7 @@ func overrideLicenseMocks(mockAPI *plugintest.API, license *model.License) {
 	mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
-// mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
+// mockLicensed sets up mock expectations for an Enterprise license.
 func mockLicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, &model.License{
 		Features: &model.Features{
@@ -109,7 +109,7 @@ func mockLicensed(mockAPI *plugintest.API) {
 	})
 }
 
-// mockUnlicensed sets up mock expectations so IsMultiLLMLicensed() returns false.
+// mockUnlicensed sets up mock expectations for an unlicensed server.
 func mockUnlicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, nil)
 }

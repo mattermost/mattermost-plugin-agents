@@ -210,11 +210,6 @@ func LevelFor(config *model.Config, license *model.License) Level {
 	return LevelUnlicensed
 }
 
-// HasLevel reports whether the current level is at least minimum.
-func (e *LicenseChecker) HasLevel(minimum Level) bool {
-	return e.Level() >= minimum
-}
-
 // Allows reports whether capability is available at the current level.
 func (e *LicenseChecker) Allows(capability Capability) bool {
 	return e.Level() >= RequiredLevel(capability)
@@ -261,17 +256,6 @@ func ServiceLimitFor(level Level) (limit int, ok bool) {
 		return 0, false
 	}
 	return BaseServiceLimit, true
-}
-
-// IsMultiLLMLicensed reports whether multiple LLM services and per-agent
-// service routing are available.
-func (e *LicenseChecker) IsMultiLLMLicensed() bool {
-	return e.Allows(CapMultipleLLMServices)
-}
-
-// IsBasicsLicensed reports whether the Enterprise capability set is available.
-func (e *LicenseChecker) IsBasicsLicensed() bool {
-	return e.HasLevel(LevelEnterprise)
 }
 
 // AgentLimitError reports that another AI agent is not available at current.

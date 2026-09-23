@@ -45,7 +45,7 @@ export type Capability =
     | 'attribute_based_access';
 
 // capabilityMinLevel is the tier chart: the minimum level at which each capability is available.
-export const capabilityMinLevel: Record<Capability, LicenseLevel> = {
+const capabilityMinLevel: Record<Capability, LicenseLevel> = {
     multiplayer_channels: LicenseLevel.Professional,
     thread_summarization: LicenseLevel.Professional,
     channel_summarization: LicenseLevel.Professional,
@@ -69,13 +69,13 @@ export const capabilityMinLevel: Record<Capability, LicenseLevel> = {
 };
 
 // Agent and LLM service caps per level; null means uncapped.
-export const FREE_AGENT_LIMIT = 1;
-export const PROFESSIONAL_AGENT_LIMIT = 3;
-export const BASE_SERVICE_LIMIT = 1;
+const FREE_AGENT_LIMIT = 1;
+const PROFESSIONAL_AGENT_LIMIT = 3;
+const BASE_SERVICE_LIMIT = 1;
 
 // licenseLevelFromLicense mirrors enterprise.LevelFor. The Entry SKU maps to
 // Enterprise; unknown SKUs fall back to feature flags.
-export const licenseLevelFromLicense = (license: Record<string, string> | undefined | null): LicenseLevel => {
+const licenseLevelFromLicense = (license: Record<string, string> | undefined | null): LicenseLevel => {
     if (!license) {
         return LicenseLevel.Unlicensed;
     }
@@ -109,7 +109,7 @@ const isConfiguredForDevelopment = (state: GlobalState): boolean => {
 
 // getLicenseLevel returns the current license level. A development server
 // (EnableTesting and EnableDeveloper) reports EnterpriseAdvanced.
-export const getLicenseLevel = (state: GlobalState): LicenseLevel => {
+const getLicenseLevel = (state: GlobalState): LicenseLevel => {
     if (isConfiguredForDevelopment(state)) {
         return LicenseLevel.EnterpriseAdvanced;
     }
@@ -124,7 +124,7 @@ export const licenseAllows = (state: GlobalState, capability: Capability): boole
     return getLicenseLevel(state) >= requiredLevelFor(capability);
 };
 
-export const agentLimitForLevel = (level: LicenseLevel): number | null => {
+const agentLimitForLevel = (level: LicenseLevel): number | null => {
     if (level >= LicenseLevel.Enterprise) {
         return null;
     }
@@ -134,7 +134,7 @@ export const agentLimitForLevel = (level: LicenseLevel): number | null => {
     return FREE_AGENT_LIMIT;
 };
 
-export const serviceLimitForLevel = (level: LicenseLevel): number | null => {
+const serviceLimitForLevel = (level: LicenseLevel): number | null => {
     return level >= LicenseLevel.Enterprise ? null : BASE_SERVICE_LIMIT;
 };
 
@@ -169,15 +169,4 @@ export function useLicenseLevelName(): (level: LicenseLevel) => string {
             return intl.formatMessage({defaultMessage: 'Free'});
         }
     };
-}
-
-// useIsMultiLLMLicensed reports whether multiple LLM services and per-agent
-// service routing are available.
-export function useIsMultiLLMLicensed() {
-    return useIsLicensedFor('multiple_llm_services');
-}
-
-// useIsBasicsLicensed reports whether the Enterprise capability set is available.
-export function useIsBasicsLicensed() {
-    return useLicenseLevel() >= LicenseLevel.Enterprise;
 }
