@@ -79,7 +79,7 @@ const ConsolePolicySection = (props: Props) => {
             {(expanded || hasOpened) && (
                 <SectionContent
                     $collapsed={!expanded}
-                    {...collapsedInert(expanded)}
+                    inert={!expanded}
                 >
                     {isValidMattermostId(resourceId) ? (
                         <PolicyEditor
@@ -97,12 +97,6 @@ const ConsolePolicySection = (props: Props) => {
         </SectionContainer>
     );
 };
-
-// Omit inert when expanded: React 18 serializes inert={false} as inert="false",
-// which browsers still treat as inert.
-function collapsedInert(expanded: boolean): {inert?: ''} {
-    return expanded ? {} : {inert: ''};
-}
 
 // --- Styled Components ---
 
@@ -129,7 +123,7 @@ const SectionTitle = styled.div`
     font-weight: 600;
 `;
 
-const SectionContent = styled.div<{$collapsed: boolean; inert?: ''}>`
+const SectionContent = styled.div<{$collapsed: boolean}>`
     margin-top: 12px;
     ${({$collapsed}) => $collapsed && `
         visibility: hidden;
