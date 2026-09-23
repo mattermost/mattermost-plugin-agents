@@ -79,6 +79,10 @@ const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
         arrowOffsetTop,
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         placement,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        arrowRef,
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        arrowStyle,
         ...rest
     } = props;
 
