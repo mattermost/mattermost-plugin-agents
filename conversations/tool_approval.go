@@ -72,7 +72,9 @@ const (
 
 // toolRejectionGuidance is appended as a final user message to follow-ups
 // after a user rejection. It must not include tool arguments.
-const toolRejectionGuidance = "The user rejected the tool call. Do not repeat the same tool call. Ask the user for clarification or choose a different approach."
+const toolRejectionGuidance = "The user rejected one or more of your tool calls; their results read \"" +
+	toolCallRejectedByUserResult + "\". Do not repeat a rejected call with the same arguments. " +
+	"Ask the user for clarification or take a different approach."
 
 // isUserRejectedToolUse reports whether block was rejected by the user, as
 // opposed to a skipped question (UserInteraction) or a policy/license denial
