@@ -3,11 +3,7 @@
 
 import {css} from 'styled-components';
 
-/**
- * Opts an animated element out for readers who ask for less motion. Covers
- * both properties so every animated part of a bot post can use the one rule,
- * whichever of the two it happens to use.
- */
+/** Disables animations and transitions for readers who ask for less motion. */
 export const noMotionWhenReduced = css`
     @media (prefers-reduced-motion: reduce) {
         animation: none;
@@ -15,7 +11,7 @@ export const noMotionWhenReduced = css`
     }
 `;
 
-/** Whether the reader has asked for less motion, for effects that cannot use CSS. */
+/** For motion decisions that cannot be made in CSS. */
 export function prefersReducedMotion(): boolean {
     return typeof window.matchMedia === 'function' &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches;

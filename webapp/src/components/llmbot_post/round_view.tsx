@@ -29,11 +29,8 @@ interface RoundViewProps {
 }
 
 /**
- * One assistant round: reasoning, provider-executed tools, text, then the
- * client tool cards it produced.
- *
- * Memoized because a streaming response re-renders the post on every chunk
- * while only the live round's content actually changes.
+ * One assistant round: reasoning, provider-executed tools, text, then client
+ * tool cards. Memoized so settled rounds skip re-rendering on every chunk.
  */
 export const RoundView = React.memo((props: RoundViewProps) => {
     const {round} = props;
