@@ -41,7 +41,7 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 	e.api.configStore = &mockConfigStore{
 		cfg: &config.Config{
 			Services: []llm.ServiceConfig{
-				{ID: "svc-1", Name: "Test Service", Type: "openai"},
+				{ID: "svc-1", Name: "Test Service", Type: "openai", APIKey: "test-key"},
 			},
 		},
 	}
@@ -1102,6 +1102,8 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
+
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
@@ -1259,6 +1261,8 @@ func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
 
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)

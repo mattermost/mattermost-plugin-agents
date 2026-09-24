@@ -38,7 +38,7 @@ The Agents page itself shows:
 - A header with the page title and a **Create agent** button (visible only to users who can create agents — see [Permissions and license](#permissions-and-license)).
 - Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created that they can still see).
 - A search box that filters by display name or username.
-- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge when the agent's configured AI service is missing or orphaned *and* the viewer can still see the agent (primarily system admins; see [Who can see which agents](#who-can-see-which-agents)).
+- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and an **Inactive** warning badge when the agent is not running. Hovering the badge explains why: the agent's AI service was deleted or is missing required settings, the service is not active on the current plan, or the plan's agent limit is reached (see [Agent shows an "Inactive" badge](#agent-shows-an-inactive-badge)).
 - A row-level overflow menu (`⋯`) with **Edit** and **Delete** actions for users who can manage that agent. Selecting the row itself also opens the editor for users who can manage the agent.
 
 ## Permissions and license
@@ -287,11 +287,15 @@ The signed-in user does not have `manage_own_agent` or `manage_system`. Grant `m
 
 The signed-in user is not the agent's creator, not in **Agent admins**, and does not have `manage_others_agent`. For migrated legacy bots (no creator), only system administrators see these actions.
 
-### Agent shows "Service unavailable" badge
+### Agent shows an "Inactive" badge
 
-The agent's configured AI service is missing or orphaned (for example its `serviceID` no longer matches any service in **System Console > Plugins > Agents**). Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+The agent is stored but not running. The badge tooltip names the reason:
 
-This badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent. System admins (and rare edge cases where the viewer can still see the agent) may still see **Service unavailable** for a truly missing service.
+- **Service deleted or incomplete** — the agent's `serviceID` no longer matches a service in **System Console > Plugins > Agents**, or that service is missing required settings such as its API key. Edit the agent and pick a current service, or complete the service configuration.
+- **Service not active on the plan** — Free and Professional use only the first service in the **Services** list. Edit the agent and choose that service; multiple services are available at Enterprise and above.
+- **Agent limit reached** — the plan's agent cap is filled by configuration-file bots and agents created earlier. Delete an earlier agent or move to a plan with more agents.
+
+The badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent.
 
 ### Saving an agent returns "This username is already taken"
 

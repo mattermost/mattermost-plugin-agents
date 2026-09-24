@@ -57,7 +57,7 @@ func TestAgentCreateQuotaByLicense(t *testing.T) {
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 			store := e.api.configStore.(*mockConfigStore)
-			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai"})
+			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai", APIKey: "test-key"})
 			addAgents := func(n int, serviceID string) {
 				for i := 0; i < n; i++ {
 					id := model.NewId()
@@ -198,6 +198,59 @@ func TestListAgentsQuotaHeadersByLicense(t *testing.T) {
 				return
 			}
 			assert.Equal(t, "1", recorder.Result().Header.Get(AgentActiveCountHeader))
+		})
+	}
+}
+
+func TestListAgentsInactiveReason(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+
+	tests := []struct {
+		level enterprise.Level
+		want  map[string]string
+	}{
+		{level: enterprise.LevelUnlicensed, want: map[string]string{"oldest": "", "newer": "agent_limit", "second-service": "service_not_licensed", "deleted-service": "service_unavailable"}},
+		{level: enterprise.LevelProfessional, want: map[string]string{"oldest": "", "newer": "", "second-service": "service_not_licensed", "deleted-service": "service_unavailable"}},
+		{level: enterprise.LevelEnterprise, want: map[string]string{"oldest": "", "newer": "", "second-service": "", "deleted-service": "service_unavailable"}},
+		{level: enterprise.LevelEnterpriseAdvanced, want: map[string]string{"oldest": "", "newer": "", "second-service": "", "deleted-service": "service_unavailable"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.level.String(), func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.OverrideLicense(enterprisetest.LicenseFor(tc.level))
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			store := e.api.configStore.(*mockConfigStore)
+			store.cfg.Services = append(store.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai", APIKey: "test-key"})
+			for i, seed := range []struct{ id, serviceID string }{
+				{"oldest", "svc-1"},
+				{"newer", "svc-1"},
+				{"second-service", "svc-2"},
+				{"deleted-service", "svc-deleted"},
+			} {
+				e.agentStore.agents[seed.id] = &llm.BotConfig{
+					ID: seed.id, CreatorID: testUserID, DisplayName: seed.id, Name: seed.id,
+					ServiceID: seed.serviceID, CreateAt: int64(i + 1),
+				}
+			}
+
+			recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+			var listed []struct {
+				ID             string `json:"id"`
+				InactiveReason string `json:"inactiveReason"`
+			}
+			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&listed))
+			got := make(map[string]string, len(listed))
+			for _, agent := range listed {
+				got[agent.ID] = agent.InactiveReason
+			}
+			assert.Equal(t, tc.want, got)
 		})
 	}
 }

@@ -232,7 +232,7 @@ describe('AgentsList services loading', () => {
         expect(screen.queryByText('Failed to load AI services. Using the last loaded list.')).toBeNull();
 
         // The row must be told the services list is unknown so it never renders
-        // a "Service unavailable" badge for these users.
+        // an inactive badge for a missing service for these users.
         expect(screen.getByTestId('agent-row').getAttribute('data-services-loaded')).toBe('false');
     });
 

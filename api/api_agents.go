@@ -196,47 +196,36 @@ func (a *API) pluginConfigOrEmpty() *config.Config {
 	return cfg
 }
 
-// licensedAgentPoolCount counts the agents that take a slot in the agent cap:
-// valid configuration-file bots and user-created agents whose LLM service is
-// active at level. It mirrors the runtime selection in bots.selectActiveBots,
-// so agents left inactive on another service never block creating one that
-// works.
-func licensedAgentPoolCount(cfg *config.Config, dbAgents []*llm.BotConfig, level enterprise.Level) int {
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
-	active := config.ActiveServiceIDs(cfg, level)
-	counts := func(bot llm.BotConfig) bool {
-		return bot.IsValid() && slices.Contains(active, bot.ServiceID)
-	}
-	n := 0
-	for _, bot := range cfg.Bots {
-		if counts(bot) {
-			n++
-		}
-	}
-	for _, agent := range dbAgents {
-		if agent != nil && counts(*agent) {
-			n++
-		}
-	}
-	return n
-}
-
-// combinedAgentPoolCount is licensedAgentPoolCount over the stored plugin
-// configuration and dbAgents.
-func (a *API) combinedAgentPoolCount(dbAgents []*llm.BotConfig) (int, error) {
+// agentPoolStatus classifies the combined agent pool (stored
+// configuration-file bots and dbAgents) at the current license level with the
+// same rule the runtime uses to choose which agents run.
+func (a *API) agentPoolStatus(dbAgents []*llm.BotConfig) ([]llm.BotConfig, []config.AgentInactiveReason, error) {
 	cfg := &config.Config{}
 	if a.configStore != nil {
 		stored, err := a.configStore.GetConfig()
 		if err != nil {
-			return 0, err
+			return nil, nil, err
 		}
 		if stored != nil {
 			cfg = stored
 		}
 	}
-	return licensedAgentPoolCount(cfg, dbAgents, a.licenseChecker.Level()), nil
+	pool := config.AgentPool(cfg.Bots, dbAgents)
+	return pool, config.AgentInactiveReasons(cfg.Services, pool, a.licenseChecker.Level()), nil
+}
+
+// licensedAgentPoolCount counts the agents that take a slot in the agent cap:
+// active agents plus those waiting for a slot. Agents whose LLM service is
+// missing, incomplete or inactive at the current level are not counted, so
+// they never block creating one that works.
+func licensedAgentPoolCount(reasons []config.AgentInactiveReason) int {
+	n := 0
+	for _, reason := range reasons {
+		if reason == config.AgentActive || reason == config.AgentInactiveAgentLimit {
+			n++
+		}
+	}
+	return n
 }
 
 // checkAgentCreateQuota allows unlimited creation when agents are uncapped;
@@ -252,12 +241,12 @@ func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
 	}
-	count, err := a.combinedAgentPoolCount(dbAgents)
+	_, reasons, err := a.agentPoolStatus(dbAgents)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
 	}
-	if count >= limit {
+	if licensedAgentPoolCount(reasons) >= limit {
 		abortNotLicensed(c, enterprise.AgentLimitError(a.licenseChecker.Level()))
 		return false
 	}
@@ -458,6 +447,13 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	c.JSON(http.StatusCreated, agent)
 }
 
+// agentListItem is an agent as listed on GET /agents, with the reason it is
+// not running when it is inactive.
+type agentListItem struct {
+	*llm.BotConfig
+	InactiveReason config.AgentInactiveReason `json:"inactiveReason,omitempty"`
+}
+
 // handleListAgents handles GET /agents: agents the caller may access.
 func (a *API) handleListAgents(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -468,23 +464,33 @@ func (a *API) handleListAgents(c *gin.Context) {
 		return
 	}
 
-	accessible := make([]*llm.BotConfig, 0, len(agents))
-	for _, cfg := range agents {
-		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
-			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
+	// Status enrichment is best-effort: a failure here must not fail the list
+	// request, so agents are listed without a status and without the header,
+	// and the create API still enforces the limit.
+	inactive := make(map[string]config.AgentInactiveReason)
+	pool, reasons, err := a.agentPoolStatus(agents)
+	if err != nil {
+		a.pluginAPI.Log.Warn("Failed to determine which agents are active", "error", err.Error())
+	} else {
+		for i, bot := range pool {
+			if bot.ID != "" {
+				inactive[bot.ID] = reasons[i]
+			}
+		}
+		// The server-wide pool count lets the webapp gate creation against the
+		// real quota, not the access-filtered list.
+		if _, capped := a.licenseChecker.AgentLimit(); capped {
+			c.Header(AgentActiveCountHeader, strconv.Itoa(licensedAgentPoolCount(reasons)))
 		}
 	}
 
-	// Enrich (best-effort) with the server-wide combined pool count so the
-	// webapp can gate creation against the real quota, not the access-filtered
-	// list. A failure here must not fail the list request: just omit the
-	// header and let the create API enforce the limit.
-	if _, capped := a.licenseChecker.AgentLimit(); capped {
-		count, err := a.combinedAgentPoolCount(agents)
-		if err != nil {
-			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
-		} else {
-			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
+	accessible := make([]agentListItem, 0, len(agents))
+	for _, cfg := range agents {
+		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
+			accessible = append(accessible, agentListItem{
+				BotConfig:      sanitizeAgentForUser(a.pluginAPI, cfg, userID),
+				InactiveReason: inactive[cfg.ID],
+			})
 		}
 	}
 

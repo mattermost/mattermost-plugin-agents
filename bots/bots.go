@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"reflect"
-	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -136,51 +135,25 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 // EnsureBots calls this for both the optimistic equality check and the
 // rebuild, so the check can't miss a service used only by a DB agent.
 func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}, map[string]llm.ServiceConfig, error) {
-	// config.GetBots() returns the config-owned slice; clone before
-	// appending so we don't overwrite it.
-	pool := slices.Clone(b.config.GetBots())
-	dbNames := make(map[string]struct{})
+	var dbAgents []*llm.BotConfig
 	if b.agentStore != nil {
-		dbAgents, err := b.agentStore.ListAgents()
+		var err error
+		dbAgents, err = b.agentStore.ListAgents()
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
-		sortAgentsByCreateAt(dbAgents)
-		for _, cfg := range dbAgents {
-			if cfg == nil {
-				continue
-			}
+	}
+	dbNames := make(map[string]struct{}, len(dbAgents))
+	for _, cfg := range dbAgents {
+		if cfg != nil {
 			dbNames[cfg.Name] = struct{}{}
-			pool = append(pool, *cfg)
 		}
 	}
 
+	pool := config.AgentPool(b.config.GetBots(), dbAgents)
 	botCfgs, activeDBBotUsernames := b.selectActiveBots(pool, dbNames)
 	serviceCfgs := b.resolveServiceCfgs(botCfgs)
 	return botCfgs, activeDBBotUsernames, serviceCfgs, nil
-}
-
-// sortAgentsByCreateAt orders DB agents by CreateAt ascending, then ID, so the
-// combined pool is deterministic even when ListAgents does not specify order.
-func sortAgentsByCreateAt(agents []*llm.BotConfig) {
-	slices.SortFunc(agents, func(a, b *llm.BotConfig) int {
-		if a == nil && b == nil {
-			return 0
-		}
-		if a == nil {
-			return 1
-		}
-		if b == nil {
-			return -1
-		}
-		if a.CreateAt != b.CreateAt {
-			if a.CreateAt < b.CreateAt {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
 }
 
 func (b *MMBots) licenseLevel() enterprise.Level {
@@ -190,45 +163,20 @@ func (b *MMBots) licenseLevel() enterprise.Level {
 	return b.licenseChecker.Level()
 }
 
-func (b *MMBots) activeServiceIDSet() map[string]struct{} {
-	var services []llm.ServiceConfig
-	if b.config != nil {
-		services = b.config.GetServices()
-	}
-	ids := config.ActiveServiceIDs(&config.Config{Services: services}, b.licenseLevel())
-	set := make(map[string]struct{}, len(ids))
-	for _, id := range ids {
-		set[id] = struct{}{}
-	}
-	return set
-}
-
-// selectActiveBots keeps the first AgentLimit valid agents that reference an
-// active LLM service. Cap-inactive and service-inactive agents are omitted
-// from the ensure set (so existing Mattermost bot accounts are deactivated)
-// and from activeDBBotUsernames. DB rows are never deleted.
+// selectActiveBots keeps the agents config.AgentInactiveReasons reports as
+// active. Inactive agents are omitted from the ensure set (so existing
+// Mattermost bot accounts are deactivated) and from activeDBBotUsernames. DB
+// rows are never deleted.
 func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struct{}) ([]llm.BotConfig, map[string]struct{}) {
-	limit, capped := b.licenseChecker.AgentLimit()
-	activeServices := b.activeServiceIDSet()
-	_, servicesCapped := b.licenseChecker.ServiceLimit()
+	level := b.licenseLevel()
+	reasons := config.AgentInactiveReasons(b.config.GetServices(), pool, level)
 
 	active := make([]llm.BotConfig, 0, len(pool))
 	activeDB := make(map[string]struct{})
-	var capInactive []string
-	var serviceInactive []string
-
-	for _, cfg := range pool {
-		if !cfg.IsValid() {
-			continue
-		}
-		if servicesCapped {
-			if _, ok := activeServices[cfg.ServiceID]; !ok {
-				serviceInactive = append(serviceInactive, cfg.Name)
-				continue
-			}
-		}
-		if capped && len(active) >= limit {
-			capInactive = append(capInactive, cfg.Name)
+	inactive := make(map[config.AgentInactiveReason][]string)
+	for i, cfg := range pool {
+		if reasons[i] != config.AgentActive {
+			inactive[reasons[i]] = append(inactive[reasons[i]], cfg.Name)
 			continue
 		}
 		active = append(active, cfg)
@@ -238,19 +186,26 @@ func (b *MMBots) selectActiveBots(pool []llm.BotConfig, dbNames map[string]struc
 	}
 
 	if b.pluginAPI != nil {
-		if len(capInactive) > 0 {
-			b.pluginAPI.Log.Warn(
-				"AI agents over the current license agent limit are inactive",
-				"inactive_agents", strings.Join(capInactive, ", "),
-				"limit", limit,
-				"license_level", b.licenseLevel().String(),
-			)
+		if names := inactive[config.AgentInactiveInvalidConfig]; len(names) > 0 {
+			b.pluginAPI.Log.Error("AI agents with an invalid configuration are inactive", "inactive_agents", strings.Join(names, ", "))
 		}
-		if len(serviceInactive) > 0 {
+		if names := inactive[config.AgentInactiveServiceUnavailable]; len(names) > 0 {
+			b.pluginAPI.Log.Error("AI agents referencing a missing or incomplete LLM service are inactive", "inactive_agents", strings.Join(names, ", "))
+		}
+		if names := inactive[config.AgentInactiveServiceNotLicensed]; len(names) > 0 {
 			b.pluginAPI.Log.Warn(
 				"Agents referencing LLM services other than the first configured service are inactive; multiple LLM services are available at Enterprise and above",
-				"inactive_agents", strings.Join(serviceInactive, ", "),
-				"license_level", b.licenseLevel().String(),
+				"inactive_agents", strings.Join(names, ", "),
+				"license_level", level.String(),
+			)
+		}
+		if names := inactive[config.AgentInactiveAgentLimit]; len(names) > 0 {
+			limit, _ := enterprise.AgentLimitFor(level)
+			b.pluginAPI.Log.Warn(
+				"AI agents over the current license agent limit are inactive",
+				"inactive_agents", strings.Join(names, ", "),
+				"limit", limit,
+				"license_level", level.String(),
 			)
 		}
 	}
