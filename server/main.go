@@ -554,7 +554,8 @@ func (p *Plugin) OnActivate() error {
 	// Create logger adapter to route MCP handler logs through plugin logging
 	mcpHandlerLogger := NewPluginAPILoggerAdapter(pluginAPI.Log)
 	internalServerURL := deriveInternalServerURL(pluginAPI, *siteURL)
-	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, mcpClientManager, mmClient, func() bool {
+	pluginServers := licensedPluginServers{registry: mcpClientManager, allowed: remoteMCPAllowed}
+	handlers, err := mcpserver.NewPluginMCPHandlers(*siteURL, internalServerURL, mcpHandlerLogger, pluginServers, mmClient, func() bool {
 		return licenseChecker.Allows(enterprise.CapStateChangingTools)
 	}, accessChecker, func() string {
 		return p.configuration.MCP().EmbeddedServer.ID
@@ -564,6 +565,7 @@ func (p *Plugin) OnActivate() error {
 	} else {
 		mcpHandlers = handlers
 		pluginAPI.Log.Info("Embedded MCP server handlers initialized successfully")
+		p.licenseChangeListeners = append(p.licenseChangeListeners, handlers.RebuildExternalServer)
 	}
 
 	customPromptsStore := customprompts.NewStore(dbClient)
@@ -809,4 +811,19 @@ func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string,
 	}
 
 	return false
+}
+
+// licensedPluginServers exposes plugin-registered MCP servers on the external
+// MCP endpoint only where remote and plugin MCP servers are available
+// (Enterprise and above).
+type licensedPluginServers struct {
+	registry mcpserver.PluginServerRegistry
+	allowed  func() bool
+}
+
+func (l licensedPluginServers) ListPluginServers() []mcp.PluginServerConfig {
+	if l.allowed == nil || !l.allowed() {
+		return nil
+	}
+	return l.registry.ListPluginServers()
 }
