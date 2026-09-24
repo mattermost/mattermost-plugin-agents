@@ -47,8 +47,8 @@ type Props = {
     services: ServiceInfo[];
     errors?: Record<string, string>;
 
-    /** When true (e.g. edit mode), username cannot be changed; matches API behavior. */
-    usernameLocked?: boolean;
+    /** The saved username when editing an existing agent (empty when creating); used to flag a pending rename. */
+    savedUsername?: string;
 }
 
 // Keep in sync with legacy System Console bot form (webapp/src/components/system_console/bot.tsx).
@@ -62,7 +62,7 @@ const ConfigTab = (props: Props) => {
         onAvatarChange,
         services,
         errors = {},
-        usernameLocked = false,
+        savedUsername,
     } = props;
     const intl = useIntl();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
@@ -252,6 +252,14 @@ const ConfigTab = (props: Props) => {
         intl.formatMessage({defaultMessage: 'Default: {model}'}, {model: serviceDefaultModel}) :
         intl.formatMessage({defaultMessage: 'Use service default'});
 
+    const usernameRulesHelptext = intl.formatMessage({
+        defaultMessage: 'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores.',
+    });
+    const usernameHelptext = savedUsername && draft.username !== savedUsername ? intl.formatMessage(
+        {defaultMessage: '{rules} Renaming keeps the agent\'s conversations, but people and integrations using @{savedUsername} will need to switch to the new name.'},
+        {rules: usernameRulesHelptext, savedUsername},
+    ) : usernameRulesHelptext;
+
     const handleReasoningBotChange = (bot: LLMBotConfig) => {
         onChange({
             reasoningEnabled: bot.reasoningEnabled ?? true,
@@ -274,13 +282,9 @@ const ConfigTab = (props: Props) => {
                     label={intl.formatMessage({defaultMessage: 'Agent username'})}
                     value={draft.username}
                     maxLength={22}
-                    disabled={usernameLocked}
                     onChange={(e) => onChange({username: e.target.value})}
                     error={errors.username}
-                    helptext={intl.formatMessage({
-                        defaultMessage:
-                            'Users will mention this name to interact with the agent. Must start with a letter and contain only lowercase letters, numbers, dots, hyphens, or underscores. The username cannot be changed after the agent is created.',
-                    })}
+                    helptext={usernameHelptext}
                 />
                 <AvatarItem
                     botusername={draft.username}

@@ -536,6 +536,63 @@ describe('AgentConfigView', () => {
         }));
     });
 
+    describe('renaming an agent', () => {
+        const renderEdit = (onSaved = jest.fn()) => {
+            render(
+                <IntlProvider locale='en'>
+                    <AgentConfigView
+                        mode='edit'
+                        agent={savedAgent}
+                        services={services}
+                        onBack={jest.fn()}
+                        onSaved={onSaved}
+                    />
+                </IntlProvider>,
+            );
+            return {onSaved};
+        };
+
+        test('asks for confirmation and saves the new username only after confirming', async () => {
+            mockUpdateAgent.mockResolvedValue({...savedAgent, name: 'renamed'});
+            const {onSaved} = renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            expect(screen.getByRole('dialog', {name: 'Change agent username?'})).not.toBeNull();
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+
+            fireEvent.click(screen.getByRole('button', {name: 'Change username'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({username: 'renamed'}));
+            await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+        });
+
+        test('keeping the current username does not save', async () => {
+            renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'renamed'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Keep current username'}));
+
+            await waitForElementToBeRemoved(() => screen.queryByRole('dialog', {name: 'Change agent username?'}));
+            expect(mockUpdateAgent).not.toHaveBeenCalled();
+            expect((screen.getByLabelText('Username') as HTMLInputElement).value).toBe('renamed');
+        });
+
+        test('saves without confirmation when the username is unchanged', async () => {
+            mockUpdateAgent.mockResolvedValue(savedAgent);
+            renderEdit();
+
+            fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'New Display Name'}});
+            fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+            await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+            expect(screen.queryByRole('dialog', {name: 'Change agent username?'})).toBeNull();
+        });
+    });
+
     test('blocks saving when maxToolTurns exceeds the hard cap', () => {
         render(
             <IntlProvider locale='en'>
