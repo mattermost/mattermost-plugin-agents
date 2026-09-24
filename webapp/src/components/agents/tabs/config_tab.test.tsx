@@ -246,4 +246,29 @@ describe('ConfigTab license gating', () => {
         ).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
     });
+
+    test.each([
+        {licensed: true, expected: ['web_search']},
+        {licensed: false, expected: []},
+    ])('switching to a service of another type resets native tools per license (licensed=$licensed)', async ({licensed, expected}) => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'provider_web_search' || licensed);
+        const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
+        const onChange = jest.fn();
+        const renderTab = (serviceId: string) => (
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId, enabledNativeTools: ['web_fetch']})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, anthropicService]}
+                />
+            </IntlProvider>
+        );
+
+        const {rerender} = render(renderTab(anthropicService.id));
+        await screen.findByText('AI Service');
+        rerender(renderTab(openaiService.id));
+
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabledNativeTools: expected}));
+    });
 });

@@ -37,7 +37,7 @@ import {IntItem} from '@/components/system_console/number_items';
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
-import {LicenseLevel, useLicenseLevelName, useServiceLimit} from '@/license';
+import {LicenseLevel, useIsLicensedFor, useLicenseLevelName, useServiceLimit} from '@/license';
 
 import {AgentDraft} from '../agent_config_view';
 
@@ -68,6 +68,7 @@ const ConfigTab = (props: Props) => {
     } = props;
     const intl = useIntl();
     const serviceLimit = useServiceLimit();
+    const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
     const levelName = useLicenseLevelName();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
@@ -102,7 +103,7 @@ const ConfigTab = (props: Props) => {
                 ...(sameServiceType ?
                     {} :
                     {
-                        enabledNativeTools: ['web_search'],
+                        enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
@@ -110,7 +111,7 @@ const ConfigTab = (props: Props) => {
             });
         }
         prevServiceIdRef.current = draft.serviceId;
-    }, [draft.serviceId, onChange, services]);
+    }, [draft.serviceId, onChange, services, providerWebSearchLicensed]);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
 
