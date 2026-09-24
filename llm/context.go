@@ -157,6 +157,19 @@ func (c *Context) SetBotFields(displayName, username, userID, defaultModel, serv
 	c.CustomInstructions = customInstructions
 }
 
+// IsToolCallable reports whether the named tool is in the tool store and not
+// listed in DisabledToolsInfo. Disabled tools stay in the store for prompt
+// awareness but are never sent to the provider, so prompts must not tell the
+// model to call them.
+func (c *Context) IsToolCallable(name string) bool {
+	if c == nil || c.Tools == nil || c.Tools.GetTool(name) == nil {
+		return false
+	}
+	return !slices.ContainsFunc(c.DisabledToolsInfo, func(info ToolInfo) bool {
+		return info.Name == name
+	})
+}
+
 // CustomPromptVars returns a flat map of whitelisted variables for use in
 // user-created custom prompt templates. Only safe, useful fields are exposed.
 func (c *Context) CustomPromptVars() map[string]string {
