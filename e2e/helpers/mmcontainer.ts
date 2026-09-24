@@ -19,6 +19,11 @@ const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
 // release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
 const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
+export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
+
+export function mattermostImage(): string {
+    return process.env.MM_IMAGE || defaultMattermostImage;
+}
 
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
@@ -232,17 +237,14 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
-        let image = defaultMattermostImage;
+        const image = mattermostImage();
         const isCustomImage = !!process.env.MM_IMAGE;
-        if (isCustomImage) {
-            image = process.env.MM_IMAGE;
-        }
         console.log(`\n🚀 Starting Mattermost container`);
         console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
 
         this.network = await new Network().start()
         // Use pgvector image to enable semantic search functionality
-        this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
+        this.pgContainer = await new PostgreSqlContainer(POSTGRES_IMAGE)
             .withExposedPorts(5432)
             .withDatabase("mattermost_test")
             .withUsername("user")
