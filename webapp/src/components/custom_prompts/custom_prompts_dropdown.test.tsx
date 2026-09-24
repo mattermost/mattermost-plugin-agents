@@ -142,7 +142,7 @@ describe('CustomPromptsDropdown', () => {
         expect(screen.queryByLabelText('Sends without review')).toBeNull();
     });
 
-    it('leaves the draft alone when an immediate run fails', async () => {
+    it('surfaces a visible error when an immediate run fails, without touching the draft', async () => {
         const updateText = jest.fn();
         createPost.mockRejectedValue(new Error('boom'));
         jest.spyOn(console, 'error').mockImplementation(() => null);
@@ -151,7 +151,18 @@ describe('CustomPromptsDropdown', () => {
 
         fireEvent.click(screen.getByText('Triage'));
 
-        await waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
+        // A failed send leaves no draft behind, so it has to say so: silence
+        // would look exactly like success.
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Could not send the prompt/));
         expect(updateText).not.toHaveBeenCalled();
+    });
+
+    it('shows no error on a successful immediate run', async () => {
+        renderDropdown(makePrompt({run_immediately: true}), jest.fn());
+
+        fireEvent.click(screen.getByText('Triage'));
+
+        await waitFor(() => expect(createPost).toHaveBeenCalledTimes(1));
+        expect(screen.queryByRole('alert')).toBeNull();
     });
 });

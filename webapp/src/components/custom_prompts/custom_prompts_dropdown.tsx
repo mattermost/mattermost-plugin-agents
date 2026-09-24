@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useCallback} from 'react';
+import React, {useEffect, useCallback, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
@@ -62,6 +62,15 @@ const SendAffordance = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
+const ErrorItem = styled.li`
+    padding: 6px 20px;
+    font-family: 'Open Sans', sans-serif;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--error-text);
+    list-style: none;
+`;
+
 const StyledMenuSeparator = styled.li`
     height: 1px;
     margin: 4px 0;
@@ -82,6 +91,7 @@ const CustomPromptsDropdown = ({draft, updateText, channelId}: Props) => {
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
     const runPromptImmediately = useRunPromptImmediately();
+    const [error, setError] = useState('');
 
     // Selection is backed by the shared selected-agent preference so the
     // "GENERATE WITH:" menu stays in sync with the RHS and all other surfaces.
@@ -95,24 +105,34 @@ const CustomPromptsDropdown = ({draft, updateText, channelId}: Props) => {
     }, [dispatch]);
 
     const handlePromptClick = useCallback(async (prompt: CustomPrompt) => {
-        dismissMenu();
-        try {
-            const botUsername = selectedBot?.username;
-            const mentionBot = !isBotDMChannel && Boolean(botUsername);
+        const botUsername = selectedBot?.username;
+        const mentionBot = !isBotDMChannel && Boolean(botUsername);
 
-            // Prompts marked "send without review" skip the draft entirely and
-            // post the rendered text, matching the pinned-button behavior in
-            // the Agents pane. The draft is left untouched either way.
-            if (prompt.run_immediately) {
+        // Prompts marked "send without review" skip the draft entirely and
+        // post the rendered text, matching the pinned-button behavior in
+        // the Agents pane. The draft is left untouched either way.
+        if (prompt.run_immediately) {
+            // Hold the menu open until the post lands. This path leaves no
+            // draft behind, so a failure that only logged to the console
+            // would be indistinguishable from a successful send.
+            setError('');
+            try {
                 await runPromptImmediately(prompt.id, {
                     channelId,
                     botUsername,
                     mentionBot,
                     rootId: draft?.rootId,
                 });
-                return;
+                dismissMenu();
+            } catch (e) {
+                console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
+                setError(intl.formatMessage({defaultMessage: 'Could not send the prompt. Nothing was posted — try again.'}));
             }
+            return;
+        }
 
+        dismissMenu();
+        try {
             const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
             if (mentionBot) {
                 updateText(`@${botUsername} ${result.rendered}`);
@@ -122,7 +142,7 @@ const CustomPromptsDropdown = ({draft, updateText, channelId}: Props) => {
         } catch (e) {
             console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, draft, updateText, selectedBot, isBotDMChannel, runPromptImmediately]);
+    }, [channelId, draft, updateText, selectedBot, isBotDMChannel, runPromptImmediately, intl]);
 
     const handleCreateClick = useCallback(() => {
         dismissMenu();
@@ -167,6 +187,9 @@ const CustomPromptsDropdown = ({draft, updateText, channelId}: Props) => {
                 >
                     <span><FormattedMessage defaultMessage='No custom prompts yet'/></span>
                 </StyledMenuItem>
+            )}
+            {error && (
+                <ErrorItem role='alert'>{error}</ErrorItem>
             )}
             <StyledMenuSeparator role='separator'/>
             <StyledMenuItem

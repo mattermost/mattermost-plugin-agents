@@ -255,6 +255,7 @@
   "OX9BmvVN": "SearXNG Result Limit",
   "OZQSk2AF": "Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.",
   "OeOwybAX": "AWS Secret Access Key (Optional)",
+  "OjJ0vJTm": "Could not send the prompt. Nothing was posted — try again.",
   "OpSwEvCi": "Where to send distributed traces of LLM requests, tool execution, and search operations. \"Server Logs\" writes spans to the Mattermost server log and requires no extra infrastructure. \"OTLP Endpoint\" exports spans to a collector such as Grafana Tempo or Jaeger.",
   "OvzONl52": "Off",
   "Oxv02I9S": "IAM user secret access key. Required if AWS Access Key ID is provided. Can also be set via AWS_SECRET_ACCESS_KEY environment variable. System console takes precedence over environment variables.",
