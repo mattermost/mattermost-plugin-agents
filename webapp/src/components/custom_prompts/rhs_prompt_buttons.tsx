@@ -7,8 +7,9 @@ import {useSelector, useDispatch} from 'react-redux';
 
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
-import {renderCustomPrompt, createPost} from '@/client';
 import {Button} from '../rhs/common';
+
+import {useRunPromptImmediately} from './use_run_prompt';
 
 const ButtonContainer = styled.div`
     display: flex;
@@ -42,6 +43,7 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
     const pinnedIds = useSelector(getPinnedPromptIds);
+    const runPromptImmediately = useRunPromptImmediately();
 
     useEffect(() => {
         dispatch(fetchCustomPrompts() as any);
@@ -50,20 +52,15 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
 
     const handleClick = useCallback(async (promptId: string) => {
         try {
-            const result = await renderCustomPrompt(promptId, channelId);
-            const post = {
-                channel_id: channelId,
-                message: result.rendered,
-                props: {},
-                file_ids: [],
-            };
-            const created = await createPost(post);
+            // channelId here is the agent's DM channel, so no @mention is
+            // needed for the agent to pick the message up.
+            const created = await runPromptImmediately(promptId, {channelId});
             selectPost(created.id);
             setCurrentTab('thread');
         } catch (e) {
-            console.error('Failed to execute custom prompt:', e); // eslint-disable-line no-console
+            console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, selectPost, setCurrentTab]);
+    }, [channelId, selectPost, setCurrentTab, runPromptImmediately]);
 
     const pinnedPrompts = (prompts || []).filter((p) => pinnedIds.includes(p.id));
 

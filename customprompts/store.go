@@ -21,9 +21,14 @@ type CustomPrompt struct {
 	Description string `json:"description" db:"description"`
 	Template    string `json:"template" db:"template"`
 	IsShared    bool   `json:"is_shared" db:"isshared"`
-	CreatedAt   int64  `json:"created_at" db:"createdat"`
-	UpdatedAt   int64  `json:"updated_at" db:"updatedat"`
-	DeletedAt   int64  `json:"deleted_at" db:"deletedat"`
+
+	// RunImmediately posts the rendered template instead of putting it in the
+	// composer draft for review. Opt-in per prompt; false is the old behavior.
+	RunImmediately bool `json:"run_immediately" db:"runimmediately"`
+
+	CreatedAt int64 `json:"created_at" db:"createdat"`
+	UpdatedAt int64 `json:"updated_at" db:"updatedat"`
+	DeletedAt int64 `json:"deleted_at" db:"deletedat"`
 }
 
 // Validate checks that required fields are present and within limits.
@@ -60,8 +65,8 @@ func (s *Store) Create(prompt CustomPrompt) (CustomPrompt, error) {
 
 	_, err := s.db.ExecBuilder(s.db.Builder().
 		Insert("LLM_CustomPrompts").
-		Columns("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "CreatedAt", "UpdatedAt", "DeletedAt").
-		Values(prompt.ID, prompt.CreatorID, prompt.Name, prompt.Description, prompt.Template, prompt.IsShared, prompt.CreatedAt, prompt.UpdatedAt, prompt.DeletedAt))
+		Columns("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "RunImmediately", "CreatedAt", "UpdatedAt", "DeletedAt").
+		Values(prompt.ID, prompt.CreatorID, prompt.Name, prompt.Description, prompt.Template, prompt.IsShared, prompt.RunImmediately, prompt.CreatedAt, prompt.UpdatedAt, prompt.DeletedAt))
 	if err != nil {
 		return CustomPrompt{}, fmt.Errorf("failed to create custom prompt: %w", err)
 	}
@@ -73,7 +78,7 @@ func (s *Store) Create(prompt CustomPrompt) (CustomPrompt, error) {
 func (s *Store) Get(id string) (CustomPrompt, error) {
 	var prompts []CustomPrompt
 	if err := s.db.DoQuery(&prompts, s.db.Builder().
-		Select("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "CreatedAt", "UpdatedAt", "DeletedAt").
+		Select("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "RunImmediately", "CreatedAt", "UpdatedAt", "DeletedAt").
 		From("LLM_CustomPrompts").
 		Where(sq.Eq{"ID": id}).
 		Where(sq.Eq{"DeletedAt": 0}),
@@ -98,6 +103,7 @@ func (s *Store) Update(prompt CustomPrompt) error {
 		Set("Description", prompt.Description).
 		Set("Template", prompt.Template).
 		Set("IsShared", prompt.IsShared).
+		Set("RunImmediately", prompt.RunImmediately).
 		Set("UpdatedAt", prompt.UpdatedAt).
 		Where(sq.Eq{"ID": prompt.ID}).
 		Where(sq.Eq{"CreatorID": prompt.CreatorID}).
@@ -148,7 +154,7 @@ func (s *Store) Delete(id string, userID string) error {
 func (s *Store) ListForUser(userID string) ([]CustomPrompt, error) {
 	var prompts []CustomPrompt
 	if err := s.db.DoQuery(&prompts, s.db.Builder().
-		Select("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "CreatedAt", "UpdatedAt", "DeletedAt").
+		Select("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "RunImmediately", "CreatedAt", "UpdatedAt", "DeletedAt").
 		From("LLM_CustomPrompts").
 		Where(sq.Eq{"DeletedAt": 0}).
 		Where(sq.Or{

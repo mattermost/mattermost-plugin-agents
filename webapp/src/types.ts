@@ -14,7 +14,14 @@ export interface CustomPrompt {
     description: string;
     template: string;
     is_shared: boolean;
+
+    // When true, selecting the prompt posts the rendered template instead of
+    // inserting it into the draft for the user to review and send.
+    run_immediately: boolean;
     created_at: number;
     updated_at: number;
     deleted_at: number;
 }
+
+/** The writable subset of a prompt, as accepted by create and update. */
+export type CustomPromptInput = Pick<CustomPrompt, 'name' | 'description' | 'template' | 'is_shared' | 'run_immediately'>;

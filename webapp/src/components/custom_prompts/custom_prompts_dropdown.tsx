@@ -3,10 +3,10 @@
 
 import React, {useEffect, useCallback} from 'react';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {CogOutlineIcon} from '@mattermost/compass-icons/components';
+import {CogOutlineIcon, SendIcon} from '@mattermost/compass-icons/components';
 
 import {getCustomPrompts} from '@/selectors';
 import {fetchCustomPrompts, ShowCustomPromptsModalHandler} from '@/redux';
@@ -14,6 +14,8 @@ import {renderCustomPrompt} from '@/client';
 import {CustomPrompt} from '@/types';
 import {LLMBot, useBotlist} from '@/bots';
 import {DropdownBotSelector} from '@/components/bot_selector';
+
+import {useRunPromptImmediately} from './use_run_prompt';
 
 const EMPTY_BOTS: LLMBot[] = [];
 
@@ -52,6 +54,14 @@ const StyledMenuItem = styled.li`
     }
 `;
 
+// Marks prompts that post on selection, so the menu doesn't send without warning.
+const SendAffordance = styled.span`
+    display: inline-flex;
+    margin-left: auto;
+    padding-left: 8px;
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+`;
+
 const StyledMenuSeparator = styled.li`
     height: 1px;
     margin: 4px 0;
@@ -67,9 +77,11 @@ interface Props {
     isRHS: boolean;
 }
 
-const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
+const CustomPromptsDropdown = ({draft, updateText, channelId}: Props) => {
+    const intl = useIntl();
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
+    const runPromptImmediately = useRunPromptImmediately();
 
     // Selection is backed by the shared selected-agent preference so the
     // "GENERATE WITH:" menu stays in sync with the RHS and all other surfaces.
@@ -86,16 +98,31 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
+            const mentionBot = !isBotDMChannel && Boolean(botUsername);
+
+            // Prompts marked "send without review" skip the draft entirely and
+            // post the rendered text, matching the pinned-button behavior in
+            // the Agents pane. The draft is left untouched either way.
+            if (prompt.run_immediately) {
+                await runPromptImmediately(prompt.id, {
+                    channelId,
+                    botUsername,
+                    mentionBot,
+                    rootId: draft?.rootId,
+                });
+                return;
+            }
+
             const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
-            if (!isBotDMChannel && botUsername) {
+            if (mentionBot) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {
                 updateText(result.rendered);
             }
         } catch (e) {
-            console.error('Failed to render custom prompt:', e); // eslint-disable-line no-console
+            console.error('Failed to run custom prompt:', e); // eslint-disable-line no-console
         }
-    }, [channelId, updateText, selectedBot, isBotDMChannel]);
+    }, [channelId, draft, updateText, selectedBot, isBotDMChannel, runPromptImmediately]);
 
     const handleCreateClick = useCallback(() => {
         dismissMenu();
@@ -123,6 +150,14 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                         onClick={() => handlePromptClick(prompt)}
                     >
                         <span>{prompt.name}</span>
+                        {prompt.run_immediately && (
+                            <SendAffordance
+                                aria-label={intl.formatMessage({defaultMessage: 'Sends without review'})}
+                                title={intl.formatMessage({defaultMessage: 'Sends without review'})}
+                            >
+                                <SendIcon size={14}/>
+                            </SendAffordance>
+                        )}
                     </StyledMenuItem>
                 ))
             ) : (

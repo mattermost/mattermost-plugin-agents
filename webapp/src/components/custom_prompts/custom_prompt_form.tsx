@@ -5,7 +5,7 @@ import React, {useState, useRef, useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {CustomPrompt} from '@/types';
+import {CustomPrompt, CustomPromptInput} from '@/types';
 import Dropdown from '../dropdown';
 
 import ContextVariablesDropdown from './context_variables_dropdown';
@@ -27,7 +27,10 @@ const FormBody = styled.div<{$stickyFooter?: boolean}>`
     display: flex;
     flex-direction: column;
     gap: 24px;
-    padding: 20px 32px 0;
+
+    // The trailing bottom padding keeps the last field (the send-without-review
+    // checkbox and its hint) off the footer's top border.
+    padding: 20px 32px;
 
     ${({$stickyFooter}) =>
         $stickyFooter && `
@@ -139,6 +142,28 @@ const RadioInput = styled.input`
 const PrivateNote = styled.span`
     color: rgba(var(--center-channel-color-rgb), 0.56);
     font-size: 12px;
+`;
+
+const CheckboxLabel = styled.label`
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--center-channel-color);
+    cursor: pointer;
+`;
+
+const CheckboxInput = styled.input`
+    margin-top: 3px;
+    cursor: pointer;
+`;
+
+const CheckboxHint = styled.div`
+    color: rgba(var(--center-channel-color-rgb), 0.56);
+    font-size: 12px;
+    line-height: 16px;
+    margin-top: 2px;
 `;
 
 const VisibilityLabel = styled.div`
@@ -262,7 +287,7 @@ const ReadOnlyMuted = styled(ReadOnlyText)`
 
 interface CustomPromptFormProps {
     prompt?: CustomPrompt;
-    onSave: (data: {name: string; description: string; template: string; is_shared: boolean}) => void | Promise<void>;
+    onSave: (data: CustomPromptInput) => void | Promise<void>;
     onDiscard: () => void;
     onDelete?: () => void;
     readOnly?: boolean;
@@ -277,6 +302,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
     const [description, setDescription] = useState(prompt?.description ?? '');
     const [template, setTemplate] = useState(prompt?.template ?? '');
     const [isShared, setIsShared] = useState(prompt?.is_shared ?? false);
+    const [runImmediately, setRunImmediately] = useState(prompt?.run_immediately ?? false);
     const [showContextVars, setShowContextVars] = useState(false);
     const [errors, setErrors] = useState<{name?: boolean; template?: boolean}>({});
     const [isSaving, setIsSaving] = useState(false);
@@ -300,11 +326,11 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
         setErrors({});
         setIsSaving(true);
         try {
-            await onSave({name: name.trim(), description: description.trim(), template: template.trim(), is_shared: isShared});
+            await onSave({name: name.trim(), description: description.trim(), template: template.trim(), is_shared: isShared, run_immediately: runImmediately});
         } finally {
             setIsSaving(false);
         }
-    }, [name, description, template, isShared, onSave, isSaving]);
+    }, [name, description, template, isShared, runImmediately, onSave, isSaving]);
 
     const handleInsertVariable = useCallback((variable: string) => {
         const textarea = templateRef.current;
@@ -360,6 +386,18 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                         <FormattedMessage defaultMessage='System Prompt'/>
                     </VisibilityLabel>
                     <ReadOnlyText>{prompt?.template}</ReadOnlyText>
+                </FieldGroup>
+                <FieldGroup>
+                    <VisibilityLabel>
+                        <FormattedMessage defaultMessage='On selection'/>
+                    </VisibilityLabel>
+                    <ReadOnlyText>
+                        {prompt?.run_immediately ? (
+                            <FormattedMessage defaultMessage='Sends without review'/>
+                        ) : (
+                            <FormattedMessage defaultMessage='Fills in the message box for review'/>
+                        )}
+                    </ReadOnlyText>
                 </FieldGroup>
             </FormContainer>
         );
@@ -498,6 +536,22 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                             <FormattedMessage defaultMessage='System prompt is required'/>
                         </ValidationError>
                     )}
+                </FieldGroup>
+                <FieldGroup>
+                    <CheckboxLabel htmlFor={`prompt-run-immediately-${prompt?.id ?? 'new'}`}>
+                        <CheckboxInput
+                            id={`prompt-run-immediately-${prompt?.id ?? 'new'}`}
+                            type='checkbox'
+                            checked={runImmediately}
+                            onChange={(e) => setRunImmediately(e.target.checked)}
+                        />
+                        <div>
+                            <FormattedMessage defaultMessage='Send without review'/>
+                            <CheckboxHint>
+                                <FormattedMessage defaultMessage='Selecting this prompt posts it right away instead of filling in the message box. Pinned prompts always send without review.'/>
+                            </CheckboxHint>
+                        </div>
+                    </CheckboxLabel>
                 </FieldGroup>
             </FormBody>
             <FormFooter>{actions}</FormFooter>
