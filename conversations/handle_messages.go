@@ -255,7 +255,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 
 	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
 		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
-			c.notifyMultiplayerChannelsRequiresLicense(postingUser, channel, post)
+			c.postMultiplayerChannelsUnavailable(bot, channel, post)
 			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
 		}
 	}
@@ -602,27 +602,34 @@ func (c *Conversations) responseLocale(postingUser *model.User, channel *model.C
 	return defaultLocale
 }
 
-func (c *Conversations) notifyMultiplayerChannelsRequiresLicense(postingUser *model.User, channel *model.Channel, post *model.Post) {
-	if c.mmClient == nil || postingUser == nil || channel == nil || post == nil {
+// postMultiplayerChannelsUnavailable replies in the thread as the agent so
+// everyone in the channel sees why it did not answer. The reply uses the
+// server locale because it is visible to the whole channel.
+func (c *Conversations) postMultiplayerChannelsUnavailable(bot *bots.Bot, channel *model.Channel, post *model.Post) {
+	if c.mmClient == nil || bot == nil || channel == nil || post == nil {
 		return
 	}
 
-	fallback := "Invoking an agent in a channel or group message is available with a Mattermost Professional license or higher."
+	fallback := "Agents can reply in channels and group messages on Mattermost Professional and above. You can still chat with me in a direct message."
 	message := fallback
 	if c.i18n != nil {
-		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(postingUser.Locale))
+		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(""))
 		message = T("agents.multiplayer_channels_requires_professional", fallback)
 	}
 
-	ephemeral := &model.Post{
+	rootID := post.RootId
+	if rootID == "" {
+		rootID = post.Id
+	}
+	reply := &model.Post{
+		UserId:    bot.GetMMBot().UserId,
 		ChannelId: channel.Id,
-		RootId:    post.RootId,
+		RootId:    rootID,
 		Message:   message,
 	}
-	if ephemeral.RootId == "" {
-		ephemeral.RootId = post.Id
+	if err := c.mmClient.CreatePost(reply); err != nil {
+		c.mmClient.LogError("Failed to post multiplayer availability reply", "error", err.Error())
 	}
-	c.mmClient.SendEphemeralPost(postingUser.Id, ephemeral)
 }
 
 func (c *Conversations) fallbackLocale(userLocale string) string {

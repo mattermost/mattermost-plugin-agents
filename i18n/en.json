@@ -5,7 +5,7 @@
   },
   {
     "id": "agents.multiplayer_channels_requires_professional",
-    "translation": "Invoking an agent in a channel or group message is available with a Mattermost Professional license or higher."
+    "translation": "Agents can reply in channels and group messages on Mattermost Professional and above. You can still chat with me in a direct message."
   },
   {
     "id": "agents.no_longer_access_error",

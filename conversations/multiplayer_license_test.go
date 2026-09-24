@@ -30,11 +30,8 @@ func TestChannelMentionLicenseGate(t *testing.T) {
 				return
 			}
 
-			require.Empty(t, env.mmClient.createdPosts, "channel mention must not create a response below Professional")
-			require.Empty(t, allConversations(env.convStore))
-			require.Len(t, env.mmClient.ephemeralPosts, 1)
-			require.Equal(t, autoReplyUserID, env.mmClient.ephemeralPostUserIDs[0])
-			require.Contains(t, env.mmClient.ephemeralPosts[0].Message, "Professional")
+			require.Empty(t, allConversations(env.convStore), "channel mention must not start a conversation below Professional")
+			requireMultiplayerUnavailableReply(t, env.mmClient.createdPosts, env.mmClient.ephemeralPosts, autoReplyBotUserID, post.Id)
 		})
 	}
 }
@@ -56,9 +53,7 @@ func TestGroupMessageMentionLicenseGate(t *testing.T) {
 				return
 			}
 
-			require.Empty(t, env.mmClient.createdPosts)
-			require.Len(t, env.mmClient.ephemeralPosts, 1)
-			require.Contains(t, env.mmClient.ephemeralPosts[0].Message, "Professional")
+			requireMultiplayerUnavailableReply(t, env.mmClient.createdPosts, env.mmClient.ephemeralPosts, autoReplyBotUserID, post.Id)
 		})
 	}
 }
@@ -116,10 +111,7 @@ func TestHandleLoopInAgentLicenseGate(t *testing.T) {
 
 			require.Error(t, err)
 			require.ErrorIs(t, err, conversations.ErrNoResponse)
-			require.Len(t, fix.client.ephemeralPosts, 1)
-			require.Equal(t, reminderUserID, fix.client.ephemeralPostUserIDs[0])
-			require.Contains(t, fix.client.ephemeralPosts[0].Message, "Professional")
-			require.Empty(t, fix.client.createdPosts)
+			requireMultiplayerUnavailableReply(t, fix.client.createdPosts, fix.client.ephemeralPosts, reminderBotID, reminderRootID)
 			var licErr *enterprise.LicenseError
 			require.ErrorAs(t, err, &licErr)
 			require.Equal(t, enterprise.CapMultiplayerChannels, licErr.Capability)
@@ -149,7 +141,7 @@ func TestHandleLoopInAgentNilCheckerFailsClosed(t *testing.T) {
 	err := nilConv.HandleLoopInAgent(context.Background(), reminderUserID, bot, post, channel)
 	require.Error(t, err)
 	require.ErrorIs(t, err, conversations.ErrNoResponse)
-	require.Len(t, fix.client.ephemeralPosts, 1)
+	requireMultiplayerUnavailableReply(t, fix.client.createdPosts, fix.client.ephemeralPosts, reminderBotID, reminderRootID)
 	var licErr *enterprise.LicenseError
 	require.ErrorAs(t, err, &licErr)
 }
@@ -161,7 +153,16 @@ func TestChannelMentionNilCheckerFailsClosed(t *testing.T) {
 	post := env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" help me")
 	nilConv.MessageHasBeenPosted(nil, post)
 
-	require.Empty(t, env.mmClient.createdPosts)
-	require.Len(t, env.mmClient.ephemeralPosts, 1)
-	require.Contains(t, env.mmClient.ephemeralPosts[0].Message, "Professional")
+	requireMultiplayerUnavailableReply(t, env.mmClient.createdPosts, env.mmClient.ephemeralPosts, autoReplyBotUserID, post.Id)
+}
+
+// requireMultiplayerUnavailableReply asserts the agent answered a mention it
+// cannot serve with one visible thread reply naming the required plan.
+func requireMultiplayerUnavailableReply(t *testing.T, created, ephemeral []*model.Post, botUserID, rootID string) {
+	t.Helper()
+	require.Empty(t, ephemeral)
+	require.Len(t, created, 1)
+	require.Equal(t, botUserID, created[0].UserId)
+	require.Equal(t, rootID, created[0].RootId)
+	require.Contains(t, created[0].Message, "Professional")
 }
