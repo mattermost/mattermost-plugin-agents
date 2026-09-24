@@ -102,6 +102,54 @@ func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 	assert.True(t, got)
 }
 
+// TestShouldAutoExecuteTool_ConfigPolicyChecker runs the production
+// config-backed checker against runtime tool names as the MCP client builds
+// them. Plugin tools carry a "{pluginID}__" prefix from pluginmcp, so their
+// configured names contain the namespace separator themselves.
+func TestShouldAutoExecuteTool_ConfigPolicyChecker(t *testing.T) {
+	const (
+		pluginOrigin = "plugin://com.example.demo"
+		remoteOrigin = "https://mcp.example.com/mcp"
+	)
+
+	cases := []struct {
+		name           string
+		origin         string
+		serverSlug     string
+		configuredName string
+		policy         string
+		wantDM         bool
+		wantChannel    bool
+	}{
+		{name: "plugin tool auto_run_everywhere", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+		{name: "plugin tool auto_run_in_dm", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunInDM, wantDM: true, wantChannel: false},
+		{name: "plugin tool ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAsk, wantDM: false, wantChannel: false},
+		{name: "remote tool name containing separator", origin: remoteOrigin, serverSlug: "remote", configuredName: "issues__create", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+		{name: "remote tool plain name", origin: remoteOrigin, serverSlug: "remote", configuredName: "get_issue", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			toolConfigs := []mcp.ToolConfig{{Name: tc.configuredName, Policy: tc.policy, Enabled: true}}
+			cfg := mcp.Config{}
+			if tc.origin == pluginOrigin {
+				cfg.PluginServers = []mcp.PluginServerConfig{{PluginID: "com.example.demo", Name: "Demo Plugin", Enabled: true, ToolConfigs: toolConfigs}}
+			} else {
+				cfg.Servers = []mcp.ServerConfig{{Name: "Remote", Enabled: true, BaseURL: remoteOrigin, ToolConfigs: toolConfigs}}
+			}
+
+			c := &Conversations{toolPolicyChecker: mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg })}
+			runtimeName := llm.NamespaceMCPToolName(tc.serverSlug, tc.configuredName)
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: tc.origin}})
+			call := llm.ToolCall{Name: runtimeName, ServerOrigin: tc.origin}
+
+			assert.Equal(t, tc.wantDM, c.shouldAutoExecuteTool(llmCtx, true)(call), "DM")
+			assert.Equal(t, tc.wantChannel, c.shouldAutoExecuteTool(llmCtx, false)(call), "channel")
+		})
+	}
+}
+
 func TestShouldAutoExecuteToolMetaToolsBypassPolicy(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
 
