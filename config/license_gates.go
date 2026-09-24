@@ -79,9 +79,9 @@ func AccessControlsNewlyRestricted(prev, next llm.BotConfig) bool {
 // configuration as baseline rather than as an admin-authored policy.
 type DefaultToolPolicyLookup func(serverBaseURL, toolName string) string
 
-// toolPolicyReach orders policies by how much they auto-run: ask < auto-run
+// ToolPolicyReach orders policies by how much they auto-run: ask < auto-run
 // in DMs < auto-run everywhere. Unknown values behave as ask.
-func toolPolicyReach(policy string) int {
+func ToolPolicyReach(policy string) int {
 	switch policy {
 	case MCPToolPolicyAutoRunEverywhere:
 		return 2
@@ -98,14 +98,14 @@ func toolPolicyReach(policy string) int {
 func toolPoliciesNewlyAuto(prev, next []MCPToolConfig, defaultFor func(toolName string) string) bool {
 	prevReach := make(map[string]int, len(prev))
 	for _, tc := range prev {
-		prevReach[tc.Name] = toolPolicyReach(tc.Policy)
+		prevReach[tc.Name] = ToolPolicyReach(tc.Policy)
 	}
 	for _, tc := range next {
 		baseline, stored := prevReach[tc.Name]
 		if !stored && defaultFor != nil {
-			baseline = toolPolicyReach(defaultFor(tc.Name))
+			baseline = ToolPolicyReach(defaultFor(tc.Name))
 		}
-		if toolPolicyReach(tc.Policy) > baseline {
+		if ToolPolicyReach(tc.Policy) > baseline {
 			return true
 		}
 	}

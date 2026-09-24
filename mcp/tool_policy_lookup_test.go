@@ -234,6 +234,7 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 			Enabled: true,
 			ToolConfigs: []ToolConfig{
 				{Name: "read_file", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
+				{Name: "read_post", Policy: ToolPolicyAsk, Enabled: true},
 				{Name: "custom_unseeded", Policy: ToolPolicyAutoRunEverywhere, Enabled: true},
 				{Name: "disabled_tool", Policy: ToolPolicyAutoRunEverywhere, Enabled: false},
 			},
@@ -268,6 +269,10 @@ func TestLookupEffectiveToolPolicy(t *testing.T) {
 			} else {
 				require.Equal(t, ToolPolicyAutoRunInDM, policy, "embedded seed policy is used below Enterprise")
 			}
+
+			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "read_post", licensed)
+			require.True(t, enabled)
+			require.Equal(t, ToolPolicyAsk, policy, "an admin's narrower policy than the seed holds at every level")
 
 			policy, enabled = LookupEffectiveToolPolicy(cfg, EmbeddedClientKey, "custom_unseeded", licensed)
 			require.True(t, enabled)

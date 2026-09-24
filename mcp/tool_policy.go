@@ -6,6 +6,8 @@ package mcp
 import (
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
@@ -85,12 +87,13 @@ func LookupToolPolicy(cfg Config, serverBaseURL, toolName string) (string, bool)
 	return ToolPolicyAsk, false
 }
 
-// LookupEffectiveToolPolicy is LookupToolPolicy with the product-default policy
-// substituted when tool-approval policies are not available. Enabled still
-// comes from the stored config, so a disabled tool stays disabled at every
-// level. When policies are not available, EmbeddedClientKey tools use the
-// vetted seed policy (or ask if the tool is not in the seed) and every other
-// origin uses ask.
+// LookupEffectiveToolPolicy is LookupToolPolicy limited to the product-default
+// policy when tool-approval policies are not available: the stored policy
+// applies only where it auto-runs no more widely than the default, so an
+// admin's narrower choice (such as ask) always holds. Enabled still comes from
+// the stored config, so a disabled tool stays disabled at every level. The
+// default is the vetted seed policy for EmbeddedClientKey tools (ask if the
+// tool is not in the seed) and ask for every other origin.
 func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, policiesLicensed bool) (string, bool) {
 	policy, enabled := LookupToolPolicy(cfg, serverBaseURL, toolName)
 	if policiesLicensed {
@@ -111,6 +114,9 @@ func LookupEffectiveToolPolicy(cfg Config, serverBaseURL, toolName string, polic
 				break
 			}
 		}
+	}
+	if config.ToolPolicyReach(policy) < config.ToolPolicyReach(defaultPolicy) {
+		return policy, enabled
 	}
 	return defaultPolicy, enabled
 }
