@@ -99,7 +99,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | Field | Description |
 |---|---|
 | **Display name** | Required. The user-facing name shown in posts, the agent list, and the RHS picker. Updating the display name also updates the linked Mattermost bot's display name. |
-| **Agent username** | Required. The `@mention` handle for the agent. Must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores. Maximum 22 characters in the UI. The server-side validator does not enforce a length limit; direct API callers are constrained only by the database schema (`VARCHAR(64)`). **The username is set when the agent is created and cannot be changed afterward.** |
+| **Agent username** | Required. The `@mention` handle for the agent. Must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores. Maximum 22 characters in the UI. The server-side validator does not enforce a length limit; direct API callers are constrained only by the database schema (`VARCHAR(64)`). The username can be changed later; see [Renaming an agent](#renaming-an-agent). |
 | **Agent avatar** | Optional. Upload a custom image. Avatar upload is a second step after the agent record is created or updated; if the avatar upload fails the rest of the save still succeeds. |
 | **AI Service** | Required. Pick a configured service from the dropdown. Services are managed in **System Console > Plugins > Agents** and shared across agents. If the agent references a service that has been deleted, an "Unknown service (deleted)" entry appears in the dropdown until you pick a new one. |
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
@@ -163,15 +163,23 @@ API clients can set `mcpDynamicToolLoading` on `POST /agents` and `PUT /agents/:
 
 ### What's editable vs locked
 
-While **Use service accounts for authentication** is off, anyone who can manage the agent may edit every field except the permanent username (below).
+While **Use service accounts for authentication** is off, anyone who can manage the agent may edit every field.
 
 While **Use service accounts for authentication** is enabled:
 
-- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
+- **Editable by anyone who can manage the agent:** display name, username, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
 - **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
-- **Agent username is permanent.** Once the agent is created, the username field is disabled in the editor. The Mattermost bot account is keyed off this username, and changing it would orphan existing `@mentions` and conversation history. To use a different username, create a new agent.
+### Renaming an agent
+
+Changing **Agent username** renames the agent's existing Mattermost bot account in place. The bot keeps its user ID, so its direct messages, channel memberships, threads, and avatar stay with the agent. Selecting **Save** with a new username first shows a **Change agent username?** confirmation that lists what the rename affects:
+
+- Existing messages that mention the old `@username` keep that text and no longer link to the agent.
+- People must mention the new username to reach the agent, and slash commands (such as `/summarize-channel --bot`), scripts, or integrations that use the old username must be updated.
+- The old username becomes available, so another user or bot could claim it.
+
+If the renamed agent is the plugin's default agent, the default agent setting is updated to the new username. Renaming fails with "This username is already taken" when any Mattermost user or bot, including a deactivated one, already has the new username. Agents defined only in the plugin configuration file, rather than on the **Agents** page, can't be renamed this way.
 
 ### Unsaved-changes warning
 
@@ -292,7 +300,7 @@ This badge is **not** used to mean "you are denied by service ABAC." Non–syste
 
 ### Saving an agent returns "This username is already taken"
 
-Another agent (active or recently deleted) already uses the username. Pick a different username. Usernames cannot be changed after creation, so attempting to edit the conflicting agent is not a workaround — delete that agent if it is truly unused, or pick another name.
+Another Mattermost user or bot (active or deactivated, including a deleted agent's bot) already uses the username. Pick a different username, or rename the agent that holds it first; see [Renaming an agent](#renaming-an-agent).
 
 ### Saving an agent returns "creating more than 1 self-service agent(s) requires an E20 or Enterprise license"
 

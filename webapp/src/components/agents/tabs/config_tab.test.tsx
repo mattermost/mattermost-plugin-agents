@@ -126,6 +126,30 @@ describe('ConfigTab', () => {
         ).toBe(false);
     });
 
+    test.each([
+        {name: 'creating an agent', savedUsername: '', username: 'testagent', warns: false},
+        {name: 'editing without renaming', savedUsername: 'testagent', username: 'testagent', warns: false},
+        {name: 'editing with a new username', savedUsername: 'testagent', username: 'renamed', warns: true},
+    ])('username stays editable and warns about renames only when one is pending: $name', async ({savedUsername, username, warns}) => {
+        render(
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({username})}
+                    onChange={jest.fn()}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService]}
+                    savedUsername={savedUsername}
+                />
+            </IntlProvider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Agent username')).not.toBeNull());
+
+        const usernameInput = within(formRowForLabel('Agent username')).getByRole('textbox') as HTMLInputElement;
+        expect(usernameInput.disabled).toBe(false);
+        expect(screen.queryByText(/people and integrations using @testagent will need to switch/) !== null).toBe(warns);
+    });
+
     test('shows vision and effort reasoning for north without native tools', async () => {
         const northService: ServiceInfo = {
             id: 'svc_north',

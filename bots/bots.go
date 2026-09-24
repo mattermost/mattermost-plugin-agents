@@ -124,11 +124,75 @@ func New(mutexPluginAPI cluster.MutexPluginAPI, pluginAPI *pluginapi.Client, lic
 	}
 }
 
+// dbAgentBotSet identifies the Mattermost bot accounts that belong to active
+// DB-backed agents, by bot user ID and, for agents stored without one, by username.
+type dbAgentBotSet struct {
+	userIDs   map[string]struct{}
+	usernames map[string]struct{}
+}
+
+func newDBAgentBotSet() dbAgentBotSet {
+	return dbAgentBotSet{userIDs: map[string]struct{}{}, usernames: map[string]struct{}{}}
+}
+
+func (s dbAgentBotSet) add(cfg *llm.BotConfig) {
+	if cfg.BotUserID != "" {
+		s.userIDs[cfg.BotUserID] = struct{}{}
+		return
+	}
+	s.usernames[cfg.Name] = struct{}{}
+}
+
+func (s dbAgentBotSet) owns(bot *model.Bot) bool {
+	if _, ok := s.userIDs[bot.UserId]; ok {
+		return true
+	}
+	_, ok := s.usernames[bot.Username]
+	return ok
+}
+
+// matchPreviousMMBots pairs each bot with its existing Mattermost bot account.
+// Bots that know their bot user ID are matched by it first, so an agent whose
+// username changed keeps its account (and its DMs and history) instead of being
+// recreated; the rest fall back to matching by username.
+func matchPreviousMMBots(bots []*Bot, previousMMBots []*model.Bot) map[*Bot]*model.Bot {
+	byUserID := make(map[string]*model.Bot, len(previousMMBots))
+	byUsername := make(map[string]*model.Bot, len(previousMMBots))
+	for _, mmBot := range previousMMBots {
+		byUserID[mmBot.UserId] = mmBot
+		byUsername[mmBot.Username] = mmBot
+	}
+
+	matched := make(map[*Bot]*model.Bot, len(bots))
+	claimed := make(map[string]struct{}, len(bots))
+	for _, bot := range bots {
+		if mmBot, ok := byUserID[bot.cfg.BotUserID]; ok && bot.cfg.BotUserID != "" {
+			matched[bot] = mmBot
+			claimed[mmBot.UserId] = struct{}{}
+		}
+	}
+	for _, bot := range bots {
+		if _, ok := matched[bot]; ok {
+			continue
+		}
+		mmBot, ok := byUsername[bot.cfg.Name]
+		if !ok {
+			continue
+		}
+		if _, taken := claimed[mmBot.UserId]; taken {
+			continue
+		}
+		matched[bot] = mmBot
+		claimed[mmBot.UserId] = struct{}{}
+	}
+	return matched
+}
+
 // snapshotBotsAndServices returns the full bot lineup (file-config bots plus
 // DB-backed agents, license cap applied) and the services they reference.
 // EnsureBots calls this for both the optimistic equality check and the
 // rebuild, so the check can't miss a service used only by a DB agent.
-func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}, map[string]llm.ServiceConfig, error) {
+func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, dbAgentBotSet, map[string]llm.ServiceConfig, error) {
 	// config.GetBots() returns the config-owned slice; clone before
 	// truncating + appending so we don't overwrite it.
 	botCfgs := slices.Clone(b.config.GetBots())
@@ -139,23 +203,23 @@ func (b *MMBots) snapshotBotsAndServices() ([]llm.BotConfig, map[string]struct{}
 
 	// DB-backed user agents bypass the license multi-LLM cap — gated by
 	// PermissionManageOwnAgent at the API layer instead.
-	activeDBBotUsernames := make(map[string]struct{})
+	activeDBBots := newDBAgentBotSet()
 	if b.agentStore != nil {
 		dbAgents, err := b.agentStore.ListAgents()
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to list user agents: %w", err)
+			return nil, dbAgentBotSet{}, nil, fmt.Errorf("failed to list user agents: %w", err)
 		}
 		for _, cfg := range dbAgents {
 			if cfg == nil {
 				continue
 			}
-			activeDBBotUsernames[cfg.Name] = struct{}{}
+			activeDBBots.add(cfg)
 			botCfgs = append(botCfgs, *cfg)
 		}
 	}
 
 	serviceCfgs := b.resolveServiceCfgs(botCfgs)
-	return botCfgs, activeDBBotUsernames, serviceCfgs, nil
+	return botCfgs, activeDBBots, serviceCfgs, nil
 }
 
 // resolveServiceCfgs builds a map of service configs referenced by the given
@@ -282,12 +346,12 @@ func (b *MMBots) reconcileTokenUsageSinks() {
 // because nothing changed since the last successful ensure. Called twice per
 // EnsureBots — once optimistically and once after acquiring the cluster mutex
 // (deliberate double-checked locking).
-func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBotUsernames map[string]struct{}, serviceCfgs map[string]llm.ServiceConfig, unchanged bool, err error) {
+func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBots dbAgentBotSet, serviceCfgs map[string]llm.ServiceConfig, unchanged bool, err error) {
 	b.reconcileTokenUsageSinks()
 
-	botCfgs, activeDBBotUsernames, serviceCfgs, err = b.snapshotBotsAndServices()
+	botCfgs, activeDBBots, serviceCfgs, err = b.snapshotBotsAndServices()
 	if err != nil {
-		return nil, nil, nil, false, err
+		return nil, dbAgentBotSet{}, nil, false, err
 	}
 	b.botsLock.RLock()
 	botsAlreadyInitialized := len(b.bots) > 0
@@ -297,7 +361,7 @@ func (b *MMBots) snapshotForEnsure() (botCfgs []llm.BotConfig, activeDBBotUserna
 	b.botsLock.RUnlock()
 
 	unchanged = botsAlreadyInitialized && !forceRefresh && botConfigsEqual(lastBotCfgs, botCfgs) && serviceConfigsEqual(lastServiceCfgs, serviceCfgs)
-	return botCfgs, activeDBBotUsernames, serviceCfgs, unchanged, nil
+	return botCfgs, activeDBBots, serviceCfgs, unchanged, nil
 }
 
 func (b *MMBots) EnsureBots() error {
@@ -325,7 +389,7 @@ func (b *MMBots) EnsureBots() error {
 	defer mtx.Unlock()
 
 	// Re-check after acquiring lock - another node may have already handled this
-	currentBotCfgs, activeDBBotUsernames, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
+	currentBotCfgs, activeDBBots, currentServiceCfgs, unchanged, err := b.snapshotForEnsure()
 	if err != nil {
 		return err
 	}
@@ -376,35 +440,41 @@ func (b *MMBots) EnsureBots() error {
 		aiBotsByUsername[botCfg.Name] = bot
 	}
 
-	prevousMMBotsByUsername := make(map[string]*model.Bot)
-	for _, bot := range previousMMBots {
-		prevousMMBotsByUsername[bot.Username] = bot
+	matchedMMBots := matchPreviousMMBots(bots, previousMMBots)
+	inUseMMBotUserIDs := make(map[string]struct{}, len(matchedMMBots))
+	for _, mmBot := range matchedMMBots {
+		inUseMMBotUserIDs[mmBot.UserId] = struct{}{}
 	}
 
 	// For each of the bots we found, if it's not in the configuration, delete it.
 	for _, bot := range previousMMBots {
-		if _, ok := aiBotsByUsername[bot.Username]; !ok {
-			if _, dbActive := activeDBBotUsernames[bot.Username]; dbActive {
-				b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
-				continue
-			}
-			if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
-				b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
-				continue
-			}
+		if _, ok := inUseMMBotUserIDs[bot.UserId]; ok {
+			continue
+		}
+		if activeDBBots.owns(bot) {
+			b.pluginAPI.Log.Debug("EnsureBots: skipping deactivation for active DB agent not in ensure set (missing or invalid service)", "bot_name", bot.Username)
+			continue
+		}
+		if _, err := b.pluginAPI.Bot.UpdateActive(bot.UserId, false); err != nil {
+			b.pluginAPI.Log.Error("Failed to delete bot", "bot_name", bot.Username, "error", err.Error())
+			continue
 		}
 	}
 
-	// For each bot in the configuration, try to find an existing bot matching the username.
-	// If it exists, update it to match. Otherwise, create a new bot.
+	// For each bot in the configuration, update its existing Mattermost bot to match,
+	// including the username when the agent was renamed. Otherwise, create a new bot.
 	for _, bot := range bots {
 		description := poweredByDescription(bot.service.Type, bot.service.DefaultModel)
-		if prevBot, ok := prevousMMBotsByUsername[bot.cfg.Name]; ok {
-			var err error
-			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, &model.BotPatch{
+		if prevBot, ok := matchedMMBots[bot]; ok {
+			patch := &model.BotPatch{
 				DisplayName: &bot.cfg.DisplayName,
 				Description: &description,
-			})
+			}
+			if prevBot.Username != bot.cfg.Name {
+				patch.Username = &bot.cfg.Name
+			}
+			var err error
+			bot.mmBot, err = b.pluginAPI.Bot.Patch(prevBot.UserId, patch)
 			if err != nil {
 				b.pluginAPI.Log.Error("Failed to patch bot", "bot_name", bot.cfg.Name, "error", err.Error())
 				continue

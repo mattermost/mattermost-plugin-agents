@@ -891,6 +891,114 @@ func TestEnsureBots(t *testing.T) {
 	}
 }
 
+func TestEnsureBotsReusesExistingBotAccounts(t *testing.T) {
+	services := []llm.ServiceConfig{
+		{ID: "svc1", Type: llm.ServiceTypeOpenAI, APIKey: "k", DefaultModel: "gpt-4o"},
+	}
+
+	testCases := []struct {
+		name            string
+		cfgBots         []llm.BotConfig
+		dbAgents        []llm.BotConfig
+		previousMMBots  []*model.Bot
+		expectedRenames map[string]string
+		expectedPatched []string
+		expectedCreates []string
+		expectedRetired []string
+	}{
+		{
+			name:            "renamed DB agent renames its existing bot account",
+			dbAgents:        []llm.BotConfig{{ID: "a1", BotUserID: "bot-1", Name: "new-name", DisplayName: "Agent", ServiceID: "svc1"}},
+			previousMMBots:  []*model.Bot{{UserId: "bot-1", Username: "old-name"}},
+			expectedRenames: map[string]string{"bot-1": "new-name"},
+			expectedPatched: []string{"bot-1"},
+		},
+		{
+			name:            "unchanged DB agent keeps its username",
+			dbAgents:        []llm.BotConfig{{ID: "a1", BotUserID: "bot-1", Name: "same-name", DisplayName: "Agent", ServiceID: "svc1"}},
+			previousMMBots:  []*model.Bot{{UserId: "bot-1", Username: "same-name"}},
+			expectedPatched: []string{"bot-1"},
+		},
+		{
+			name:            "renamed DB agent does not take over a stale bot with its new name",
+			dbAgents:        []llm.BotConfig{{ID: "a1", BotUserID: "bot-1", Name: "new-name", DisplayName: "Agent", ServiceID: "svc1"}},
+			previousMMBots:  []*model.Bot{{UserId: "bot-1", Username: "old-name"}, {UserId: "bot-2", Username: "new-name"}},
+			expectedRenames: map[string]string{"bot-1": "new-name"},
+			expectedPatched: []string{"bot-1"},
+			expectedRetired: []string{"bot-2"},
+		},
+		{
+			name:            "config-defined bot is matched by username",
+			cfgBots:         []llm.BotConfig{{ID: "f1", Name: "filebot", DisplayName: "File Bot", ServiceID: "svc1"}},
+			previousMMBots:  []*model.Bot{{UserId: "file-bot-user", Username: "filebot"}},
+			expectedPatched: []string{"file-bot-user"},
+		},
+		{
+			name:            "DB agent whose bot account is missing gets a new one",
+			dbAgents:        []llm.BotConfig{{ID: "a1", BotUserID: "bot-gone", Name: "agent", DisplayName: "Agent", ServiceID: "svc1"}},
+			previousMMBots:  []*model.Bot{{UserId: "bot-other", Username: "other"}},
+			expectedCreates: []string{"agent"},
+			expectedRetired: []string{"bot-other"},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			client := pluginapi.NewClient(mockAPI, nil)
+
+			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise, Features: &model.Features{}}).Maybe()
+			mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return(tc.previousMMBots, nil)
+			mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 1}, nil).Maybe()
+			mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
+			mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
+			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+
+			renames := map[string]string{}
+			var patched, creates, retired []string
+			mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(func(userID string, patch *model.BotPatch) *model.Bot {
+				patched = append(patched, userID)
+				username := ""
+				for _, prev := range tc.previousMMBots {
+					if prev.UserId == userID {
+						username = prev.Username
+					}
+				}
+				if patch.Username != nil {
+					renames[userID] = *patch.Username
+					username = *patch.Username
+				}
+				return &model.Bot{UserId: userID, Username: username}
+			}, nil).Maybe()
+			mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot {
+				creates = append(creates, bot.Username)
+				bot.UserId = "created-" + bot.Username
+				return bot
+			}, nil).Maybe()
+			mockAPI.On("UpdateBotActive", mock.AnythingOfType("string"), mock.AnythingOfType("bool")).Return(func(userID string, active bool) *model.Bot {
+				if !active {
+					retired = append(retired, userID)
+				}
+				return &model.Bot{UserId: userID}
+			}, nil).Maybe()
+
+			cfg := &mockConfig{bots: tc.cfgBots, services: services}
+			mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, &stubAgentStore{agents: tc.dbAgents}, newPassthroughAccessChecker(), &http.Client{}, nil)
+
+			require.NoError(t, mmBots.EnsureBots())
+
+			if tc.expectedRenames == nil {
+				tc.expectedRenames = map[string]string{}
+			}
+			assert.Equal(t, tc.expectedRenames, renames)
+			assert.ElementsMatch(t, tc.expectedPatched, patched)
+			assert.ElementsMatch(t, tc.expectedCreates, creates)
+			assert.ElementsMatch(t, tc.expectedRetired, retired)
+		})
+	}
+}
+
 // stubAgentStore returns a fixed slice. Tests can swap the slice between
 // EnsureBots calls to mimic a config save changing the DB-backed agent.
 type stubAgentStore struct {
