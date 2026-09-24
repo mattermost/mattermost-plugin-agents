@@ -91,6 +91,60 @@ test.describe('Agent CRUD', () => {
         await expect(agentPage.getAgentRowByName('Edit Me')).not.toBeVisible();
     });
 
+    test('should rename an agent in place after confirming, keeping its DM history', async ({ page }) => {
+        test.setTimeout(90000);
+        const mmPage = new MattermostPage(page);
+        const agentPage = new AgentPageHelper(page);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const suffix = Date.now().toString(36);
+        const oldName = `renameme${suffix}`;
+        const newName = `renamed${suffix}`;
+        const displayName = `Rename Me ${suffix}`;
+        const historyMessage = `Message sent before the rename ${suffix}`;
+
+        const adminClient = await mattermost.getClient(agentAdminUsername, agentAdminPassword);
+        const token = adminClient.getToken();
+        const agent = await agentApi.createTestAgent(token, {
+            displayName,
+            username: oldName,
+            serviceID: mockServiceId,
+        });
+        const botUserId = agent.botUserID!;
+        const me = await adminClient.getMe();
+        const dm = await adminClient.createDirectChannel([me.id, botUserId]);
+        await adminClient.createPost({ channel_id: dm.id, message: historyMessage });
+
+        await mmPage.login(mattermost.url(), agentAdminUsername, agentAdminPassword);
+        await agentPage.navigateToAgents(mattermost.url());
+        await agentPage.openAgentActions(displayName);
+        await agentPage.clickEditAction(displayName);
+        await agentPage.waitForModal();
+
+        await expect(agentPage.getUsernameInput()).toBeEditable();
+        await agentPage.getUsernameInput().fill(newName);
+        await expect(page.getByText(`people and integrations using @${oldName} will need to switch`)).toBeVisible();
+
+        await agentPage.getModalSaveButton().click();
+        const dialog = agentPage.getRenameDialog();
+        await expect(dialog).toBeVisible();
+        await expect(dialog).toContainText(`@${oldName}`);
+        await expect(dialog).toContainText(`@${newName}`);
+        await expect(dialog).toContainText('will no longer link to the agent');
+        await expect(dialog).toContainText('another user or bot could claim it');
+
+        await agentPage.getRenameConfirmButton().click();
+        await agentPage.waitForModalClosed();
+
+        const renamedBot = await adminClient.getUser(botUserId);
+        expect(renamedBot.username).toBe(newName);
+        expect(renamedBot.delete_at).toBe(0);
+        expect((await agentApi.getAgent(token, agent.id)).name).toBe(newName);
+
+        const teams = await adminClient.getMyTeams();
+        await page.goto(`${mattermost.url()}/${teams[0].name}/messages/@${newName}`);
+        await expect(page.getByTestId('post-message-text').getByText(historyMessage)).toBeVisible({ timeout: 15000 });
+    });
+
     test('should prompt before closing the agent modal with unsaved changes', async ({ page }) => {
         test.setTimeout(60000);
         const mmPage = new MattermostPage(page);

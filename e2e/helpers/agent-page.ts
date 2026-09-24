@@ -33,7 +33,9 @@ export class AgentPageHelper {
         await this.page.waitForLoadState('domcontentloaded');
         // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
         // (e.g. users without manage permission might differ in future).
-        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
+        // Newer servers also render a screen-reader-only "Agents" heading in the global header.
+        await this.page.getByRole('heading', { name: 'Agents' }).and(this.page.locator('h1:not(.sr-only)')).
+            waitFor({ state: 'visible', timeout: 15000 });
         await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
         await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
     }
@@ -198,6 +200,14 @@ export class AgentPageHelper {
 
     getDiscardChangesKeepEditingButton(): Locator {
         return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
+    }
+
+    getRenameDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Change agent username?' });
+    }
+
+    getRenameConfirmButton(): Locator {
+        return this.getRenameDialog().getByRole('button', { name: 'Change username' });
     }
 
     // --- MCPs Tab ---
