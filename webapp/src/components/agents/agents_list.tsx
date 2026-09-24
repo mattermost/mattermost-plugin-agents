@@ -63,7 +63,7 @@ const AgentsList = () => {
         licenseLevel < LicenseLevel.Professional ? LicenseLevel.Professional : LicenseLevel.Enterprise,
     );
     const createQuotaMessage = agentLimit === null ? '' : intl.formatMessage(
-        {defaultMessage: 'Your current plan allows {count} agents. Additional agents are available on {plan} plans and above.'},
+        {defaultMessage: 'Your current plan allows {count, plural, one {# agent} other {# agents}}. Additional agents are available on {plan} plans and above.'},
         {count: agentLimit, plan: nextAgentPlanName},
     );
 

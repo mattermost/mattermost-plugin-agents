@@ -16,16 +16,10 @@ jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
 
     // Stable intl object so effects depending on `intl` don't refire every render.
+    const real = actual.createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
     const intl = {
-        formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string | number>) => {
-            if (!values) {
-                return defaultMessage;
-            }
-            return Object.entries(values).reduce(
-                (message, [key, value]) => message.replace(`{${key}}`, String(value)),
-                defaultMessage,
-            );
-        },
+        formatMessage: (descriptor: {id?: string; defaultMessage: string}, values?: Record<string, string | number>) =>
+            real.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values),
     };
     return {
         ...actual,
@@ -120,7 +114,7 @@ const mockGetServices = getServices as unknown as jest.Mock;
 const mockDeleteAgent = deleteAgent as unknown as jest.Mock;
 const mockUserHasSystemPermission = userHasSystemPermission as unknown as jest.Mock;
 
-const unlicensedQuotaMessage = 'Your current plan allows 1 agents. Additional agents are available on Professional plans and above.';
+const unlicensedQuotaMessage = 'Your current plan allows 1 agent. Additional agents are available on Professional plans and above.';
 const professionalQuotaMessage = 'Your current plan allows 3 agents. Additional agents are available on Enterprise plans and above.';
 
 function makeAgent(id: string): UserAgent {

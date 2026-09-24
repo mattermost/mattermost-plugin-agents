@@ -11,32 +11,21 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {Capability, requiredLevelFor, useLicenseLevelName} from '@/license';
 
 const Chip = styled.div`
-    position: relative;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    padding: 3px 8px 3px 22px;
+    padding: 0 8px;
     margin-left: 8px;
     border-radius: 10px;
-    height: 20px;
-	width: fit-content;
+    height: 18px;
+    width: fit-content;
+    white-space: nowrap;
 
     font-size: 10px;
     font-weight: 600;
-    line-height: 15px;
+    line-height: 16px;
 
     color: var(--button-bg);
     background: rgba(var(--button-bg-rgb), 0.12);
-
-    &:before {
-        left: 7px;
-        top: 3px;
-        position: absolute;
-        content: '\f030b';
-        font-size: 12px;
-        font-family: 'compass-icons', mattermosticons;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-    }
 `;
 
 const MainText = styled.div`

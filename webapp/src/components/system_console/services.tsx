@@ -126,7 +126,7 @@ const Services = (props: Props) => {
                         title={serviceChip.title}
                         text={serviceChip.text}
                         subtext={intl.formatMessage(
-                            {defaultMessage: 'Your current plan allows {count} LLM services. Additional services are available on {plan} plans and above.'},
+                            {defaultMessage: 'Your current plan allows {count, plural, one {# LLM service} other {# LLM services}}. Additional services are available on {plan} plans and above.'},
                             {count: serviceLimit, plan: serviceChip.levelName},
                         )}
                     />
