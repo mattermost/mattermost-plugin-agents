@@ -245,15 +245,17 @@ func sanitizeUserProfileField(s string) string {
 
 // WithLLMContextSessionID removed: embedded MCP manages its own session lifecycle
 
-// isRemoteMCPLicensed reports whether the licensed remote-MCP feature is available.
+// isRemoteMCPLicensed reports whether remote and plugin MCP servers are
+// available at the current license level. A nil checker fails closed.
 func (b *Builder) isRemoteMCPLicensed() bool {
-	return b.licenseChecker == nil || b.licenseChecker.IsBasicsLicensed()
+	return b.licenseChecker.Allows(enterprise.CapRemoteMCP)
 }
 
 // UsesServiceAccountCatalog reports whether tool catalogs for this bot are built in
-// service-account mode; on an unlicensed server SA agents behave like normal agents.
+// service-account mode. Service-account catalogs are available at Enterprise and
+// above; below that, agents use per-user credentials.
 func (b *Builder) UsesServiceAccountCatalog(bot *bots.Bot) bool {
-	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.isRemoteMCPLicensed()
+	return bot != nil && bot.GetConfig().UseServiceAccountAuth && b.licenseChecker.Allows(enterprise.CapMCPServiceAccount)
 }
 
 // getToolsStoreForUser returns a tool store for a specific user, including MCP tools.
@@ -270,7 +272,8 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		return llm.NewToolStore()
 	}
 
-	// useServiceAccount implies remoteMCPLicensed, so the selection below never
+	// useServiceAccount is only true when CapMCPServiceAccount is available,
+	// which is at the same level as CapRemoteMCP, so the selection below never
 	// excludes remote service-account servers.
 	remoteMCPLicensed := b.isRemoteMCPLicensed()
 	useServiceAccount := b.UsesServiceAccountCatalog(bot)

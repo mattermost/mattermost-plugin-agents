@@ -43,6 +43,10 @@ jest.mock('@/client', () => ({
     doStopGenerating: jest.fn(),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+}));
+
 jest.mock('@/hooks', () => ({
     useSelectNotAIPost: () => jest.fn(),
 }));
@@ -1237,5 +1241,49 @@ describe('LLMBotPost search_results prop handling', () => {
         expect(() => renderPost(makePost('hello', {search_results: value}))).not.toThrow();
 
         expect(screen.queryByText('Sources')).toBeNull();
+    });
+});
+
+describe('LLMBotPost meetings license gating', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+        mockUseSelector.mockImplementation((selector) => selector({
+            entities: {
+                channels: {
+                    channels: {
+                        channel_1: {type: 'D'},
+                    },
+                },
+                posts: {
+                    posts: {
+                        root_1: {props: {referenced_transcript_post_id: 'transcript_1'}},
+                    },
+                },
+                users: {
+                    currentUserId: 'user_1',
+                },
+            },
+        }));
+    });
+
+    test('shows Post summary for a transcription result at Enterprise', () => {
+        renderPost(makePost('Call summary', {
+            conversation_id: '',
+            llm_requester_user_id: 'user_1',
+        }));
+
+        expect(screen.getByText('Post summary')).not.toBeNull();
+    });
+
+    test('hides Post summary below Enterprise', () => {
+        useIsLicensedFor.mockReturnValue(false);
+        renderPost(makePost('Call summary', {
+            conversation_id: '',
+            llm_requester_user_id: 'user_1',
+        }));
+
+        expect(screen.queryByText('Post summary')).toBeNull();
     });
 });

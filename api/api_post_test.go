@@ -496,6 +496,7 @@ func TestHandleTranscribeFileDeniedByFilePolicy(t *testing.T) {
 				nil,
 				nil,
 				nil,
+				enterprise.NewLicenseChecker(e.client),
 			)
 
 			req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/transcribe/file/"+fileID, nil)

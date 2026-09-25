@@ -77,37 +77,46 @@ export class MattermostPage {
         await this.page.getByText('Log in to your account').waitFor({ timeout: 60000 });
         await this.page.getByPlaceholder('Password').fill(password);
         await this.page.getByPlaceholder("Email or Username").fill(username);
+        await this.page.getByTestId('saveSetting').click();
 
-        let resolveChunkLoadFailure: (() => void) | undefined;
-        const chunkLoadFailure = new Promise<void>((resolve) => {
-            resolveChunkLoadFailure = resolve;
+        // Wait for navigation to complete and channel view to be visible
+        // Using a more generous timeout and proper wait strategy for parallel test runs
+        await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
+        await this.waitForChannelView(channelTimeout);
+    }
+
+    /**
+     * The Mattermost webapp occasionally fails to lazy-load one of its static chunks right after
+     * login (ChunkLoadError / "Loading CSS chunk N failed") and then never renders the channel view.
+     * Reload once in that case instead of waiting out the full timeout.
+     */
+    private async waitForChannelView(timeout: number) {
+        const channelView = this.page.getByTestId('channel_view');
+        let onPageError: (error: Error) => void = () => {};
+        const chunkLoadFailed = new Promise<'chunk-load-failed'>((resolve) => {
+            onPageError = (error: Error) => {
+                if (/Loading (CSS )?chunk \S+ failed/.test(error.message)) {
+                    resolve('chunk-load-failed');
+                }
+            };
         });
-        const onPageError = (error: Error) => {
-            if (/Loading (?:CSS )?chunk \d+ failed|ChunkLoadError/.test(error.message)) {
-                resolveChunkLoadFailure?.();
-            }
-        };
         this.page.on('pageerror', onPageError);
 
+        const startedAt = Date.now();
+        let outcome: 'visible' | 'chunk-load-failed';
         try {
-            await this.page.getByTestId('saveSetting').click();
-
-            // Wait for navigation to complete and channel view to be visible.
-            await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
-            const channelView = this.page.getByTestId('channel_view');
-            const loadResult = await Promise.race([
-                channelView.waitFor({ state: 'visible', timeout: channelTimeout }).then(() => 'ready' as const),
-                chunkLoadFailure.then(() => 'chunk-load-failed' as const),
+            outcome = await Promise.race([
+                channelView.waitFor({ state: 'visible', timeout }).then(() => 'visible' as const),
+                chunkLoadFailed,
             ]);
-
-            // Starting parallel Docker networks can briefly produce ERR_NETWORK_CHANGED in Chromium.
-            // Reload only when that manifests as a webpack chunk-load failure; preserve all other failures.
-            if (loadResult === 'chunk-load-failed') {
-                await this.page.reload({ waitUntil: 'domcontentloaded', timeout: channelTimeout });
-                await channelView.waitFor({ state: 'visible', timeout: channelTimeout });
-            }
         } finally {
             this.page.off('pageerror', onPageError);
+        }
+
+        if (outcome === 'chunk-load-failed') {
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            const remaining = Math.max(timeout - (Date.now() - startedAt), 30000);
+            await channelView.waitFor({ state: 'visible', timeout: remaining });
         }
     }
 

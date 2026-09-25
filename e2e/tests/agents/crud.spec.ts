@@ -17,10 +17,11 @@ let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent CRUD', () => {
     test.beforeAll(async () => {
+        test.setTimeout(180000);
         mattermost = await RunAgentContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await openAIMock.addCompletionMock(responseTest);
-    }, { timeout: 180000 });
+    });
 
     test.afterAll(async () => {
         await openAIMock?.stop();

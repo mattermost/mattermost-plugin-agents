@@ -247,11 +247,12 @@ func (p *MattermostToolProvider) getAutomationTools() []MCPTool {
 	// get_automation_instructions deliberately has no schema (it takes no
 	// arguments), so it is registered as a literal rather than via mcpTool.
 	automationTools := []MCPTool{
-		mcpTool(p, "list_automations", listAutomationsToolDescription, p.toolListAutomations),
+		mcpReadTool(p, "list_automations", listAutomationsToolDescription, p.toolListAutomations),
 		{
 			Name:        "get_automation_instructions",
 			Description: "Returns detailed documentation for creating and updating channel automations: triggers, actions, template syntax, allowed_tools, and required user-confirmation workflow. Call this before create_automation or update_automation.",
 			Resolver:    typed("get_automation_instructions", p.toolGetAutomationInstructions),
+			ReadOnly:    true,
 		},
 		mcpTool(p, "create_automation", createAutomationToolDescription, p.toolCreateAutomation),
 		mcpTool(p, "update_automation", updateAutomationToolDescription, p.toolUpdateAutomation),

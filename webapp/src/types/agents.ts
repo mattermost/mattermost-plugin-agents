@@ -23,6 +23,9 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Mirrors config.AgentInactiveReason on the backend.
+export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
+
 // UserAgent matches the JSON serialization of *llm.BotConfig from the backend.
 // The backend API (GET /agents, GET /agents/:id, POST /agents, PUT /agents/:id)
 // returns this shape.
@@ -74,6 +77,9 @@ export type UserAgent = {
      * returns this field for older clients; the UI ignores it.
      */
     structuredOutputEnabled?: boolean;
+
+    // Only on GET /agents; absent when the agent is running.
+    inactiveReason?: AgentInactiveReason;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;

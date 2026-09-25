@@ -9,6 +9,7 @@ import styled from 'styled-components';
 import {GlobalState} from '@mattermost/types/store';
 
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
+import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
@@ -584,7 +585,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     const showRegenerate = isDM && !isGenerationInProgress && requesterIsCurrentUser && !isNoShowRegen;
-    const showPostbackButton = !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
+    const meetingsLicensed = useIsLicensedFor('meetings');
+    const showPostbackButton = meetingsLicensed && !isGenerationInProgress && requesterIsCurrentUser && isTranscriptionResult;
     const showStopGeneratingButton = isGenerationInProgress && requesterIsCurrentUser;
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;

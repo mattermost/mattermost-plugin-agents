@@ -8,7 +8,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TertiaryButton} from '../assets/buttons';
 
-import {useIsMultiLLMLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import Bot, {ChannelAccessLevel, LLMBotConfig, UserAccessLevel} from './bot';
 import EnterpriseChip from './enterprise_chip';
@@ -48,7 +48,7 @@ type Props = {
 }
 
 const Bots = (props: Props) => {
-    const multiLLMLicensed = useIsMultiLLMLicensed();
+    const multiLLMLicensed = useIsLicensedFor('multiple_llm_services');
     const licenceAddDisabled = !multiLLMLicensed && props.bots.length > 0;
     const intl = useIntl();
 

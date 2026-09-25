@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -131,6 +132,9 @@ func (a *API) handleGetAgentPolicy(c *gin.Context) {
 }
 
 func (a *API) handlePutAgentPolicy(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapAttributeBasedAccess) {
+		return
+	}
 	userID := c.GetHeader("Mattermost-User-Id")
 	cfg := a.loadManagedAgent(c)
 	if cfg == nil {
@@ -210,6 +214,9 @@ func (a *API) handleGetServicePolicy(c *gin.Context) {
 }
 
 func (a *API) handlePutServicePolicy(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapAttributeBasedAccess) {
+		return
+	}
 	userID := c.GetHeader("Mattermost-User-Id")
 	svc := a.resolveServiceForPolicy(c)
 	if svc == nil {
@@ -301,6 +308,9 @@ func (a *API) handleGetMCPPolicy(c *gin.Context) {
 }
 
 func (a *API) handlePutMCPPolicy(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapAttributeBasedAccess) {
+		return
+	}
 	userID := c.GetHeader("Mattermost-User-Id")
 	server := a.resolveMCPServerForPolicy(c)
 	if server == nil {

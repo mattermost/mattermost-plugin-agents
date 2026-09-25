@@ -62,11 +62,13 @@ data: [DONE]
 export const responseTest2Text = "Hello! This is a second message."
 
 
+export const SMOCKER_IMAGE = "thiht/smocker";
+
 export class OpenAIMockContainer {
 	container: StartedTestContainer;
 
 	start = async (network: StartedNetwork) => {
-		this.container = await new GenericContainer("thiht/smocker")
+		this.container = await new GenericContainer(SMOCKER_IMAGE)
 			.withExposedPorts(8081)
 			.withNetwork(network)
 			.withNetworkAliases("openai")

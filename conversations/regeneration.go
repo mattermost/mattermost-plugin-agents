@@ -10,6 +10,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -70,6 +71,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 
 	if post.GetProp(streaming.NoRegen) != nil {
 		return errors.New("tagged no regen")
+	}
+
+	if err := c.checkRegenerateLicense(post); err != nil {
+		return err
 	}
 
 	user, err := c.mmClient.GetUser(userID)
@@ -232,6 +237,24 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	config := c.mmClient.GetConfig()
 	c.streamingService.StreamToPost(ctx, result, post, *config.LocalizationSettings.DefaultServerLocale, user.Id)
 
+	return nil
+}
+
+// checkRegenerateLicense gates regenerating a post by the capability of the
+// operation that produced it. Thread summaries are available at Professional
+// and above, channel summaries at Professional and above, and transcription
+// summaries at Enterprise and above. Other conversation posts are not gated.
+func (c *Conversations) checkRegenerateLicense(post *model.Post) error {
+	if post.GetProp(ReferencedRecordingFileID) != nil || post.GetProp(ReferencedTranscriptPostID) != nil {
+		return c.licenseChecker.Check(enterprise.CapMeetings)
+	}
+	threadID, _ := post.GetProp(ThreadIDProp).(string)
+	if threadID != "" {
+		return c.licenseChecker.Check(enterprise.CapThreadSummarization)
+	}
+	if post.GetProp(AnalysisTypeProp) != nil {
+		return c.licenseChecker.Check(enterprise.CapChannelSummarization)
+	}
 	return nil
 }
 

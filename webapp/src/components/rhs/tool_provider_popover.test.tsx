@@ -16,6 +16,10 @@ jest.mock('@/client', () => ({
     updateUserToolPreferences: jest.fn(),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+}));
+
 // OverlayTrigger renders the overlay alongside children so tests can assert the tooltip text.
 jest.mock('react-bootstrap', () => ({
     OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
@@ -156,6 +160,33 @@ describe('ToolProviderPopover', () => {
         expect(screen.getByRole('button', {name: 'Connect'})).not.toBeNull();
         expect(screen.queryByText('Unavailable')).toBeNull();
         expect(screen.queryByText(unavailableTooltip)).toBeNull();
+    });
+
+    test.each([
+        {authenticated: false, expectDisconnect: false},
+        {authenticated: true, expectDisconnect: true},
+    ])('hides Connect when remote MCP is not licensed (authenticated=$authenticated)', async ({authenticated, expectDisconnect}) => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(false);
+
+        const oauthServer: UserMCPServerInfo = {
+            name: 'OAuth Server',
+            serverOrigin: 'https://oauth.example.com/mcp',
+            kind: 'remote',
+            authenticated,
+            needsOAuth: true,
+            authURL: 'http://localhost/oauth/start',
+            serviceAccountConfigured: false,
+            tools: [],
+        };
+        mockGetUserMCPTools.mockResolvedValue({servers: [oauthServer]});
+        renderComponent([oauthServer]);
+
+        await openToolsMenu();
+        await screen.findByText('OAuth Server');
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Disconnect'}) !== null).toBe(expectDisconnect);
+        useIsLicensedFor.mockReturnValue(true);
     });
 
     test('does not mark an authenticated SA-configured server as unavailable', async () => {

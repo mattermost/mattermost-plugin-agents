@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
@@ -40,6 +41,7 @@ type reminderFixture struct {
 	conv       *conversations.Conversations
 	client     *fakeMMClient
 	botService *bots.MMBots
+	mockAPI    *plugintest.API
 }
 
 func newReminderFixture(t *testing.T) *reminderFixture {
@@ -59,18 +61,19 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 
 	mockAPI := &plugintest.API{}
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuProfessional}).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: reminderTeamID, Name: "team"}, nil).Maybe()
 	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	pluginClient := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginClient)
 
 	botService := bots.New(mockAPI, pluginClient, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+	fLLM := newDMTestLLM(dmMakeTextStream("canned reply"))
 	bot := bots.NewBot(
 		botConfig,
-		llm.ServiceConfig{},
+		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: reminderBotID, Username: reminderBotUsername, DisplayName: reminderBotDisplay},
-		nil,
+		fLLM,
 	)
 	botService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -84,16 +87,18 @@ func newReminderFixtureWithBotConfig(t *testing.T, botConfig llm.BotConfig) *rem
 			reminderOtherUserID: {Id: reminderOtherUserID, Username: "other", Locale: "en"},
 			reminderBotID:       {Id: reminderBotID, Username: reminderBotUsername, IsBot: true, Locale: "en"},
 		},
-		channels: map[string]*model.Channel{},
+		channels:        map[string]*model.Channel{},
+		allowCreatePost: true,
 	}
 
-	conv := conversations.New(promptsManager, client, nil, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
+	conv := conversations.New(promptsManager, client, &fakeStreamingService{}, contextBuilder, botService, nil, licenseChecker, i18n.Init(), nil, &testToolCallingConfig{})
 	conv.SetConversationService(conversation.NewService(newFakeConvStore(), promptsManager, client, botService))
 
 	return &reminderFixture{
 		conv:       conv,
 		client:     client,
 		botService: botService,
+		mockAPI:    mockAPI,
 	}
 }
 
@@ -244,7 +249,9 @@ func TestMessageHasBeenPostedSendsReminderWhenPreviousPostIsAgent(t *testing.T) 
 				require.Equal(t, reminderReplyID, ephemeral.GetProp(conversations.AgentMentionReminderTargetPostIDProp))
 				require.NotEmpty(t, ephemeral.Message)
 			} else {
-				require.Empty(t, fix.client.ephemeralPosts, "expected no ephemeral reminder")
+				for _, ephemeral := range fix.client.ephemeralPosts {
+					require.NotEqual(t, conversations.AgentMentionReminderPostType, ephemeral.GetProp("type"), "expected no ephemeral reminder")
+				}
 			}
 		})
 	}
@@ -396,4 +403,44 @@ func TestMessageHasBeenPostedReminderSkipsRestrictedBot(t *testing.T) {
 	fix.conv.MessageHasBeenPosted(nil, reply)
 
 	require.Empty(t, fix.client.ephemeralPosts)
+}
+
+// TestMessageHasBeenPostedReminderByLicenseLevel pins that the reminder, which
+// points at channel mentions and loop-in, appears only where multiplayer
+// agents in channels are available.
+func TestMessageHasBeenPostedReminderByLicenseLevel(t *testing.T) {
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			fix := newReminderFixture(t)
+			calls := fix.mockAPI.ExpectedCalls[:0]
+			for _, call := range fix.mockAPI.ExpectedCalls {
+				if call.Method != "GetLicense" {
+					calls = append(calls, call)
+				}
+			}
+			fix.mockAPI.ExpectedCalls = calls
+			fix.mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(level)).Maybe()
+
+			channel := &model.Channel{Id: reminderChannelID, Type: model.ChannelTypeOpen}
+			fix.setChannel(channel)
+			root := &model.Post{Id: reminderRootID, ChannelId: channel.Id, UserId: reminderUserID, CreateAt: 100, Message: "kicking off"}
+			previous := &model.Post{Id: "prev-post-id", ChannelId: channel.Id, UserId: reminderBotID, RootId: reminderRootID, CreateAt: 200, Message: "previous message"}
+			reply := &model.Post{Id: reminderReplyID, ChannelId: channel.Id, UserId: reminderUserID, RootId: reminderRootID, CreateAt: 300, Message: "thanks!"}
+			fix.setThread(reminderRootID, root, previous, reply)
+
+			fix.conv.MessageHasBeenPosted(nil, reply)
+
+			reminders := 0
+			for _, ephemeral := range fix.client.ephemeralPosts {
+				if ephemeral.GetProp("type") == conversations.AgentMentionReminderPostType {
+					reminders++
+				}
+			}
+			want := 0
+			if level >= enterprise.RequiredLevel(enterprise.CapMultiplayerChannels) {
+				want = 1
+			}
+			require.Equal(t, want, reminders)
+		})
+	}
 }
