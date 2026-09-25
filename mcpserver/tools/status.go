@@ -47,9 +47,9 @@ const (
 // getStatusTools returns the presence and custom-status tools.
 func (p *MattermostToolProvider) getStatusTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_user_status", getUserStatusDescription, p.toolGetUserStatus),
-		mcpTool(p, "get_users_statuses", getUsersStatusesDescription, p.toolGetUsersStatuses),
-		mcpTool(p, "get_user_custom_status", getUserCustomStatusDescription, p.toolGetUserCustomStatus),
+		mcpReadTool(p, "get_user_status", getUserStatusDescription, p.toolGetUserStatus),
+		mcpReadTool(p, "get_users_statuses", getUsersStatusesDescription, p.toolGetUsersStatuses),
+		mcpReadTool(p, "get_user_custom_status", getUserCustomStatusDescription, p.toolGetUserCustomStatus),
 		mcpTool(p, "set_status", setStatusDescription, p.toolSetStatus),
 		mcpTool(p, "set_dnd", setDndDescription, p.toolSetDnd),
 	}

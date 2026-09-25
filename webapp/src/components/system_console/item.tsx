@@ -54,6 +54,13 @@ export const FieldControlRow = styled.div`
 	}
 `;
 
+// FieldExtra keeps adornments such as the license chip at their natural width
+// instead of the row's full-width rule for direct div children.
+const FieldExtra = styled.span`
+	display: inline-flex;
+	flex: 0 0 auto;
+`;
+
 export const FieldErrorText = styled.div`
 	color: var(--dnd-indicator, #D24B4E);
 	font-size: 12px;
@@ -130,6 +137,7 @@ export type SelectionItemProps = {
     helptext?: string
     disabled?: boolean
     error?: string
+    extra?: React.ReactNode
 };
 
 export const SelectionItem = (props: SelectionItemProps) => {
@@ -146,6 +154,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                     >
                         {props.children}
                     </SelectField>
+                    {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>
@@ -645,6 +654,11 @@ type BooleanItemProps = {
     onChange: (to: boolean) => void
     helpText?: string
     disabled?: boolean
+
+    // When true, the "true" radio is disabled so the setting cannot be turned
+    // on, but turning it off remains possible.
+    disableTrue?: boolean
+    extra?: React.ReactNode
 };
 
 export const BooleanItem = (props: BooleanItemProps) => {
@@ -657,7 +671,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         type='radio'
                         value='true'
                         checked={props.value}
-                        disabled={props.disabled}
+                        disabled={props.disabled || props.disableTrue}
                         onChange={() => props.onChange(true)}
                     />
                     <FormattedMessage defaultMessage='true'/>
@@ -669,6 +683,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         onChange={() => props.onChange(false)}
                     />
                     <FormattedMessage defaultMessage='false'/>
+                    {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>

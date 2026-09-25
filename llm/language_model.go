@@ -46,6 +46,7 @@ type LanguageModelConfig struct {
 	JSONOutputFormat       *jsonschema.Schema
 	ToolsDisabled          bool
 	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
+	SkipNativeWebSearch    bool // Omits the provider-native web search tool from the request
 	ReasoningDisabled      bool
 }
 
@@ -72,6 +73,12 @@ func WithToolsDisabled() LanguageModelOption {
 func WithNativeWebSearchAllowed() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.NativeWebSearchAllowed = true
+	}
+}
+
+func WithSkipNativeWebSearch() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.SkipNativeWebSearch = true
 	}
 }
 

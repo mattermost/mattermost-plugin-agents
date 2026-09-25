@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 )
 
@@ -72,6 +73,11 @@ func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, user
 
 	result, err := run(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
@@ -172,6 +178,11 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return

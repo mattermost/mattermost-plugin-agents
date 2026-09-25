@@ -41,7 +41,7 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 	e.api.configStore = &mockConfigStore{
 		cfg: &config.Config{
 			Services: []llm.ServiceConfig{
-				{ID: "svc-1", Name: "Test Service", Type: "openai"},
+				{ID: "svc-1", Name: "Test Service", Type: "openai", APIKey: "test-key"},
 			},
 		},
 	}
@@ -99,7 +99,7 @@ func overrideLicenseMocks(mockAPI *plugintest.API, license *model.License) {
 	mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
-// mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
+// mockLicensed sets up mock expectations for an Enterprise license.
 func mockLicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, &model.License{
 		Features: &model.Features{
@@ -109,7 +109,7 @@ func mockLicensed(mockAPI *plugintest.API) {
 	})
 }
 
-// mockUnlicensed sets up mock expectations so IsMultiLLMLicensed() returns false.
+// mockUnlicensed sets up mock expectations for an unlicensed server.
 func mockUnlicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, nil)
 }
@@ -519,7 +519,7 @@ func TestCreateAgentFreeTierBlocksWhenQuotaReached(t *testing.T) {
 
 	// One existing agent is already at the free-tier quota.
 	e.agentStore.agents["existing"] = &llm.BotConfig{
-		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 	}
 
 	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
@@ -534,8 +534,8 @@ func TestListAgentsIncludesActiveCountHeaderWhenUnlicensed(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
-		ID: "agent-1", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: llm.UserAccessLevelNone,
+		ID: "agent-1", CreatorID: "other-user", Name: "private-agent", DisplayName: "Private Agent",
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
@@ -556,7 +556,7 @@ func TestListAgentsOmitsActiveCountHeaderWhenCountFails(t *testing.T) {
 	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.countErr = errors.New("boom")
+	e.api.configStore = &mockConfigStore{getErr: errors.New("boom")}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
 	resp := recorder.Result()
@@ -1102,6 +1102,8 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
+
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
@@ -1259,6 +1261,8 @@ func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
 
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
@@ -2033,7 +2037,7 @@ func TestAuditCreateAgent(t *testing.T) {
 				mockUnlicensed(e.mockAPI)
 				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 				e.agentStore.agents["existing"] = &llm.BotConfig{
-					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 				}
 			},
 			body:           createAgentBody(nil),

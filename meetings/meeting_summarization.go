@@ -223,6 +223,10 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 }
 
 func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client) error {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return err
+	}
+
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 
 	transcriptPost := &model.Post{
@@ -291,6 +295,10 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 }
 
 func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
 	llmFormattedTranscription := transcription.FormatForLLM()
 	tokens := llm.EstimateTokens(llmFormattedTranscription)
 	inputLimit := bot.LLM().InputTokenLimit()

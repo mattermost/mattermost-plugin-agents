@@ -278,25 +278,40 @@ func TestListForUser(t *testing.T) {
 	tests := []struct {
 		name          string
 		userID        string
+		includeShared bool
 		expectedNames []string
 	}{
 		{
-			name:   "user A sees own and shared",
-			userID: userA,
+			name:          "user A sees own and shared",
+			userID:        userA,
+			includeShared: true,
 			// Ordered by Name: "A Private", "A Shared", "B Shared"
 			expectedNames: []string{"A Private", "A Shared", "B Shared"},
 		},
 		{
-			name:   "user B sees own and shared",
-			userID: userB,
+			name:          "user B sees own and shared",
+			userID:        userB,
+			includeShared: true,
 			// Ordered by Name: "A Shared", "B Private", "B Shared"
 			expectedNames: []string{"A Shared", "B Private", "B Shared"},
+		},
+		{
+			name:          "user A without shared sees only own prompts",
+			userID:        userA,
+			includeShared: false,
+			expectedNames: []string{"A Private", "A Shared"},
+		},
+		{
+			name:          "user B without shared sees only own prompts",
+			userID:        userB,
+			includeShared: false,
+			expectedNames: []string{"B Private", "B Shared"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			prompts, listErr := store.ListForUser(tc.userID)
+			prompts, listErr := store.ListForUser(tc.userID, tc.includeShared)
 			require.NoError(t, listErr)
 			require.Len(t, prompts, len(tc.expectedNames))
 
@@ -330,7 +345,7 @@ func TestListForUserExcludesSoftDeleted(t *testing.T) {
 	err = store.Delete(created.ID, userID)
 	require.NoError(t, err)
 
-	prompts, err := store.ListForUser(userID)
+	prompts, err := store.ListForUser(userID, true)
 	require.NoError(t, err)
 	require.Len(t, prompts, 1)
 	require.Equal(t, "Will Keep", prompts[0].Name)
@@ -426,7 +441,7 @@ func TestListForUserEmpty(t *testing.T) {
 	dbClient := testDB(t)
 	store := NewStore(dbClient)
 
-	prompts, err := store.ListForUser(model.NewId())
+	prompts, err := store.ListForUser(model.NewId(), true)
 	require.NoError(t, err)
 	require.NotNil(t, prompts)
 	require.Empty(t, prompts)
@@ -496,7 +511,7 @@ func TestRunImmediatelyPersists(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.runImmediately, got.RunImmediately)
 
-			listed, err := store.ListForUser(creatorID)
+			listed, err := store.ListForUser(creatorID, false)
 			require.NoError(t, err)
 			found := false
 			for _, p := range listed {

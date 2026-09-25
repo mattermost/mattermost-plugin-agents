@@ -33,8 +33,8 @@ const InputContainer = styled.div`
 `;
 
 interface AIInputProps {
-    isFocused: boolean;
-    hasValue: boolean;
+    $isFocused: boolean;
+    $hasValue: boolean;
 }
 
 const AIInputWrapper = styled.div<AIInputProps>`
@@ -50,13 +50,13 @@ const AIInputWrapper = styled.div<AIInputProps>`
     cursor: text;
     position: relative;
 
-    ${({isFocused, hasValue}) => (isFocused || hasValue) && css`
+    ${({$isFocused, $hasValue}) => ($isFocused || $hasValue) && css`
         border: 2px solid var(--button-bg);
         padding: 9px 11px; /* Adjust padding to account for border width change */
     `}
 
     &:hover {
-        border-color: ${({isFocused, hasValue}) => ((isFocused || hasValue) ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
+        border-color: ${({$isFocused, $hasValue}) => (($isFocused || $hasValue) ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
     }
 `;
 
@@ -86,15 +86,15 @@ const IconWrapper = styled.div`
     flex-shrink: 0;
 `;
 
-const TrailingIconWrapper = styled.div<{isActive: boolean}>`
+const TrailingIconWrapper = styled.div<{$isActive: boolean}>`
     display: flex;
     align-items: center;
     justify-content: center;
     width: 16px;
     height: 16px;
-    color: ${({isActive}) => (isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.32)')};
+    color: ${({$isActive}) => ($isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.32)')};
     flex-shrink: 0;
-    cursor: ${({isActive}) => (isActive ? 'pointer' : 'default')};
+    cursor: ${({$isActive}) => ($isActive ? 'pointer' : 'default')};
 `;
 
 const Divider = styled.div`
@@ -242,8 +242,8 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
             <PopoverContainer>
                 <InputContainer>
                     <AIInputWrapper
-                        isFocused={isFocused}
-                        hasValue={inputValue.length > 0}
+                        $isFocused={isFocused}
+                        $hasValue={inputValue.length > 0}
                         onClick={handleInputClick}
                     >
                         <IconWrapper>
@@ -265,7 +265,7 @@ export const ChannelSummarizePopover = ({bots, activeBot, setActiveBot, channelN
                         </FormattedMessage>
                         <TrailingIconWrapper
                             data-testid='send-custom-prompt-button'
-                            isActive={inputValue.length > 0}
+                            $isActive={inputValue.length > 0}
                             onClick={(e) => {
                                 e.stopPropagation();
                                 handleInputSubmit();

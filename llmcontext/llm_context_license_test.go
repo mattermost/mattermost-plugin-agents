@@ -7,6 +7,8 @@ import (
 	stdcontext "context"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -17,10 +19,20 @@ import (
 )
 
 const licenseTestRemoteOrigin = "https://jira.example.com"
+const licenseTestPluginOrigin = "plugin://com.mattermost.plugin-playbooks"
 
 // newLicenseTestBuilder mirrors newTestBuilder but lets the test control the
 // license state the builder sees.
 func newLicenseTestBuilder(t *testing.T, licensed bool, toolProvider ToolProvider, mcpProvider MCPToolProvider) *Builder {
+	t.Helper()
+	level := enterprise.LevelUnlicensed
+	if licensed {
+		level = enterprise.LevelEnterprise
+	}
+	return newLicenseTestBuilderAt(t, level, toolProvider, mcpProvider)
+}
+
+func newLicenseTestBuilderAt(t *testing.T, level enterprise.Level, toolProvider ToolProvider, mcpProvider MCPToolProvider) *Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
@@ -30,11 +42,7 @@ func newLicenseTestBuilder(t *testing.T, licensed bool, toolProvider ToolProvide
 		TeamSettings:    model.TeamSettings{SiteName: &siteName},
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
-	if licensed {
-		mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
-	} else {
-		mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	}
+	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(level)).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
 		for j := range args {
@@ -86,34 +94,17 @@ func licenseTestMCPProvider() *selectionHonoringMCPProvider {
 	return &selectionHonoringMCPProvider{tools: []llm.Tool{
 		testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
 		testMCPTool("jira__get_issue", licenseTestRemoteOrigin, "fetch Jira issue details"),
+		testMCPTool("playbooks__run", licenseTestPluginOrigin, "start a playbook run"),
 	}}
 }
 
 // TestUnlicensedBuilderDropsRemoteMCPTools pins the supply-time license gate:
-// without a license, remote MCP tools are never added to the LLM tool store,
-// while built-in and embedded Mattermost MCP tools remain available. With a
-// license, everything is supplied.
+// remote and plugin MCP tools are available at Enterprise and above, while
+// built-in and embedded Mattermost MCP tools are available at every level.
 func TestUnlicensedBuilderDropsRemoteMCPTools(t *testing.T) {
-	tests := []struct {
-		name      string
-		licensed  bool
-		wantTools []string
-	}{
-		{
-			name:      "unlicensed supplies only builtin and embedded tools",
-			licensed:  false,
-			wantTools: []string{"builtin", "mattermost__read_channel"},
-		},
-		{
-			name:      "licensed supplies remote tools too",
-			licensed:  true,
-			wantTools: []string{"builtin", "mattermost__read_channel", "jira__get_issue"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			builder := newLicenseTestBuilder(t, tc.licensed,
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			builder := newLicenseTestBuilderAt(t, level,
 				&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
 				licenseTestMCPProvider(),
 			)
@@ -126,9 +117,30 @@ func TestUnlicensedBuilderDropsRemoteMCPTools(t *testing.T) {
 
 			context := buildToolsContext(builder, bot)
 
-			require.ElementsMatch(t, tc.wantTools, toolNames(context.Tools))
+			want := []string{"builtin", "mattermost__read_channel"}
+			if level >= enterprise.LevelEnterprise {
+				want = append(want, "jira__get_issue", "playbooks__run")
+			}
+			require.ElementsMatch(t, want, toolNames(context.Tools))
 		})
 	}
+
+	t.Run("nil checker fails closed", func(t *testing.T) {
+		builder := newLicenseTestBuilderAt(t, enterprise.LevelEnterpriseAdvanced,
+			&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+			licenseTestMCPProvider(),
+		)
+		builder.licenseChecker = nil
+		bot := newTestBotWithConfig(llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+		})
+
+		context := buildToolsContext(builder, bot)
+		require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel"}, toolNames(context.Tools))
+	})
 }
 
 // TestUnlicensedBuilderDropsRemoteMCPToolsFromDynamicRegistry pins that the
@@ -176,33 +188,73 @@ func TestUnlicensedBuilderDropsRemoteMCPToolsFromDynamicRegistry(t *testing.T) {
 	}
 }
 
-// SA auth inherits the remote-MCP enterprise gate: unlicensed SA-flagged agents behave like normal agents.
-func TestServiceAccountModeFullyOffWhenUnlicensed(t *testing.T) {
-	provider := &staticMCPToolProvider{
-		tools: []llm.Tool{
-			testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
-			testMCPTool("jira__get_issue", licenseTestRemoteOrigin, "fetch Jira issue details"),
-		},
-		saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", licenseTestRemoteOrigin, "service account Jira")},
+// Service-account catalogs are available at Enterprise and above. Below that,
+// SA-flagged agents use the per-user catalog.
+func TestServiceAccountCatalogLicenseGate(t *testing.T) {
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			provider := &staticMCPToolProvider{
+				tools: []llm.Tool{
+					testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+					testMCPTool("jira__get_issue", licenseTestRemoteOrigin, "fetch Jira issue details"),
+				},
+				saTools: []llm.Tool{
+					testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts"),
+					testMCPTool("sa_jira__get_issue", licenseTestRemoteOrigin, "service account Jira"),
+				},
+			}
+			builder := newLicenseTestBuilderAt(t, level,
+				&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+				provider,
+			)
+			bot := newTestBotWithConfig(llm.BotConfig{
+				ID:                    "bot-id",
+				Name:                  "matty",
+				DisplayName:           "Matty",
+				AutoEnableNewMCPTools: true,
+				UseServiceAccountAuth: true,
+			})
+
+			context := buildToolsContext(builder, bot)
+
+			if level >= enterprise.LevelEnterprise {
+				require.Empty(t, provider.userCalls)
+				require.NotEmpty(t, provider.saCalls)
+				require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel", "sa_jira__get_issue"}, toolNames(context.Tools))
+				require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
+				return
+			}
+
+			require.Equal(t, []string{"user-id"}, provider.userCalls)
+			require.Empty(t, provider.saCalls)
+			require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel"}, toolNames(context.Tools))
+			require.Empty(t, context.ToolAuthMode)
+		})
 	}
-	builder := newLicenseTestBuilder(t, false,
-		&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
-		provider,
-	)
-	bot := newTestBotWithConfig(llm.BotConfig{
-		ID:                    "bot-id",
-		Name:                  "matty",
-		DisplayName:           "Matty",
-		AutoEnableNewMCPTools: true,
-		UseServiceAccountAuth: true,
+
+	t.Run("nil checker fails closed", func(t *testing.T) {
+		provider := &staticMCPToolProvider{
+			tools:   []llm.Tool{testMCPTool("mattermost__read_channel", mcp.EmbeddedClientKey, "read channel posts")},
+			saTools: []llm.Tool{testMCPTool("sa_jira__get_issue", licenseTestRemoteOrigin, "service account Jira")},
+		}
+		builder := newLicenseTestBuilderAt(t, enterprise.LevelEnterpriseAdvanced,
+			&staticToolProvider{tools: []llm.Tool{testBuiltinTool("builtin")}},
+			provider,
+		)
+		builder.licenseChecker = nil
+		bot := newTestBotWithConfig(llm.BotConfig{
+			ID:                    "bot-id",
+			Name:                  "matty",
+			DisplayName:           "Matty",
+			AutoEnableNewMCPTools: true,
+			UseServiceAccountAuth: true,
+		})
+
+		context := buildToolsContext(builder, bot)
+		require.Equal(t, []string{"user-id"}, provider.userCalls)
+		require.Empty(t, provider.saCalls)
+		require.Empty(t, context.ToolAuthMode)
 	})
-
-	context := buildToolsContext(builder, bot)
-
-	require.Equal(t, []string{"user-id"}, provider.userCalls, "unlicensed SA agents use the per-user catalog")
-	require.Empty(t, provider.saCalls, "unlicensed servers must never build a service account catalog")
-	require.ElementsMatch(t, []string{"builtin", "mattermost__read_channel"}, toolNames(context.Tools))
-	require.Empty(t, context.ToolAuthMode, "unlicensed SA agents are attributed as user mode")
 }
 
 // TestUnlicensedBuilderDropsRemoteMCPAuthErrors pins that OAuth prompts for

@@ -288,6 +288,7 @@ func TestCatchUpAfterWideningIndexesOnlyTheGap(t *testing.T) {
 	assert.InDelta(t, float64(floor730), float64(status.RetentionFloor), 5000)
 	assert.Less(t, seeds[1].createAt, lastIndexed, "gap is historically before the last job wall clock")
 	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+	waitForStoredRetentionDays(t, store, 730, 5*time.Second)
 
 	storedMu.Lock()
 	defer storedMu.Unlock()
@@ -444,6 +445,7 @@ func TestCheckIndexHealthWidenedEmptyGapThenCatchUp(t *testing.T) {
 	_, err = idx.StartCatchUpJob()
 	require.NoError(t, err)
 	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+	waitForStoredRetentionDays(t, store, 730, 5*time.Second)
 
 	health, err = idx.CheckIndexHealth(context.Background())
 	require.NoError(t, err)
@@ -560,6 +562,7 @@ func TestCatchUpResumeKeepsSkipExistingAndSnapshottedWindow(t *testing.T) {
 	assert.Equal(t, 730, status.IndexRetentionDays)
 	assert.Equal(t, floor730, status.RetentionFloor)
 	waitForJobStatus(t, store, JobStatusCompleted, 5*time.Second)
+	waitForStoredRetentionDays(t, store, 730, 5*time.Second)
 
 	storedMu.Lock()
 	defer storedMu.Unlock()

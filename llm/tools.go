@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"reflect"
 	"strings"
 	"unicode"
@@ -61,13 +60,6 @@ type Tool struct {
 	// attaching a file to the reply post). Only honored for tools with an
 	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
-
-	// CallMetadata is forwarded to the tool implementation as MCP CallToolParams.Meta.
-	// It is invisible to the LLM, not part of the input schema, and not parsed from the
-	// model's arguments. Set it at scope-time via WithCallMetadata when callers need to
-	// plumb runtime/protocol info (e.g. before-hook keys) that the underlying server
-	// needs but the model shouldn't see or be able to manipulate.
-	CallMetadata map[string]any
 }
 
 // UserInteractionSelect identifies tools answered by the user picking from a
@@ -84,21 +76,6 @@ func (t Tool) WithBoundParams(params map[string]any) Tool {
 	cloned := t
 	cloned.Schema = removeSchemaProperties(t.Schema, params)
 	cloned.Resolver = wrapResolverWithBoundParams(t.Resolver, params)
-	return cloned
-}
-
-// WithCallMetadata returns a copy of the tool with CallMetadata set. Use this to attach
-// per-call MCP metadata (like before-hook keys) at scope-time without leaking it into
-// the LLM-visible schema or making the resolver fish it out of llm.Context. Passing an
-// empty map clears the field.
-func (t Tool) WithCallMetadata(meta map[string]any) Tool {
-	cloned := t
-	if len(meta) == 0 {
-		cloned.CallMetadata = nil
-		return cloned
-	}
-	cloned.CallMetadata = make(map[string]any, len(meta))
-	maps.Copy(cloned.CallMetadata, meta)
 	return cloned
 }
 

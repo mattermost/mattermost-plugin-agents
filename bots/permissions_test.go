@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -528,6 +529,7 @@ func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: 
 func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironment {
 	t.Helper()
 	mockAPI := &plugintest.API{}
+	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
 	client := pluginapi.NewClient(mockAPI, nil)
 	checker := accesscontrol.New(stub, nil, accesscontrol.NoMCPServerIDs, nil)
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)

@@ -6,6 +6,7 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 
@@ -21,7 +22,6 @@ export async function setupRedux(registry: any, store: WebappStore) {
     const reducer = combineReducers({
         callsPostButtonClickedTranscription,
         bots,
-        botChannelId,
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
@@ -31,10 +31,12 @@ export async function setupRedux(registry: any, store: WebappStore) {
     });
     registry.registerReducer(reducer);
 
-    store.dispatch({
-        type: CallsClickHandler as any,
-        handler: makeCallsPostButtonClickedHandler(store.dispatch),
-    });
+    if (licenseAllows(store.getState(), 'meetings')) {
+        store.dispatch({
+            type: CallsClickHandler as any,
+            handler: makeCallsPostButtonClickedHandler(store.dispatch, store.getState),
+        });
+    }
 
     // This is a workaround for a bug where the RHS was inaccessible to
     // users that where not system admins. This is unable to be fixed properly
@@ -87,15 +89,6 @@ function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
     case 'SET_ALLOW_UNSAFE_LINKS':
         return action.allowUnsafeLinks;
-    default:
-        return state;
-    }
-}
-
-function botChannelId(state = '', action: any) {
-    switch (action.type) {
-    case 'SET_AI_BOT_CHANNEL':
-        return action.botChannelId;
     default:
         return state;
     }

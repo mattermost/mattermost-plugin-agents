@@ -10,6 +10,7 @@ import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserTool
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus} from '@/utils/mcp_availability';
+import {useIsLicensedFor} from '@/license';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import MCPUnavailableBadge from '../mcp_unavailable_badge';
@@ -42,6 +43,7 @@ function filterServersByEnabledTools(
 
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const intl = useIntl();
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
     const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
@@ -160,7 +162,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             {servers.map((server) => {
                 const status = mcpServerStatus(server, false);
                 const unavailable = status === 'sa-only-unavailable';
-                const showConnect = !server.authenticated && server.needsOAuth && !unavailable;
+                const showConnect = remoteMcpLicensed && !server.authenticated && server.needsOAuth && !unavailable;
                 return (
                     <ProviderRow
                         key={server.serverOrigin}
@@ -180,7 +182,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         ) : (
                             <ProviderActions>
                                 {unavailable && <MCPUnavailableBadge/>}
-                                {!unavailable && server.needsOAuth && (
+                                {!unavailable && server.authenticated && server.needsOAuth && (
                                     <DisconnectButton onClick={() => handleDisconnect(server.name)}>
                                         <FormattedMessage defaultMessage='Disconnect'/>
                                     </DisconnectButton>
@@ -199,7 +201,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
     );
 };
 
-const ToolProviderButton = styled(DotMenuButton)<{isActive: boolean}>`
+const ToolProviderButton = styled(DotMenuButton)<{$isActive: boolean}>`
     display: flex;
     align-items: center;
     padding: 2px 4px 2px 6px;
@@ -209,12 +211,12 @@ const ToolProviderButton = styled(DotMenuButton)<{isActive: boolean}>`
     font-size: 11px;
     font-weight: 600;
     line-height: 16px;
-    color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-    background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
+    color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
+    background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
 
     &:hover {
-        color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
-        background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
+        color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'var(--center-channel-color-rgb)')};
+        background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.16)' : 'rgba(var(--center-channel-color-rgb), 0.16)')};
     }
 `;
 

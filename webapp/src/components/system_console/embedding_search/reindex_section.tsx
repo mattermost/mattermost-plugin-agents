@@ -43,9 +43,9 @@ const ProgressContainer = styled.div`
     overflow: hidden;
 `;
 
-const ProgressBar = styled.div<{progress: number}>`
+const ProgressBar = styled.div<{$progress: number}>`
     height: 100%;
-    width: ${(props) => props.progress}%;
+    width: ${(props) => props.$progress}%;
     background-color: var(--button-bg);
     transition: width 0.3s ease-in-out;
 `;
@@ -140,7 +140,7 @@ const HealthCheckValue = styled.span`
     font-weight: 500;
 `;
 
-const StatusBadge = styled.span<{status: string}>`
+const StatusBadge = styled.span<{$status: string}>`
     display: inline-block;
     padding: 2px 8px;
     border-radius: 10px;
@@ -148,7 +148,7 @@ const StatusBadge = styled.span<{status: string}>`
     font-weight: 600;
     text-transform: uppercase;
     background-color: ${(props) => {
-        switch (props.status) {
+        switch (props.$status) {
         case 'healthy':
             return 'rgba(var(--online-indicator-rgb), 0.16)';
         case 'mismatch':
@@ -161,7 +161,7 @@ const StatusBadge = styled.span<{status: string}>`
         }
     }};
     color: ${(props) => {
-        switch (props.status) {
+        switch (props.$status) {
         case 'healthy':
             return 'var(--online-indicator)';
         case 'mismatch':
@@ -461,7 +461,7 @@ export const ReindexSection = ({
                                             <IndeterminateProgressBar/>
                                         ) : (
                                             <ProgressBar
-                                                progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
+                                                $progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
                                             />
                                         )}
                                     </ProgressContainer>
@@ -577,7 +577,7 @@ export const ReindexSection = ({
                                     <HealthCheckLabel>
                                         <FormattedMessage defaultMessage='Status'/>
                                     </HealthCheckLabel>
-                                    <StatusBadge status={healthCheckResult.status}>
+                                    <StatusBadge $status={healthCheckResult.status}>
                                         {getStatusLabel(healthCheckResult.status)}
                                     </StatusBadge>
                                 </HealthCheckRow>

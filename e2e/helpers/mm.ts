@@ -82,7 +82,42 @@ export class MattermostPage {
         // Wait for navigation to complete and channel view to be visible
         // Using a more generous timeout and proper wait strategy for parallel test runs
         await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
-        await this.page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: channelTimeout });
+        await this.waitForChannelView(channelTimeout);
+    }
+
+    /**
+     * The Mattermost webapp occasionally fails to lazy-load one of its static chunks right after
+     * login (ChunkLoadError / "Loading CSS chunk N failed") and then never renders the channel view.
+     * Reload once in that case instead of waiting out the full timeout.
+     */
+    private async waitForChannelView(timeout: number) {
+        const channelView = this.page.getByTestId('channel_view');
+        let onPageError: (error: Error) => void = () => {};
+        const chunkLoadFailed = new Promise<'chunk-load-failed'>((resolve) => {
+            onPageError = (error: Error) => {
+                if (/Loading (CSS )?chunk \S+ failed/.test(error.message)) {
+                    resolve('chunk-load-failed');
+                }
+            };
+        });
+        this.page.on('pageerror', onPageError);
+
+        const startedAt = Date.now();
+        let outcome: 'visible' | 'chunk-load-failed';
+        try {
+            outcome = await Promise.race([
+                channelView.waitFor({ state: 'visible', timeout }).then(() => 'visible' as const),
+                chunkLoadFailed,
+            ]);
+        } finally {
+            this.page.off('pageerror', onPageError);
+        }
+
+        if (outcome === 'chunk-load-failed') {
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            const remaining = Math.max(timeout - (Date.now() - startedAt), 30000);
+            await channelView.waitFor({ state: 'visible', timeout: remaining });
+        }
     }
 
     async sendChannelMessage(message: string) {

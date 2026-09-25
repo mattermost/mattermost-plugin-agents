@@ -15,16 +15,13 @@ import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
 import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
-import {useIsMultiLLMLicensed} from '@/license';
+import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
 
 type Tab = 'all' | 'yours';
-
-// Keep in sync with api.FreeTierAgentLimit (api/api_agents.go).
-const FREE_TIER_AGENT_LIMIT = 1;
 
 const AgentsList = () => {
     const intl = useIntl();
@@ -40,7 +37,9 @@ const AgentsList = () => {
     // Mirrors api.canConfigureAgentServices. Users without these permissions
     // browse read-only; requesting /services would 403 and wrongly flag every agent.
     const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
-    const multiLLMLicensed = useIsMultiLLMLicensed();
+    const agentLimit = useAgentLimit();
+    const licenseLevel = useLicenseLevel();
+    const licenseLevelName = useLicenseLevelName();
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -58,8 +57,15 @@ const AgentsList = () => {
     const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
 
     const serverAgentCount = activeAgentCount ?? agents.length;
-    const createQuotaReached = !multiLLMLicensed && serverAgentCount >= FREE_TIER_AGENT_LIMIT;
+    const createQuotaReached = agentLimit !== null && serverAgentCount >= agentLimit;
     const createButtonDisabled = loading || createQuotaReached;
+    const nextAgentPlanName = licenseLevelName(
+        licenseLevel < LicenseLevel.Professional ? LicenseLevel.Professional : LicenseLevel.Enterprise,
+    );
+    const createQuotaMessage = agentLimit === null ? '' : intl.formatMessage(
+        {defaultMessage: 'Your current plan allows {count, plural, one {# agent} other {# agents}}. Additional agents are available on {plan} plans and above.'},
+        {count: agentLimit, plan: nextAgentPlanName},
+    );
 
     const fetchAgents = useCallback(async () => {
         try {
@@ -200,7 +206,7 @@ const AgentsList = () => {
                                     placement='bottom'
                                     overlay={
                                         <Tooltip id='create-agent-quota-tooltip'>
-                                            <FormattedMessage defaultMessage='Multiple self-service agents require a qualifying Mattermost plan'/>
+                                            {createQuotaMessage}
                                         </Tooltip>
                                     }
                                 >

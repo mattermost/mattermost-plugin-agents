@@ -1212,6 +1212,13 @@ func TestShouldUseResponsesAPI(t *testing.T) {
 			expected:           true,
 		},
 		{
+			name:               "Vertex SkipNativeWebSearch does not auto-enable Responses API",
+			provider:           schemas.Vertex,
+			enabledNativeTools: nil,
+			cfg:                llm.LanguageModelConfig{NativeWebSearchAllowed: true, SkipNativeWebSearch: true},
+			expected:           false,
+		},
+		{
 			name:               "nothing configured returns false",
 			provider:           schemas.OpenAI,
 			enabledNativeTools: nil,

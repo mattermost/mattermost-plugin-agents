@@ -9,6 +9,7 @@ import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {useBotlist} from '@/bots';
+import {useIsLicensedFor} from '@/license';
 import manifest from '../manifest';
 
 import {BotDropdown} from './bot_selector';
@@ -65,9 +66,10 @@ const SearchHints = () => {
     const {bots, activeBot, setActiveBot} = useBotlist();
     const currentBotName = activeBot?.displayName ?? '';
     const searchEnabled = useSelector<GlobalState, boolean>((state: any) => state['plugins-' + manifest.id].searchEnabled);
+    const semanticSearchLicensed = useIsLicensedFor('semantic_search');
 
     // Don't show if search is disabled or no bots are available
-    if (!searchEnabled || !bots || bots.length === 0) {
+    if (!searchEnabled || !semanticSearchLicensed || !bots || bots.length === 0) {
         return null;
     }
 

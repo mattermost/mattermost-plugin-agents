@@ -17,6 +17,7 @@ import {
     userHasChannelPermission,
 } from '@/utils/permissions';
 import manifest from '@/manifest';
+import {licenseAllows} from '@/license';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
 import {
@@ -61,6 +62,12 @@ export function botsFromState(state: GlobalState): LLMBot[] | null {
 // tab never expands Channel Settings menu-item visibility beyond core.
 export const shouldRenderChannelAutoReplyTab = (state: GlobalState, channel: Channel): boolean => {
     if (channel.type !== 'O' && channel.type !== 'P') {
+        return false;
+    }
+
+    // Channel agent auto-reply is available at Enterprise Advanced; below it a
+    // stored setting is inactive and stays clearable through the REST API.
+    if (!licenseAllows(state, 'channel_auto_reply')) {
         return false;
     }
     const permission = channel.type === 'P' ? PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES : PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES;

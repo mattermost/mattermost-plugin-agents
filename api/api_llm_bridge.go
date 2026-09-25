@@ -18,8 +18,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -272,38 +273,20 @@ func validateCompletionRequestIDs(req bridgeclient.CompletionRequest) (int, erro
 // bridgeCompletionPlan is the validated, ready-to-dispatch state for an agent
 // bridge completion request.
 type bridgeCompletionPlan struct {
-	bot            *bots.Bot
-	request        llm.CompletionRequest
-	opts           []llm.LanguageModelOption
-	shouldExecute  func(llm.ToolCall) bool
-	beforeHookKeys []string
+	bot           *bots.Bot
+	request       llm.CompletionRequest
+	opts          []llm.LanguageModelOption
+	shouldExecute func(llm.ToolCall) bool
 }
 
 func (a *API) prepareAgentBridgeCompletion(
 	ctx stdcontext.Context,
 	agent string,
 	req bridgeclient.CompletionRequest,
-	pluginID string,
 	operation, operationSubType string,
 ) (*bridgeCompletionPlan, int, error) {
-	var beforeHookKeys []string
-	success := false
-	defer func() {
-		if !success {
-			a.cleanupBeforeHookKeys(beforeHookKeys)
-		}
-	}()
-
 	if statusCode, err := validateCompletionRequestIDs(req); err != nil {
 		return nil, statusCode, err
-	}
-
-	normalizedPluginID := strings.TrimSpace(pluginID)
-	if len(req.ToolHooks) > 0 && normalizedPluginID == "" {
-		return nil, http.StatusBadRequest, errors.New("tool_hooks requires Mattermost-Plugin-ID header")
-	}
-	if len(req.ToolHooks) > 0 && req.UserID == "" {
-		return nil, http.StatusBadRequest, errors.New("tool_hooks requires user_id")
 	}
 
 	allowedToolNames, err := normalizeAllowedToolNames(req.AllowedTools)
@@ -328,30 +311,6 @@ func (a *API) prepareAgentBridgeCompletion(
 	llmRequest, err := a.convertAgentBridgeRequestToInternal(ctx, bot, req, toolsRequested, operation, operationSubType)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
-	}
-
-	if len(req.ToolHooks) > 0 && !toolsRequested {
-		return nil, http.StatusBadRequest, errors.New("tool_hooks requires allowed_tools")
-	}
-
-	// Normalize tool_hooks keys to bare names so they match the embedded MCP
-	// server, which registers and runs before-hooks by bare name. Callers may key
-	// hooks by either the bare or namespaced form; both collapse to the same bare
-	// key. Keys are issued lazily per scoped tool below, tracked in beforeHookKeys
-	// so the deferred cleanup runs even on later failures.
-	//
-	// Reject two distinct keys (e.g. "search_posts" and "mattermost__search_posts")
-	// that collapse to the same bare name: silently keeping one would be
-	// non-deterministic. Each tool may be hooked once.
-	hooksByBareName := make(map[string]bridgeclient.ToolHookConfig, len(req.ToolHooks))
-	hookKeyByBareName := make(map[string]string, len(req.ToolHooks))
-	for name, cfg := range req.ToolHooks {
-		bare := llm.BareMCPToolName(name)
-		if existing, ok := hookKeyByBareName[bare]; ok {
-			return nil, http.StatusBadRequest, fmt.Errorf("tool_hooks has conflicting entries %q and %q for the same tool; specify it once", existing, name)
-		}
-		hookKeyByBareName[bare] = name
-		hooksByBareName[bare] = cfg
 	}
 
 	autoRunNames := make(map[string]struct{})
@@ -380,33 +339,8 @@ func (a *API) prepareAgentBridgeCompletion(
 				)
 			}
 
-			scopedTool := *tool
-			// Bind a before-hook (if the caller registered one for this tool) keyed
-			// by the resolved tool's bare name, so it matches the embedded server's
-			// bare lookup at execution time regardless of the name form the caller
-			// passed.
-			bare := llm.BareMCPToolName(scopedTool.Name)
-			if cfg, ok := hooksByBareName[bare]; ok && cfg.BeforeCallback != "" {
-				beforeHookKey, hookErr := a.beforeHookStore.Issue(req.UserID, bare, normalizedPluginID, cfg.BeforeCallback)
-				if hookErr != nil {
-					statusCode := http.StatusInternalServerError
-					if errors.Is(hookErr, mcp.ErrInvalidBeforeHookConfig) {
-						statusCode = http.StatusBadRequest
-					}
-					return nil, statusCode, fmt.Errorf("invalid tool_hooks: %w", hookErr)
-				}
-				beforeHookKeys = append(beforeHookKeys, beforeHookKey)
-				// Wire format on the MCP server side keys hooks by tool name (see
-				// mcpserver/tools/provider.go decodeToolHooksFromMetadata).
-				scopedTool = scopedTool.WithCallMetadata(map[string]any{
-					"tool_hooks": map[string]any{
-						bare: map[string]any{"before_hook_key": beforeHookKey},
-					},
-				})
-			}
-
-			scopedTools.AddTools([]llm.Tool{scopedTool})
-			autoRunNames[scopedTool.Name] = struct{}{}
+			scopedTools.AddTools([]llm.Tool{*tool})
+			autoRunNames[tool.Name] = struct{}{}
 		}
 		llmRequest.Context.Tools = scopedTools
 	}
@@ -420,11 +354,13 @@ func (a *API) prepareAgentBridgeCompletion(
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 
-	// Enable native web search if the bot supports it.
-	// Native web search is a provider-level feature (not an MCP tool),
-	// so it's not part of allowed_tools — it's always available when configured.
-	if bot.HasNativeWebSearchEnabled() {
+	// Enable native web search if the bot supports it. Native web search is a
+	// provider-level feature (not an MCP tool), so it's not part of
+	// allowed_tools; it is available at Professional and above.
+	if bot.HasNativeWebSearchEnabled() && a.licenseChecker.Allows(enterprise.CapProviderWebSearch) {
 		opts = append(opts, llm.WithNativeWebSearchAllowed())
+	} else {
+		opts = append(opts, llm.WithSkipNativeWebSearch())
 	}
 
 	// Build the auto-run predicate from the explicit allowlist. Returning nil
@@ -445,22 +381,12 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 	}
 
-	success = true
 	return &bridgeCompletionPlan{
-		bot:            bot,
-		request:        llmRequest,
-		opts:           opts,
-		shouldExecute:  shouldExecute,
-		beforeHookKeys: beforeHookKeys,
+		bot:           bot,
+		request:       llmRequest,
+		opts:          opts,
+		shouldExecute: shouldExecute,
 	}, 0, nil
-}
-
-func (a *API) cleanupBeforeHookKeys(keys []string) {
-	for _, key := range keys {
-		if err := a.beforeHookStore.Delete(key); err != nil {
-			a.pluginAPI.Log.Warn("failed to clean up before-hook key", "error", err)
-		}
-	}
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -592,6 +518,9 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 	if !found || !bots.ServiceCanServeCompletions(primary) {
 		return fail(http.StatusNotFound, fmt.Sprintf("service not found: %s", service))
 	}
+	if !a.serviceActiveAtLicense(services, primary.ID) {
+		return fail(http.StatusForbidden, a.licenseChecker.Check(enterprise.CapMultipleLLMServices).Error())
+	}
 
 	// Converting the request before leasing a model keeps a malformed role,
 	// file, or JSON schema a 400 that never allocates a provider client.
@@ -607,10 +536,14 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 	opts = append(opts, llm.WithToolsDisabled())
 
 	// The primary is configured and eligible, so a broken chain is a server
-	// configuration problem rather than a missing service.
-	fallbacks, err := bots.ResolveBridgeFallbacks(services, primary)
-	if err != nil {
-		return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
+	// configuration problem rather than a missing service. Fallback chains are
+	// available at Enterprise Advanced.
+	var fallbacks []llm.ServiceConfig
+	if a.licenseChecker.Allows(enterprise.CapModelFallback) {
+		fallbacks, err = bots.ResolveBridgeFallbacks(services, primary)
+		if err != nil {
+			return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
+		}
 	}
 
 	model, release, err := a.bots.AcquireServiceLLM(primary, fallbacks)
@@ -880,6 +813,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 // is not filtered by agent ACLs.
 func (a *API) handleGetServices(c *gin.Context) {
 	snapshot := a.config.GetServices()
+	fallbacksAllowed := a.licenseChecker.Allows(enterprise.CapModelFallback)
 
 	seen := make(map[string]struct{}, len(snapshot))
 	services := make([]bridgeclient.BridgeServiceInfo, 0, len(snapshot))
@@ -891,13 +825,15 @@ func (a *API) handleGetServices(c *gin.Context) {
 		}
 		seen[svc.ID] = struct{}{}
 
-		if !bots.ServiceCanServeCompletions(svc) {
+		if !bots.ServiceCanServeCompletions(svc) || !a.serviceActiveAtLicense(snapshot, svc.ID) {
 			continue
 		}
 		// A service whose fallback chain is broken would fail every call, so
 		// advertising it would only produce confusing errors later.
-		if _, err := bots.ResolveBridgeFallbacks(snapshot, svc); err != nil {
-			continue
+		if fallbacksAllowed {
+			if _, err := bots.ResolveBridgeFallbacks(snapshot, svc); err != nil {
+				continue
+			}
 		}
 
 		services = append(services, bridgeclient.BridgeServiceInfo{
@@ -939,14 +875,13 @@ func (a *API) handleAgentCompletion(c *gin.Context, operationSubType string, res
 		return
 	}
 
-	plan, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, c.GetHeader("Mattermost-Plugin-ID"), llm.OperationBridgeAgent, operationSubType)
+	plan, statusCode, err := a.prepareAgentBridgeCompletion(c.Request.Context(), agent, req, llm.OperationBridgeAgent, operationSubType)
 	if err != nil {
 		c.JSON(statusCode, bridgeclient.ErrorResponse{
 			Error: err.Error(),
 		})
 		return
 	}
-	defer a.cleanupBeforeHookKeys(plan.beforeHookKeys)
 
 	respond(c, plan.bot.LLM(), plan.bot.GetConfig().EffectiveMaxToolTurns(), plan.request, plan.shouldExecute, plan.opts...)
 }
@@ -984,4 +919,11 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
 func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	a.handleServiceCompletion(c, llm.SubTypeNoStream, a.handleNonStreamingLLMResponse)
+}
+
+// serviceActiveAtLicense reports whether serviceID is one of the LLM services
+// active at the current license level: every service at Enterprise and above,
+// the first configured service below that.
+func (a *API) serviceActiveAtLicense(services []llm.ServiceConfig, serviceID string) bool {
+	return slices.Contains(config.ActiveServiceIDs(&config.Config{Services: services}, a.licenseChecker.Level()), serviceID)
 }

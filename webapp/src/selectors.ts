@@ -6,7 +6,7 @@ import {GlobalState} from '@mattermost/types/store';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
 
-// Both start null (unloaded); the selectors below default them with ?? [].
+// Both start null (unloaded); the selectors below default them to shared empty arrays.
 interface PluginState {
     customPrompts: CustomPrompt[] | null;
     pinnedPromptIds: string[] | null;
@@ -17,11 +17,15 @@ type AppState = GlobalState & {
     [key: `plugins-${string}`]: PluginState;
 };
 
-export const getCustomPrompts = (state: AppState): CustomPrompt[] =>
-    state[`plugins-${manifest.id}`]?.customPrompts ?? [];
+// Stable references so useSelector doesn't re-render on every store update while unloaded.
+const EMPTY_CUSTOM_PROMPTS: readonly CustomPrompt[] = Object.freeze([]);
+const EMPTY_PINNED_PROMPT_IDS: readonly string[] = Object.freeze([]);
 
-export const getPinnedPromptIds = (state: AppState): string[] =>
-    state[`plugins-${manifest.id}`]?.pinnedPromptIds ?? [];
+export const getCustomPrompts = (state: AppState): readonly CustomPrompt[] =>
+    state[`plugins-${manifest.id}`]?.customPrompts ?? EMPTY_CUSTOM_PROMPTS;
+
+export const getPinnedPromptIds = (state: AppState): readonly string[] =>
+    state[`plugins-${manifest.id}`]?.pinnedPromptIds ?? EMPTY_PINNED_PROMPT_IDS;
 
 export const getShowCustomPromptsModal = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.showCustomPromptsModal ?? false;

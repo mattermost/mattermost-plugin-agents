@@ -76,11 +76,11 @@ const (
 // getThreadTools returns the threads, mentions, and unread-state tools.
 func (p *MattermostToolProvider) getThreadTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_threads", getThreadsDescription, p.toolGetThreads),
-		mcpTool(p, "get_mentions", getMentionsDescription, p.toolGetMentions),
-		mcpTool(p, "get_unread_counts", getUnreadCountsDescription, p.toolGetUnreadCounts),
-		mcpTool(p, "get_channel_unread", getChannelUnreadDescription, p.toolGetChannelUnread),
-		mcpTool(p, "get_posts_around_unread", getPostsAroundUnreadDescription, p.toolGetPostsAroundUnread),
+		mcpReadTool(p, "get_threads", getThreadsDescription, p.toolGetThreads),
+		mcpReadTool(p, "get_mentions", getMentionsDescription, p.toolGetMentions),
+		mcpReadTool(p, "get_unread_counts", getUnreadCountsDescription, p.toolGetUnreadCounts),
+		mcpReadTool(p, "get_channel_unread", getChannelUnreadDescription, p.toolGetChannelUnread),
+		mcpReadTool(p, "get_posts_around_unread", getPostsAroundUnreadDescription, p.toolGetPostsAroundUnread),
 		mcpTool(p, "mark_channel_read", markChannelReadDescription, p.toolMarkChannelRead),
 		mcpTool(p, "mark_channels_viewed", markChannelsViewedDescription, p.toolMarkChannelsViewed),
 		mcpTool(p, "mark_post_unread", markPostUnreadDescription, p.toolMarkPostUnread),

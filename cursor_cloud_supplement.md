@@ -154,6 +154,10 @@ artifacts. Upload before creating or updating the PR description.
 - The Mattermost server port comes from the Docker port mapping above
   (`8065`); if you re-run with a different `-p` flag, look it up with
   `docker port mm-server`.
+- The VM has `/.dockerenv`, so testcontainers reports the Docker gateway
+  IP (e.g. `http://172.18.0.1:<port>`) as the e2e host. That origin is not
+  a secure context, so Clipboard API specs fail. Run e2e with
+  `TESTCONTAINERS_HOST_OVERRIDE=localhost`.
 - Outbound LLM traffic from the container respects `HTTP_PROXY` /
   `HTTPS_PROXY` on the Mattermost process environment if the cloud VM
   routes egress through a proxy.

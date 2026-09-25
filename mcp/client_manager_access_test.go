@@ -80,6 +80,7 @@ func newAccessTestManager(t *testing.T, checker ServerAccessChecker) *ClientMana
 		embeddedClient:   &EmbeddedServerClient{},
 		pluginServers:    make(map[string]PluginServerConfig),
 		pluginRegistered: make(map[string]bool),
+		remoteAllowed:    func() bool { return true },
 	}
 	m.pluginServers[accessPluginID] = PluginServerConfig{
 		ID: accessPluginSrvID, PluginID: accessPluginID, Name: "Plugin MCP", Enabled: true, Path: "/mcp",
@@ -300,6 +301,7 @@ func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker Se
 		activity:      make(map[clientKey]time.Time),
 		httpClient:    httpClient,
 		accessChecker: checker,
+		remoteAllowed: func() bool { return true },
 	}
 }
 
@@ -484,4 +486,39 @@ func TestGetCatalogAccessServiceAccountUsesInvokerAndRemoteOwnerPool(t *testing.
 		"service-account remotes must remain pooled by the bot owner")
 	assert.Nil(t, m.clients[clientKey{userID: "user-a", kind: clientKindSARemote}])
 	assert.Nil(t, m.clients[clientKey{userID: "user-b", kind: clientKindSARemote}])
+}
+
+func TestRemoteAllowedSkipsRemoteAndPluginServers(t *testing.T) {
+	m := newAccessTestManager(t, nil)
+	plugins := []PluginServerConfig{m.pluginServers[accessPluginID]}
+
+	assertEligibility := func(t *testing.T, allowed bool) {
+		t.Helper()
+		servers := m.resolveEligibleServers(m.config, m.embeddedClient, plugins, ToolSelection{}, map[string]bool{}, false)
+		require.True(t, servers.embedded, "embedded Mattermost MCP server stays connected")
+		ids := m.liveOriginIdentities(m.config, m.embeddedClient, false)
+		require.Contains(t, ids, EmbeddedClientKey)
+		if allowed {
+			require.NotEmpty(t, servers.remote)
+			require.NotEmpty(t, servers.plugins)
+			require.Contains(t, ids, accessAllowedOrigin)
+			require.Contains(t, ids, accessPluginOrigin)
+			return
+		}
+		require.Empty(t, servers.remote)
+		require.Empty(t, servers.plugins)
+		require.NotContains(t, ids, accessAllowedOrigin)
+		require.NotContains(t, ids, accessPluginOrigin)
+	}
+
+	assertEligibility(t, true)
+
+	m.remoteAllowed = func() bool { return false }
+	assertEligibility(t, false)
+
+	m.remoteAllowed = nil
+	assertEligibility(t, false)
+
+	m.remoteAllowed = func() bool { return true }
+	assertEligibility(t, true)
 }

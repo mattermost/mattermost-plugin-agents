@@ -34,11 +34,11 @@ const readFileDescription = "Read the text contents of a Mattermost file attachm
 // getFileTools returns the file-related tools.
 func (p *MattermostToolProvider) getFileTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "read_file", readFileDescription, p.toolReadFile),
-		mcpTool(p, "get_file_info", getFileInfoDescription, p.toolGetFileInfo),
-		mcpTool(p, "get_post_files", getPostFilesDescription, p.toolGetPostFiles),
-		mcpTool(p, "get_file_link", getFileLinkDescription, p.toolGetFileLink),
-		mcpTool(p, "search_files", searchFilesDescription, p.toolSearchFiles),
+		mcpReadTool(p, "read_file", readFileDescription, p.toolReadFile),
+		mcpReadTool(p, "get_file_info", getFileInfoDescription, p.toolGetFileInfo),
+		mcpReadTool(p, "get_post_files", getPostFilesDescription, p.toolGetPostFiles),
+		mcpReadTool(p, "get_file_link", getFileLinkDescription, p.toolGetFileLink),
+		mcpReadTool(p, "search_files", searchFilesDescription, p.toolSearchFiles),
 		mcpTool(p, "upload_file", uploadFileDescription, p.toolUploadFile),
 	}
 }
