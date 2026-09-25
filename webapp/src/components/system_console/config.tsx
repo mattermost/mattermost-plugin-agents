@@ -77,6 +77,7 @@ const ConnectionFailureDetail = styled.div`
 `;
 
 type ConnectionFailure = {
+
     // key disambiguates two services that render the same display name.
     key: string;
     name: string;

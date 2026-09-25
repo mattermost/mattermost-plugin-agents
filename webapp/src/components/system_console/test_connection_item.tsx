@@ -10,6 +10,7 @@ import {testService} from '@/client';
 import {TertiaryButton} from '../assets/buttons';
 
 import {FieldControlRow, FieldErrorText, FormRow, HelpText, ItemLabel, TextFieldContainer} from './item';
+import {connectionFingerprint} from './service_connection';
 
 // Type-only: service.tsx imports this component back, and erasing the type
 // import keeps that cycle out of the emitted module graph.
@@ -44,24 +45,15 @@ export const TestConnectionItem = (props: Props) => {
     const intl = useIntl();
     const [state, setState] = useState<TestState>({status: 'idle'});
 
-    // A result describes the configuration that produced it, so editing any
-    // field clears it rather than leaving a stale "Connection successful" next
-    // to a key the admin has since changed.
+    // A result describes the configuration that produced it, so editing a field
+    // the provider call depends on clears it rather than leaving a stale
+    // "Connection successful" next to a key the admin has since changed.
+    // Keyed on the shared fingerprint so this and the save-time probe can never
+    // disagree about which fields matter.
+    const fingerprint = connectionFingerprint(props.service);
     useEffect(() => {
         setState({status: 'idle'});
-    }, [
-        props.service.type,
-        props.service.apiKey,
-        props.service.apiURL,
-        props.service.orgId,
-        props.service.defaultModel,
-        props.service.region,
-        props.service.awsAccessKeyID,
-        props.service.awsSecretAccessKey,
-        props.service.vertexProjectID,
-        props.service.vertexProjectNumber,
-        props.service.vertexAuthCredentials,
-    ]);
+    }, [fingerprint]);
 
     const runTest = async () => {
         setState({status: 'testing'});
