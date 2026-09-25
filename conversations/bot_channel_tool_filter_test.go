@@ -489,6 +489,22 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 			expectSafeTool:   true,
 			expectAskTool:    false,
 		},
+		{
+			name:              "webhook ActivateAI filters auto everywhere",
+			toolPolicyChecker: channelPolicyChecker,
+			setupMMClient: func(t *testing.T) *mocks.MockClient {
+				rootPost := &model.Post{UserId: "human-user"}
+				rootPost.AddProp(FromWebhookProp, "true")
+				rootPost.AddProp(ActivateAIProp, "true")
+				mmClient := mocks.NewMockClient(t)
+				mmClient.On("GetPost", "root-id").Return(rootPost, nil).Once()
+				mmClient.On("GetUser", "human-user").Return(&model.User{Id: "human-user", IsBot: false}, nil).Once()
+				return mmClient
+			},
+			expectedFiltered: true,
+			expectSafeTool:   true,
+			expectAskTool:    false,
+		},
 	}
 
 	for _, tt := range tests {
