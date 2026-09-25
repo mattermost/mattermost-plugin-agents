@@ -20,6 +20,11 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 const baseService: LLMService = {
     id: 'svc-1',
     name: 'Anthropic',

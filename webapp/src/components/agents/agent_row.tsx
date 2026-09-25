@@ -15,7 +15,7 @@ import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 import {getProfilePictureUrl} from '@/client';
 import {getPortalTarget} from '@/utils/dom';
 
-import {UserAgent, ServiceInfo} from '@/types/agents';
+import {AgentInactiveReason, UserAgent, ServiceInfo} from '@/types/agents';
 
 type Props = {
     agent: UserAgent;
@@ -37,9 +37,13 @@ const AgentRow = (props: Props) => {
     const toolCount = autoEnableNewMCPTools ? 0 : (agent.enabledMCPTools?.length ?? 0);
     const service = services.find((s) => s.id === agent.serviceID);
 
-    // Only flag a missing service once the list has loaded; users without
+    // Only infer a missing service once the list has loaded; users without
     // agent-management permission never fetch it, so empty means unknown.
-    const serviceUnavailable = servicesLoaded && agent.serviceID && !service;
+    const serviceMissing = Boolean(servicesLoaded && agent.serviceID && !service);
+    let inactiveReason = agent.inactiveReason;
+    if (!inactiveReason && serviceMissing) {
+        inactiveReason = 'service_unavailable';
+    }
 
     let mcpBadge: React.ReactNode = null;
     if (autoEnableNewMCPTools) {
@@ -145,10 +149,22 @@ const AgentRow = (props: Props) => {
                     <Username>{'@'}{agent.name}</Username>
                 </NameColumn>
                 <BadgesColumn>
-                    {serviceUnavailable && (
-                        <ServiceWarningBadge>
-                            <FormattedMessage defaultMessage='Service unavailable'/>
-                        </ServiceWarningBadge>
+                    {inactiveReason && (
+                        <OverlayTrigger
+                            placement='top'
+                            container={getPortalTarget}
+                            overlay={
+                                <Tooltip id={`inactive-agent-tooltip-${agent.id}`}>
+                                    <InactiveReasonMessage reason={inactiveReason}/>
+                                </Tooltip>
+                            }
+                        >
+                            <BadgeTrigger tabIndex={0}>
+                                <InactiveBadge>
+                                    <FormattedMessage defaultMessage='Inactive'/>
+                                </InactiveBadge>
+                            </BadgeTrigger>
+                        </OverlayTrigger>
                     )}
                     {!canManage && (
                         <OverlayTrigger
@@ -163,11 +179,11 @@ const AgentRow = (props: Props) => {
                                 </Tooltip>
                             }
                         >
-                            <ReadOnlyBadgeTrigger tabIndex={0}>
+                            <BadgeTrigger tabIndex={0}>
                                 <ReadOnlyBadge>
                                     <FormattedMessage defaultMessage='Read only'/>
                                 </ReadOnlyBadge>
-                            </ReadOnlyBadgeTrigger>
+                            </BadgeTrigger>
                         </OverlayTrigger>
                     )}
                     {mcpBadge}
@@ -204,6 +220,19 @@ const AgentRow = (props: Props) => {
             )}
         </RowContainer>
     );
+};
+
+const InactiveReasonMessage = ({reason}: {reason: AgentInactiveReason}) => {
+    switch (reason) {
+    case 'service_not_licensed':
+        return <FormattedMessage defaultMessage='This agent uses an LLM service that is not active on your current plan. Only the first configured service is active; multiple LLM services are available on Enterprise plans and above. Edit the agent to choose the active service.'/>;
+    case 'agent_limit':
+        return <FormattedMessage defaultMessage='Your current plan has reached its limit of active AI agents, and agents created earlier take the available slots. Delete an earlier agent, or upgrade your plan for more agents.'/>;
+    case 'service_unavailable':
+        return <FormattedMessage defaultMessage='This agent’s LLM service was deleted or is missing required settings. Edit the agent to choose another service, or complete the service configuration.'/>;
+    default:
+        return <FormattedMessage defaultMessage='This agent’s configuration is incomplete. Edit the agent to fix it.'/>;
+    }
 };
 
 // --- Styled Components ---
@@ -289,7 +318,7 @@ const BadgesColumn = styled.div`
     flex-shrink: 0;
 `;
 
-const ServiceWarningBadge = styled.span`
+const InactiveBadge = styled.span`
     padding: 2px 8px;
     border-radius: 4px;
     background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
@@ -298,7 +327,7 @@ const ServiceWarningBadge = styled.span`
     white-space: nowrap;
 `;
 
-const ReadOnlyBadgeTrigger = styled.span`
+const BadgeTrigger = styled.span`
     display: inline-flex;
     flex-shrink: 0;
     cursor: default;

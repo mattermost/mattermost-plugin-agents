@@ -99,8 +99,9 @@ func (p *MattermostToolProvider) getSearchTools() []MCPTool {
 			Description: description,
 			Schema:      schema,
 			Resolver:    typed("search_posts", p.toolCombinedSearch),
+			ReadOnly:    true,
 		},
-		mcpTool(p, "search_users", searchUsersDescription, p.toolSearchUsers),
+		mcpReadTool(p, "search_users", searchUsersDescription, p.toolSearchUsers),
 	}
 }
 

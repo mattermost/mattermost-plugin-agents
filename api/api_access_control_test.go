@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
@@ -36,6 +37,7 @@ func setupAccessControlTestEnvironment(t *testing.T) *TestEnvironment {
 
 	e := SetupTestEnvironment(t)
 	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
 	return e
 }
@@ -1094,7 +1096,7 @@ func TestCreateAgentDeniedServiceReturns403(t *testing.T) {
 	seedServiceConfig(e, serviceID)
 	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-	mockLicensed(e.mockAPI)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -1118,7 +1120,7 @@ func TestCreateAgentAttributeBasedWhileUnavailableReturns400(t *testing.T) {
 	// IsAvailable reports false and the attribute-based save is rejected.
 	e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-	mockLicensed(e.mockAPI)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -1142,7 +1144,7 @@ func TestUpdateAgentUnchangedDeniedServiceSucceeds(t *testing.T) {
 	seedServiceConfig(e, serviceID)
 	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-	mockLicensed(e.mockAPI)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -1201,7 +1203,7 @@ func TestListAgentsAppliesServicePolicies(t *testing.T) {
 			seedTwoServiceConfig(e, allowedServiceID, deniedServiceID)
 			e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: tt.deniedIDs}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-			mockLicensed(e.mockAPI)
+			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 			e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
 			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -1255,7 +1257,7 @@ func TestListAgentsKeepsAgentWhenFallbackServiceDenied(t *testing.T) {
 	}
 	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{fallbackID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-	mockLicensed(e.mockAPI)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -1293,7 +1295,7 @@ func TestListAgentsHidesDeniedServiceFromAgentAdmin(t *testing.T) {
 	seedServiceConfig(e, serviceID)
 	e.api.accessChecker = accesscontrol.New(perIDDecisionClient{denied: map[string]bool{serviceID: true}}, nil, accesscontrol.NoMCPServerIDs, nil)
 
-	mockLicensed(e.mockAPI)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -1398,7 +1400,7 @@ func TestListServicesAppliesServicePolicies(t *testing.T) {
 			seedTwoServiceConfig(e, allowedID, gatedID)
 			e.api.accessChecker = tt.checker()
 
-			mockLicensed(e.mockAPI)
+			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
 			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -1458,7 +1460,7 @@ func TestFetchModelsForServiceAppliesServicePolicies(t *testing.T) {
 			seedServiceConfig(e, serviceID)
 			e.api.accessChecker = tt.checker()
 
-			mockLicensed(e.mockAPI)
+			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageOwnAgent).Return(true)
 			e.mockAPI.On("HasPermissionTo", userID, model.PermissionManageSystem).Return(tt.isAdmin).Maybe()
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()

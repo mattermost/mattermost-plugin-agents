@@ -15,7 +15,10 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
@@ -405,7 +408,7 @@ func TestWebSearchService(t *testing.T) {
 			}
 		}
 
-		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient)
+		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
 		tool := service.Tool()
 
 		require.Nil(t, tool, "Should return nil when web search is disabled")
@@ -425,7 +428,7 @@ func TestWebSearchService(t *testing.T) {
 			}
 		}
 
-		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient)
+		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
 		tool := service.Tool()
 
 		require.NotNil(t, tool, "Should return tool when properly configured")
@@ -433,6 +436,95 @@ func TestWebSearchService(t *testing.T) {
 		require.Contains(t, tool.Description, "limited to 3 searches")
 		require.Contains(t, tool.Description, "DO NOT repeat a search query")
 	})
+}
+
+func configuredWebSearchGetter() func() *config.Config {
+	return func() *config.Config {
+		return &config.Config{
+			WebSearch: config.WebSearchConfig{
+				Enabled:  true,
+				Provider: "google",
+				Google: config.WebSearchGoogleConfig{
+					APIKey:         "test-key",
+					SearchEngineID: "test-engine-id",
+				},
+			},
+		}
+	}
+}
+
+func TestSovereignWebSearchLicenseGate(t *testing.T) {
+	cfgGetter := configuredWebSearchGetter()
+	mockBot := bots.NewBot(
+		llm.BotConfig{Name: "mockbot"},
+		llm.ServiceConfig{Type: "mock"},
+		&model.Bot{Username: "mockbot"},
+		&mockLanguageModel{},
+	)
+
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(level))
+			impl := service.(*webSearchService)
+
+			if level >= enterprise.LevelEnterprise {
+				require.NotNil(t, service.Tool())
+				require.NotNil(t, service.SourceTool(mockBot))
+				return
+			}
+
+			require.Nil(t, service.Tool())
+			require.Nil(t, service.SourceTool(mockBot))
+
+			_, err := impl.resolve(context.Background(), &llm.Context{}, func(any) error { return nil })
+			var licErr *enterprise.LicenseError
+			require.ErrorAs(t, err, &licErr)
+			require.Equal(t, enterprise.CapSovereignWebSearch, licErr.Capability)
+
+			_, err = impl.resolveSource(context.Background(), mockBot, &llm.Context{}, func(any) error { return nil })
+			require.ErrorAs(t, err, &licErr)
+			require.Equal(t, enterprise.CapSovereignWebSearch, licErr.Capability)
+		})
+	}
+
+	t.Run("nil checker fails closed", func(t *testing.T) {
+		service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, nil)
+		impl := service.(*webSearchService)
+		require.Nil(t, service.Tool())
+		require.Nil(t, service.SourceTool(mockBot))
+
+		_, err := impl.resolve(context.Background(), &llm.Context{}, func(any) error { return nil })
+		var licErr *enterprise.LicenseError
+		require.ErrorAs(t, err, &licErr)
+	})
+}
+
+func TestGetToolsOmitsSovereignWebSearchWhenUnlicensed(t *testing.T) {
+	cfgGetter := configuredWebSearchGetter()
+	mockBot := bots.NewBot(
+		llm.BotConfig{Name: "mockbot"},
+		llm.ServiceConfig{Type: "mock"},
+		&model.Bot{Username: "mockbot"},
+		&mockLanguageModel{},
+	)
+	client := mocks.NewMockClient(t)
+
+	for _, level := range enterprisetest.AllLevels {
+		t.Run(level.String(), func(t *testing.T) {
+			provider := NewMMToolProvider(client, NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(level)))
+			names := []string{}
+			for _, tool := range provider.GetTools(mockBot, &llm.Context{}) {
+				names = append(names, tool.Name)
+			}
+			if level >= enterprise.LevelEnterprise {
+				require.Contains(t, names, "WebSearch")
+				require.Contains(t, names, "WebSearchFetchSource")
+				return
+			}
+			require.NotContains(t, names, "WebSearch")
+			require.NotContains(t, names, "WebSearchFetchSource")
+		})
+	}
 }
 
 func TestWebSearchResetBehavior(t *testing.T) {
@@ -553,8 +645,9 @@ func TestWebSearchSourceWhitelist(t *testing.T) {
 	}
 
 	service := &webSearchService{
-		httpClient: mockClient,
-		logger:     &mockLogger{},
+		httpClient:     mockClient,
+		logger:         &mockLogger{},
+		licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 		cfgGetter: func() *config.Config {
 			return &config.Config{
 				WebSearch: config.WebSearchConfig{

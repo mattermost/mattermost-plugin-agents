@@ -37,6 +37,8 @@ import {IntItem} from '@/components/system_console/number_items';
 import ReasoningConfigItem from '@/components/system_console/reasoning_config';
 import {LLMService} from '@/components/system_console/service';
 
+import {LicenseLevel, useIsLicensedFor, useLicenseLevelName, useServiceLimit} from '@/license';
+
 import {AgentDraft} from '../agent_config_view';
 
 type Props = {
@@ -65,6 +67,9 @@ const ConfigTab = (props: Props) => {
         usernameLocked = false,
     } = props;
     const intl = useIntl();
+    const serviceLimit = useServiceLimit();
+    const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+    const levelName = useLicenseLevelName();
     const [advancedExpanded, setAdvancedExpanded] = useState(false);
     const [availableModels, setAvailableModels] = useState<{id: string; displayName: string}[]>([]);
     const customInstructionsLength = useMemo(() => codePointLength(draft.customInstructions), [draft.customInstructions]);
@@ -98,7 +103,7 @@ const ConfigTab = (props: Props) => {
                 ...(sameServiceType ?
                     {} :
                     {
-                        enabledNativeTools: ['web_search'],
+                        enabledNativeTools: providerWebSearchLicensed ? ['web_search'] : [],
                         reasoningEnabled: true,
                         reasoningEffort: 'medium',
                         thinkingBudget: 0,
@@ -106,7 +111,7 @@ const ConfigTab = (props: Props) => {
             });
         }
         prevServiceIdRef.current = draft.serviceId;
-    }, [draft.serviceId, onChange, services]);
+    }, [draft.serviceId, onChange, services, providerWebSearchLicensed]);
 
     const selectedService = services.find((s) => s.id === draft.serviceId);
 
@@ -292,10 +297,17 @@ const ConfigTab = (props: Props) => {
                     value={draft.serviceId}
                     onChange={(e) => onChange({serviceId: e.target.value})}
                     error={errors.serviceId}
-                    helptext={intl.formatMessage({
-                        defaultMessage:
-                            'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
-                    })}
+                    helptext={
+                        serviceLimit !== null && services.length > 1 ?
+                            intl.formatMessage(
+                                {defaultMessage: 'Only the first configured service is active on your current plan. Additional services are available on {plan} plans and above.'},
+                                {plan: levelName(LicenseLevel.Enterprise)},
+                            ) :
+                            intl.formatMessage({
+                                defaultMessage:
+                                    'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
+                            })
+                    }
                 >
                     <SelectionItemOption value=''>
                         {intl.formatMessage({defaultMessage: 'Select a service'})}
@@ -308,10 +320,11 @@ const ConfigTab = (props: Props) => {
                             {intl.formatMessage({defaultMessage: 'Unknown service (deleted)'})}
                         </SelectionItemOption>
                     )}
-                    {services.map((svc) => (
+                    {services.map((svc, index) => (
                         <SelectionItemOption
                             key={svc.id}
                             value={svc.id}
+                            disabled={serviceLimit !== null && index >= serviceLimit}
                         >
                             {svc.name || svc.type}
                         </SelectionItemOption>

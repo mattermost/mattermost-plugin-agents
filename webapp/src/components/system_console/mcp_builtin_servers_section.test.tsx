@@ -31,6 +31,10 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('../../utils/access_control', () => ({
+    useABACSupport: jest.fn(() => ({supported: true, loading: false})),
+}));
+
 jest.mock('../access_control/console_policy_section', () => ({
     __esModule: true,
     default: ({resourceId}: {resourceId: string}) => (
@@ -98,5 +102,24 @@ describe('BuiltInPluginServersSection', () => {
         );
 
         expect(screen.queryByTestId('console-policy-section')).toBeNull();
+    });
+
+    it.each([
+        {supported: true, shown: true},
+        {supported: false, shown: false},
+    ])('shows the built-in access warning only where ABAC is available (supported=$supported)', ({supported, shown}) => {
+        const {useABACSupport} = jest.requireMock('../../utils/access_control') as {useABACSupport: jest.Mock};
+        useABACSupport.mockReturnValue({supported, loading: false});
+        render(
+            <IntlProvider locale='en'>
+                <BuiltInPluginServersSection
+                    embeddedServerId={EMBEDDED_ID}
+                    pluginServers={[]}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.queryByText(/Denying access to the built-in Mattermost server/) !== null).toBe(shown);
+        useABACSupport.mockReturnValue({supported: true, loading: false});
     });
 });

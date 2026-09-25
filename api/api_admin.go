@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -621,6 +622,7 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 		if mergedIdx >= 0 {
 			base = mcp.ApplyPersistedPluginServerFields(base, merged[mergedIdx])
 		}
+		before := base
 		if req.Enabled != nil {
 			base.Enabled = *req.Enabled
 		}
@@ -636,8 +638,20 @@ func (a *API) handleUpdatePluginServer(c *gin.Context) {
 			merged = append(merged, base)
 		}
 		cfg.MCP.PluginServers = merged
+
+		// Gate only what this request changes on the entry, measured from
+		// the entry as it stood (live registration plus persisted fields).
+		gateFrom := config.Config{MCP: config.MCPConfig{PluginServers: []mcp.PluginServerConfig{before}}}
+		gateTo := config.Config{MCP: config.MCPConfig{PluginServers: []mcp.PluginServerConfig{base}}}
+		if err := config.ValidateLicenseTransition(&gateFrom, gateTo, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
+			return config.Config{}, err
+		}
 		return *cfg, nil
 	})
+	if errors.Is(err, enterprise.ErrNotLicensed) {
+		abortNotLicensed(c, err)
+		return
+	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save plugin-server config: %w", err))
 		return

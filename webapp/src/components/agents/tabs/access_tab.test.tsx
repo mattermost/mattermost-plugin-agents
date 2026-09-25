@@ -23,6 +23,11 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('@/client', () => ({
     getProfilesByIds: jest.fn().mockResolvedValue([]),
     getTeamsByIds: jest.fn().mockResolvedValue([]),
@@ -30,6 +35,12 @@ jest.mock('@/client', () => ({
     searchTeams: jest.fn().mockResolvedValue([]),
     getProfilePictureUrl: jest.fn().mockReturnValue(''),
     getTeamIconUrl: jest.fn().mockReturnValue(''),
+}));
+
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Professional'),
+    requiredLevelFor: jest.fn(() => 1),
 }));
 
 jest.mock('@/components/select', () => ({
@@ -149,6 +160,11 @@ function findAttributeBasedRadio(): HTMLInputElement | undefined {
 }
 
 describe('AccessTab', () => {
+    beforeEach(() => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
     test('disables channel access, user access, and agent admins when service-account fields are locked', () => {
         renderTab({serviceAccountFieldsLocked: true});
 
@@ -188,6 +204,62 @@ describe('AccessTab', () => {
     test('shows the attribute-based option when ABAC is supported', () => {
         renderTab();
         expect(findAttributeBasedRadio()).toBeDefined();
+    });
+
+    test('hides the attribute-based option below Enterprise Advanced unless it is already selected', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'attribute_based_access');
+
+        renderTab();
+        expect(findAttributeBasedRadio()).toBeUndefined();
+
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    test('keeps the attribute-based option when it is the current value without a license', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'attribute_based_access');
+
+        renderTab({
+            agentId: 'agentid',
+            draft: {userAccessLevel: UserAccessLevel.AttributeBased},
+        });
+
+        expect(findAttributeBasedRadio()).toBeDefined();
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    test('disables restrictive access options below Professional unless they are the current value', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability === 'attribute_based_access');
+
+        renderTab();
+
+        const userRadios = within(formRowForLabel('User access')).getAllByRole('radio').
+            map((radio) => radio as HTMLInputElement);
+        const allRadio = userRadios.find((radio) => radio.value === String(UserAccessLevel.All));
+        const allowRadio = userRadios.find((radio) => radio.value === String(UserAccessLevel.Allow));
+        const blockRadio = userRadios.find((radio) => radio.value === String(UserAccessLevel.Block));
+        expect(allRadio?.disabled).toBe(false);
+        expect(allowRadio?.disabled).toBe(true);
+        expect(blockRadio?.disabled).toBe(true);
+        expect(screen.getAllByText('Professional').length).toBeGreaterThan(0);
+    });
+
+    test('keeps the current restrictive access option enabled below Professional so it can be reset', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability === 'attribute_based_access');
+
+        renderTab({draft: {userAccessLevel: UserAccessLevel.Allow}});
+
+        const allowRadio = within(formRowForLabel('User access')).getAllByRole('radio').
+            map((radio) => radio as HTMLInputElement).
+            find((radio) => radio.value === String(UserAccessLevel.Allow));
+        expect(allowRadio?.disabled).toBe(false);
+
+        // The existing list stays editable so entries can be removed.
+        const userPicker = within(formRowForLabel('User access')).getByRole('combobox') as HTMLInputElement;
+        expect(userPicker.disabled).toBe(false);
     });
 
     test('keeps the option visible for an already attribute-based agent on a downgraded server, with a warning', () => {

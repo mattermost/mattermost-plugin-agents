@@ -32,7 +32,6 @@ func TestEmbeddedServer_InvalidSession(t *testing.T) {
 		user.Id,
 		"invalid-session-id",
 		tokenResolver,
-		nil,
 	)
 
 	// Should fail during session validation
@@ -62,7 +61,6 @@ func TestEmbeddedServer_MissingSessionToken(t *testing.T) {
 		user.Id,
 		session.Id,
 		tokenResolver,
-		nil,
 	)
 	require.Error(t, err, "Connection creation should fail with empty token")
 	assert.Contains(t, err.Error(), "invalid session token", "Error should mention invalid session")
@@ -165,7 +163,6 @@ func TestEmbeddedServer_TokenResolverCalledAsNeeded(t *testing.T) {
 		user.Id,
 		session.Id,
 		tokenResolver,
-		nil,
 	)
 	require.NoError(t, err)
 

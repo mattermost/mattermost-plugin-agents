@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -99,6 +101,7 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
 	}
 
 	adminRouter := router.Group("/admin")

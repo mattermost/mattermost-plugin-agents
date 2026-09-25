@@ -90,6 +90,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
+                e.preventDefault();
                 if (!pendingRef.current) {
                     onCancelRef.current();
                 }
@@ -116,8 +117,9 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             }
         };
 
-        document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
+        // Capture phase so the dialog claims Escape before page-level document listeners registered earlier.
+        document.addEventListener('keydown', onKeyDown, true);
+        return () => document.removeEventListener('keydown', onKeyDown, true);
     }, [managedAccessibility, dialogMounted]);
 
     useEffect(() => {

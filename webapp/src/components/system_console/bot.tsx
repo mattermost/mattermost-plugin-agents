@@ -13,12 +13,14 @@ import {DangerPill} from '../pill';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import {LicenseChip} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -144,6 +146,7 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
 
     const availableNativeTools = nativeToolOptions(provider, intl);
 
@@ -166,20 +169,25 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                 {titleMessage}
             </ItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                disabled={props.disabled}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <NativeToolField key={tool.id}>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && <LicenseChip capability='provider_web_search'/>}
+                            </FieldControlRow>
+                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                        </NativeToolField>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );

@@ -50,7 +50,7 @@ const (
 // getBookmarkTools returns the channel bookmark tools.
 func (p *MattermostToolProvider) getBookmarkTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "list_channel_bookmarks", listChannelBookmarksDescription, p.toolListChannelBookmarks),
+		mcpReadTool(p, "list_channel_bookmarks", listChannelBookmarksDescription, p.toolListChannelBookmarks),
 		mcpTool(p, "create_channel_bookmark", createChannelBookmarkDescription, p.toolCreateChannelBookmark),
 		mcpTool(p, "update_channel_bookmark", updateChannelBookmarkDescription, p.toolUpdateChannelBookmark),
 		mcpTool(p, "delete_channel_bookmark", deleteChannelBookmarkDescription, p.toolDeleteChannelBookmark),

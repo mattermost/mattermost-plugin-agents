@@ -206,7 +206,7 @@ const sourceLabels: Record<CompositionSource, {id: string; defaultMessage: strin
     image: {id: 'context.source.image', defaultMessage: 'Image'},
 };
 
-const IndicatorButton = styled(DotMenuButton)<{isActive: boolean}>`
+const IndicatorButton = styled(DotMenuButton)<{$isActive: boolean}>`
     display: flex;
     align-items: center;
     padding: 2px 6px;
@@ -216,7 +216,7 @@ const IndicatorButton = styled(DotMenuButton)<{isActive: boolean}>`
     font-size: 11px;
     font-weight: 600;
     line-height: 16px;
-    background-color: ${(props) => (props.isActive ? 'rgba(var(--center-channel-color-rgb), 0.16)' : 'transparent')};
+    background-color: ${(props) => (props.$isActive ? 'rgba(var(--center-channel-color-rgb), 0.16)' : 'transparent')};
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.08);
