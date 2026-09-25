@@ -150,29 +150,31 @@ func createAgentBody(overrides map[string]any) map[string]any {
 // included so the request satisfies the full-replacement contract.
 func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map[string]any {
 	body := map[string]any{
-		"displayName":             cfg.DisplayName,
-		"username":                cfg.Name,
-		"serviceID":               cfg.ServiceID,
-		"customInstructions":      cfg.CustomInstructions,
-		"channelAccessLevel":      int(cfg.ChannelAccessLevel),
-		"channelIDs":              cfg.ChannelIDs,
-		"userAccessLevel":         int(cfg.UserAccessLevel),
-		"userIDs":                 cfg.UserIDs,
-		"teamIDs":                 cfg.TeamIDs,
-		"adminUserIDs":            cfg.AdminUserIDs,
-		"enabledMCPTools":         cfg.EnabledMCPTools,
-		"autoEnableNewMCPTools":   cfg.AutoEnableNewMCPTools,
-		"mcpDynamicToolLoading":   cfg.MCPDynamicToolLoading,
-		"useServiceAccountAuth":   cfg.UseServiceAccountAuth,
-		"model":                   cfg.Model,
-		"enableVision":            cfg.EnableVision,
-		"disableTools":            cfg.DisableTools,
-		"enabledNativeTools":      cfg.EnabledNativeTools,
-		"reasoningEnabled":        cfg.ReasoningEnabled,
-		"reasoningEffort":         cfg.ReasoningEffort,
-		"thinkingBudget":          cfg.ThinkingBudget,
-		"structuredOutputEnabled": cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated but still accepted on the wire
-		"maxToolTurns":            cfg.MaxToolTurns,
+		"displayName":                    cfg.DisplayName,
+		"username":                       cfg.Name,
+		"serviceID":                      cfg.ServiceID,
+		"customInstructions":             cfg.CustomInstructions,
+		"channelAccessLevel":             int(cfg.ChannelAccessLevel),
+		"channelIDs":                     cfg.ChannelIDs,
+		"userAccessLevel":                int(cfg.UserAccessLevel),
+		"userIDs":                        cfg.UserIDs,
+		"teamIDs":                        cfg.TeamIDs,
+		"adminUserIDs":                   cfg.AdminUserIDs,
+		"enabledMCPTools":                cfg.EnabledMCPTools,
+		"autoEnableNewMCPTools":          cfg.AutoEnableNewMCPTools,
+		"mcpDynamicToolLoading":          cfg.MCPDynamicToolLoading,
+		"useServiceAccountAuth":          cfg.UseServiceAccountAuth,
+		"model":                          cfg.Model,
+		"enableVision":                   cfg.EnableVision,
+		"disableTools":                   cfg.DisableTools,
+		"enabledNativeTools":             cfg.EnabledNativeTools,
+		"reasoningEnabled":               cfg.ReasoningEnabled,
+		"reasoningEffort":                cfg.ReasoningEffort,
+		"thinkingBudget":                 cfg.ThinkingBudget,
+		"structuredOutputEnabled":        cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated but still accepted on the wire
+		"maxToolTurns":                   cfg.MaxToolTurns,
+		"experimentalBypassToolApproval": cfg.ExperimentalBypassToolApproval,
+		"experimentalUseBotPermissions":  cfg.ExperimentalUseBotPermissions,
 	}
 	maps.Copy(body, overrides)
 	return body
@@ -958,6 +960,104 @@ func TestAgentServiceAccountAuthRequiresSystemAdmin(t *testing.T) {
 					assert.Equal(t, modelName, e.agentStore.agents["agent-1"].Model)
 				}
 			}
+		})
+	}
+}
+
+// The experimental service account settings are only stored while service
+// account auth is on, and changing them while it stays on is admin-only.
+func TestAgentExperimentalServiceAccountSettings(t *testing.T) {
+	bothOn := map[string]any{
+		"experimentalBypassToolApproval": true,
+		"experimentalUseBotPermissions":  true,
+	}
+	tests := []struct {
+		name           string
+		systemAdmin    bool
+		stored         llm.BotConfig
+		overrides      map[string]any
+		expectedStatus int
+		expectEnabled  bool
+	}{
+		{
+			name:           "admin can enable both settings with service account auth on",
+			systemAdmin:    true,
+			stored:         llm.BotConfig{UseServiceAccountAuth: true},
+			overrides:      bothOn,
+			expectedStatus: http.StatusOK,
+			expectEnabled:  true,
+		},
+		{
+			name:           "settings are dropped when service account auth is off",
+			systemAdmin:    true,
+			stored:         llm.BotConfig{},
+			overrides:      bothOn,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "non-admin cannot enable settings on a service account agent",
+			stored:         llm.BotConfig{UseServiceAccountAuth: true},
+			overrides:      bothOn,
+			expectedStatus: http.StatusForbidden,
+		},
+		{
+			name:           "non-admin cannot pre-arm settings on a normal agent",
+			stored:         llm.BotConfig{},
+			overrides:      bothOn,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name: "non-admin keeps enabled settings while editing another field",
+			stored: llm.BotConfig{
+				UseServiceAccountAuth:          true,
+				ExperimentalBypassToolApproval: true,
+				ExperimentalUseBotPermissions:  true,
+			},
+			overrides:      map[string]any{"customInstructions": "manager update"},
+			expectedStatus: http.StatusOK,
+			expectEnabled:  true,
+		},
+		{
+			name: "turning service account auth off clears the settings",
+			stored: llm.BotConfig{
+				UseServiceAccountAuth:          true,
+				ExperimentalBypassToolApproval: true,
+				ExperimentalUseBotPermissions:  true,
+			},
+			overrides:      map[string]any{"useServiceAccountAuth": false},
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tc.systemAdmin).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			e.mockAPI.On("PatchBot", "bot-1", mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
+
+			stored := tc.stored
+			stored.ID, stored.CreatorID, stored.BotUserID = "agent-1", testUserID, "bot-1"
+			stored.DisplayName, stored.Name, stored.ServiceID = "Original", "original", "svc-1"
+			e.agentStore.agents["agent-1"] = &stored
+			storedBefore := stored
+
+			body := updateAgentBodyFromStored(&stored, tc.overrides)
+			recorder := doRequest(e.api, http.MethodPut, "/agents/agent-1", body, testUserID)
+			require.Equal(t, tc.expectedStatus, recorder.Result().StatusCode)
+
+			got := e.agentStore.agents["agent-1"]
+			if tc.expectedStatus != http.StatusOK {
+				assert.Equal(t, storedBefore.ExperimentalBypassToolApproval, got.ExperimentalBypassToolApproval)
+				assert.Equal(t, storedBefore.ExperimentalUseBotPermissions, got.ExperimentalUseBotPermissions)
+				return
+			}
+			assert.Equal(t, tc.expectEnabled, got.ExperimentalBypassToolApproval)
+			assert.Equal(t, tc.expectEnabled, got.ExperimentalUseBotPermissions)
 		})
 	}
 }

@@ -286,6 +286,7 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	// Create a tool store that requires user approval for tool calls
 	store := llm.NewToolStore()
 	botCfg := bot.GetConfig()
+	c.ToolApprovalBypassed = useServiceAccount && botCfg.ExperimentalBypassToolApproval
 
 	// Add built-in tools (always add for LLM awareness; execution controlled via WithToolsDisabled)
 	store.AddTools(b.toolProvider.GetTools(bot, c))
@@ -308,6 +309,9 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		if useServiceAccount {
 			c.ToolAuthMode = llm.ToolAuthModeServiceAccount
 			req = mcp.ServiceAccountCatalogRequest(bot.BotUserID(), userID)
+			if botCfg.ExperimentalUseBotPermissions {
+				req.LocalActorID = bot.BotUserID()
+			}
 		}
 
 		// Resolve server-level eligibility before connecting. The per-tool
