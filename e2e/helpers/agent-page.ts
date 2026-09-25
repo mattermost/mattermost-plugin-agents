@@ -33,7 +33,8 @@ export class AgentPageHelper {
         await this.page.waitForLoadState('domcontentloaded');
         // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
         // (e.g. users without manage permission might differ in future).
-        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
+        // The product header also renders an sr-only "Agents" heading; wait for the listing title.
+        await this.page.locator('h1:not(.sr-only)').filter({hasText: /^Agents$/}).waitFor({state: 'visible', timeout: 15000});
         await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
         await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
     }
