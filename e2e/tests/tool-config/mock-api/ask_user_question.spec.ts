@@ -1,5 +1,6 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
+import { expandToolActivity } from 'helpers/llmbot-post';
 import { MattermostPage } from 'helpers/mm';
 import {
     OpenAIMockContainer,
@@ -116,7 +117,10 @@ test.describe('AskUserQuestion with malformed arguments (Mocked LLM)', () => {
         await botPost.getByText(firstOption, { exact: true }).click();
         await botPost.getByRole('button', { name: /^accept$/i }).click();
 
-        await expect(botPost.getByText('Answered', { exact: true })).toBeVisible({ timeout: 30000 });
         await expect(rhs.getByText(followUpText, { exact: false })).toBeVisible({ timeout: 30000 });
+
+        // Once answered, the question folds into the post's activity area.
+        const activityRounds = await expandToolActivity(botPost);
+        await expect(activityRounds.getByText('Answered', { exact: true })).toBeVisible({ timeout: 30000 });
     });
 });
