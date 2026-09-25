@@ -104,6 +104,41 @@ func TestHTTPFileContentService_GetContent(t *testing.T) {
 			},
 		},
 		{
+			name: "session token resolver is forwarded as bearer when AuthToken is absent",
+			serverHandler: func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(httpFileContentResponse{HasText: true})
+			},
+			ctxSetup: func(ctx context.Context) context.Context {
+				ctx = auth.WithSessionID(ctx, "sess-1")
+				ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(func(sid string) (string, error) {
+					assert.Equal(t, "sess-1", sid)
+					return "resolved-session-token", nil
+				}))
+				return ctx
+			},
+			validateReq: func(t *testing.T, r *http.Request) {
+				assert.Equal(t, "Bearer resolved-session-token", r.Header.Get("Authorization"))
+			},
+		},
+		{
+			name: "direct auth token wins over session resolver",
+			serverHandler: func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(httpFileContentResponse{HasText: true})
+			},
+			ctxSetup: func(ctx context.Context) context.Context {
+				ctx = context.WithValue(ctx, auth.AuthTokenContextKey, "direct-token")
+				ctx = auth.WithSessionID(ctx, "sess-1")
+				ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(func(string) (string, error) {
+					t.Fatal("resolver must not run when a direct auth token is present")
+					return "", nil
+				}))
+				return ctx
+			},
+			validateReq: func(t *testing.T, r *http.Request) {
+				assert.Equal(t, "Bearer direct-token", r.Header.Get("Authorization"))
+			},
+		},
+		{
 			name: "user id header falls back to the param when context lacks it",
 			serverHandler: func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.NewEncoder(w).Encode(httpFileContentResponse{HasText: true})

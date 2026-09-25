@@ -29,6 +29,7 @@ type fakeMMClient struct {
 	channels             map[string]*model.Channel
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
+	fileInfos            map[string]*model.FileInfo
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -203,7 +204,16 @@ func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission)
 	return true
 }
 
-func (c *fakeMMClient) GetFileInfo(string) (*model.FileInfo, error) {
+func (c *fakeMMClient) HasPermissionToFileAction(sessionID, _, _ string) bool {
+	return sessionID != ""
+}
+
+func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
+	if c.fileInfos != nil {
+		if info, ok := c.fileInfos[fileID]; ok {
+			return info, nil
+		}
+	}
 	return nil, errors.New("not implemented")
 }
 

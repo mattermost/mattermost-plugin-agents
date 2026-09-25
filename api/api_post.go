@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/react"
@@ -205,8 +206,12 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -225,7 +230,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		if err.Error() == "not a calls or zoom bot post" {
 			c.AbortWithError(http.StatusBadRequest, errors.New("not a calls or zoom bot post"))
@@ -292,6 +297,10 @@ func (a *API) handleRegenerate(c *gin.Context) {
 
 	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
 	}
@@ -453,7 +462,11 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+	detachedCtx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	if err := a.conversationsService.HandleLoopInAgent(detachedCtx, userID, bot, post, channel); err != nil {
 		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}

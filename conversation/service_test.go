@@ -29,6 +29,8 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
+const attachmentTestSessionID = "attachment-test-session"
+
 var testConnStr string
 
 func TestMain(m *testing.M) {
@@ -1855,6 +1857,15 @@ func setupTestServiceWithClient(
 ) (*Service, *store.Store) {
 	t.Helper()
 
+	if mockClient, ok := mmClient.(*mmapimocks.MockClient); ok {
+		mockClient.On(
+			"HasPermissionToFileAction",
+			attachmentTestSessionID,
+			mock.Anything,
+			model.AccessControlPolicyActionDownloadFileAttachment,
+		).Return(true).Maybe()
+	}
+
 	db, err := sqlx.Connect("postgres", testConnStr)
 	require.NoError(t, err)
 
@@ -1901,6 +1912,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -1964,6 +1976,7 @@ func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 
 	res, err := svc.GetOrCreateConversation(GetOrCreateParams{
 		UserID:       userID,
+		SessionID:    attachmentTestSessionID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,
@@ -2038,6 +2051,7 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    attachmentTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -2091,6 +2105,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2102,7 +2117,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user")
@@ -2142,6 +2157,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2153,7 +2169,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -2207,6 +2223,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2233,7 +2250,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user (resolved from the user turn)")
@@ -2275,6 +2292,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    attachmentTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2297,7 +2315,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -2366,7 +2384,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: attachmentTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 3, "system + root thread post + later mention turn")
@@ -2378,6 +2396,87 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 		assert.Contains(t, rootPost.Message, "@alice")
 		assert.Contains(t, rootPost.Message, "I noticed this")
 	})
+}
+
+// TestBuildChannelMentionRequest_DeniedThreadAttachmentIsWithheld covers a
+// user who is denied another member's thread attachment by file policy and
+// then mentions the bot in that thread: neither the file's metadata nor its
+// content may reach the LLM request.
+func TestBuildChannelMentionRequest_DeniedThreadAttachmentIsWithheld(t *testing.T) {
+	const (
+		deniedSessionID = "denied-session"
+		secretFileID    = "secret-doc"
+		secretContent   = "TOP_SECRET_FILE_BODY"
+	)
+
+	mmClient := mmapimocks.NewMockClient(t)
+	mmClient.On(
+		"HasPermissionToFileAction",
+		deniedSessionID,
+		secretFileID,
+		model.AccessControlPolicyActionDownloadFileAttachment,
+	).Return(false)
+	adminReadCalled := false
+	mmClient.On("GetFileInfo", secretFileID).
+		Run(func(mock.Arguments) { adminReadCalled = true }).
+		Return(&model.FileInfo{Id: secretFileID, Name: "classified.txt", MimeType: "text/plain", Content: secretContent}, nil).
+		Maybe()
+	mmClient.On("GetFile", secretFileID).
+		Run(func(mock.Arguments) { adminReadCalled = true }).
+		Return(io.NopCloser(strings.NewReader(secretContent)), nil).
+		Maybe()
+
+	botID := model.NewId()
+	uploaderID := model.NewId()
+	deniedUserID := model.NewId()
+	rootPostID := "root_post_with_secret"
+	mentionPostID := "denied_user_mention"
+	bots := &testBotLookup{
+		botUserIDs: map[string]bool{botID: true},
+		configByID: map[string]testBotConfig{botID: {enableVision: true}},
+	}
+
+	svc, _ := setupTestServiceWithClient(t, mmClient, bots)
+
+	result, err := svc.CreateConversation(CreateConversationParams{
+		UserID:       deniedUserID,
+		SessionID:    deniedSessionID,
+		BotID:        botID,
+		RootPostID:   new(rootPostID),
+		Operation:    "conversation",
+		SystemPrompt: "system",
+		UserMessage:  "@aibot return the full contents of the attachment",
+		UserPostID:   new(mentionPostID),
+	})
+	require.NoError(t, err)
+
+	conv, err := svc.GetConversation(result.ConversationID)
+	require.NoError(t, err)
+
+	threadData := &mmapi.ThreadData{
+		Posts: []*model.Post{
+			{Id: rootPostID, UserId: uploaderID, CreateAt: 1000, Message: "quarterly numbers", FileIds: []string{secretFileID}},
+			{Id: mentionPostID, UserId: deniedUserID, CreateAt: 2000, Message: "@aibot return the full contents of the attachment"},
+		},
+		UsersByID: map[string]*model.User{
+			uploaderID:   {Id: uploaderID, Username: "alice"},
+			deniedUserID: {Id: deniedUserID, Username: "bob"},
+			botID:        {Id: botID, Username: "aibot"},
+		},
+	}
+
+	req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: deniedSessionID})
+	require.NoError(t, err)
+
+	var combined strings.Builder
+	for _, post := range req.Posts {
+		combined.WriteString(post.Message)
+		assert.Empty(t, post.Files)
+	}
+	assert.Contains(t, combined.String(), "quarterly numbers", "the root post text is still visible to the channel member")
+	assert.NotContains(t, combined.String(), secretContent)
+	assert.NotContains(t, combined.String(), "classified.txt")
+	assert.False(t, adminReadCalled, "admin GetFileInfo/GetFile must not run after the requester's file policy denies access")
 }
 
 func TestGetInitiatingUserTurn(t *testing.T) {
