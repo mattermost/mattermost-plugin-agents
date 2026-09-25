@@ -437,6 +437,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/mcp/tools/cache/clear", a.handleClearMCPToolsCache)
 	adminRouter.PUT("/mcp/plugin-servers/:pluginID", a.handleUpdatePluginServer)
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
+	adminRouter.POST("/services/test", a.handleTestService)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
 	// Service / MCP-server access policy authoring: system admins only. The
@@ -749,4 +750,93 @@ func (a *API) handleFetchModels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, models)
+}
+
+// testServiceTimeout bounds a single connection test so a hung or very slow
+// provider cannot hold the admin's request open indefinitely.
+const testServiceTimeout = 30 * time.Second
+
+type TestServiceRequest struct {
+	Service llm.ServiceConfig `json:"service"`
+}
+
+// TestServiceResponse reports whether the probe reached the provider. A
+// provider that answers "your key is wrong" is a successful test run with a
+// negative result, so it is reported as OK=false on a 200 rather than as an
+// HTTP error: the admin needs the provider's own message, and the webapp's
+// error path discards response bodies for non-2xx replies.
+type TestServiceResponse struct {
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// handleTestService probes an LLM service with a minimal completion and reports
+// whether it answered. The service config arrives in the request body rather
+// than being read from stored config so that admins can test credentials they
+// have typed but not yet saved.
+func (a *API) handleTestService(c *gin.Context) {
+	var req TestServiceRequest
+	if err := c.BindJSON(&req); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	if req.Service.Type == "" {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("service type is required"))
+		return
+	}
+
+	// The load-test mock answers from a local profile and contacts no provider,
+	// so there is no connection to report on. It is a valid stored service
+	// (bots.ServiceCanServeCompletions accepts it), hence a result rather than
+	// a request error.
+	if req.Service.Type == llm.ServiceTypeLoadTestMock {
+		c.JSON(http.StatusOK, TestServiceResponse{
+			OK:    false,
+			Error: "The load-test mock does not contact a provider, so there is nothing to test.",
+		})
+		return
+	}
+
+	if !bifrost.IsSupported(req.Service.Type) {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("unsupported service type: %s", req.Service.Type))
+		return
+	}
+
+	// Testing a service runs without an agent in front of it, so nothing can
+	// supply a model override; without a default model the provider would fail
+	// with a message that does not name the real problem. Same reasoning as
+	// bots.ServiceCanServeCompletions.
+	if req.Service.DefaultModel == "" {
+		c.JSON(http.StatusOK, TestServiceResponse{
+			OK:    false,
+			Error: "This service has no default model set, so no request can be sent to the provider.",
+		})
+		return
+	}
+
+	// Test this service alone. Fallbacks are deliberately not attached: a
+	// healthy fallback answering for a broken primary is the opposite of what
+	// the admin is asking about. The client is built here and discarded rather
+	// than taken from the service LLM registry, because publishing a probe's
+	// client there would evict the live entry other requests are using.
+	model, err := bifrost.NewFromServiceConfig(req.Service, llm.BotConfig{}, nil)
+	if err != nil {
+		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: err.Error()})
+		return
+	}
+	defer model.Shutdown()
+
+	ctx, cancel := context.WithTimeout(c.Request.Context(), testServiceTimeout)
+	defer cancel()
+
+	_, err = model.ChatCompletionNoStream(ctx, llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "Reply with OK."}},
+	}, llm.WithMaxGeneratedTokens(1))
+	if err != nil {
+		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, TestServiceResponse{OK: true})
 }

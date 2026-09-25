@@ -1,18 +1,19 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
+import {getPluginConfig, getAIBots, savePluginConfig, testService} from '@/client';
 import {useIsLicensedFor} from '@/license';
 
 import {Pill} from '../pill';
 
 import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
-import {LLMService} from './service';
+import {LLMService, serviceTypeToDisplayName} from './service';
+import {connectionFingerprint, servicesNeedingConnectionTest} from './service_connection';
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 import NoServicesPage from './no_services_page';
@@ -57,6 +58,30 @@ const MessageContainer = styled.div`
 	border-radius: 4px;
 	border: 1px solid rgba(63, 67, 80, 0.08);
 `;
+
+const ConnectionFailureContainer = styled.div`
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 10px 12px;
+	margin-bottom: 16px;
+	border-radius: 4px;
+	border: 1px solid var(--dnd-indicator, #D24B4E);
+	background: rgba(210, 75, 78, 0.08);
+	font-size: 12px;
+`;
+
+const ConnectionFailureDetail = styled.div`
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+`;
+
+type ConnectionFailure = {
+    // key disambiguates two services that render the same display name.
+    key: string;
+    name: string;
+    error: string;
+}
 
 const ConfigContainer = styled.div`
 	display: flex;
@@ -194,9 +219,17 @@ const Config = (props: Props) => {
     const [loadError, setLoadError] = useState<string | null>(null);
     const [runtimeBots, setRuntimeBots] = useState<RuntimeBotOption[]>([]);
     const [runtimeBotsError, setRuntimeBotsError] = useState<string | null>(null);
+    const [connectionFailures, setConnectionFailures] = useState<ConnectionFailure[]>([]);
     const intl = useIntl();
     const tokenAccountingLicensed = useIsLicensedFor('token_accounting');
     const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
+
+    // Fingerprints of the service configurations already on the server, so a
+    // save only probes what the admin actually changed. Seeded from the loaded
+    // config: stored services are treated as unchanged rather than as known
+    // good, so an untouched service does not block an unrelated save. The
+    // per-service Test connection button covers checking those on demand.
+    const connectionBaseline = useRef<Record<string, string>>({});
 
     // Load config from plugin API on mount
     useEffect(() => {
@@ -204,6 +237,11 @@ const Config = (props: Props) => {
             try {
                 const cfg = await getPluginConfig();
                 setLocalConfig({...defaultConfig, ...cfg});
+                for (const service of cfg.services ?? []) {
+                    if (service.id) {
+                        connectionBaseline.current[service.id] = connectionFingerprint(service);
+                    }
+                }
                 setLoadError(null);
             } catch (e: any) {
                 setLoadError(intl.formatMessage({defaultMessage: 'Failed to load configuration.'}));
@@ -233,17 +271,67 @@ const Config = (props: Props) => {
     // Register save action that PUTs config to plugin API
     useEffect(() => {
         const save = async () => {
+            let saved;
             try {
-                const saved = await savePluginConfig(localConfig);
-
-                // Adopt the normalized saved config so server-minted
-                // service/MCP IDs (and the UI gated on them) appear
-                // immediately instead of after a page reload.
-                setLocalConfig({...defaultConfig, ...saved});
-                return {};
+                saved = await savePluginConfig(localConfig);
             } catch (e: any) {
                 return {error: {message: intl.formatMessage({defaultMessage: 'Failed to save configuration.'})}};
             }
+
+            // Adopt the normalized saved config so server-minted
+            // service/MCP IDs (and the UI gated on them) appear
+            // immediately instead of after a page reload.
+            setLocalConfig({...defaultConfig, ...saved});
+
+            // The configuration is already stored by this point. The probes
+            // below report on it rather than gate it, so a provider being down
+            // never costs the admin the edits they just made.
+            const toTest = servicesNeedingConnectionTest(saved.services ?? [], connectionBaseline.current);
+            if (toTest.length === 0) {
+                setConnectionFailures([]);
+                return {};
+            }
+
+            const results = await Promise.all(toTest.map(async (service) => {
+                try {
+                    const result = await testService(service);
+                    return {service, ok: result.ok, error: result.error ?? ''};
+                } catch {
+                    return {
+                        service,
+                        ok: false,
+                        error: intl.formatMessage({defaultMessage: 'Could not reach the server to run the test.'}),
+                    };
+                }
+            }));
+
+            for (const result of results) {
+                if (!result.service.id) {
+                    continue;
+                }
+                if (result.ok) {
+                    connectionBaseline.current[result.service.id] = connectionFingerprint(result.service);
+                } else {
+                    delete connectionBaseline.current[result.service.id];
+                }
+            }
+
+            const failures = results.filter((result) => !result.ok).map((result, index) => ({
+                key: result.service.id || `unsaved-${index}`,
+                name: result.service.name || serviceTypeToDisplayName(intl, result.service.type),
+                error: result.error || intl.formatMessage({defaultMessage: 'The provider did not accept the request.'}),
+            }));
+            setConnectionFailures(failures);
+
+            if (failures.length > 0) {
+                // Returning an error is what holds the page open: the admin
+                // console only clears its unsaved state when every registered
+                // save action succeeds. The message itself is not rendered
+                // there — the console consumes only the presence of an error —
+                // so the detail is shown in the panel instead.
+                return {error: {message: intl.formatMessage({defaultMessage: 'One or more services failed their connection test.'})}};
+            }
+            return {};
         };
         props.registerSaveAction(save);
         return () => {
@@ -305,6 +393,18 @@ const Config = (props: Props) => {
                 title={intl.formatMessage({defaultMessage: 'AI Services'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
             >
+                {connectionFailures.length > 0 && (
+                    <ConnectionFailureContainer data-testid='service-connection-failures'>
+                        <strong>
+                            <FormattedMessage defaultMessage='Saved, but the connection test failed:'/>
+                        </strong>
+                        {connectionFailures.map((failure) => (
+                            <ConnectionFailureDetail key={failure.key}>
+                                {`${failure.name}: ${failure.error}`}
+                            </ConnectionFailureDetail>
+                        ))}
+                    </ConnectionFailureContainer>
+                )}
                 <Services
                     services={value.services ?? []}
                     bots={value.bots ?? []}
