@@ -31,7 +31,6 @@ import {
     deriveApprovalStageForPost,
 } from './turn_content_utils';
 import {deriveActivity, isTerminalToolStatus} from './activity_items';
-import {LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
@@ -624,9 +623,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser);
     const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
+    const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
     const activity = useMemo(
-        () => deriveActivity(renderedRounds, {pendingDecisionRoundId}),
-        [renderedRounds, pendingDecisionRoundId],
+        () => deriveActivity(renderedRounds, {pendingDecisionRoundId, reasoningLoadingRoundId}),
+        [renderedRounds, pendingDecisionRoundId, reasoningLoadingRoundId],
     );
 
     // Answer text that turns out to be narration folds away instead of
@@ -688,18 +688,14 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {showWorking && (
-                <MinimalReasoningContainer>
-                    <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
-                    <span>{precontentMessage}</span>
-                </MinimalReasoningContainer>
-            )}
-            {activity.items.length > 0 && (
+            {(showWorking || activity.items.length > 0) && (
                 <ToolActivityDisplay
                     activity={activity}
                     expanded={activityExpanded}
                     onToggleExpanded={setActivityExpanded}
                     inProgress={isGenerationInProgress || awaitingDecision}
+                    working={isGenerationInProgress || progressPhase !== null}
+                    statusMessage={showWorking ? precontentMessage : undefined} // eslint-disable-line no-undefined
                     renderRound={renderRound}
                 />
             )}
@@ -746,14 +742,6 @@ const AnswerArea = styled.div<{$afterActivity: boolean}>`
     &:not(:empty) {
         margin-top: ${(props) => (props.$afterActivity ? '8px' : '0')};
     }
-`;
-
-const SpinnerWrapper = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
 `;
 
 const PostSummaryHelpMessage = styled.div`

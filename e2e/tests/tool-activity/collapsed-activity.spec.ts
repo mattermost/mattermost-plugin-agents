@@ -138,9 +138,8 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
                         response: {content: failingFinal},
                     },
 
-                    // Reasoning lands on the answer round, so its Thinking row
-                    // sits next to the collapsed activity area rather than
-                    // inside it.
+                    // Reasoning lands on the answer round: its Thinking row
+                    // folds into the activity area while the text stays the answer.
                     {
                         match: {userMessage: reasoningPrompt, hasToolResult: false},
                         response: {
@@ -264,31 +263,27 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
         await expect(activityRounds.getByText(readChannelLabel, {exact: true})).toBeVisible({timeout: 30000});
     });
 
-    test('shows the reasoning row alongside the activity area, each expanding independently', async ({page}) => {
+    test('folds the closing reasoning block into the activity area while its answer stays in the post', async ({page}) => {
         test.setTimeout(180000);
 
         const {botPost, llmBotHelper} = await askAimockBot(page, mattermost.url(), reasoningPrompt);
         await expect(botPost.getByText(reasoningFinal)).toBeVisible({timeout: 120000});
         await expect(page.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
-        // Both collapsed rows coexist on the finished post.
+        // Only the summary row remains above the answer.
         await expectToolActivitySummary(botPost, 1, 'success');
-        await llmBotHelper.expectReasoningLabelVisible(true);
-        await llmBotHelper.expectReasoningExpanded(false);
+        await llmBotHelper.expectReasoningVisible(false);
 
-        // Opening the activity area leaves the reasoning row untouched.
+        // The Thinking row sits in the expanded stack after the tool that preceded it.
         const activityRounds = await expandToolActivity(botPost);
         await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible({timeout: 30000});
         await llmBotHelper.expectReasoningLabelVisible(true);
-
-        // Opening the reasoning row leaves the activity stack open.
         await llmBotHelper.clickReasoningToggle();
         await llmBotHelper.expectReasoningText(reasoningText);
-        await expect(activityRounds.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
 
-        // Collapsing the activity area leaves the reasoning open.
         await collapseToolActivity(botPost);
-        await llmBotHelper.expectReasoningText(reasoningText);
+        await llmBotHelper.expectReasoningVisible(false);
+        await expect(botPost.getByText(reasoningFinal)).toBeVisible();
     });
 
     test('streams the answer into the post body while the row names the finished tool, even when expanded mid-stream', async ({page}) => {

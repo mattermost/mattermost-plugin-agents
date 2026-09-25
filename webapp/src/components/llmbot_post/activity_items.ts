@@ -23,18 +23,28 @@ export interface ActivityServerToolItem {
     serverTool: ServerToolUse;
 }
 
-export type ActivityItem = ActivityToolItem | ActivityServerToolItem;
+/** A reasoning block of a post that also used tools. */
+export interface ActivityReasoningItem {
+    kind: 'reasoning';
+    id: string;
+    status: ToolCallStatus;
+}
+
+export type ActivityItem = ActivityToolItem | ActivityServerToolItem | ActivityReasoningItem;
 
 export interface PostActivity {
 
-    /** Rounds folded into the activity area, ending with the last round that used a tool. */
+    /** Rounds folded into the activity area, ending with the last round that used a tool or reasoned. */
     activityRounds: Round[];
 
     /** Everything after that; its text renders as the post message. */
     answerRounds: Round[];
 
-    /** Every tool invocation in the activity area, in order. */
+    /** Every tool invocation and reasoning block in the activity area, in order. */
     items: ActivityItem[];
+
+    /** Tool invocations only, for the "Used N tools" summary. */
+    toolCount: number;
 
     /** A client tool call can wait on approval after the stream ends; provider tools cannot. */
     hasRunningTool: boolean;
@@ -75,6 +85,10 @@ function usesTools(round: Round): boolean {
     return round.toolCalls.length > 0 || round.serverTools.length > 0;
 }
 
+function hasActivity(round: Round): boolean {
+    return usesTools(round) || round.reasoning.summary !== '';
+}
+
 // Split parts are cached per round so settled rounds keep their identity and
 // the memoized RoundView does not re-render them on every streamed chunk.
 const splitCache = new WeakMap<Round, {activity: Round; answer: Round}>();
@@ -98,13 +112,17 @@ export interface DeriveActivityOptions {
      * stay out of the activity area so the approval card renders in full.
      */
     pendingDecisionRoundId?: string;
+
+    /** The round whose reasoning is still streaming. */
+    reasoningLoadingRoundId?: string;
 }
 
 /**
  * Split a post's rounds into the collapsible activity area and the answer.
- * Text is only folded once a later tool invocation shows it was narration, so
- * the answer streams into the post body as it always did. A post that never
- * used a tool produces no activity.
+ * Text is only folded once a later tool invocation or reasoning block shows
+ * it was narration, so the answer streams into the post body as it always
+ * did. A post that never used a tool produces no activity, so its reasoning
+ * keeps its own row.
  */
 export function deriveActivity(rounds: Round[], options: DeriveActivityOptions = {}): PostActivity {
     const pendingIdx = options.pendingDecisionRoundId === undefined ? // eslint-disable-line no-undefined
@@ -112,34 +130,40 @@ export function deriveActivity(rounds: Round[], options: DeriveActivityOptions =
         rounds.findIndex((round) => round.id === options.pendingDecisionRoundId);
     const searchEnd = pendingIdx === -1 ? rounds.length : pendingIdx;
 
-    let lastToolRoundIdx = -1;
-    for (let i = searchEnd - 1; i >= 0; i--) {
-        if (usesTools(rounds[i])) {
-            lastToolRoundIdx = i;
-            break;
+    let lastActivityRoundIdx = -1;
+    if (rounds.slice(0, searchEnd).some(usesTools)) {
+        for (let i = searchEnd - 1; i >= 0; i--) {
+            if (hasActivity(rounds[i])) {
+                lastActivityRoundIdx = i;
+                break;
+            }
         }
     }
 
-    if (lastToolRoundIdx === -1) {
-        return {activityRounds: [], answerRounds: rounds, items: [], hasRunningTool: false, hasError: false, hasRejected: false};
+    if (lastActivityRoundIdx === -1) {
+        return {activityRounds: [], answerRounds: rounds, items: [], toolCount: 0, hasRunningTool: false, hasError: false, hasRejected: false};
     }
 
-    // A round renders provider tools before its text and client tool calls
-    // after it, so only text that follows provider tools can be the answer.
-    const lastToolRound = rounds[lastToolRoundIdx];
-    const activityRounds = rounds.slice(0, lastToolRoundIdx);
-    const answerRounds = rounds.slice(lastToolRoundIdx + 1);
-    if (lastToolRound.toolCalls.length === 0 && lastToolRound.text !== '') {
-        const {activity, answer} = splitAnswerText(lastToolRound);
+    // A round renders reasoning and provider tools before its text and client
+    // tool calls after it, so only text without client calls can be the answer.
+    const lastActivityRound = rounds[lastActivityRoundIdx];
+    const activityRounds = rounds.slice(0, lastActivityRoundIdx);
+    const answerRounds = rounds.slice(lastActivityRoundIdx + 1);
+    if (lastActivityRound.toolCalls.length === 0 && lastActivityRound.text !== '') {
+        const {activity, answer} = splitAnswerText(lastActivityRound);
         activityRounds.push(activity);
         answerRounds.unshift(answer);
     } else {
-        activityRounds.push(lastToolRound);
+        activityRounds.push(lastActivityRound);
     }
 
-    // Keyed by invocation id, which survives the refetch that replaces live rounds.
+    // Tools are keyed by invocation id, which survives the refetch that replaces live rounds.
     const items: ActivityItem[] = [];
     for (const round of activityRounds) {
+        if (round.reasoning.summary !== '') {
+            const loading = round.id === options.reasoningLoadingRoundId;
+            items.push({kind: 'reasoning', id: `reasoning:${round.id}`, status: loading ? ToolCallStatus.Pending : ToolCallStatus.Success});
+        }
         round.serverTools.forEach((serverTool, idx) => {
             items.push({kind: 'server_tool', id: `server:${serverTool.id || `${round.id}:${idx}`}`, status: serverToolStatus(serverTool), serverTool});
         });
@@ -152,6 +176,7 @@ export function deriveActivity(rounds: Round[], options: DeriveActivityOptions =
         activityRounds,
         answerRounds,
         items,
+        toolCount: items.filter((item) => item.kind !== 'reasoning').length,
         hasRunningTool: items.some((item) => item.kind === 'tool' && !isTerminalToolStatus(item.status)),
         hasError: items.some((item) => item.status === ToolCallStatus.Error),
         hasRejected: items.some((item) => item.status === ToolCallStatus.Rejected),

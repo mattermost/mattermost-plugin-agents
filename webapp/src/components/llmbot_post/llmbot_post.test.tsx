@@ -470,6 +470,24 @@ describe('LLMBotPost tool activity area', () => {
         expect(screen.getByText('Let me look that up')).toBeTruthy();
         expect(screen.getByText('Here is the answer')).toBeTruthy();
     });
+
+    test('folds the reasoning of the answer round into the activity area', () => {
+        const conversation = conversationWithToolRound();
+        conversation.turns[3] = {
+            ...conversation.turns[3],
+            content: [{type: 'thinking', text: 'Weighing the result'}, {type: 'text', text: 'Here is the answer'}],
+        };
+        mockUseConversation.mockReturnValue({conversation, loading: false, error: null});
+
+        renderPost();
+
+        expect(mainAreaText()).toContain('Here is the answer');
+        expect(mainAreaText()).not.toContain('Thinking');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toMatch(/^Used /);
+
+        expandToolActivity();
+        expect(within(screen.getByTestId('llm-bot-tool-activity-rounds')).getByText('Thinking')).toBeTruthy();
+    });
 });
 
 describe('LLMBotPost mid-stream text routing', () => {
@@ -590,6 +608,37 @@ describe('LLMBotPost mid-stream text routing', () => {
 
         expect(screen.getByTestId('llm-bot-folding-text').textContent).toBe('That found nothing.');
         expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Searched the web for "second"');
+    });
+
+    test('shows a reasoning block after a tool round on the activity line, not below it', () => {
+        const send = streamingPost();
+        send({control: 'start'});
+        send(resolvedToolCall('tc_a', 'search_tools'));
+        send({control: 'reasoning_summary', reasoning: 'Weighing the result'});
+
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Thinking');
+        expect(mainAreaText()).not.toContain('Thinking');
+
+        send({control: 'reasoning_summary_done', reasoning: 'Weighing the result'});
+        send({next: 'Here is the answer'});
+        send({control: 'end'});
+
+        expect(mainAreaText()).toContain('Here is the answer');
+        expect(mainAreaText()).not.toContain('Thinking');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toMatch(/^Used /);
+    });
+
+    test('carries the setup status and the first tool on the same line', () => {
+        const send = streamingPost();
+        send({control: 'progress', progress_phase: 'connecting_provider', progress_seq: 4});
+        const header = screen.getByTestId('llm-bot-tool-activity-header');
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Connecting to provider...');
+
+        send({control: 'start'});
+        send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_a', name: 'read_channel', description: '', status: ToolCallStatus.Pending}])});
+
+        expect(screen.getByTestId('llm-bot-tool-activity-header')).toBe(header);
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
     });
 
     test('leaves a response without tool calls streaming in the main area', () => {
@@ -982,13 +1031,13 @@ describe('LLMBotPost live activity ordering', () => {
         expect(rendered.indexOf('Searched the web for "q"')).toBeLessThan(rendered.indexOf('Here you go.'));
     });
 
-    test('reasoning that follows provider activity starts a new live round', async () => {
+    test('reasoning that follows provider activity joins the activity line as a new round', async () => {
         let listener: PostUpdateHandler | undefined;
         const websocketRegister = jest.fn((postID, listenerID, handler) => {
             listener = handler;
         });
 
-        const {container} = renderPost(makePost(), websocketRegister);
+        renderPost(makePost(), websocketRegister);
 
         act(() => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
@@ -1009,16 +1058,20 @@ describe('LLMBotPost live activity ordering', () => {
                 reasoning: 'Considering the result',
             }));
         });
-        await expect(screen.findByText('Thinking')).resolves.toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Thinking');
+        expect(mainAreaText()).not.toContain('Thinking');
 
         act(() => {
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'Final answer.'}));
         });
         await expect(screen.findByText('Final answer.')).resolves.toBeTruthy();
+        expect(mainAreaText()).toContain('Final answer.');
+        expect(mainAreaText()).not.toContain('Thinking');
 
-        const rendered = container.textContent ?? '';
-        expect(rendered.indexOf('Searched the web for "first"')).toBeLessThan(rendered.indexOf('Thinking'));
-        expect(rendered.indexOf('Thinking')).toBeLessThan(rendered.indexOf('Final answer.'));
+        expandToolActivity();
+        const stackText = screen.getByTestId('llm-bot-tool-activity-rounds').textContent ?? '';
+        expect(stackText.indexOf('Searched the web for "first"')).toBeLessThan(stackText.indexOf('Thinking'));
+        expect(stackText).not.toContain('Final answer.');
     });
 
     // Matches splitTurnIntoRounds: a thinking block after text starts a new

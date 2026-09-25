@@ -4,7 +4,7 @@
 import {ToolCallStatus} from '../tool_types';
 
 import {deriveActivity, isTerminalToolStatus} from './activity_items';
-import {makeRound, makeServerTool, makeTool} from './test_support';
+import {makeRound, makeServerTool, makeTool, withReasoning} from './test_support';
 
 describe('isTerminalToolStatus', () => {
     test.each([
@@ -58,6 +58,54 @@ describe('deriveActivity round split', () => {
 
         expect(second.activityRounds[0]).toBe(first.activityRounds[0]);
         expect(second.answerRounds[0]).toBe(first.answerRounds[0]);
+    });
+});
+
+describe('deriveActivity with reasoning', () => {
+    const toolRound = makeRound('r1', 'Let me look that up', [makeTool({id: 'tc_a'})]);
+    const reasonedAnswer = withReasoning(makeRound('r2', 'Here is the answer'), 'Weighing the result');
+    const reasoningOnly = withReasoning(makeRound('r3', ''));
+    const plainAnswer = makeRound('r4', 'Here is the answer');
+
+    test.each([
+        {name: 'a post without tools keeps its reasoning out', rounds: [reasonedAnswer], activity: [], answer: ['r2']},
+        {name: 'reasoning streaming after a tool round joins the activity', rounds: [toolRound, reasoningOnly], activity: ['r1', 'r3'], answer: []},
+        {name: 'final reasoning folds in while its text stays the answer', rounds: [toolRound, reasonedAnswer], activity: ['r1', 'r2'], answer: ['r2']},
+        {name: 'text before a later reasoning block is narration', rounds: [toolRound, plainAnswer, reasoningOnly], activity: ['r1', 'r4', 'r3'], answer: []},
+    ])('$name', ({rounds, activity, answer}) => {
+        const result = deriveActivity(rounds);
+
+        expect(result.activityRounds.map((round) => round.id)).toEqual(activity);
+        expect(result.answerRounds.map((round) => round.id)).toEqual(answer);
+    });
+
+    test('splits the final reasoning from its answer text', () => {
+        const result = deriveActivity([toolRound, reasonedAnswer]);
+
+        const folded = result.activityRounds[1];
+        expect(folded.reasoning.summary).toBe('Weighing the result');
+        expect(folded.text).toBe('');
+        expect(result.answerRounds[0].reasoning.summary).toBe('');
+        expect(result.answerRounds[0].text).toBe('Here is the answer');
+    });
+
+    test('lists reasoning as a running item without counting it as a tool', () => {
+        const result = deriveActivity([toolRound, reasoningOnly], {reasoningLoadingRoundId: 'r3'});
+
+        expect(result.items.map((item) => [item.id, item.status])).toEqual([
+            ['tool:tc_a', ToolCallStatus.Success],
+            ['reasoning:r3', ToolCallStatus.Pending],
+        ]);
+        expect(result.toolCount).toBe(1);
+        expect(result.hasRunningTool).toBe(false);
+    });
+
+    test('keeps reasoning before a pending decision out when no tool ran before it', () => {
+        const pending = makeRound('p', 'I will post that', [makeTool({id: 'tc_post', status: ToolCallStatus.Pending})]);
+        const result = deriveActivity([reasoningOnly, pending], {pendingDecisionRoundId: 'p'});
+
+        expect(result.activityRounds).toEqual([]);
+        expect(result.answerRounds.map((round) => round.id)).toEqual(['r3', 'p']);
     });
 });
 

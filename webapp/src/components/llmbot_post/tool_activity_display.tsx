@@ -12,16 +12,19 @@ import {toolDisplayName} from '@/utils/tool_identity';
 import ToolStatusIcon from '../tool_status_icon';
 import {ToolCallStatus} from '../tool_types';
 
-import {ActivityItem, PostActivity} from './activity_items';
+import {ActivityItem, PostActivity, isTerminalToolStatus} from './activity_items';
 import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
 import {noMotionWhenReduced, prefersReducedMotion} from './motion';
+import {LoadingSpinner} from './reasoning_display';
+import {RollingLine} from './rolling_line';
 import {serverToolTitle} from './server_tool_set';
 import {Round} from './turn_content_utils';
 
-const ROW_ANIM_MS = 240;
 const EXPAND_MS = 200;
 
 const SUMMARY_KEY = 'summary';
+
+const LineSpinner = () => <LoadingSpinner data-testid='llm-bot-activity-spinner'/>;
 
 function summaryStatus(activity: PostActivity): ToolCallStatus {
     if (activity.hasError) {
@@ -41,26 +44,32 @@ interface ToolActivityDisplayProps {
     /** True while the response is unfinished: still generating, or paused on a decision. */
     inProgress: boolean;
 
+    /** True while the server is actively producing the response. */
+    working: boolean;
+
+    /** A setup phase such as "Connecting to provider...", shown in place of the latest item. */
+    statusMessage?: string;
+
     renderRound: (round: Round) => React.ReactNode;
 }
 
 /**
- * The collapsible activity area of a bot post. Collapsed, a single row shows
- * the latest tool invocation, or a "Used N tools" summary once the response is
- * done; expanded, it shows the full stack of intermediate rounds.
+ * The status line of a bot post, which doubles as its collapsible activity
+ * area. It shows setup progress until the first activity arrives, then the
+ * latest tool invocation or reasoning block, and a "Used N tools" summary once
+ * the response is done. Expanded, it frames the full stack of intermediate rounds.
  */
 const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
-    const {activity, expanded, inProgress} = props;
+    const {activity, inProgress, working, statusMessage} = props;
     const intl = useIntl();
+    const expandable = activity.items.length > 0;
+    const expanded = props.expanded && expandable;
 
-    // A tool can still be running after the stream stops.
-    const showSummary = !inProgress && !activity.hasRunningTool;
-    const current: ActivityItem | null = showSummary ? null : activity.items[activity.items.length - 1] ?? null;
-    const currentKey = current?.id ?? SUMMARY_KEY;
-
-    // Only rows that change after mount roll in, so settled posts render statically.
-    const mountKeyRef = useRef(currentKey);
-    const animateRow = currentKey !== mountKeyRef.current;
+    // Settled posts render statically; only a line that has been live rolls between states.
+    const liveRef = useRef(false);
+    if (working || inProgress) {
+        liveRef.current = true;
+    }
 
     const [closing, setClosing] = useState(false);
     useEffect(() => {
@@ -76,52 +85,77 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
         props.onToggleExpanded(!expanded);
     };
 
-    let rowContent: React.ReactNode;
-    if (current === null) {
-        rowContent = (
-            <>
-                <ToolStatusIcon status={summaryStatus(activity)}/>
-                <ActivityLabel>
-                    <FormattedMessage
-                        id='ai.activity.tools_used'
-                        defaultMessage='Used {count, plural, one {# tool} other {# tools}}'
-                        values={{count: activity.items.length}}
-                    />
-                </ActivityLabel>
-            </>
+    // A tool can still be running after the stream stops.
+    const showSummary = !inProgress && !activity.hasRunningTool;
+    const current: ActivityItem | null = showSummary ? null : activity.items[activity.items.length - 1] ?? null;
+
+    let lineKey: string;
+    let indicator: React.ReactNode;
+    let label: React.ReactNode;
+    if (statusMessage) {
+        lineKey = `status:${statusMessage}`;
+        indicator = <LineSpinner/>;
+        label = statusMessage;
+    } else if (current === null) {
+        lineKey = SUMMARY_KEY;
+        indicator = <ToolStatusIcon status={summaryStatus(activity)}/>;
+        label = (
+            <FormattedMessage
+                id='ai.activity.tools_used'
+                defaultMessage='Used {count, plural, one {# tool} other {# tools}}'
+                values={{count: activity.toolCount}}
+            />
         );
     } else {
-        const label = current.kind === 'tool' ? toolDisplayName(current.toolCall) : serverToolTitle(current.serverTool, intl);
-        rowContent = (
-            <>
-                <ToolStatusIcon status={current.status}/>
-                <ActivityLabel>{label}</ActivityLabel>
-            </>
-        );
+        lineKey = current.id;
+        const running = working || !isTerminalToolStatus(current.status);
+        indicator = running ? <LineSpinner/> : <ToolStatusIcon status={current.status}/>;
+        switch (current.kind) {
+        case 'reasoning':
+            label = (
+                <FormattedMessage
+                    id='ai.activity.thinking'
+                    defaultMessage='Thinking'
+                />
+            );
+            break;
+        case 'tool':
+            label = toolDisplayName(current.toolCall);
+            break;
+        case 'server_tool':
+            label = serverToolTitle(current.serverTool, intl);
+            break;
+        }
     }
 
     return (
-        <ActivityContainer data-testid='llm-bot-tool-activity'>
-            <CollapseHeaderRow
+        <ActivityContainer
+            $expanded={expanded}
+            data-testid={expandable ? 'llm-bot-tool-activity' : 'llm-bot-status-line'}
+            data-expanded={expanded}
+        >
+            <ActivityHeader
                 as='button'
                 type='button'
                 data-testid='llm-bot-tool-activity-header'
-                aria-expanded={expanded}
+                aria-expanded={expandable ? expanded : undefined} // eslint-disable-line no-undefined
+                disabled={!expandable}
                 onClick={toggle}
             >
-                <CollapseChevron $expanded={expanded}>
+                <HeaderChevron
+                    $expanded={expanded}
+                    $visible={expandable}
+                >
                     <ChevronRightIcon/>
-                </CollapseChevron>
-                <RowViewport>
-                    <Row
-                        key={currentKey}
-                        $animate={animateRow}
-                        data-testid='llm-bot-tool-activity-current'
-                    >
-                        {rowContent}
-                    </Row>
-                </RowViewport>
-            </CollapseHeaderRow>
+                </HeaderChevron>
+                <RollingLine
+                    lineKey={lineKey}
+                    animate={liveRef.current}
+                >
+                    <Indicator>{indicator}</Indicator>
+                    <ActivityLabel>{label}</ActivityLabel>
+                </RollingLine>
+            </ActivityHeader>
 
             {(expanded || closing) && (
                 <ExpandedRounds
@@ -141,40 +175,42 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
 
 export default ToolActivityDisplay;
 
-const ActivityContainer = styled.div`
+// Expanded, the area becomes a framed panel so it reads as a separate section
+// from the answer. The frame is a shadow so collapsed rows stay flush with text.
+const ActivityContainer = styled.div<{$expanded: boolean}>`
     margin-top: 4px;
-`;
+    border-radius: 8px;
+    transition: padding ${EXPAND_MS}ms ease, box-shadow ${EXPAND_MS}ms ease, background-color ${EXPAND_MS}ms ease;
+    box-shadow: inset 0 0 0 1px transparent;
 
-const RowViewport = styled.div`
-    flex: 1;
-    min-width: 0;
-    height: 20px;
-    overflow: hidden;
-`;
-
-const rollIn = keyframes`
-    from {
-        transform: translateY(100%);
-        opacity: 0;
-    }
-    to {
-        transform: translateY(0);
-        opacity: 1;
-    }
-`;
-
-const Row = styled.div<{$animate: boolean}>`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 20px;
-    line-height: 20px;
-
-    ${(props) => props.$animate && css`
-        animation: ${rollIn} ${ROW_ANIM_MS}ms ease-out;
+    ${(props) => props.$expanded && css`
+        padding: 8px 12px 12px;
+        background-color: rgba(var(--center-channel-color-rgb), 0.02);
+        box-shadow: inset 0 0 0 1px rgba(var(--center-channel-color-rgb), 0.12);
     `}
 
     ${noMotionWhenReduced}
+`;
+
+const ActivityHeader = styled(CollapseHeaderRow)`
+    &:disabled {
+        cursor: default;
+        color: rgba(var(--center-channel-color-rgb), 0.75);
+    }
+`;
+
+const HeaderChevron = styled(CollapseChevron)<{$visible: boolean}>`
+    opacity: ${(props) => (props.$visible ? 1 : 0)};
+    transition: transform 0.2s ease, opacity 0.2s ease;
+`;
+
+const Indicator = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
 `;
 
 const ActivityLabel = styled.span`
@@ -223,5 +259,7 @@ const ExpandedClip = styled.div`
 `;
 
 const ExpandedContent = styled.div`
+    margin-top: 8px;
     padding-top: 8px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;

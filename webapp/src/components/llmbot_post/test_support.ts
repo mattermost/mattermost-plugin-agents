@@ -39,6 +39,10 @@ export function makeRound(id: string, text: string, toolCalls: ToolCall[] = [], 
     };
 }
 
+export function withReasoning(round: Round, summary = 'Thinking it over'): Round {
+    return {...round, reasoning: {summary, signature: ''}};
+}
+
 /** Lets every pending animation timer fire, for tests using jest's fake timers. */
 export function advanceAnimation() {
     act(() => {
