@@ -374,6 +374,20 @@ func TestAutoReplyTriggerMatrix(t *testing.T) {
 			expectedConvMessage: "@" + autoReplyBotUsername + " bot announcement",
 		},
 		{
+			name:        "root_posts triggers for a webhook post with activate_ai",
+			settingMode: autoreply.ModeRootPosts,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				post := env.rootPost(autoReplyUserID, "webhook announcement")
+				post.AddProp(conversations.FromWebhookProp, "true")
+				post.AddProp(conversations.ActivateAIProp, "true")
+				return post
+			},
+			expectFired:         true,
+			expectedRootID:      autoReplyRootID,
+			expectedBotUserID:   autoReplyBotUserID,
+			expectedConvMessage: "@" + autoReplyBotUsername + " webhook announcement",
+		},
+		{
 			name:        "explicit mention of a different agent wins over the setting",
 			settingMode: autoreply.ModeRootPosts,
 			buildPost: func(env *autoReplyTestEnv) *model.Post {

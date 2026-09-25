@@ -59,7 +59,8 @@ func isAutomatedInvoker(post *model.Post, postingUser *model.User) bool {
 	return false
 }
 
-// isBotActivateAI is true when a bot account (or from_bot integration post) opts in with activate_ai.
+// isBotActivateAI is true when a bot account, from_bot integration post, or
+// incoming webhook opts in with activate_ai.
 func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 	if post == nil || post.GetProp(ActivateAIProp) == nil {
 		return false
@@ -67,7 +68,7 @@ func isBotActivateAI(post *model.Post, postingUser *model.User) bool {
 	if postingUser != nil && postingUser.IsBot {
 		return true
 	}
-	return post.GetProp(FromBotProp) != nil
+	return post.GetProp(FromBotProp) != nil || post.GetProp(FromWebhookProp) != nil
 }
 
 // computeAllowToolsInChannel returns whether tools should be allowed for a channel mention,
@@ -196,8 +197,8 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 		return fmt.Errorf("not responding to plugin posts: %w", ErrNoResponse)
 	}
 
-	// Don't respond to webhooks
-	if post.GetProp(FromWebhookProp) != nil {
+	// Don't respond to webhooks unless they ask for it.
+	if post.GetProp(FromWebhookProp) != nil && post.GetProp(ActivateAIProp) == nil {
 		return fmt.Errorf("not responding to webhook posts: %w", ErrNoResponse)
 	}
 
