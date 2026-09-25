@@ -7,6 +7,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 
+import type {LLMService} from '@/components/system_console/service';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
@@ -762,6 +763,35 @@ export async function fetchModels(serviceType: string, apiKey: string, apiURL: s
 
     throw new ClientError(Client4.url, {
         message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export type TestServiceResult = {
+    ok: boolean;
+    error?: string;
+}
+
+// testService probes a service's provider with a minimal completion. The
+// service is sent in the body rather than referenced by ID so an admin can test
+// credentials they have typed but not yet saved.
+//
+// A provider that answers "your key is wrong" comes back as a 200 with
+// ok: false, so only a genuine transport or authorization failure throws here.
+export async function testService(service: LLMService): Promise<TestServiceResult> {
+    const url = `${baseRoute()}/admin/services/test`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({service}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
         status_code: response.status,
         url,
     });
