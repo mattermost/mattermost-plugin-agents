@@ -717,10 +717,9 @@ describe('AgentConfigView', () => {
         expect(createAgent).not.toHaveBeenCalled();
     });
 
-    // Update is a full-replace PUT: a payload that drops either flag would
-    // silently revert the saved MCP settings.
+    // Update is a full-replace PUT: a payload that drops any of these flags
+    // would silently revert the saved MCP settings.
     test('preserves explicit MCP settings on update', async () => {
-        mockUpdateAgent.mockResolvedValue({...savedAgent, mcpDynamicToolLoading: false, useServiceAccountAuth: true});
         const agent = {
             ...savedAgent,
             id: 'agent_dynamic_off',
@@ -728,7 +727,10 @@ describe('AgentConfigView', () => {
             displayName: 'Dynamic Off',
             mcpDynamicToolLoading: false,
             useServiceAccountAuth: true,
+            experimentalBypassToolApproval: true,
+            experimentalUseBotPermissions: true,
         };
+        mockUpdateAgent.mockResolvedValue(agent);
 
         render(
             <IntlProvider locale='en'>
@@ -749,6 +751,8 @@ describe('AgentConfigView', () => {
         expect(mockUpdateAgent).toHaveBeenCalledWith('agent_dynamic_off', expect.objectContaining({
             mcpDynamicToolLoading: false,
             useServiceAccountAuth: true,
+            experimentalBypassToolApproval: true,
+            experimentalUseBotPermissions: true,
         }));
     });
 

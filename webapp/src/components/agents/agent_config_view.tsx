@@ -49,6 +49,8 @@ export type AgentDraft = {
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
     useServiceAccountAuth: boolean;
+    experimentalBypassToolApproval: boolean;
+    experimentalUseBotPermissions: boolean;
     model: string;
     enableVision: boolean;
     disableTools: boolean;
@@ -74,6 +76,8 @@ const emptyDraft: AgentDraft = {
     autoEnableNewMCPTools: true,
     mcpDynamicToolLoading: true,
     useServiceAccountAuth: false,
+    experimentalBypassToolApproval: false,
+    experimentalUseBotPermissions: false,
     model: '',
     enableVision: true,
     disableTools: false,
@@ -120,6 +124,8 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         useServiceAccountAuth: draft.useServiceAccountAuth,
+        experimentalBypassToolApproval: draft.experimentalBypassToolApproval,
+        experimentalUseBotPermissions: draft.experimentalUseBotPermissions,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -151,6 +157,8 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         autoEnableNewMCPTools: draft.autoEnableNewMCPTools,
         mcpDynamicToolLoading: draft.mcpDynamicToolLoading,
         useServiceAccountAuth: draft.useServiceAccountAuth,
+        experimentalBypassToolApproval: draft.experimentalBypassToolApproval,
+        experimentalUseBotPermissions: draft.experimentalUseBotPermissions,
         model: draft.model,
         enableVision: draft.enableVision,
         disableTools: draft.disableTools,
@@ -178,6 +186,8 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools ?? false,
         mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         useServiceAccountAuth: agent.useServiceAccountAuth ?? false,
+        experimentalBypassToolApproval: agent.experimentalBypassToolApproval ?? false,
+        experimentalUseBotPermissions: agent.experimentalUseBotPermissions ?? false,
         model: agent.model ?? '',
         enableVision: agent.enableVision ?? true,
         disableTools: agent.disableTools ?? false,
@@ -477,6 +487,8 @@ const AgentConfigView = (props: Props) => {
                             enabledTools={draft.enabledTools}
                             autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
                             useServiceAccountAuth={draft.useServiceAccountAuth}
+                            experimentalBypassToolApproval={draft.experimentalBypassToolApproval}
+                            experimentalUseBotPermissions={draft.experimentalUseBotPermissions}
                             serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                             canEditServiceAccountAuth={canEditServiceAccountAuth}
                             onChange={(updates) => updateDraft(updates)}

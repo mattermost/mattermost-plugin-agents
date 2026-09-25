@@ -14,6 +14,9 @@ import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
 import {useIsLicensedFor} from '@/license';
 import {LicenseChip} from '@/components/system_console/enterprise_chip';
+import {Pill} from '@/components/pill';
+
+import AdvancedSection from '../advanced_section';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 
@@ -25,6 +28,8 @@ type Props = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
+    experimentalBypassToolApproval: boolean;
+    experimentalUseBotPermissions: boolean;
 
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
@@ -35,6 +40,8 @@ type Props = {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
         useServiceAccountAuth?: boolean;
+        experimentalBypassToolApproval?: boolean;
+        experimentalUseBotPermissions?: boolean;
     }) => void;
 
     // Optional server-state reconciliation callback. Used when removing entries
@@ -136,6 +143,8 @@ const McpsTab = (props: Props) => {
         enabledTools,
         autoEnableNewMCPTools,
         useServiceAccountAuth,
+        experimentalBypassToolApproval,
+        experimentalUseBotPermissions,
         serviceAccountFieldsLocked,
         canEditServiceAccountAuth,
         onChange,
@@ -150,6 +159,7 @@ const McpsTab = (props: Props) => {
     const [error, setError] = useState<string | null>(null);
     const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
     const [searchQuery, setSearchQuery] = useState('');
+    const [advancedExpanded, setAdvancedExpanded] = useState(false);
 
     const loadServers = useCallback(async (opts: {showLoading?: boolean} = {}) => {
         try {
@@ -321,7 +331,13 @@ const McpsTab = (props: Props) => {
                         if (e.target.checked && !serviceAccountLicensed) {
                             return;
                         }
-                        onChange({useServiceAccountAuth: e.target.checked});
+
+                        // The server drops the experimental settings with service account auth.
+                        onChange(e.target.checked ? {useServiceAccountAuth: true} : {
+                            useServiceAccountAuth: false,
+                            experimentalBypassToolApproval: false,
+                            experimentalUseBotPermissions: false,
+                        });
                     }}
                 />
                 <CheckboxLabel htmlFor='mcp-use-service-accounts'>
@@ -338,8 +354,68 @@ const McpsTab = (props: Props) => {
             </CheckboxRow>
             {useServiceAccountAuth && (
                 <WarningBanner>
-                    <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
+                    {experimentalUseBotPermissions ? (
+                        <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers, and with the agent's bot account permissions in Mattermost (embedded) and plugin tools. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
+                    ) : (
+                        <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
+                    )}
                 </WarningBanner>
+            )}
+            {useServiceAccountAuth && (
+                <AdvancedSection
+                    hint={<FormattedMessage defaultMessage='Experimental service account options'/>}
+                    expanded={advancedExpanded}
+                    onToggle={() => setAdvancedExpanded((prev) => !prev)}
+                >
+                    <ExperimentalOptions>
+                        <CheckboxRow>
+                            <CheckboxInput
+                                type='checkbox'
+                                id='mcp-sa-bypass-tool-approval'
+                                checked={experimentalBypassToolApproval}
+                                disabled={!canEditServiceAccountAuth}
+                                onChange={(e) => onChange({experimentalBypassToolApproval: e.target.checked})}
+                            />
+                            <CheckboxLabel
+                                htmlFor='mcp-sa-bypass-tool-approval'
+                                $disabled={!canEditServiceAccountAuth}
+                            >
+                                <CheckboxTitleRow>
+                                    <CheckboxTitle>
+                                        <FormattedMessage defaultMessage='Skip tool call approvals'/>
+                                    </CheckboxTitle>
+                                    <Pill as='span'><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                                </CheckboxTitleRow>
+                                <CheckboxHint>
+                                    <FormattedMessage defaultMessage='Tool calls run without asking the requesting user to approve them, and their results are shared in channels without asking. Questions the agent asks the user still wait for an answer.'/>
+                                </CheckboxHint>
+                            </CheckboxLabel>
+                        </CheckboxRow>
+                        <CheckboxRow>
+                            <CheckboxInput
+                                type='checkbox'
+                                id='mcp-sa-use-bot-permissions'
+                                checked={experimentalUseBotPermissions}
+                                disabled={!canEditServiceAccountAuth}
+                                onChange={(e) => onChange({experimentalUseBotPermissions: e.target.checked})}
+                            />
+                            <CheckboxLabel
+                                htmlFor='mcp-sa-use-bot-permissions'
+                                $disabled={!canEditServiceAccountAuth}
+                            >
+                                <CheckboxTitleRow>
+                                    <CheckboxTitle>
+                                        <FormattedMessage defaultMessage="Use the agent's bot account permissions"/>
+                                    </CheckboxTitle>
+                                    <Pill as='span'><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                                </CheckboxTitleRow>
+                                <CheckboxHint>
+                                    <FormattedMessage defaultMessage="Mattermost (embedded) and plugin tools run as this agent's bot account instead of the requesting user, so they can read and change anything the bot can. Access to each MCP server is still checked for the requesting user."/>
+                                </CheckboxHint>
+                            </CheckboxLabel>
+                        </CheckboxRow>
+                    </ExperimentalOptions>
+                </AdvancedSection>
             )}
         </ServiceAccountSection>
     );
@@ -619,6 +695,18 @@ const CheckboxLabel = styled.label<{$disabled?: boolean}>`
     cursor: ${(p) => (p.$disabled ? 'not-allowed' : 'pointer')};
     user-select: none;
     opacity: ${(p) => (p.$disabled ? 0.6 : 1)};
+`;
+
+const CheckboxTitleRow = styled.span`
+    display: flex;
+    align-items: center;
+    gap: 8px;
+`;
+
+const ExperimentalOptions = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
 `;
 
 const CheckboxTitle = styled.span`

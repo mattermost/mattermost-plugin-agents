@@ -88,6 +88,8 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         enabledTools: [],
         autoEnableNewMCPTools: true,
         mcpDynamicToolLoading: true,
+        experimentalBypassToolApproval: false,
+        experimentalUseBotPermissions: false,
         useServiceAccountAuth: true,
         model: '',
         enableVision: true,
