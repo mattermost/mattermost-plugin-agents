@@ -860,14 +860,6 @@ The plugin also registers an extended catalog of read and write tools spanning M
 - **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
 - **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
 
-When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
-
-- **list_automations**: List channel automations, filter them by channel, or retrieve a specific automation by ID
-- **get_automation_instructions**: Retrieve the Channel Automation plugin's current automation authoring guidance
-- **create_automation**: Create a channel automation
-- **update_automation**: Update a channel automation
-- **delete_automation**: Delete a channel automation
-
 These are the native Mattermost tools included by the Agents plugin itself. Plugin-registered MCP tools are configured separately in the **Tools** tab and are not part of the built-in list above.
 
 ### Deployment

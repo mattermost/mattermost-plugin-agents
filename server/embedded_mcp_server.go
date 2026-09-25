@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	localmcp "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -93,17 +92,9 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		}
 		return session.Token, nil
 	}
-	hookStore := localmcp.NewBeforeHookStore(&pluginAPI.KV)
-	beforeHookResolver := func(userID, toolName, hookKey string) (string, error) {
-		entry, err := hookStore.Resolve(userID, toolName, hookKey)
-		if err != nil {
-			return "", err
-		}
-		return entry.CallbackURL, nil
-	}
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, beforeHookResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
 	if err != nil {
 		return nil, err
 	}
