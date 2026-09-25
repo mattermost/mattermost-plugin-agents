@@ -2,13 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen, fireEvent, waitFor} from '@testing-library/react';
+import {act, render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {IntlProvider} from 'react-intl';
 
-import {getPost} from '@/client';
+import {getChannelById, getPost, getProfilesByIds} from '@/client';
 
-import {ToolCall, ToolCallStatus} from '../tool_types';
+import {JSONValue, ToolCall, ToolCallStatus} from '../tool_types';
 
 import {renderToolCall, ToolRenderContext} from './registry';
 
@@ -20,6 +20,7 @@ jest.mock('react-bootstrap', () => ({
 jest.mock('@/client', () => ({
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(() => Promise.resolve([])),
+    getChannelById: jest.fn(),
 }));
 
 const postMessagePreviewMock = jest.fn<React.ReactElement, [unknown]>(() => <div>{'post-preview-box'}</div>);
@@ -29,13 +30,60 @@ jest.mock('@/mm_webapp', () => ({
 }));
 
 const mockGetPost = getPost as jest.Mock;
+const mockGetProfilesByIds = getProfilesByIds as jest.Mock;
+const mockGetChannelById = getChannelById as jest.Mock;
+
+// Membership tools take opaque 26-character IDs. These fixtures give each ID a
+// distinctive readable identity so a rendering can be checked against it.
+const memberUserId = 'uzq4m8hd3r7nf2xk6bw9ct5ya1';
+const secondMemberUserId = 'p9jv2sl6ea4tq8xn3ymzd7kr5b';
+const memberChannelId = 'h4wc7ktg1ms9ybn6pz2ax8djr3';
+
+const memberProfiles: {[id: string]: {id: string; username: string}} = {
+    [memberUserId]: {id: memberUserId, username: 'dana.holloway'},
+    [secondMemberUserId]: {id: secondMemberUserId, username: 'omar.reyes'},
+};
+
+const memberChannel = {id: memberChannelId, display_name: 'Quarterly Planning', name: 'quarterly-planning', team_id: 'team1', type: 'P'};
+
+// Deliberately kept out of the store below: an approver holds no entry for a
+// person or channel they have no shared history with, so these exercise the
+// fetch route rather than the store route.
+const fetchOnlyUserId = 'k3nf7yq2hd8xr5wb1mzc6ta4pj';
+const fetchOnlyChannelId = 'r6dx9bq3na7ks2yw5hmc8tfz1p';
+const fetchOnlyChannel = {id: fetchOnlyChannelId, display_name: 'Incident Response', name: 'incident-response', team_id: 'team1', type: 'P'};
+
+// Answered by neither the store nor the fetch.
+const unnamedUserId = 'z8mr4kp7wc2hy6nv3sqb9dtx5f';
+const unresolvableChannelId = 'w2ph5nk8bd4rt9xm3cyz6qfa7j';
+
+const directoryProfiles: {[id: string]: {id: string; username: string}} = {
+    ...memberProfiles,
+    [fetchOnlyUserId]: {id: fetchOnlyUserId, username: 'lena.whitfield'},
+};
+
+const directoryChannels: {[id: string]: typeof memberChannel} = {
+    [memberChannelId]: memberChannel,
+    [fetchOnlyChannelId]: fetchOnlyChannel,
+};
 
 const state = {
     entities: {
         general: {config: {SiteURL: 'http://localhost:8065'}},
         teams: {currentTeamId: 'team1', teams: {team1: {id: 'team1', display_name: 'Eng', name: 'eng'}}},
-        channels: {channels: {chan1: {id: 'chan1', display_name: 'Town Square', team_id: 'team1', type: 'O'}}},
-        users: {currentUserId: 'u-self', profiles: {'u-self': {id: 'u-self', username: 'requester'}}},
+        channels: {
+            channels: {
+                chan1: {id: 'chan1', display_name: 'Town Square', team_id: 'team1', type: 'O'},
+                [memberChannelId]: memberChannel,
+            },
+        },
+        users: {
+            currentUserId: 'u-self',
+            profiles: {
+                'u-self': {id: 'u-self', username: 'requester'},
+                ...memberProfiles,
+            },
+        },
         posts: {posts: {}},
     },
 };
@@ -315,5 +363,205 @@ describe('shell features on routed cards', () => {
         expect(screen.getByText(/Town Square/)).not.toBeNull();
         expect(screen.getByText(/!\[img\]/)).not.toBeNull();
         expect(container.querySelector('img')).toBeNull();
+    });
+});
+
+describe('channel membership tool cards', () => {
+    // Both resolution routes are available: the redux store is seeded above and
+    // the client mocks answer for the same IDs, plus for the IDs the store
+    // deliberately omits. An ID neither knows is rejected/dropped.
+    beforeEach(() => {
+        mockGetProfilesByIds.mockImplementation((ids: string[]) => Promise.resolve(
+            ids.map((id) => directoryProfiles[id]).filter(Boolean),
+        ));
+        mockGetChannelById.mockImplementation((id: string) => (directoryChannels[id] ?
+            Promise.resolve(directoryChannels[id]) :
+            Promise.reject(new Error('not found'))));
+    });
+
+    afterEach(() => {
+        mockGetProfilesByIds.mockImplementation(() => Promise.resolve([]));
+        mockGetChannelById.mockReset();
+    });
+
+    const membershipCases: Array<{
+        label: string;
+        bareName: string;
+        args: JSONValue;
+        status?: ToolCallStatus;
+        named: string[];
+        notShown?: string[];
+    }> = [
+        {
+            label: 'add_channel_member names the member and channel its IDs point at',
+            bareName: 'add_channel_member',
+            args: {user_id: memberUserId, channel_id: memberChannelId},
+            named: ['dana.holloway', 'Quarterly Planning'],
+            notShown: ['omar.reyes'],
+        },
+        {
+            label: 'add_channel_members names every member in the list',
+            bareName: 'add_channel_members',
+            args: {channel_id: memberChannelId, user_ids: [memberUserId, secondMemberUserId]},
+            named: ['dana.holloway', 'omar.reyes', 'Quarterly Planning'],
+        },
+        {
+            label: 'remove_channel_member names the member and channel its IDs point at',
+            bareName: 'remove_channel_member',
+            args: {channel_id: memberChannelId, user_id: memberUserId},
+            named: ['dana.holloway', 'Quarterly Planning'],
+            notShown: ['omar.reyes'],
+        },
+        {
+            label: 'a member and channel the store does not hold are named from the fetched records',
+            bareName: 'add_channel_members',
+            args: {channel_id: fetchOnlyChannelId, user_ids: [fetchOnlyUserId]},
+            named: ['lena.whitfield', 'Incident Response'],
+        },
+        {
+            label: 'a member that cannot be named keeps its ID beside the named members',
+            bareName: 'add_channel_members',
+            args: {channel_id: memberChannelId, user_ids: [memberUserId, unnamedUserId]},
+            named: ['dana.holloway', unnamedUserId, 'Quarterly Planning'],
+        },
+        {
+            label: 'arguments beside the IDs do not stand in for the resolved names',
+            bareName: 'add_channel_member',
+            args: {user_id: memberUserId, channel_id: memberChannelId, username: 'omar.reyes', channel_display_name: 'Town Square'},
+            named: ['dana.holloway', 'Quarterly Planning'],
+            notShown: ['omar.reyes', 'Town Square'],
+        },
+        {
+            label: 'an accepted call that has not executed still names the member and channel',
+            bareName: 'remove_channel_member',
+            args: {channel_id: memberChannelId, user_id: secondMemberUserId},
+            status: ToolCallStatus.Accepted,
+            named: ['omar.reyes', 'Quarterly Planning'],
+            notShown: ['dana.holloway'],
+        },
+    ];
+
+    test.each(membershipCases)('$label', async ({bareName, args, status, named, notShown}) => {
+        const {container} = renderTool(makeTool({
+            name: `mattermost__${bareName}`,
+            mcp_bare_name: bareName,
+            server_origin: 'embedded://mattermost',
+            status: status ?? ToolCallStatus.Pending,
+            arguments: args,
+        }));
+
+        // Resolution may be asynchronous, so settle before reading the card.
+        await waitFor(() => {
+            for (const readable of named) {
+                expect(container.textContent).toContain(readable);
+            }
+        });
+
+        for (const absent of notShown ?? []) {
+            expect(container.textContent).not.toContain(absent);
+        }
+    });
+
+    const genericCardCases: Array<{label: string; tool: Partial<ToolCall>; visible: string[]; notShown: string[]}> = [
+        {
+            label: 'a call carrying no channel renders the generic field list',
+            tool: {
+                name: 'mattermost__add_channel_member',
+                mcp_bare_name: 'add_channel_member',
+                server_origin: 'embedded://mattermost',
+                arguments: {user_id: memberUserId},
+            },
+            visible: ['User Id', memberUserId],
+            notShown: ['dana.holloway'],
+        },
+        {
+            label: 'a member list holding a non-string renders the generic field list',
+            tool: {
+                name: 'mattermost__add_channel_members',
+                mcp_bare_name: 'add_channel_members',
+                server_origin: 'embedded://mattermost',
+                arguments: {channel_id: memberChannelId, user_ids: [memberUserId, 42]},
+            },
+            visible: ['Channel Id', memberChannelId],
+            notShown: ['dana.holloway', 'Quarterly Planning'],
+        },
+        {
+            label: 'an executed call renders the generic field list',
+            tool: {
+                name: 'mattermost__add_channel_member',
+                mcp_bare_name: 'add_channel_member',
+                server_origin: 'embedded://mattermost',
+                status: ToolCallStatus.Success,
+                arguments: {user_id: memberUserId, channel_id: memberChannelId},
+                result: 'Successfully added 1 user(s) to channel',
+            },
+            visible: ['Channel Id', memberChannelId],
+            notShown: ['dana.holloway', 'Quarterly Planning'],
+        },
+        {
+            label: 'a channel that cannot be resolved renders the generic field list',
+            tool: {
+                name: 'mattermost__remove_channel_member',
+                mcp_bare_name: 'remove_channel_member',
+                server_origin: 'embedded://mattermost',
+                arguments: {channel_id: unresolvableChannelId, user_id: memberUserId},
+            },
+            visible: ['Channel Id', unresolvableChannelId],
+            notShown: ['dana.holloway'],
+        },
+        {
+            label: 'a membership-named tool from an external server renders the generic field list',
+            tool: {
+                name: 'acme__add_channel_members',
+                mcp_bare_name: 'add_channel_members',
+                server_origin: 'https://mcp.acme.example',
+                arguments: {channel_id: memberChannelId, user_ids: [memberUserId]},
+            },
+            visible: ['Channel Id', memberChannelId],
+            notShown: ['dana.holloway', 'Quarterly Planning'],
+        },
+    ];
+
+    test.each(genericCardCases)('$label', async ({tool, visible, notShown}) => {
+        const {container} = renderTool(makeTool(tool));
+
+        await waitFor(() => {
+            for (const readable of visible) {
+                expect(container.textContent).toContain(readable);
+            }
+        });
+
+        // Let any in-flight resolution settle before checking that the card
+        // named nothing.
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        for (const absent of notShown) {
+            expect(container.textContent).not.toContain(absent);
+        }
+    });
+
+    test('a pending membership call still renders a card that can be accepted', async () => {
+        const onApprove = jest.fn();
+        const tool = makeTool({
+            name: 'mattermost__add_channel_members',
+            mcp_bare_name: 'add_channel_members',
+            server_origin: 'embedded://mattermost',
+            arguments: {channel_id: memberChannelId, user_ids: [memberUserId]},
+        });
+
+        render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({...makeCtx(tool), onApprove, onReject: jest.fn()})}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        await waitFor(() => expect(screen.getByText('Add Channel Members')).not.toBeNull());
+
+        fireEvent.click(screen.getByText('Accept'));
+        expect(onApprove).toHaveBeenCalled();
     });
 });
