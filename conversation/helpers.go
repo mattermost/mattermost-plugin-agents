@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -32,7 +33,9 @@ func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.
 	for _, fileID := range fileIDs {
 		fileInfo, err := mmClient.GetFileInfo(fileID)
 		if err != nil {
-			mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
+			if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+				mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
+			}
 			continue
 		}
 		if strings.HasPrefix(fileInfo.MimeType, "image/") {
