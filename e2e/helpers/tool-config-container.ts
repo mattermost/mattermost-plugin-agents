@@ -128,6 +128,53 @@ export async function RunToolConfigContainerWithPolicies(): Promise<MattermostCo
 }
 
 /**
+ * Container with two service account agents on the Smocker LLM: `sabaseline`
+ * has no experimental settings, `saexperimental` skips tool approvals and runs
+ * Mattermost tools with its bot account permissions.
+ */
+export async function RunToolConfigContainerWithServiceAccountBots(): Promise<MattermostContainer> {
+    const serviceAccountBot = {
+        serviceID: 'mock-service',
+        customInstructions: '',
+        disableTools: false,
+        mcpDynamicToolLoading: false,
+        enabledNativeTools: [],
+        useServiceAccountAuth: true,
+    };
+    return RunSystemConsoleContainer({
+        services: [
+            {
+                id: 'mock-service',
+                name: 'Mock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
+            },
+        ],
+        bots: [
+            {...serviceAccountBot, id: 'sa-baseline-bot', name: 'sabaseline', displayName: 'SA Baseline Bot'},
+            {
+                ...serviceAccountBot,
+                id: 'sa-experimental-bot',
+                name: 'saexperimental',
+                displayName: 'SA Experimental Bot',
+                experimentalBypassToolApproval: true,
+                experimentalUseBotPermissions: true,
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: {enabled: true},
+            idleTimeoutMinutes: 30,
+            servers: [],
+        },
+    });
+}
+
+/**
  * Container for dynamic MCP tool-loading E2E tests.
  * Enables mcpDynamicToolLoading so only search_tools/load_tool are visible
  * initially; business tools must be discovered and loaded first.
