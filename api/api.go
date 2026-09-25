@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -822,7 +823,7 @@ func (a *API) handleTestService(c *gin.Context) {
 	// client there would evict the live entry other requests are using.
 	model, err := bifrost.NewFromServiceConfig(req.Service, llm.BotConfig{}, nil)
 	if err != nil {
-		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: err.Error()})
+		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: testServiceErrorMessage(err, req.Service)})
 		return
 	}
 	defer model.Shutdown()
@@ -834,9 +835,44 @@ func (a *API) handleTestService(c *gin.Context) {
 		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "Reply with OK."}},
 	}, llm.WithMaxGeneratedTokens(1))
 	if err != nil {
-		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: err.Error()})
+		c.JSON(http.StatusOK, TestServiceResponse{OK: false, Error: testServiceErrorMessage(err, req.Service)})
 		return
 	}
 
 	c.JSON(http.StatusOK, TestServiceResponse{OK: true})
+}
+
+// bifrostAllKeysDeadMarker matches the message Bifrost substitutes when every
+// configured key has been rejected with a permanent 401/402/403. Its sentinel
+// is unexported, so text is the only handle we have; if the wording changes the
+// match simply stops firing and the raw message is shown, which is no worse
+// than not translating at all.
+const bifrostAllKeysDeadMarker = "all configured keys returned permanent per-key errors"
+
+// testServiceErrorMessage turns a probe failure into something an admin can act
+// on, and redacts credentials first.
+//
+// Redaction is not optional here: providers echo the offending key back in
+// error bodies, and this message is rendered in the browser. Same treatment
+// bifrost.FetchModels gives its errors.
+func testServiceErrorMessage(err error, svc llm.ServiceConfig) string {
+	if err == nil {
+		return ""
+	}
+
+	message := llm.SanitizeProviderErrorMessage(
+		err.Error(),
+		svc.APIKey,
+		svc.AWSSecretAccessKey,
+		svc.VertexAuthCredentials,
+	)
+
+	// Bifrost's key rotation discards the provider's own explanation once every
+	// key has failed, leaving a message that names three status codes and no
+	// cause. The condition it describes is narrow enough to state plainly.
+	if strings.Contains(message, bifrostAllKeysDeadMarker) {
+		return "The provider rejected this service's credentials (401, 402, or 403). Check that the API key is correct and active, and that the account has available credit."
+	}
+
+	return message
 }

@@ -189,3 +189,72 @@ func TestHandleTestServiceRequiresAdmin(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
+
+// TestTestServiceErrorMessage covers what the admin is shown when a probe
+// fails: credentials must never survive into the browser, and Bifrost's
+// all-keys-rejected message must be replaced with something actionable.
+func TestTestServiceErrorMessage(t *testing.T) {
+	svc := llm.ServiceConfig{
+		Type:                  llm.ServiceTypeOpenAICompatible,
+		APIKey:                "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
+		AWSSecretAccessKey:    "aws-secret-value-9876543210",
+		VertexAuthCredentials: `{"private_key":"vertex-secret-value"}`,
+	}
+
+	tests := []struct {
+		name string
+		err  error
+
+		want         string
+		wantAbsent   []string
+		wantContains string
+	}{
+		{
+			name:       "bifrost all keys rejected becomes actionable",
+			err:        fmt.Errorf("bifrost error: all configured keys returned permanent per-key errors (401/402/403)"),
+			want:       "The provider rejected this service's credentials (401, 402, or 403). Check that the API key is correct and active, and that the account has available credit.",
+			wantAbsent: []string{"bifrost"},
+		},
+		{
+			name:         "provider message is preserved",
+			err:          fmt.Errorf("model `gpt-4o-mini` does not exist or you do not have access to it"),
+			wantContains: "does not exist or you do not have access to it",
+		},
+		{
+			name:       "api key echoed by the provider is redacted",
+			err:        fmt.Errorf("request failed: Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz0123456789"),
+			wantAbsent: []string{"sk-proj-abcdefghijklmnopqrstuvwxyz0123456789"},
+		},
+		{
+			name:       "aws secret echoed by the provider is redacted",
+			err:        fmt.Errorf("signature mismatch for aws-secret-value-9876543210"),
+			wantAbsent: []string{"aws-secret-value-9876543210"},
+		},
+		{
+			name:       "vertex credentials echoed by the provider are redacted",
+			err:        fmt.Errorf(`bad credentials: {"private_key":"vertex-secret-value"}`),
+			wantAbsent: []string{"vertex-secret-value"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := testServiceErrorMessage(tt.err, svc)
+
+			if tt.want != "" {
+				require.Equal(t, tt.want, got)
+			}
+			if tt.wantContains != "" {
+				require.Contains(t, got, tt.wantContains)
+			}
+			for _, absent := range tt.wantAbsent {
+				require.NotContains(t, got, absent)
+			}
+			require.NotEmpty(t, got, "a failed probe must always say something")
+		})
+	}
+}
+
+func TestTestServiceErrorMessageNil(t *testing.T) {
+	require.Empty(t, testServiceErrorMessage(nil, llm.ServiceConfig{}))
+}
