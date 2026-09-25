@@ -558,6 +558,7 @@ describe('LLMBotPost mid-stream text routing', () => {
     });
 
     test('folds narration away once the next tool call shows it was not the answer', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'other_user'), loading: false, error: null});
         const send = streamingPost();
         send({control: 'start'});
         send(resolvedToolCall('tc_a', 'search_tools'));
@@ -572,6 +573,7 @@ describe('LLMBotPost mid-stream text routing', () => {
     });
 
     test('moves narration into the expanded stack without a fold', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'other_user'), loading: false, error: null});
         const send = streamingPost();
         send({control: 'start'});
         send(resolvedToolCall('tc_a', 'search_tools'));
@@ -628,6 +630,7 @@ describe('LLMBotPost mid-stream text routing', () => {
     });
 
     test('carries the setup status and the first tool on the same line', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'other_user'), loading: false, error: null});
         const send = streamingPost();
         send({control: 'progress', progress_phase: 'connecting_provider', progress_seq: 4});
         const header = screen.getByTestId('llm-bot-tool-activity-header');
@@ -638,6 +641,20 @@ describe('LLMBotPost mid-stream text routing', () => {
 
         expect(screen.getByTestId('llm-bot-tool-activity-header')).toBe(header);
         expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
+    });
+
+    test('keeps a live pending call out of the activity line until the conversation shows who the requester is', () => {
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        const send = streamingPost();
+        send({control: 'start'});
+        send(resolvedToolCall('tc_a', 'read_channel'));
+        send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_b', name: 'create_post', description: '', status: ToolCallStatus.Pending}])});
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
+
+        mockUseConversation.mockReturnValue({conversation: makeConversation([], 'other_user'), loading: false, error: null});
+        send({control: 'annotations', annotations: '[]'});
+
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Create Post');
     });
 
     test('keeps a call awaiting the requester out of the activity line while the conversation refetches', () => {

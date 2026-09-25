@@ -605,8 +605,12 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const lastRenderedIdx = renderedRounds.length - 1;
     const lastRendered = lastRenderedIdx >= 0 ? renderedRounds[lastRenderedIdx] : null;
     const isPersistedAnchor = lastRenderedIdx >= 0 && lastRenderedIdx === stablePersisted.length - 1;
+
+    // Until the conversation loads the viewer may be the requester, so a live
+    // pending call stays out of the activity line instead of folding in and back out.
+    const mayBeRequester = requesterIsCurrentUser || (Boolean(conversationId) && !knownConversation && !conversationError);
     const livePendingForRequester = lastRendered?.id === LIVE_ROUND_ID &&
-        selectDecisionToolCalls(lastRendered.toolCalls, 'call', requesterIsCurrentUser).length > 0;
+        selectDecisionToolCalls(lastRendered.toolCalls, 'call', mayBeRequester).length > 0;
     const anchorRound: Round | null = (isPersistedAnchor || livePendingForRequester) ? lastRendered : null;
     const anchorRoundId = anchorRound?.id ?? null;
 
@@ -628,7 +632,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // A round the viewer owes a decision on stays out of the activity area so
     // its approval card renders in full. Onlookers owe none, so it folds in.
     const awaitingDecision = anchorRound !== null &&
-        needsViewerDecision(anchorRound.toolCalls, anchorStage, requesterIsCurrentUser);
+        needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester);
     const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
     const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
