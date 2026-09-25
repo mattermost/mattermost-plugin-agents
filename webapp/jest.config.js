@@ -5,7 +5,18 @@ module.exports = {
     testEnvironment: 'jsdom',
     transform: {
         '^.+\\.tsx?$': 'ts-jest',
+
+        // @formatjs ships ESM. Transform it in isolation so the project Babel
+        // config (styled-components, formatjs AST) is not applied to it.
+        'node_modules/@formatjs/.+\\.js$': ['babel-jest', {
+            babelrc: false,
+            configFile: false,
+            presets: [['@babel/preset-env', {targets: {node: 'current'}}]],
+        }],
     },
+    transformIgnorePatterns: [
+        '/node_modules/(?!@formatjs/)',
+    ],
     moduleNameMapper: {
 
         // Asset mappings must precede the path aliases below: moduleNameMapper

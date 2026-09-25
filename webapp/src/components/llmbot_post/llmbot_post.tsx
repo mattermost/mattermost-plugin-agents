@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -19,13 +19,10 @@ import {isValidId} from '@/utils/ids';
 
 import {ServerToolUse} from '@/types/conversation';
 
-import PostText from '../post_text';
 import {SearchSources, parseSearchSources} from '../search_sources';
-import ToolApprovalSet from '../tool_approval_set';
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
+import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
-
-import ServerToolSet from './server_tool_set';
 
 import {
     Round,
@@ -33,9 +30,12 @@ import {
     computeRenderedRounds,
     deriveApprovalStageForPost,
 } from './turn_content_utils';
-import {ReasoningDisplay, LoadingSpinner, MinimalReasoningContainer} from './reasoning_display';
+import {deriveActivity, isTerminalToolStatus} from './activity_items';
 import {ControlsBarComponent} from './controls_bar';
 import {extractPermalinkData} from './permalink_data';
+import {FoldingText, useFoldingText} from './folding_text';
+import {RoundView} from './round_view';
+import ToolActivityDisplay from './tool_activity_display';
 
 const SearchResultsPropKey = 'search_results';
 
@@ -76,15 +76,7 @@ interface LLMBotPostProps {
 // ToolRunner emits one tool_call event per round with pending statuses, then one
 // with terminal statuses after execution. The terminal one is the round boundary.
 function isResolvedToolCallEvent(toolCalls: ToolCall[]): boolean {
-    if (toolCalls.length === 0) {
-        return false;
-    }
-    return toolCalls.every((tc) =>
-        tc.status === ToolCallStatus.Success ||
-        tc.status === ToolCallStatus.Error ||
-        tc.status === ToolCallStatus.AutoApproved ||
-        tc.status === ToolCallStatus.Rejected,
-    );
+    return toolCalls.length > 0 && toolCalls.every((tc) => isTerminalToolStatus(tc.status));
 }
 
 export const LLMBotPost = (props: LLMBotPostProps) => {
@@ -98,12 +90,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
+    // Invalidation empties the cache until the refetch lands. Who the requester
+    // is does not change, so keep answering from the last copy meanwhile.
+    const lastConversationRef = useRef(conversation);
+    if (conversation) {
+        lastConversationRef.current = conversation;
+    }
+    const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
+
     // Meeting summarization posts have no conversation entity yet; fall back to
     // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
     const requesterIsCurrentUser = Boolean(
-        (conversation && conversation.user_id === currentUserId) ||
+        (knownConversation && knownConversation.user_id === currentUserId) ||
         (!conversationId && legacyRequester && legacyRequester === currentUserId),
     );
 
@@ -135,6 +135,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const [isReasoningLoading, setIsReasoningLoading] = useState(false);
 
     const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+
+    const [activityExpanded, setActivityExpanded] = useState(false);
 
     // Rounds completed during this stream, before turns land via refetch.
     const [liveRounds, setLiveRounds] = useState<Round[]>([]);
@@ -346,7 +348,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 setGenerating(true);
 
                 try {
-                    const parsedServerTools = JSON.parse(data.server_tool) as ServerToolUse[];
+                    const parsed: unknown = JSON.parse(data.server_tool);
+                    if (!Array.isArray(parsed)) {
+                        throw new Error('server_tool payload is not an array');
+                    }
+                    const parsedServerTools = parsed as ServerToolUse[];
                     const fresh = parsedServerTools.filter(
                         (use) => use.id !== '' && !assignedActivityIds.current.has(use.id),
                     );
@@ -592,17 +598,25 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const hasContent = renderedRounds.length > 0;
     const showControlsBar = ((showRegenerate || showPostbackButton) && hasContent) || showStopGeneratingButton;
 
-    // Only the post anchor (latest persisted round) gets a real approval stage;
-    // live/locally-tracked rounds always render as 'done'.
-    const anchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
-    const lastPersistedIdx = stablePersisted.length - 1;
+    // Only the anchor round gets a real approval stage: the latest persisted
+    // round when nothing live follows it, or a live round with calls awaiting
+    // the requester (so its approval card shows before the refetch lands).
+    const persistedAnchorStage: ToolApprovalStage = conversation ? deriveApprovalStageForPost(conversation, props.post.id) : 'done';
     const lastRenderedIdx = renderedRounds.length - 1;
-    const stageForRound = (idx: number): ToolApprovalStage => {
-        if (idx === lastPersistedIdx && idx === lastRenderedIdx) {
-            return anchorStage;
-        }
-        return 'done';
-    };
+    const lastRendered = lastRenderedIdx >= 0 ? renderedRounds[lastRenderedIdx] : null;
+    const isPersistedAnchor = lastRenderedIdx >= 0 && lastRenderedIdx === stablePersisted.length - 1;
+
+    // Until the conversation loads the viewer may be the requester, so a live
+    // pending call stays out of the activity line instead of folding in and back out.
+    const mayBeRequester = requesterIsCurrentUser || (Boolean(conversationId) && !knownConversation && !conversationError);
+    const livePendingForRequester = lastRendered?.id === LIVE_ROUND_ID &&
+        selectDecisionToolCalls(lastRendered.toolCalls, 'call', mayBeRequester).length > 0;
+    const anchorRound: Round | null = (isPersistedAnchor || livePendingForRequester) ? lastRendered : null;
+    const anchorRoundId = anchorRound?.id ?? null;
+
+    // Call-stage even while generating: a dropped End would otherwise hide
+    // Accept after finalizeTurn has already persisted the pending turn.
+    const anchorStage: ToolApprovalStage = livePendingForRequester ? 'call' : persistedAnchorStage;
 
     // Parsed defensively: search_results is a free-form post prop, so a
     // malformed value yields an empty list instead of throwing during render.
@@ -611,10 +625,58 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         [props.post.props],
     );
 
-    const isReasoningCollapsed = (roundId: string): boolean => !expandedReasoning[roundId];
-    const toggleReasoning = (roundId: string, collapsed: boolean) => {
+    const toggleReasoning = useCallback((roundId: string, collapsed: boolean) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
-    };
+    }, []);
+
+    // A round the viewer owes a decision on stays out of the activity area so
+    // its approval card renders in full. Onlookers owe none, so it folds in.
+    const awaitingDecision = anchorRound !== null &&
+        needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester);
+    const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
+
+    const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
+    const activity = useMemo(
+        () => deriveActivity(renderedRounds, {pendingDecisionRoundId, reasoningLoadingRoundId, live: isGenerationInProgress}),
+        [renderedRounds, pendingDecisionRoundId, reasoningLoadingRoundId, isGenerationInProgress],
+    );
+
+    // Answer text that turns out to be narration folds away instead of
+    // vanishing. Expanded, the round just moves into the stack in place.
+    const answerText = activity.answerRounds.map((round) => round.text).filter((text) => text !== '').join('\n\n');
+    const foldingText = useFoldingText(answerText, activity.items.length > 0 && !activityExpanded);
+
+    const renderRound = useCallback((round: Round) => {
+        const isLiveRound = round.id === LIVE_ROUND_ID;
+        return (
+            <RoundView
+                key={round.id}
+                round={round}
+                postID={props.post.id}
+                conversationID={conversationId}
+                channelID={props.post.channel_id}
+                approvalStage={round.id === anchorRoundId ? anchorStage : 'done'}
+                canApprove={requesterIsCurrentUser}
+                canExpand={requesterIsCurrentUser}
+                showCursor={generating && isLiveRound && !precontent}
+                reasoningLoading={isLiveRound && isReasoningLoading}
+                reasoningCollapsed={!expandedReasoning[round.id]}
+                onToggleReasoning={toggleReasoning}
+            />
+        );
+    }, [
+        props.post.id,
+        props.post.channel_id,
+        conversationId,
+        anchorRoundId,
+        anchorStage,
+        requesterIsCurrentUser,
+        generating,
+        precontent,
+        isReasoningLoading,
+        expandedReasoning,
+        toggleReasoning,
+    ]);
 
     // Tool-only posts leave post.message empty, so precontent stays true on
     // remount. Hide Working... once rounds exist, except while generation is
@@ -638,33 +700,27 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 {permalinkView}
             </>
             }
-            {showWorking && (
-                <MinimalReasoningContainer>
-                    <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>
-                    <span>{precontentMessage}</span>
-                </MinimalReasoningContainer>
+            {(showWorking || activity.items.length > 0) && (
+                <ToolActivityDisplay
+                    activity={activity}
+                    expanded={activityExpanded}
+                    onToggleExpanded={setActivityExpanded}
+                    inProgress={isGenerationInProgress || awaitingDecision}
+                    working={isGenerationInProgress || progressPhase !== null}
+                    statusMessage={showWorking ? precontentMessage : undefined} // eslint-disable-line no-undefined
+                    renderRound={renderRound}
+                />
             )}
-            {renderedRounds.map((round, idx) => {
-                const isLiveRound = round.id === LIVE_ROUND_ID;
-                const showCursor = generating && isLiveRound && !precontent;
-                const reasoningLoading = isLiveRound && isReasoningLoading;
-                return (
-                    <RoundView
-                        key={round.id}
-                        round={round}
-                        postID={props.post.id}
-                        conversationID={conversationId}
-                        channelID={props.post.channel_id}
-                        approvalStage={stageForRound(idx)}
-                        canApprove={requesterIsCurrentUser}
-                        canExpand={requesterIsCurrentUser}
-                        showCursor={showCursor}
-                        reasoningLoading={reasoningLoading}
-                        reasoningCollapsed={isReasoningCollapsed(round.id)}
-                        onToggleReasoning={(collapsed) => toggleReasoning(round.id, collapsed)}
-                    />
-                );
-            })}
+            {foldingText !== null && (
+                <FoldingText
+                    text={foldingText}
+                    channelID={props.post.channel_id}
+                    postID={props.post.id}
+                />
+            )}
+            <AnswerArea $afterActivity={activity.items.length > 0}>
+                {activity.answerRounds.map(renderRound)}
+            </AnswerArea>
             {searchSources.length > 0 && (
                 <SearchSources
                     sources={searchSources}
@@ -689,77 +745,15 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     );
 };
 
-interface RoundViewProps {
-    round: Round;
-    postID: string;
-    conversationID?: string;
-    channelID: string;
-    approvalStage: ToolApprovalStage;
-    canApprove: boolean;
-    canExpand: boolean;
-    showCursor: boolean;
-    reasoningLoading: boolean;
-    reasoningCollapsed: boolean;
-    onToggleReasoning: (collapsed: boolean) => void;
-}
-
-function RoundView(props: RoundViewProps) {
-    const {round} = props;
-    const showArguments = round.toolCalls.some((tc) => tc.arguments != null);
-    const showResults = round.toolCalls.some((tc) => tc.result != null);
-    return (
-        <RoundContainer>
-            {round.reasoning.summary !== '' && (
-                <ReasoningDisplay
-                    reasoningSummary={round.reasoning.summary}
-                    isReasoningCollapsed={props.reasoningCollapsed}
-                    isReasoningLoading={props.reasoningLoading}
-                    onToggleCollapse={props.onToggleReasoning}
-                />
-            )}
-            {round.serverTools.length > 0 && (
-                <ServerToolSet serverTools={round.serverTools}/>
-            )}
-            {round.text !== '' && (
-                <PostText
-                    message={round.text}
-                    channelID={props.channelID}
-                    postID={props.postID}
-                    showCursor={props.showCursor}
-                    annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
-                />
-            )}
-            {round.toolCalls.length > 0 && (
-                <ToolApprovalSet
-                    postID={props.postID}
-                    conversationID={props.conversationID}
-                    toolCalls={round.toolCalls}
-                    approvalStage={props.approvalStage}
-                    canApprove={props.canApprove}
-                    canExpand={props.canExpand}
-                    showArguments={showArguments}
-                    showResults={showResults}
-                />
-            )}
-        </RoundContainer>
-    );
-}
-
 const PostBody = styled.div`
 `;
 
-const RoundContainer = styled.div`
-    & + & {
-        margin-top: 8px;
+// Same gap as between stacked rounds, so a round moving from here into the
+// expanded activity stack stays where it is.
+const AnswerArea = styled.div<{$afterActivity: boolean}>`
+    &:not(:empty) {
+        margin-top: ${(props) => (props.$afterActivity ? '8px' : '0')};
     }
-`;
-
-const SpinnerWrapper = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
 `;
 
 const PostSummaryHelpMessage = styled.div`

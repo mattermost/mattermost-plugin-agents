@@ -3,6 +3,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse, mergeFixtureFiles } from 'helpers/aimock-fixtures';
+import { expandToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
@@ -123,6 +124,8 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
 
         const rhs = page.locator('#rhsContainer');
         const latestBotPost = rhs.locator('[data-testid="llm-bot-post"]').last();
+
+        // Pending approvals render in full without expanding anything.
         await expect(latestBotPost.getByText(readChannelLabel, { exact: true })).toBeVisible({
             timeout: 90000,
         });
@@ -171,6 +174,11 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         await expect(rhs.getByRole('button', { name: /^reject$/i })).not.toBeVisible();
         await expect(rhs.getByRole('button', { name: /^share$/i })).not.toBeVisible();
         await expect(rhs.getByRole('button', { name: /keep private/i })).not.toBeVisible();
+
+        // The auto-approved badge lives on the tool card, which the collapsed
+        // activity row hides until it is expanded.
+        await expect(rhs.getByText('Auto-approved')).toHaveCount(0);
+        await expandToolActivity(rhs.locator('[data-testid="llm-bot-post"]').last());
         await expect(rhs.getByText('Auto-approved')).toBeVisible();
     });
 });

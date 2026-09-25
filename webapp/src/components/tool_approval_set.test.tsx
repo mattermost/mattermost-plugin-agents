@@ -57,8 +57,6 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 approvalStage={approvalStage}
                 canApprove={canApprove}
                 canExpand={true}
-                showArguments={true}
-                showResults={true}
             />
         </IntlProvider>,
     );

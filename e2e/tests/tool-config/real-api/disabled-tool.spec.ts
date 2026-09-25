@@ -4,6 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildTextResponse } from 'helpers/aimock-fixtures';
+import { expectNoToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 import { createToolConfigAPIHelper } from 'helpers/tool-config';
 
@@ -120,5 +121,8 @@ test.describe('Disabled Tool Excluded (Aimock)', () => {
         await expect(rhsContainer.getByRole('button', { name: /^accept$/i })).not.toBeVisible();
         await expect(rhsContainer.getByRole('button', { name: /^reject$/i })).not.toBeVisible();
         await expect(rhsContainer.getByText('Auto-approved')).not.toBeVisible();
+
+        // No tool ran, so the post renders without a tool-activity area at all.
+        await expectNoToolActivity(disabledBotPost);
     });
 });

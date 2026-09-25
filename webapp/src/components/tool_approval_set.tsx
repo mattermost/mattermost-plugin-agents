@@ -9,6 +9,7 @@ import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
 import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {isInterruptedAutoApprovalRound, selectDecisionToolCalls} from './tool_decisions';
 import {renderToolCall} from './tool_renderers/registry';
 
 // Styled components
@@ -64,8 +65,6 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
-    showArguments: boolean;
-    showResults: boolean;
 }
 
 // Define a type for tool decisions
@@ -92,46 +91,20 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
-    const pendingToolCalls = useMemo(() => {
-        return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
-    }, [props.toolCalls]);
-    const isInterruptedAutoRound = isCallStage &&
-        pendingToolCalls.length > 0 &&
-        pendingToolCalls.every((call) => call.would_auto_execute);
+    const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
+
+    // Onlookers get redacted calls without arguments or results.
+    const showArguments = props.toolCalls.some((call) => call.arguments != null);
+    const showResults = props.toolCalls.some((call) => call.result != null);
 
     // Approval is per pending tool. Earlier auto-approved tools in the same
     // response should not suppress controls for later manual ones.
     const effectiveCanApprove = props.canApprove;
 
-    const decisionToolCalls = useMemo(() => {
-        if (!effectiveCanApprove) {
-            return [];
-        }
-
-        if (isCallStage) {
-            // Calls that passed the auto-execution policy run server-side
-            // once the rest of the batch is resolved — no decision needed.
-            return props.toolCalls.filter((call) =>
-                call.status === ToolCallStatus.Pending && !call.would_auto_execute,
-            );
-        }
-
-        if (!isResultStage) {
-            // 'done' stage — server says no decision remains, render no buttons.
-            return [];
-        }
-
-        // User-interaction results are decided at answer time (the user
-        // authored them) and auto-executed results are decided at write time,
-        // so neither needs a share/keep-private decision.
-        return props.toolCalls.filter((call) =>
-            !call.user_interaction &&
-            !call.decided &&
-            (call.status === ToolCallStatus.Success ||
-            call.status === ToolCallStatus.Error ||
-            call.status === ToolCallStatus.AutoApproved),
-        );
-    }, [props.toolCalls, effectiveCanApprove, isCallStage, isResultStage]);
+    const decisionToolCalls = useMemo(
+        () => selectDecisionToolCalls(props.toolCalls, props.approvalStage, effectiveCanApprove),
+        [props.toolCalls, props.approvalStage, effectiveCanApprove],
+    );
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -331,8 +304,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             onApprove: isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
                             onReject: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
                             canExpand: props.canExpand,
-                            showArguments: props.showArguments,
-                            showResults: props.showResults,
+                            showArguments,
+                            showResults,
                             approvalStage: props.approvalStage,
                             isAutoApproved: tool.status === ToolCallStatus.AutoApproved,
                             canAnswer: isDecisionCall && isCallStage,
