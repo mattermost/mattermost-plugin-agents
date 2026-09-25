@@ -24,6 +24,8 @@ To create a prompt:
 3. Open **Custom prompts**, then select **Manage prompts**.
 4. Select **Create new** to open the prompt editor.
 5. Set the **Visibility** to **Public** to share the prompt with other users in the workspace, or **Private** to keep it visible only to you.
+
+   Personal (private) prompts are available at every license level. Publishing a prompt as **Public**, and discovering or using prompts published by others, is available at Enterprise and above (see [license requirements](../admin_guide.md#license-requirements)). Switching a public prompt back to private is always permitted.
 6. Enter an **Action Title**. The title is required and can be up to 64 characters. It's the label that appears in menus and on pinned buttons.
 7. Optionally enter a **Brief Description** to help you and others remember what the prompt is for.
 8. Enter the **System Prompt** template. This is the text that gets rendered and sent on your behalf when the prompt runs. The template is required.

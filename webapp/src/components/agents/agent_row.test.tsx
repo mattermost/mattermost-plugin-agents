@@ -4,7 +4,7 @@
 import React from 'react';
 import {render, screen} from '@testing-library/react';
 
-import {ServiceInfo, UserAgent} from '@/types/agents';
+import {AgentInactiveReason, ServiceInfo, UserAgent} from '@/types/agents';
 
 import AgentRow from './agent_row';
 
@@ -56,37 +56,66 @@ const availableService: ServiceInfo = {
 
 const noop = () => { /* no-op */ };
 
-describe('AgentRow "Service unavailable" badge', () => {
+describe('AgentRow inactive badge', () => {
     const cases: Array<{
         name: string;
+        inactiveReason?: AgentInactiveReason;
         servicesLoaded: boolean;
         services: ServiceInfo[];
-        expectBadge: boolean;
+        expectTooltip: string | null;
     }> = [
         {
-            name: 'shows when services loaded and the agent\'s service is missing',
+            name: 'explains a service that is not active on the plan',
+            inactiveReason: 'service_not_licensed',
+            servicesLoaded: true,
+            services: [availableService],
+            expectTooltip: 'This agent uses an LLM service that is not active on your current plan. Only the first configured service is active; multiple LLM services are available on Enterprise plans and above. Edit the agent to choose the active service.',
+        },
+        {
+            name: 'explains an agent over the agent limit',
+            inactiveReason: 'agent_limit',
+            servicesLoaded: true,
+            services: [availableService],
+            expectTooltip: 'Your current plan has reached its limit of active AI agents, and agents created earlier take the available slots. Delete an earlier agent, or upgrade your plan for more agents.',
+        },
+        {
+            name: 'explains an unavailable service reported by the server',
+            inactiveReason: 'service_unavailable',
+            servicesLoaded: false,
+            services: [],
+            expectTooltip: 'This agent’s LLM service was deleted or is missing required settings. Edit the agent to choose another service, or complete the service configuration.',
+        },
+        {
+            name: 'explains an invalid configuration',
+            inactiveReason: 'invalid_config',
+            servicesLoaded: true,
+            services: [availableService],
+            expectTooltip: 'This agent’s configuration is incomplete. Edit the agent to fix it.',
+        },
+        {
+            name: 'flags a deleted service once services have loaded',
             servicesLoaded: true,
             services: [],
-            expectBadge: true,
+            expectTooltip: 'This agent’s LLM service was deleted or is missing required settings. Edit the agent to choose another service, or complete the service configuration.',
         },
         {
             name: 'hidden when the services list was never loaded (user lacks permission)',
             servicesLoaded: false,
             services: [],
-            expectBadge: false,
+            expectTooltip: null,
         },
         {
-            name: 'hidden when services loaded and the agent\'s service exists',
+            name: 'hidden for an active agent',
             servicesLoaded: true,
             services: [availableService],
-            expectBadge: false,
+            expectTooltip: null,
         },
     ];
 
-    test.each(cases)('$name', ({servicesLoaded, services, expectBadge}) => {
+    test.each(cases)('$name', ({inactiveReason, servicesLoaded, services, expectTooltip}) => {
         render(
             <AgentRow
-                agent={makeAgent()}
+                agent={{...makeAgent(), inactiveReason}}
                 services={services}
                 servicesLoaded={servicesLoaded}
                 canManage={false}
@@ -95,11 +124,11 @@ describe('AgentRow "Service unavailable" badge', () => {
             />,
         );
 
-        const badge = screen.queryByText('Service unavailable');
-        if (expectBadge) {
-            expect(badge).not.toBeNull();
+        if (expectTooltip) {
+            expect(screen.getByText('Inactive')).not.toBeNull();
+            expect(screen.getByText(expectTooltip)).not.toBeNull();
         } else {
-            expect(badge).toBeNull();
+            expect(screen.queryByText('Inactive')).toBeNull();
         }
         expect(screen.getByText('Read only')).not.toBeNull();
         expect(screen.getByText('Mention @agent1 in a channel or direct message to chat with this agent.')).not.toBeNull();

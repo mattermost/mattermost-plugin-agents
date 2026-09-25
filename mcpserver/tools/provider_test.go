@@ -292,7 +292,7 @@ func alwaysFalse() bool { return false }
 func TestToolAvailabilityMiddleware(t *testing.T) {
 	t.Run("drops unavailable tool, keeps the rest", func(t *testing.T) {
 		availability := map[string]func() bool{"b": alwaysFalse}
-		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "b", "c"))
+		handler := toolAvailabilityMiddleware(availability, nil, alwaysTrue)(newToolsListHandler("a", "b", "c"))
 
 		// req is unread by the middleware; mcp.Request is an interface, so nil compiles.
 		result, err := handler(context.Background(), "tools/list", nil)
@@ -305,7 +305,7 @@ func TestToolAvailabilityMiddleware(t *testing.T) {
 
 	t.Run("keeps available tool", func(t *testing.T) {
 		availability := map[string]func() bool{"a": alwaysTrue}
-		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a"))
+		handler := toolAvailabilityMiddleware(availability, nil, alwaysTrue)(newToolsListHandler("a"))
 
 		result, err := handler(context.Background(), "tools/list", nil)
 		require.NoError(t, err)
@@ -317,7 +317,7 @@ func TestToolAvailabilityMiddleware(t *testing.T) {
 
 	t.Run("tools not in the availability map are always kept", func(t *testing.T) {
 		availability := map[string]func() bool{"b": alwaysFalse}
-		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "c"))
+		handler := toolAvailabilityMiddleware(availability, nil, alwaysTrue)(newToolsListHandler("a", "c"))
 
 		result, err := handler(context.Background(), "tools/list", nil)
 		require.NoError(t, err)
@@ -329,7 +329,7 @@ func TestToolAvailabilityMiddleware(t *testing.T) {
 
 	t.Run("non-tools/list method is passed through untouched", func(t *testing.T) {
 		availability := map[string]func() bool{"b": alwaysFalse}
-		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("a", "b", "c"))
+		handler := toolAvailabilityMiddleware(availability, nil, alwaysTrue)(newToolsListHandler("a", "b", "c"))
 
 		// A different method: the middleware must NOT filter "b" out.
 		result, err := handler(context.Background(), "tools/call", nil)
@@ -347,11 +347,146 @@ func TestToolAvailabilityMiddleware(t *testing.T) {
 			return true
 		}
 		availability := map[string]func() bool{"x": pred, "y": pred}
-		handler := toolAvailabilityMiddleware(availability)(newToolsListHandler("x", "y"))
+		handler := toolAvailabilityMiddleware(availability, nil, alwaysTrue)(newToolsListHandler("x", "y"))
 
 		_, err := handler(context.Background(), "tools/list", nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, 1, calls, "the shared predicate must be probed once, not once per tool")
+	})
+}
+
+func newToolsCallHandler(called *bool, text string) mcp.MethodHandler {
+	return func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		if called != nil {
+			*called = true
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil
+	}
+}
+
+func callToolRequest(name string) mcp.Request {
+	return &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
+		Params: &mcp.CallToolParamsRaw{Name: name},
+	}
+}
+
+func TestStateChangingToolsMiddleware(t *testing.T) {
+	stateChanging := map[string]struct{}{"create_post": {}}
+
+	t.Run("tools/list omits state-changing tools when not allowed", func(t *testing.T) {
+		handler := toolAvailabilityMiddleware(nil, stateChanging, alwaysFalse)(newToolsListHandler("read_post", "create_post", "get_me"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "get_me"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/list includes state-changing tools when allowed", func(t *testing.T) {
+		handler := toolAvailabilityMiddleware(nil, stateChanging, alwaysTrue)(newToolsListHandler("read_post", "create_post", "get_me"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "create_post", "get_me"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("nil predicate fails closed on tools/list", func(t *testing.T) {
+		handler := toolAvailabilityMiddleware(nil, stateChanging, nil)(newToolsListHandler("read_post", "create_post"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.Equal(t, []string{"read_post"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/call of state-changing tool when not allowed returns license error result", func(t *testing.T) {
+		called := false
+		handler := toolAvailabilityMiddleware(nil, stateChanging, alwaysFalse)(newToolsCallHandler(&called, "resolver ran"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err, "must be an MCP tool error result, not a transport error")
+		assert.False(t, called, "resolver must not run")
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.True(t, callResult.IsError)
+		require.NotEmpty(t, callResult.Content)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, text.Text, "Enterprise")
+		assert.Equal(t, stateChangingToolsUnavailableMessage(), text.Text)
+	})
+
+	t.Run("tools/call of read-only tool proceeds when state-changing tools are not allowed", func(t *testing.T) {
+		called := false
+		handler := toolAvailabilityMiddleware(nil, stateChanging, alwaysFalse)(newToolsCallHandler(&called, "read-only ok"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("read_post"))
+		require.NoError(t, err)
+		assert.True(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.False(t, callResult.IsError)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "read-only ok", text.Text)
+	})
+
+	t.Run("tools/call of state-changing tool proceeds when allowed", func(t *testing.T) {
+		called := false
+		handler := toolAvailabilityMiddleware(nil, stateChanging, alwaysTrue)(newToolsCallHandler(&called, "create_post ran"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err)
+		assert.True(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "create_post ran", text.Text)
+	})
+
+	t.Run("nil predicate fails closed on tools/call", func(t *testing.T) {
+		called := false
+		handler := toolAvailabilityMiddleware(nil, stateChanging, nil)(newToolsCallHandler(&called, "should not run"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err)
+		assert.False(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.True(t, callResult.IsError)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, stateChangingToolsUnavailableMessage(), text.Text)
+	})
+
+	t.Run("allow predicate is evaluated per request", func(t *testing.T) {
+		allow := false
+		pred := func() bool { return allow }
+		handler := toolAvailabilityMiddleware(nil, stateChanging, pred)(newToolsListHandler("read_post", "create_post"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.Equal(t, []string{"read_post"}, toolNames(listResult.Tools))
+
+		allow = true
+		result, err = handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok = result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "create_post"}, toolNames(listResult.Tools))
 	})
 }

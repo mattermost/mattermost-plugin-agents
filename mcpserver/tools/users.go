@@ -76,15 +76,15 @@ const (
 // getUserTools returns the user profile read/update tools.
 func (p *MattermostToolProvider) getUserTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_me", getMeDescription, p.toolGetMe),
-		mcpTool(p, "get_user", getUserDescription, p.toolGetUser),
-		mcpTool(p, "get_user_by_username", getUserByUsernameDescription, p.toolGetUserByUsername),
-		mcpTool(p, "get_user_by_email", getUserByEmailDescription, p.toolGetUserByEmail),
-		mcpTool(p, "get_users_by_ids", getUsersByIDsDescription, p.toolGetUsersByIDs),
-		mcpTool(p, "get_users_by_usernames", getUsersByUsernamesDescription, p.toolGetUsersByUsernames),
-		mcpTool(p, "get_user_stats", getUserStatsDescription, p.toolGetUserStats),
-		mcpTool(p, "get_user_cpa_values", getUserCPAValuesDescription, p.toolGetUserCPAValues),
-		mcpTool(p, "list_cpa_fields", listCPAFieldsDescription, p.toolListCPAFields),
+		mcpReadTool(p, "get_me", getMeDescription, p.toolGetMe),
+		mcpReadTool(p, "get_user", getUserDescription, p.toolGetUser),
+		mcpReadTool(p, "get_user_by_username", getUserByUsernameDescription, p.toolGetUserByUsername),
+		mcpReadTool(p, "get_user_by_email", getUserByEmailDescription, p.toolGetUserByEmail),
+		mcpReadTool(p, "get_users_by_ids", getUsersByIDsDescription, p.toolGetUsersByIDs),
+		mcpReadTool(p, "get_users_by_usernames", getUsersByUsernamesDescription, p.toolGetUsersByUsernames),
+		mcpReadTool(p, "get_user_stats", getUserStatsDescription, p.toolGetUserStats),
+		mcpReadTool(p, "get_user_cpa_values", getUserCPAValuesDescription, p.toolGetUserCPAValues),
+		mcpReadTool(p, "list_cpa_fields", listCPAFieldsDescription, p.toolListCPAFields),
 		mcpTool(p, "update_user", updateUserDescription, p.toolUpdateUser),
 	}
 }

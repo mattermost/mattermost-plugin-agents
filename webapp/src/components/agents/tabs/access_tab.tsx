@@ -10,6 +10,7 @@ import {ChannelAccessLevelItem, UserAccessLevelItem} from '@/components/system_c
 import {FormRow, ItemLabel, ItemList} from '@/components/system_console/item';
 import {SelectUser} from '@/components/select';
 import PolicyEditor from '@/components/access_control/policy_editor';
+import {useIsLicensedFor} from '@/license';
 
 import {AgentDraft} from '../agent_config_view';
 
@@ -34,6 +35,7 @@ type Props = {
 const AccessTab = (props: Props) => {
     const {draft, onChange, serviceAccountFieldsLocked, baselineUserAccessLevel, agentId, abacSupported, isSystemAdmin} = props;
     const intl = useIntl();
+    const abacLicensed = useIsLicensedFor('attribute_based_access');
 
     const attributeBasedSelected = draft.userAccessLevel === UserAccessLevel.AttributeBased;
     const switchingAwayFromAttributeBased =
@@ -50,6 +52,7 @@ const AccessTab = (props: Props) => {
             allowAdvanced={isSystemAdmin}
             agentIdForAuthz={agentId}
             hideWhenEmpty={!attributeBasedSelected}
+            allowEdit={abacLicensed}
         />
     ) : null;
 
@@ -100,7 +103,7 @@ const AccessTab = (props: Props) => {
                     teamIDs={draft.teamIds}
                     onChangeIDs={(userIds: string[], teamIds: string[]) => onChange({userIds, teamIds})}
                     disabled={serviceAccountFieldsLocked}
-                    showAttributeBased={abacSupported || attributeBasedSelected}
+                    showAttributeBased={(abacSupported && abacLicensed) || attributeBasedSelected}
                     attributeBasedDescription={attributeBasedContent}
                 />
                 <FormRow>

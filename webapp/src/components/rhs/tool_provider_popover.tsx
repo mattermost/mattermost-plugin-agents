@@ -10,6 +10,7 @@ import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserTool
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus} from '@/utils/mcp_availability';
+import {useIsLicensedFor} from '@/license';
 
 import DotMenu, {DotMenuButton, DropdownMenu} from '../dot_menu';
 import MCPUnavailableBadge from '../mcp_unavailable_badge';
@@ -42,6 +43,7 @@ function filterServersByEnabledTools(
 
 const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloadedServers, enabledMCPTools, autoEnableNewMCPTools}: ToolProviderPopoverProps) => {
     const intl = useIntl();
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [allServers, setAllServers] = useState<UserMCPServerInfo[]>(preloadedServers || []);
     const [loading, setLoading] = useState(false);
     const refreshLabel = intl.formatMessage({defaultMessage: 'Refresh tool providers'});
@@ -160,7 +162,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             {servers.map((server) => {
                 const status = mcpServerStatus(server, false);
                 const unavailable = status === 'sa-only-unavailable';
-                const showConnect = !server.authenticated && server.needsOAuth && !unavailable;
+                const showConnect = remoteMcpLicensed && !server.authenticated && server.needsOAuth && !unavailable;
                 return (
                     <ProviderRow
                         key={server.serverOrigin}
@@ -180,7 +182,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         ) : (
                             <ProviderActions>
                                 {unavailable && <MCPUnavailableBadge/>}
-                                {!unavailable && server.needsOAuth && (
+                                {!unavailable && server.authenticated && server.needsOAuth && (
                                     <DisconnectButton onClick={() => handleDisconnect(server.name)}>
                                         <FormattedMessage defaultMessage='Disconnect'/>
                                     </DisconnectButton>
