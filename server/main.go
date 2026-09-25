@@ -193,10 +193,7 @@ func (p *Plugin) OnActivate() error {
 		pluginAPI.Log.Info("Config migrated from config.json to database")
 	}
 
-	// Runs last inside this critical section: the migration above still reads the
-	// stored plugin configuration, and holding the lock keeps a single node
-	// responsible for the write.
-	removeObsoleteCredentialSettings(pluginAPI, manifest.Id)
+	clearMigratedPluginSettings(pluginAPI)
 	mtx2.Unlock()
 
 	// ABAC ID migrations must run after the config.json->DB migration and
