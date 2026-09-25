@@ -90,12 +90,20 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     const conversationId: string | undefined = isValidId(rawConversationId) ? rawConversationId : undefined; // eslint-disable-line no-undefined
     const {conversation, loading: conversationLoading, error: conversationError} = useConversation(conversationId);
 
+    // Invalidation empties the cache until the refetch lands. Who the requester
+    // is does not change, so keep answering from the last copy meanwhile.
+    const lastConversationRef = useRef(conversation);
+    if (conversation) {
+        lastConversationRef.current = conversation;
+    }
+    const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
+
     // Meeting summarization posts have no conversation entity yet; fall back to
     // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
     const requesterIsCurrentUser = Boolean(
-        (conversation && conversation.user_id === currentUserId) ||
+        (knownConversation && knownConversation.user_id === currentUserId) ||
         (!conversationId && legacyRequester && legacyRequester === currentUserId),
     );
 
@@ -625,8 +633,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
     const activity = useMemo(
-        () => deriveActivity(renderedRounds, {pendingDecisionRoundId, reasoningLoadingRoundId}),
-        [renderedRounds, pendingDecisionRoundId, reasoningLoadingRoundId],
+        () => deriveActivity(renderedRounds, {pendingDecisionRoundId, reasoningLoadingRoundId, live: isGenerationInProgress}),
+        [renderedRounds, pendingDecisionRoundId, reasoningLoadingRoundId, isGenerationInProgress],
     );
 
     // Answer text that turns out to be narration folds away instead of

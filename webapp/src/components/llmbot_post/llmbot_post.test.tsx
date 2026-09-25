@@ -378,13 +378,12 @@ describe('LLMBotPost setup progress', () => {
                 reasoning: 'Reasoning before text',
             }));
         });
-        expect(screen.getByText('Thinking')).toBeTruthy();
-        expect(screen.queryByText('Connecting to provider...')).toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Thinking');
 
         act(() => {
             listener?.(postUpdateMessage({post_id: 'post_1', control: 'start'}));
         });
-        expect(screen.getByText('Thinking')).toBeTruthy();
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Thinking');
         expect(screen.queryByText('Starting...')).toBeNull();
     });
 });
@@ -638,6 +637,20 @@ describe('LLMBotPost mid-stream text routing', () => {
         send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_a', name: 'read_channel', description: '', status: ToolCallStatus.Pending}])});
 
         expect(screen.getByTestId('llm-bot-tool-activity-header')).toBe(header);
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
+    });
+
+    test('keeps a call awaiting the requester out of the activity line while the conversation refetches', () => {
+        mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
+        const send = streamingPost();
+        send({control: 'start'});
+        send(resolvedToolCall('tc_a', 'read_channel'));
+        send({control: 'tool_call', tool_call: JSON.stringify([{id: 'tc_b', name: 'create_post', description: '', status: ToolCallStatus.Pending}])});
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
+
+        mockUseConversation.mockReturnValue({conversation: null, loading: true, error: null});
+        send({control: 'end'});
+
         expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Read Channel');
     });
 
@@ -1100,6 +1113,15 @@ describe('LLMBotPost live activity ordering', () => {
             listener?.(postUpdateMessage({post_id: 'post_1', next: 'Intro.Answer.'}));
         });
         await expect(screen.findByText('Answer.')).resolves.toBeTruthy();
+
+        // While live, the reasoning rides the status line and the text stays put.
+        expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('Thinking');
+        expect(mainAreaText()).toContain('Intro.');
+
+        act(() => {
+            listener?.(postUpdateMessage({post_id: 'post_1', control: 'end'}));
+        });
+        expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
 
         const rendered = container.textContent ?? '';
         expect(rendered.indexOf('Intro.')).toBeLessThan(rendered.indexOf('Thinking'));

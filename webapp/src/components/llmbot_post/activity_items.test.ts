@@ -100,6 +100,19 @@ describe('deriveActivity with reasoning', () => {
         expect(result.hasRunningTool).toBe(false);
     });
 
+    test.each([
+        {name: 'streaming reasoning joins before any tool', rounds: [reasoningOnly], activity: ['r3'], answer: []},
+        {name: 'text after the reasoning stays the answer', rounds: [reasonedAnswer], activity: ['r2'], answer: ['r2']},
+        {name: 'text before a reasoning block is not folded without a tool', rounds: [plainAnswer, reasoningOnly], activity: ['r3'], answer: ['r4']},
+    ])('while live, $name', ({rounds, activity, answer}) => {
+        const result = deriveActivity(rounds, {live: true});
+
+        expect(result.activityRounds.map((round) => round.id)).toEqual(activity);
+        expect(result.answerRounds.map((round) => round.id)).toEqual(answer);
+        expect(result.answerRounds.every((round) => round.reasoning.summary === '')).toBe(true);
+        expect(result.toolCount).toBe(0);
+    });
+
     test('keeps reasoning before a pending decision out when no tool ran before it', () => {
         const pending = makeRound('p', 'I will post that', [makeTool({id: 'tc_post', status: ToolCallStatus.Pending})]);
         const result = deriveActivity([reasoningOnly, pending], {pendingDecisionRoundId: 'p'});

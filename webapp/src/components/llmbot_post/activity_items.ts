@@ -115,33 +115,42 @@ export interface DeriveActivityOptions {
 
     /** The round whose reasoning is still streaming. */
     reasoningLoadingRoundId?: string;
+
+    /**
+     * The response is still streaming. Reasoning then joins the activity even
+     * before any tool runs, so the status line carries it; a post that ends
+     * without tools hands it back to its own row.
+     */
+    live?: boolean;
 }
 
-/**
- * Split a post's rounds into the collapsible activity area and the answer.
- * Text is only folded once a later tool invocation or reasoning block shows
- * it was narration, so the answer streams into the post body as it always
- * did. A post that never used a tool produces no activity, so its reasoning
- * keeps its own row.
- */
-export function deriveActivity(rounds: Round[], options: DeriveActivityOptions = {}): PostActivity {
-    const pendingIdx = options.pendingDecisionRoundId === undefined ? // eslint-disable-line no-undefined
-        -1 :
-        rounds.findIndex((round) => round.id === options.pendingDecisionRoundId);
-    const searchEnd = pendingIdx === -1 ? rounds.length : pendingIdx;
-
-    let lastActivityRoundIdx = -1;
-    if (rounds.slice(0, searchEnd).some(usesTools)) {
-        for (let i = searchEnd - 1; i >= 0; i--) {
-            if (hasActivity(rounds[i])) {
-                lastActivityRoundIdx = i;
-                break;
-            }
+function splitRounds(rounds: Round[], searchEnd: number, live: boolean): {activityRounds: Round[]; answerRounds: Round[]} {
+    const considered = rounds.slice(0, searchEnd);
+    if (!considered.some(usesTools)) {
+        if (!live || !considered.some(hasActivity)) {
+            return {activityRounds: [], answerRounds: rounds};
         }
+
+        // No tool has shown the text to be narration yet, so only reasoning moves.
+        const activityRounds: Round[] = [];
+        const answerRounds: Round[] = [];
+        rounds.forEach((round, idx) => {
+            if (idx >= searchEnd || round.reasoning.summary === '') {
+                answerRounds.push(round);
+            } else if (round.text === '') {
+                activityRounds.push(round);
+            } else {
+                const {activity, answer} = splitAnswerText(round);
+                activityRounds.push(activity);
+                answerRounds.push(answer);
+            }
+        });
+        return {activityRounds, answerRounds};
     }
 
-    if (lastActivityRoundIdx === -1) {
-        return {activityRounds: [], answerRounds: rounds, items: [], toolCount: 0, hasRunningTool: false, hasError: false, hasRejected: false};
+    let lastActivityRoundIdx = searchEnd - 1;
+    while (!hasActivity(rounds[lastActivityRoundIdx])) {
+        lastActivityRoundIdx--;
     }
 
     // A round renders reasoning and provider tools before its text and client
@@ -156,6 +165,23 @@ export function deriveActivity(rounds: Round[], options: DeriveActivityOptions =
     } else {
         activityRounds.push(lastActivityRound);
     }
+    return {activityRounds, answerRounds};
+}
+
+/**
+ * Split a post's rounds into the collapsible activity area and the answer.
+ * Text is only folded once a later tool invocation or reasoning block shows
+ * it was narration, so the answer streams into the post body as it always
+ * did. A finished post that never used a tool produces no activity, so its
+ * reasoning keeps its own row.
+ */
+export function deriveActivity(rounds: Round[], options: DeriveActivityOptions = {}): PostActivity {
+    const pendingIdx = options.pendingDecisionRoundId === undefined ? // eslint-disable-line no-undefined
+        -1 :
+        rounds.findIndex((round) => round.id === options.pendingDecisionRoundId);
+    const searchEnd = pendingIdx === -1 ? rounds.length : pendingIdx;
+
+    const {activityRounds, answerRounds} = splitRounds(rounds, searchEnd, options.live ?? false);
 
     // Tools are keyed by invocation id, which survives the refetch that replaces live rounds.
     const items: ActivityItem[] = [];
