@@ -68,6 +68,7 @@ type staticMCPToolProvider struct {
 type saCatalogCall struct {
 	remoteOwnerID  string
 	invokingUserID string
+	localActorID   string
 }
 
 func (p *staticMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -84,6 +85,7 @@ func (p *staticMCPToolProvider) GetToolsWithSelection(_ stdcontext.Context, req 
 		p.saCalls = append(p.saCalls, saCatalogCall{
 			remoteOwnerID:  req.RemoteOwnerID,
 			invokingUserID: req.InvokingUserID,
+			localActorID:   req.LocalActorID,
 		})
 		tools = p.saTools
 	} else {
@@ -404,6 +406,96 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	require.Empty(t, provider.userCalls, "the requesting user's per-user remotes catalog must not be consulted")
 	require.ElementsMatch(t, []string{"builtin", "sa_jira__get_issue"}, toolNames(context.Tools))
 	require.Equal(t, llm.ToolAuthModeServiceAccount, context.ToolAuthMode)
+}
+
+// The experimental settings only take effect for a licensed service account agent.
+func TestGetToolsStoreExperimentalServiceAccountSettings(t *testing.T) {
+	const botUserID = "bot-user-id"
+	const requestingUserID = "user-id"
+
+	tests := []struct {
+		name             string
+		licensed         bool
+		serviceAccount   bool
+		bypass           bool
+		botPermissions   bool
+		wantBypassed     bool
+		wantLocalActorID string
+		wantSACatalog    bool
+	}{
+		{
+			name:           "service account agent without the settings",
+			licensed:       true,
+			serviceAccount: true,
+			wantSACatalog:  true,
+		},
+		{
+			name:           "bypass tool approval",
+			licensed:       true,
+			serviceAccount: true,
+			bypass:         true,
+			wantBypassed:   true,
+			wantSACatalog:  true,
+		},
+		{
+			name:             "use bot permissions",
+			licensed:         true,
+			serviceAccount:   true,
+			botPermissions:   true,
+			wantLocalActorID: botUserID,
+			wantSACatalog:    true,
+		},
+		{
+			name:           "settings are ignored without service account auth",
+			licensed:       true,
+			bypass:         true,
+			botPermissions: true,
+		},
+		{
+			name:           "settings are ignored when service account auth is unlicensed",
+			serviceAccount: true,
+			bypass:         true,
+			botPermissions: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &staticMCPToolProvider{}
+			builder := newLicenseTestBuilder(t, tt.licensed, &emptyToolProvider{}, provider)
+			bot := newTestBotWithMMBot(
+				llm.BotConfig{
+					ID:                             "bot-id",
+					Name:                           "matty",
+					DisplayName:                    "Matty",
+					AutoEnableNewMCPTools:          true,
+					UseServiceAccountAuth:          tt.serviceAccount,
+					ExperimentalBypassToolApproval: tt.bypass,
+					ExperimentalUseBotPermissions:  tt.botPermissions,
+				},
+				&model.Bot{UserId: botUserID, Username: "matty", DisplayName: "Matty"},
+			)
+
+			context := builder.BuildLLMContextUserRequest(
+				bot,
+				&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
+				testChannel(),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+
+			require.Equal(t, tt.wantBypassed, context.ToolApprovalBypassed)
+			if !tt.wantSACatalog {
+				require.Empty(t, provider.saCalls)
+				require.Equal(t, []string{requestingUserID}, provider.userCalls)
+				return
+			}
+			require.Equal(t, []saCatalogCall{{
+				remoteOwnerID:  botUserID,
+				invokingUserID: requestingUserID,
+				localActorID:   tt.wantLocalActorID,
+			}}, provider.saCalls)
+		})
+	}
 }
 
 func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {

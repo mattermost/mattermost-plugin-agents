@@ -6,6 +6,7 @@ package conversations
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -13,9 +14,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
+	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -117,6 +120,54 @@ func TestHandleToolCallExecutesFromServiceAccountCatalog(t *testing.T) {
 	require.NoError(t, json.Unmarshal(turns[1].Content, &resultBlocks))
 	require.Equal(t, conversation.BlockTypeToolResult, resultBlocks[0].Type)
 	require.Equal(t, "mcp:sa_jira__get_issue", resultBlocks[0].Content)
+}
+
+// Tool calls on an "ask" tool need approval and a Share step unless a service
+// account agent has the experimental bypass setting on.
+func TestServiceAccountBypassToolApproval(t *testing.T) {
+	const toolName = "jira__get_issue"
+
+	tests := []struct {
+		name           string
+		serviceAccount bool
+		bypass         bool
+		wantAutoRun    bool
+	}{
+		{name: "service account agent still asks", serviceAccount: true},
+		{name: "bypass setting auto-runs and shares", serviceAccount: true, bypass: true, wantAutoRun: true},
+		{name: "bypass setting is ignored without service account auth", bypass: true},
+	}
+
+	for _, tt := range tests {
+		for _, isDM := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s (DM=%v)", tt.name, isDM), func(t *testing.T) {
+				tool := channelFollowUpTestMCPTool(toolName, serviceAccountRemoteOrigin, "Jira")
+				provider := &countingMCPToolProvider{tools: []llm.Tool{tool}, saTools: []llm.Tool{tool}}
+				c := &Conversations{
+					contextBuilder: newSingleBuildLLMContextBuilder(t, provider),
+					toolPolicyChecker: mapPolicyChecker{
+						serviceAccountRemoteOrigin: {"get_issue": {policy: mcp.ToolPolicyAsk, enabled: true}},
+					},
+				}
+				cfg := serviceAccountTestBot(tt.serviceAccount).GetConfig()
+				cfg.ExperimentalBypassToolApproval = tt.bypass
+				bot := bots.NewBot(cfg, llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
+					&model.Bot{UserId: serviceAccountBotUserID, Username: "matty", DisplayName: "Matty"}, &loadedStateLLM{})
+				user := &model.User{Id: "user-id", Username: "user"}
+				channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeOpen}
+				if isDM {
+					channel.Type = model.ChannelTypeDirect
+				}
+
+				llmCtx := c.buildConversationContextWithTools(context.Background(), bot, user, channel, "")
+
+				call := llm.ToolCall{Name: toolName, ServerOrigin: serviceAccountRemoteOrigin}
+				require.Equal(t, tt.wantAutoRun, c.shouldAutoExecuteTool(llmCtx, isDM)(call))
+				turns := []toolrunner.ToolTurn{{AssistantToolCalls: []llm.ToolCall{call}}}
+				require.Equal(t, tt.wantAutoRun, c.allToolsAutoRunEverywhere(turns, llmCtx))
+			})
+		}
+	}
 }
 
 func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, provider llmcontext.MCPToolProvider) *Conversations {

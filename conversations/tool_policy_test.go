@@ -161,16 +161,19 @@ func TestShouldAutoExecuteTool_AutoExecuteBuiltInSkipsPolicyLookup(t *testing.T)
 
 // TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes pins the contract
 // that tools answered by the user (e.g. AskUserQuestion) never auto-execute,
-// even if a policy claims auto_run — auto-running one would skip the question.
+// even if a policy claims auto_run or approvals are bypassed — auto-running
+// one would skip the question.
 func TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes(t *testing.T) {
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
-	llmCtx.Tools.AddTools([]llm.Tool{{Name: "AskUserQuestion", UserInteraction: llm.UserInteractionSelect}})
+	for _, bypassed := range []bool{false, true} {
+		llmCtx := &llm.Context{Tools: llm.NewToolStore(), ToolApprovalBypassed: bypassed}
+		llmCtx.Tools.AddTools([]llm.Tool{{Name: "AskUserQuestion", UserInteraction: llm.UserInteractionSelect}})
 
-	for _, isDM := range []bool{true, false} {
-		got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "AskUserQuestion"})
-		assert.False(t, got, "isDM=%v", isDM)
+		for _, isDM := range []bool{true, false} {
+			got := c.shouldAutoExecuteTool(llmCtx, isDM)(llm.ToolCall{Name: "AskUserQuestion"})
+			assert.False(t, got, "isDM=%v bypassed=%v", isDM, bypassed)
+		}
 	}
 }
 
