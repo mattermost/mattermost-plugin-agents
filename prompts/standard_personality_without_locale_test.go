@@ -231,6 +231,24 @@ func TestStandardPersonalityDynamicToolWorkflow(t *testing.T) {
 			},
 		},
 		{
+			name: "omits workflow when meta tools are disabled",
+			context: &llm.Context{
+				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
+				ServerName:  "server",
+				BotName:     "agent",
+				BotUsername: "agent",
+				BotModel:    "model-x",
+				Tools:       dynamicMetaToolStore(),
+				DisabledToolsInfo: []llm.ToolInfo{
+					{Name: "search_tools", Description: "Search tools"},
+					{Name: "load_tool", Description: "Load tool"},
+				},
+				ToolCatalog: llm.ToolCatalogContext{MCPDynamicToolLoading: true},
+			},
+			contains:    []string{"IMPORTANT: You have capabilities that can only be used in a Direct Message (DM) or via the Agents tab"},
+			notContains: dynamicWorkflowText,
+		},
+		{
 			name: "omits workflow when flag off",
 			context: &llm.Context{
 				Time:        "Fri, 20 Feb 2026 18:00:00 UTC",
