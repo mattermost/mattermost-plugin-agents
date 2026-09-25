@@ -660,3 +660,29 @@ func TestChannelMentionTurnLookupByPostID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, userID, conv.UserID)
 }
+
+// With channel tool calling off, the mention is answered without tool
+// definitions, so the stored system prompt must not tell the model to call the
+// dynamic MCP meta-tools.
+func TestChannelMentionWithToolsDisabledOmitsDynamicToolWorkflow(t *testing.T) {
+	botConfig := autoReplyBotConfig()
+	botConfig.MCPDynamicToolLoading = true
+	botConfig.AutoEnableNewMCPTools = true
+	env := setupAutoReplyTestEnv(t, []llm.BotConfig{botConfig}, dmMakeTextStream("done"))
+	env.mcpMgr.tools = []llm.Tool{{
+		Name:         "fusion__create_geojson",
+		Description:  "Build a GeoJSON document",
+		ServerOrigin: "https://fusion.example.com",
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "{}", nil
+		},
+	}}
+
+	env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" create a GeoJSON overlay"))
+
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	assert.NotContains(t, convs[0].SystemPrompt, "call search_tools")
+	assert.Contains(t, convs[0].SystemPrompt, "can only be used in a Direct Message (DM) or via the Agents tab")
+}
