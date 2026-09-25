@@ -158,7 +158,7 @@ const AcceptRejectButton = styled.button<{$primary?: boolean}>`
     }
 `;
 
-const ResultDecisionButton = styled.button<{variant: 'primary' | 'secondary'}>`
+const ResultDecisionButton = styled.button<{$variant: 'primary' | 'secondary'}>`
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -170,16 +170,16 @@ const ResultDecisionButton = styled.button<{variant: 'primary' | 'secondary'}>`
     line-height: 16px;
     cursor: pointer;
 
-    border: 1px solid ${(props) => (props.variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.16)')};
-    background: ${(props) => (props.variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
-    color: ${(props) => (props.variant === 'primary' ? 'var(--button-color)' : 'var(--button-bg)')};
+    border: 1px solid ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.16)')};
+    background: ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
+    color: ${(props) => (props.$variant === 'primary' ? 'var(--button-color)' : 'var(--button-bg)')};
 
     &:hover {
-        background: ${(props) => (props.variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
+        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
     }
 
     &:active {
-        background: ${(props) => (props.variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
+        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
     }
 `;
 
@@ -412,7 +412,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         >
                             <span>
                                 <ResultDecisionButton
-                                    variant='primary'
+                                    $variant='primary'
                                     onClick={onApprove}
                                     disabled={isProcessing}
                                 >
@@ -425,7 +425,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                             </span>
                         </OverlayTrigger>
                         <ResultDecisionButton
-                            variant='secondary'
+                            $variant='secondary'
                             onClick={onReject}
                             disabled={isProcessing}
                         >

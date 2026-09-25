@@ -60,8 +60,8 @@ func (c *Client) AgentCompletion(agent string, request CompletionRequest) (strin
 // The service's own default model is used. No agent configuration applies (no model
 // override, reasoning, native tools, custom instructions, or agent access restrictions),
 // and no user or channel permission check runs — inter-plugin trust of the bridge is the
-// security boundary for these endpoints. Tools are disabled, allowed_tools is rejected,
-// and tool_hooks are ignored. Token usage is logged with the resolved service's identity
+// security boundary for these endpoints. Tools are disabled and allowed_tools is rejected.
+// Token usage is logged with the resolved service's identity
 // (service_id and service_name); the agent dimensions are blank for service-only calls.
 func (c *Client) ServiceCompletion(service string, request CompletionRequest) (string, error) {
 	requestURL, err := buildServiceCompletionURL(service, false)

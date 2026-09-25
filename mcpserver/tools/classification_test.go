@@ -165,13 +165,6 @@ var expectedToolReadOnly = map[string]bool{
 
 	// agents
 	"list_agents": true,
-
-	// automations
-	"list_automations":            true,
-	"get_automation_instructions": true,
-	"create_automation":           false,
-	"update_automation":           false,
-	"delete_automation":           false,
 }
 
 func TestMCPToolClassification(t *testing.T) {

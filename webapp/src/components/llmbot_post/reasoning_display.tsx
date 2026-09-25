@@ -65,7 +65,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
             </ExpandedReasoningHeader>
             {reasoningSummary && (
                 <ExpandedReasoningContainer>
-                    <ReasoningContent collapsed={false}>
+                    <ReasoningContent $collapsed={false}>
                         <ReasoningText>
                             {reasoningSummary}
                         </ReasoningText>
@@ -118,11 +118,11 @@ export const MinimalReasoningContainer = styled(CollapseHeaderRow)`
 	margin: 4px 0;
 `;
 
-const ReasoningContent = styled.div<{collapsed: boolean}>`
-	max-height: ${(props) => (props.collapsed ? '0' : '600px')};
+const ReasoningContent = styled.div<{$collapsed: boolean}>`
+	max-height: ${(props) => (props.$collapsed ? '0' : '600px')};
 	overflow-y: auto;
 	transition: max-height 0.3s ease-in-out;
-	opacity: ${(props) => (props.collapsed ? '0' : '1')};
+	opacity: ${(props) => (props.$collapsed ? '0' : '1')};
 	transition: opacity 0.2s ease-in-out, max-height 0.3s ease-in-out;
 `;
 
