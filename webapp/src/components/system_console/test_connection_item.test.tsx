@@ -122,6 +122,74 @@ describe('TestConnectionItem', () => {
         expect(screen.getByText('Connection successful')).toBeTruthy();
     });
 
+    it('discards a result that arrives after the credentials changed', async () => {
+        let resolveTest!: (value: {ok: boolean}) => void;
+        (testService as jest.Mock).mockReturnValue(new Promise<{ok: boolean}>((resolve) => {
+            resolveTest = resolve;
+        }));
+        const {rerender} = render(<TestConnectionItem service={service}/>);
+
+        fireEvent.click(screen.getByText('Test connection'));
+        expect(await screen.findByText('Testing...')).toBeTruthy();
+
+        // The admin fixes a typo while the probe is still out. Its answer
+        // describes the old key, so reporting success here would vouch for a
+        // configuration that was never tested.
+        rerender(<TestConnectionItem service={{...service, apiKey: 'key-2'}}/>);
+        resolveTest({ok: true});
+
+        await waitFor(() => {
+            expect(screen.getByText('Test connection')).toBeTruthy();
+        });
+        expect(screen.queryByText('Connection successful')).toBeNull();
+    });
+
+    it('discards a failure that arrives after the credentials changed', async () => {
+        let rejectTest!: (reason: Error) => void;
+        (testService as jest.Mock).mockReturnValue(new Promise<{ok: boolean}>((_resolve, reject) => {
+            rejectTest = reject;
+        }));
+        const {rerender} = render(<TestConnectionItem service={service}/>);
+
+        fireEvent.click(screen.getByText('Test connection'));
+        expect(await screen.findByText('Testing...')).toBeTruthy();
+
+        rerender(<TestConnectionItem service={{...service, apiKey: 'key-2'}}/>);
+        rejectTest(new Error('500'));
+
+        await waitFor(() => {
+            expect(screen.getByText('Test connection')).toBeTruthy();
+        });
+        expect(screen.queryByText('Could not reach the server to run the test.')).toBeNull();
+    });
+
+    it('applies only the newest result when an older probe answers last', async () => {
+        const resolvers: Array<(value: {ok: boolean; error?: string}) => void> = [];
+        (testService as jest.Mock).mockImplementation(() => new Promise<{ok: boolean; error?: string}>((resolve) => {
+            resolvers.push(resolve);
+        }));
+        const {rerender} = render(<TestConnectionItem service={service}/>);
+
+        fireEvent.click(screen.getByText('Test connection'));
+        expect(await screen.findByText('Testing...')).toBeTruthy();
+
+        // Changing the key re-enables the button, so a second probe can be in
+        // flight alongside the first.
+        rerender(<TestConnectionItem service={{...service, apiKey: 'key-2'}}/>);
+        fireEvent.click(await screen.findByText('Test connection'));
+
+        resolvers[1]({ok: false, error: 'invalid x-api-key'});
+        expect(await screen.findByText('invalid x-api-key')).toBeTruthy();
+
+        // The first probe lands last and must not overwrite the newer answer.
+        resolvers[0]({ok: true});
+
+        await waitFor(() => {
+            expect(screen.getByText('invalid x-api-key')).toBeTruthy();
+        });
+        expect(screen.queryByText('Connection successful')).toBeNull();
+    });
+
     it('disables the button while a test is in flight', async () => {
         let resolveTest!: (value: {ok: boolean}) => void;
         (testService as jest.Mock).mockReturnValue(new Promise<{ok: boolean}>((resolve) => {

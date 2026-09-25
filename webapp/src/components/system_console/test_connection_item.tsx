@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
@@ -51,14 +51,25 @@ export const TestConnectionItem = (props: Props) => {
     // Keyed on the shared fingerprint so this and the save-time probe can never
     // disagree about which fields matter.
     const fingerprint = connectionFingerprint(props.service);
+
+    // A probe already in flight described the settings as they were when it
+    // started. Editing those settings, or starting a newer probe, retires it:
+    // its answer says nothing about what is on screen now, and painting it
+    // would be the stale result the reset above exists to prevent.
+    const currentRequest = useRef(0);
     useEffect(() => {
+        currentRequest.current++;
         setState({status: 'idle'});
     }, [fingerprint]);
 
     const runTest = async () => {
+        const request = ++currentRequest.current;
         setState({status: 'testing'});
         try {
             const result = await testService(props.service);
+            if (request !== currentRequest.current) {
+                return;
+            }
             if (result.ok) {
                 setState({status: 'success'});
             } else {
@@ -68,6 +79,9 @@ export const TestConnectionItem = (props: Props) => {
                 });
             }
         } catch (error) {
+            if (request !== currentRequest.current) {
+                return;
+            }
             setState({
                 status: 'failure',
                 error: intl.formatMessage({defaultMessage: 'Could not reach the server to run the test.'}),
