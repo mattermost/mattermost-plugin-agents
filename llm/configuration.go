@@ -205,6 +205,16 @@ type BotConfig struct {
 	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
 	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
+	// ExperimentalBypassToolApproval runs this agent's tool calls without
+	// asking for approval and shares their results without asking. Only
+	// honored while service account auth is in effect.
+	ExperimentalBypassToolApproval bool `json:"experimentalBypassToolApproval"`
+
+	// ExperimentalUseBotPermissions runs embedded Mattermost and plugin MCP
+	// tools as the agent's bot user instead of the requesting user. Only
+	// honored while service account auth is in effect.
+	ExperimentalUseBotPermissions bool `json:"experimentalUseBotPermissions"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`
