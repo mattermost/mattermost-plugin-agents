@@ -265,6 +265,9 @@ func (c *Conversations) regenerateViaConversation(
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
+	if llmContext != nil {
+		llmContext.ResponsePostID = post.Id
+	}
 	toolsDisabled := applyToolAvailability(llmContext, isDM, c.channelMentionToolCallingEnabled())
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
