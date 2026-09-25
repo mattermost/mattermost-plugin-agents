@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -229,4 +230,163 @@ func TestValidateAccessRestrictions_AttackScenario(t *testing.T) {
 
 	err = validateAccessRestrictions([]byte(cleanRemoteRequest), &target, "remote")
 	require.NoError(t, err, "Remote access mode should allow requests without restricted fields")
+}
+
+// toolNames extracts the names from a slice of *mcp.Tool.
+func toolNames(tools []*mcp.Tool) []string {
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+	}
+	return names
+}
+
+// newToolsListHandler returns a fake "next" MethodHandler that responds to any
+// method with a ListToolsResult carrying tools named by the given names.
+func newToolsListHandler(names ...string) mcp.MethodHandler {
+	return func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		tools := make([]*mcp.Tool, 0, len(names))
+		for _, name := range names {
+			tools = append(tools, &mcp.Tool{Name: name})
+		}
+		return &mcp.ListToolsResult{Tools: tools}, nil
+	}
+}
+
+func alwaysTrue() bool  { return true }
+func alwaysFalse() bool { return false }
+
+func newToolsCallHandler(called *bool, text string) mcp.MethodHandler {
+	return func(_ context.Context, _ string, _ mcp.Request) (mcp.Result, error) {
+		if called != nil {
+			*called = true
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil
+	}
+}
+
+func callToolRequest(name string) mcp.Request {
+	return &mcp.ServerRequest[*mcp.CallToolParamsRaw]{
+		Params: &mcp.CallToolParamsRaw{Name: name},
+	}
+}
+
+func TestStateChangingToolsMiddleware(t *testing.T) {
+	stateChanging := map[string]struct{}{"create_post": {}}
+
+	t.Run("tools/list omits state-changing tools when not allowed", func(t *testing.T) {
+		handler := stateChangingToolsMiddleware(stateChanging, alwaysFalse)(newToolsListHandler("read_post", "create_post", "get_me"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "get_me"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/list includes state-changing tools when allowed", func(t *testing.T) {
+		handler := stateChangingToolsMiddleware(stateChanging, alwaysTrue)(newToolsListHandler("read_post", "create_post", "get_me"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "create_post", "get_me"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("nil predicate fails closed on tools/list", func(t *testing.T) {
+		handler := stateChangingToolsMiddleware(stateChanging, nil)(newToolsListHandler("read_post", "create_post"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.Equal(t, []string{"read_post"}, toolNames(listResult.Tools))
+	})
+
+	t.Run("tools/call of state-changing tool when not allowed returns license error result", func(t *testing.T) {
+		called := false
+		handler := stateChangingToolsMiddleware(stateChanging, alwaysFalse)(newToolsCallHandler(&called, "resolver ran"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err, "must be an MCP tool error result, not a transport error")
+		assert.False(t, called, "resolver must not run")
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.True(t, callResult.IsError)
+		require.NotEmpty(t, callResult.Content)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Contains(t, text.Text, "Enterprise")
+		assert.Equal(t, stateChangingToolsUnavailableMessage(), text.Text)
+	})
+
+	t.Run("tools/call of read-only tool proceeds when state-changing tools are not allowed", func(t *testing.T) {
+		called := false
+		handler := stateChangingToolsMiddleware(stateChanging, alwaysFalse)(newToolsCallHandler(&called, "read-only ok"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("read_post"))
+		require.NoError(t, err)
+		assert.True(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.False(t, callResult.IsError)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "read-only ok", text.Text)
+	})
+
+	t.Run("tools/call of state-changing tool proceeds when allowed", func(t *testing.T) {
+		called := false
+		handler := stateChangingToolsMiddleware(stateChanging, alwaysTrue)(newToolsCallHandler(&called, "create_post ran"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err)
+		assert.True(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, "create_post ran", text.Text)
+	})
+
+	t.Run("nil predicate fails closed on tools/call", func(t *testing.T) {
+		called := false
+		handler := stateChangingToolsMiddleware(stateChanging, nil)(newToolsCallHandler(&called, "should not run"))
+
+		result, err := handler(context.Background(), "tools/call", callToolRequest("create_post"))
+		require.NoError(t, err)
+		assert.False(t, called)
+
+		callResult, ok := result.(*mcp.CallToolResult)
+		require.True(t, ok)
+		require.True(t, callResult.IsError)
+		text, ok := callResult.Content[0].(*mcp.TextContent)
+		require.True(t, ok)
+		assert.Equal(t, stateChangingToolsUnavailableMessage(), text.Text)
+	})
+
+	t.Run("allow predicate is evaluated per request", func(t *testing.T) {
+		allow := false
+		pred := func() bool { return allow }
+		handler := stateChangingToolsMiddleware(stateChanging, pred)(newToolsListHandler("read_post", "create_post"))
+
+		result, err := handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok := result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.Equal(t, []string{"read_post"}, toolNames(listResult.Tools))
+
+		allow = true
+		result, err = handler(context.Background(), "tools/list", nil)
+		require.NoError(t, err)
+		listResult, ok = result.(*mcp.ListToolsResult)
+		require.True(t, ok)
+		assert.ElementsMatch(t, []string{"read_post", "create_post"}, toolNames(listResult.Tools))
+	})
 }

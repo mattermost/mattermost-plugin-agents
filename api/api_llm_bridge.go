@@ -18,6 +18,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
@@ -352,11 +354,13 @@ func (a *API) prepareAgentBridgeCompletion(
 		opts = append(opts, llm.WithToolsDisabled())
 	}
 
-	// Enable native web search if the bot supports it.
-	// Native web search is a provider-level feature (not an MCP tool),
-	// so it's not part of allowed_tools — it's always available when configured.
-	if bot.HasNativeWebSearchEnabled() {
+	// Enable native web search if the bot supports it. Native web search is a
+	// provider-level feature (not an MCP tool), so it's not part of
+	// allowed_tools; it is available at Professional and above.
+	if bot.HasNativeWebSearchEnabled() && a.licenseChecker.Allows(enterprise.CapProviderWebSearch) {
 		opts = append(opts, llm.WithNativeWebSearchAllowed())
+	} else {
+		opts = append(opts, llm.WithSkipNativeWebSearch())
 	}
 
 	// Build the auto-run predicate from the explicit allowlist. Returning nil
@@ -514,6 +518,9 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 	if !found || !bots.ServiceCanServeCompletions(primary) {
 		return fail(http.StatusNotFound, fmt.Sprintf("service not found: %s", service))
 	}
+	if !a.serviceActiveAtLicense(services, primary.ID) {
+		return fail(http.StatusForbidden, a.licenseChecker.Check(enterprise.CapMultipleLLMServices).Error())
+	}
 
 	// Converting the request before leasing a model keeps a malformed role,
 	// file, or JSON schema a 400 that never allocates a provider client.
@@ -529,10 +536,14 @@ func (a *API) prepareServiceBridgeCompletion(c *gin.Context, operationSubType st
 	opts = append(opts, llm.WithToolsDisabled())
 
 	// The primary is configured and eligible, so a broken chain is a server
-	// configuration problem rather than a missing service.
-	fallbacks, err := bots.ResolveBridgeFallbacks(services, primary)
-	if err != nil {
-		return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
+	// configuration problem rather than a missing service. Fallback chains are
+	// available at Enterprise Advanced.
+	var fallbacks []llm.ServiceConfig
+	if a.licenseChecker.Allows(enterprise.CapModelFallback) {
+		fallbacks, err = bots.ResolveBridgeFallbacks(services, primary)
+		if err != nil {
+			return fail(http.StatusInternalServerError, fmt.Sprintf("service %q is not usable: %v", primary.ID, err))
+		}
 	}
 
 	model, release, err := a.bots.AcquireServiceLLM(primary, fallbacks)
@@ -802,6 +813,7 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 // is not filtered by agent ACLs.
 func (a *API) handleGetServices(c *gin.Context) {
 	snapshot := a.config.GetServices()
+	fallbacksAllowed := a.licenseChecker.Allows(enterprise.CapModelFallback)
 
 	seen := make(map[string]struct{}, len(snapshot))
 	services := make([]bridgeclient.BridgeServiceInfo, 0, len(snapshot))
@@ -813,13 +825,15 @@ func (a *API) handleGetServices(c *gin.Context) {
 		}
 		seen[svc.ID] = struct{}{}
 
-		if !bots.ServiceCanServeCompletions(svc) {
+		if !bots.ServiceCanServeCompletions(svc) || !a.serviceActiveAtLicense(snapshot, svc.ID) {
 			continue
 		}
 		// A service whose fallback chain is broken would fail every call, so
 		// advertising it would only produce confusing errors later.
-		if _, err := bots.ResolveBridgeFallbacks(snapshot, svc); err != nil {
-			continue
+		if fallbacksAllowed {
+			if _, err := bots.ResolveBridgeFallbacks(snapshot, svc); err != nil {
+				continue
+			}
 		}
 
 		services = append(services, bridgeclient.BridgeServiceInfo{
@@ -905,4 +919,11 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 // handleServiceCompletionNoStream handles non-streaming completion requests for a specific service
 func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	a.handleServiceCompletion(c, llm.SubTypeNoStream, a.handleNonStreamingLLMResponse)
+}
+
+// serviceActiveAtLicense reports whether serviceID is one of the LLM services
+// active at the current license level: every service at Enterprise and above,
+// the first configured service below that.
+func (a *API) serviceActiveAtLicense(services []llm.ServiceConfig, serviceID string) bool {
+	return slices.Contains(config.ActiveServiceIDs(&config.Config{Services: services}, a.licenseChecker.Level()), serviceID)
 }

@@ -95,9 +95,10 @@ function makeChannel(type: string, id = CHANNEL_ID): Channel {
     return {id, type, team_id: TEAM_ID} as Channel;
 }
 
-function makeState(opts: {bots: LLMBot[] | null; channelPermissions?: string[]}): GlobalState {
+function makeState(opts: {bots: LLMBot[] | null; channelPermissions?: string[]; skuShortName?: string}): GlobalState {
     return {
         entities: {
+            general: {config: {}, license: {SkuShortName: opts.skuShortName ?? 'advanced'}},
             users: {currentUserId: 'me', profiles: {me: {roles: 'system_user'}}},
             teams: {myMembers: {[TEAM_ID]: {roles: 'team_user'}}},
             channels: {roles: {[CHANNEL_ID]: new Set(['channel_role'])}},
@@ -141,8 +142,10 @@ describe('shouldRenderChannelAutoReplyTab', () => {
         {name: 'open channel with permission but all agents filtered out', type: 'O', perms: bothPerms, bots: [filteredOut], want: false},
         {name: 'open channel with the public manage permission and an agent', type: 'O', perms: [PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES], bots: [bot], want: true},
         {name: 'private channel with the private manage permission and an agent', type: 'P', perms: [PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES], bots: [bot], want: true},
-    ])('$name -> $want', ({type, perms, bots, want}) => {
-        const state = makeState({bots, channelPermissions: perms});
+        {name: 'open channel with permission and an agent on an Enterprise license', type: 'O', perms: bothPerms, bots: [bot], sku: 'enterprise', want: false},
+        {name: 'open channel with permission and an agent without a license', type: 'O', perms: bothPerms, bots: [bot], sku: '', want: false},
+    ])('$name -> $want', ({type, perms, bots, sku, want}: {type: string; perms: string[]; bots: LLMBot[] | null; sku?: string; want: boolean}) => {
+        const state = makeState({bots, channelPermissions: perms, skuShortName: sku});
         expect(shouldRenderChannelAutoReplyTab(state, makeChannel(type))).toBe(want);
     });
 });

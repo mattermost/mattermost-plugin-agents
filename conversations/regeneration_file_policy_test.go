@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
@@ -132,6 +134,8 @@ func TestHandleRegenerateDeniedByFilePolicy(t *testing.T) {
 				bots:             botsService,
 				convService:      &conversation.Service{},
 				streamingService: regenNoopStreaming{},
+				// Regenerating meeting summaries is available at Enterprise and above.
+				licenseChecker: enterprisetest.CheckerAt(enterprise.LevelEnterprise),
 			}
 			if tt.setup != nil {
 				tt.setup(t, mmClient, c, fileID)

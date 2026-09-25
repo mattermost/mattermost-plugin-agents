@@ -59,12 +59,12 @@ const (
 // getGroupTools returns the group tools.
 func (p *MattermostToolProvider) getGroupTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_group_info", getGroupInfoDescription, p.toolGetGroupInfo),
-		mcpTool(p, "list_groups", listGroupsDescription, p.toolListGroups),
-		mcpTool(p, "get_user_groups", getUserGroupsDescription, p.toolGetUserGroups),
-		mcpTool(p, "get_channel_groups", getChannelGroupsDescription, p.toolGetChannelGroups),
-		mcpTool(p, "get_team_groups", getTeamGroupsDescription, p.toolGetTeamGroups),
-		mcpTool(p, "get_users_in_group_channels", getUsersInGroupChannelsDescription, p.toolGetUsersInGroupChannels),
+		mcpReadTool(p, "get_group_info", getGroupInfoDescription, p.toolGetGroupInfo),
+		mcpReadTool(p, "list_groups", listGroupsDescription, p.toolListGroups),
+		mcpReadTool(p, "get_user_groups", getUserGroupsDescription, p.toolGetUserGroups),
+		mcpReadTool(p, "get_channel_groups", getChannelGroupsDescription, p.toolGetChannelGroups),
+		mcpReadTool(p, "get_team_groups", getTeamGroupsDescription, p.toolGetTeamGroups),
+		mcpReadTool(p, "get_users_in_group_channels", getUsersInGroupChannelsDescription, p.toolGetUsersInGroupChannels),
 	}
 }
 

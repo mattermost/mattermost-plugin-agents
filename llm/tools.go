@@ -48,6 +48,12 @@ type Tool struct {
 	// the Resolver is only an error backstop. Empty for normal tools.
 	UserInteraction string
 
+	// ValidateArguments optionally rejects the model's raw arguments before
+	// the call is approved, executed, or shown to the user. An error fails the
+	// call with that message so the model can retry. Needed for tools whose
+	// arguments are not consumed until after a user round trip.
+	ValidateArguments func(json.RawMessage) error
+
 	// AutoExecute marks a built-in tool that runs without user approval, like
 	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
 	// effect is scoped to the assistant's own response (e.g. CreateFile

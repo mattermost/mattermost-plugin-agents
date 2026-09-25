@@ -50,7 +50,7 @@ import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
-import {isEnterpriseLicensedOrDevelopment} from './license';
+import {licenseAllows} from './license';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -246,7 +246,7 @@ export default class Plugin {
                 if (rhs) {
                     store.dispatch(rhs.showRHSPlugin);
                 }
-            });
+            }, () => licenseAllows(store.getState(), 'thread_summarization'));
             registry.registerPostDropdownMenuAction(<><span className='icon'><IconReactForMe/></span><FormattedMessage defaultMessage='React for me'/></>, doReaction);
         }
 
@@ -295,11 +295,17 @@ export default class Plugin {
         // Register slash commands
         if (rhs) {
             registry.registerSlashCommandWillBePostedHook((message: string, args: any) => {
-                if ((message.startsWith('/ask-channel') || message.startsWith('/summarize-channel')) &&
-                    !isEnterpriseLicensedOrDevelopment(store.getState())) {
+                if (message.startsWith('/ask-channel') && !licenseAllows(store.getState(), 'semantic_search')) {
                     return {
                         error: {
-                            message: 'The /ask-channel and /summarize-channel commands are available on Enterprise plans.',
+                            message: 'The /ask-channel command is available on Enterprise plans and above.',
+                        },
+                    };
+                }
+                if (message.startsWith('/summarize-channel') && !licenseAllows(store.getState(), 'channel_summarization')) {
+                    return {
+                        error: {
+                            message: 'The /summarize-channel command is available on Professional plans and above.',
                         },
                     };
                 }
@@ -338,6 +344,10 @@ export default class Plugin {
                 suggestionsComponent: () => null,
                 hintsComponent: SearchHints,
                 action: async (searchTerms: string) => {
+                    if (!licenseAllows(store.getState(), 'semantic_search')) {
+                        return;
+                    }
+
                     // Resolve the active bot from the shared selected-agent preference.
                     const state = store.getState() as any;
                     const bots = state['plugins-' + manifest.id]?.bots || [];

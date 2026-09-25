@@ -11,7 +11,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
 import {useBotlist} from '@/bots';
 
@@ -108,7 +108,7 @@ const AskChannelButton = () => {
     const [showPopover, setShowPopover] = useState(false);
     const target = useRef<HTMLButtonElement>(null);
     const {bots, activeBot, setActiveBot} = useBotlist();
-    const isBasicsLicensed = useIsBasicsLicensed();
+    const channelSummarizationLicensed = useIsLicensedFor('channel_summarization');
 
     const currentChannelId = useSelector((state: GlobalState) => state.entities.channels.currentChannelId);
     const currentTeamId = useSelector((state: GlobalState) => state.entities.teams.currentTeamId);
@@ -165,7 +165,7 @@ const AskChannelButton = () => {
         setShowPopover(!showPopover);
     };
 
-    if (!isBasicsLicensed) {
+    if (!channelSummarizationLicensed) {
         return null;
     }
 

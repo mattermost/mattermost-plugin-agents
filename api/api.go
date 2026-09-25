@@ -372,8 +372,9 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/services", a.handleListServices)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
-	// Used by the MCP server for external search callbacks.
-	router.POST("/search/raw", a.handleRawSearch)
+	// Used by the MCP server for external search callbacks. Semantic search is
+	// available at Enterprise and above.
+	router.POST("/search/raw", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRawSearch)
 
 	// Raw file content endpoint returns a ranged slice of a file's text after
 	// checking the requesting user's channel permission. Used by the MCP server
@@ -397,8 +398,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.Use(a.postAuthorizationRequired)
 	postRouter.POST("/react", a.handleReact)
 	postRouter.POST("/analyze", a.handleThreadAnalysis)
-	postRouter.POST("/transcribe/file/:fileid", a.handleTranscribeFile)
-	postRouter.POST("/summarize_transcription", a.handleSummarizeTranscription)
+	postRouter.POST("/transcribe/file/:fileid", a.capabilityRequired(enterprise.CapMeetings), a.handleTranscribeFile)
+	postRouter.POST("/summarize_transcription", a.capabilityRequired(enterprise.CapMeetings), a.handleSummarizeTranscription)
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
@@ -408,8 +409,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
-	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
-	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
+	channelRouter.POST("/analyze", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleChannelAnalysis)
+	channelRouter.POST("/interval", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleInterval)
 
 	// Auto-reply settings are channel configuration, not a bot invocation:
 	// they must not depend on the default agent (restricted default agents and
@@ -423,11 +424,11 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)
-	adminRouter.POST("/reindex", a.handleReindexPosts)
+	adminRouter.POST("/reindex", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
-	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
-	adminRouter.POST("/reindex/rebuild-vector-index", a.handleRebuildVectorIndex)
+	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
+	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
@@ -459,6 +460,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	celRouter.POST("/visual_ast", a.handleCELVisualAST)
 
 	searchRouter := botRequiredRouter.Group("/search")
+	searchRouter.Use(a.capabilityRequired(enterprise.CapSemanticSearch))
 	// Only returns search results
 	searchRouter.POST("", a.handleSearchQuery)
 	// Initiates a search and responds to the user in a DM with the selected bot

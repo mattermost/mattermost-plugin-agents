@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/logger"
@@ -60,12 +61,23 @@ func mcpTool[T any](p *MattermostToolProvider, name, description string, handler
 	}
 }
 
+// mcpReadTool is mcpTool with ReadOnly set, for tools that only retrieve data.
+func mcpReadTool[T any](p *MattermostToolProvider, name, description string, handler func(*MCPToolContext, T) (string, error)) MCPTool {
+	tool := mcpTool(p, name, description, handler)
+	tool.ReadOnly = true
+	return tool
+}
+
 // MCPTool represents a tool specifically for MCP use with our custom context
 type MCPTool struct {
 	Name        string
 	Description string
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
+
+	// ReadOnly is true when the tool only retrieves data. State-changing tools
+	// are available at Enterprise and above.
+	ReadOnly bool
 }
 
 type ToolProvider interface {
@@ -91,19 +103,22 @@ type SemanticSearchService interface {
 
 // MattermostToolProvider provides Mattermost tools following the mmtools pattern
 type MattermostToolProvider struct {
-	authProvider       auth.AuthenticationProvider
-	logger             logger.Logger
-	mmServerURL        string // Mattermost server URL for API communication (internal URL if set, otherwise external)
-	devMode            bool
-	accessMode         AccessMode
-	trackAIGenerated   bool                  // Whether to add ai_generated_by props to posts
-	searchService      SemanticSearchService // Optional semantic search service, can be nil
-	fileContentService FileContentService    // Optional file content service for read_file, can be nil
+	authProvider            auth.AuthenticationProvider
+	logger                  logger.Logger
+	mmServerURL             string // Mattermost server URL for API communication (internal URL if set, otherwise external)
+	devMode                 bool
+	accessMode              AccessMode
+	trackAIGenerated        bool                  // Whether to add ai_generated_by props to posts
+	searchService           SemanticSearchService // Optional semantic search service, can be nil
+	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
+	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
 }
 
 // NewMattermostToolProvider creates a new tool provider.
-// searchService is optional and can be nil if semantic search is not available
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService) *MattermostToolProvider {
+// searchService is optional and can be nil if semantic search is not available.
+// allowStateChangingTools is a runtime predicate evaluated on each tools/list
+// and tools/call; a nil predicate means state-changing tools are not available.
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -111,14 +126,15 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 	}
 
 	return &MattermostToolProvider{
-		authProvider:       authProvider,
-		logger:             logger,
-		mmServerURL:        serverURL,
-		devMode:            config.GetDevMode(),
-		accessMode:         accessMode,
-		trackAIGenerated:   config.GetTrackAIGenerated(),
-		searchService:      searchService,
-		fileContentService: fileContentService,
+		authProvider:            authProvider,
+		logger:                  logger,
+		mmServerURL:             serverURL,
+		devMode:                 config.GetDevMode(),
+		accessMode:              accessMode,
+		trackAIGenerated:        config.GetTrackAIGenerated(),
+		searchService:           searchService,
+		fileContentService:      fileContentService,
+		allowStateChangingTools: allowStateChangingTools,
 	}
 }
 
@@ -167,8 +183,86 @@ func (p *MattermostToolProvider) ToolNames() []string {
 
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
+	stateChanging := map[string]struct{}{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
+		if !mcpTool.ReadOnly {
+			stateChanging[mcpTool.Name] = struct{}{}
+		}
+	}
+
+	// State-changing tools are listed and callable when allowStateChangingTools
+	// reports they are available (Enterprise and above).
+	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
+}
+
+// stateChangingAllowed reports whether state-changing tools are available.
+// A nil predicate fails closed.
+func stateChangingAllowed(allow func() bool) bool {
+	return allow != nil && allow()
+}
+
+// stateChangingToolsUnavailableMessage is the tools/call error text when
+// state-changing Mattermost tools are not available at the current license level.
+func stateChangingToolsUnavailableMessage() string {
+	return enterprise.DisplayName(enterprise.CapStateChangingTools) + " are available at Enterprise and above"
+}
+
+func stateChangingToolsLicenseResult() *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: stateChangingToolsUnavailableMessage()},
+		},
+		IsError: true,
+	}
+}
+
+func mcpCallToolName(req mcp.Request) string {
+	if req == nil {
+		return ""
+	}
+	params, ok := req.GetParams().(*mcp.CallToolParamsRaw)
+	if !ok || params == nil {
+		return ""
+	}
+	return params.Name
+}
+
+// stateChangingToolsMiddleware returns MCP receiving middleware that omits
+// state-changing tools from tools/list when they are not available at the
+// current license level, and answers a tools/call of such a tool with an MCP
+// tool error result. allowStateChangingTools is evaluated per request so a
+// license change is visible without rebuilding the server.
+func stateChangingToolsMiddleware(stateChanging map[string]struct{}, allowStateChangingTools func() bool) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				name := mcpCallToolName(req)
+				if _, gated := stateChanging[name]; gated && !stateChangingAllowed(allowStateChangingTools) {
+					return stateChangingToolsLicenseResult(), nil
+				}
+				return next(ctx, method, req)
+			}
+
+			result, err := next(ctx, method, req)
+			if err != nil || method != "tools/list" || stateChangingAllowed(allowStateChangingTools) {
+				return result, err
+			}
+			listResult, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, nil
+			}
+
+			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+			for _, tool := range listResult.Tools {
+				if _, gated := stateChanging[tool.Name]; gated {
+					continue
+				}
+				filtered = append(filtered, tool)
+			}
+			listResult.Tools = filtered
+			return listResult, nil
+		}
 	}
 }
 
@@ -178,6 +272,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Name:        mcpTool.Name,
 		Description: mcpTool.Description,
 		InputSchema: nil, // Initialize as nil, will be set below if schema is available
+		Annotations: &mcp.ToolAnnotations{
+			ReadOnlyHint: mcpTool.ReadOnly,
+		},
 	}
 
 	// Set the InputSchema from the MCPTool schema

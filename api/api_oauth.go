@@ -9,11 +9,16 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 func (a *API) handleOAuthStart(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapRemoteMCP) {
+		return
+	}
+
 	userID := c.GetHeader("Mattermost-User-Id")
 	serverName := c.Param("serverName")
 	// Recorded before any validation so every fail path carries the target

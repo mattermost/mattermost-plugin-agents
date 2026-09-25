@@ -59,7 +59,7 @@ To configure auto-reply, select the channel name to open the channel dropdown, s
 
 An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
 
-> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
 
 ### Use custom prompt templates
 
@@ -134,7 +134,7 @@ Agents can also attach created files to posts they make on your behalf. When you
 
 ### Summarize discussion threads
 
-Summarizing a discussion thread requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+Summarizing a discussion thread is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize a discussion thread:
 
@@ -148,7 +148,7 @@ This is particularly useful for catching up on long discussions, creating meetin
 
 ### Summarize unread channels
 
-Summarizing unread Mattermost channels requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+Summarizing unread Mattermost channels is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize unread Mattermost channels:
 
@@ -162,7 +162,7 @@ For more flexible channel analysis options, including **Ask Agents about this ch
 
 ## Search with AI
 
-You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a license (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
 Open the Agents pane from the right sidebar and use natural language to search for content (such as "find discussions about the new product launch"). The AI will find semantically relevant results, even if they don't contain the exact keywords, and results respect your permissions so you'll only see content you have access to.
 
@@ -189,7 +189,7 @@ To summarize a Mattermost call recording:
 
 The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
-Both call recordings and recorded meeting summarization require a license. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
+Both call recordings and recorded meeting summarization are available at Enterprise and above. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
 
 
 ## Summarize Zoom meetings in Mattermost
