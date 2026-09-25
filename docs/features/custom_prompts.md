@@ -7,7 +7,7 @@ See LICENSE.txt for license information.
 
 Custom Prompts are saved prompt templates you can reuse from the message composer or as shortcut buttons in the **Agents** pane. Use them to capture team workflows — incident triage, document review, runbook execution, code review checklists, status updates — once, then run them anywhere with the agent of your choice.
 
-Each prompt has a title, an optional description, a system prompt template (the text that gets sent), and a visibility setting that determines whether other users in the workspace can use it. You can pin prompts so they appear as one-click buttons in the **Agents** pane.
+Each prompt has a title, an optional description, a system prompt template (the text that gets sent), a visibility setting that determines whether other users in the workspace can use it, and a **Send without review** setting that controls whether selecting it posts right away. You can pin prompts so they appear as one-click buttons in the **Agents** pane.
 
 ## What replaced the old prompt buttons
 
@@ -29,7 +29,8 @@ To create a prompt:
 6. Enter an **Action Title**. The title is required and can be up to 64 characters. It's the label that appears in menus and on pinned buttons.
 7. Optionally enter a **Brief Description** to help you and others remember what the prompt is for.
 8. Enter the **System Prompt** template. This is the text that gets rendered and sent on your behalf when the prompt runs. The template is required.
-9. Select **Save**.
+9. Optionally select **Send without review** to make the prompt post as soon as you select it, instead of filling in the message box. This is off by default.
+10. Select **Save**.
 
 You can use the **Context Variables** button above the system prompt field to insert variables that get filled in with values from your current context (your username, the current channel, the current team, the time, and so on). See [Template variables](#template-variables) below for the full list.
 
@@ -67,6 +68,8 @@ Mattermost renders the template with your current context (channel, team, user, 
 
 You can review and edit the rendered draft before sending it like any other message.
 
+Prompts saved with **Send without review** skip the draft: selecting one posts the rendered message straight away. They're marked with a send icon in the **Custom prompts** menu so you can tell before you select one. Anything already typed in the message box is left untouched — the prompt posts as its own message.
+
 ![Custom Prompts modal showing the All Prompts and Your Prompts tabs, search field, and Create new action.](../img/custom-prompts-modal.png)
 
 ### From a pinned button in the Agents pane
@@ -77,7 +80,7 @@ You can review and edit the rendered draft before sending it like any other mess
 
 Pinned-prompt buttons render the template against your current context and post the rendered message immediately, then switch you into the resulting thread so you can read the agent's response. Use this when you want a faster path than opening the **Custom prompts** menu and confirming the draft.
 
-> **Note:** Pinned-prompt buttons send the rendered message right away — there's no review step before posting. Use the composer flow if you want to edit the rendered text before sending.
+> **Note:** Pinned-prompt buttons always send right away, regardless of the prompt's **Send without review** setting — that setting only governs the composer menu. If you want a review step, use the composer flow with **Send without review** off.
 
 ## Template variables
 

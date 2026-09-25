@@ -43,11 +43,13 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 		return
 	}
 
-	// Audit that a prompt was created and whether it is shared — never its
-	// name or template, which are user content.
+	// Audit that a prompt was created, whether it is shared, and whether it
+	// sends without review — never its name or template, which are user
+	// content.
 	rec := auditRec(c)
 	audit.AddParam(rec, "prompt_id", created.ID)
 	audit.AddParam(rec, "is_shared", created.IsShared)
+	audit.AddParam(rec, "run_immediately", created.RunImmediately)
 
 	c.JSON(http.StatusCreated, created)
 }
@@ -88,9 +90,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 		return
 	}
 
-	// Sharing state is the only body field audited — never the name or
-	// template, which are user content.
+	// Sharing state and the run-immediately opt-in are the only body fields
+	// audited — never the name or template, which are user content.
 	audit.AddParam(auditRec(c), "is_shared", prompt.IsShared)
+	audit.AddParam(auditRec(c), "run_immediately", prompt.RunImmediately)
 
 	prompt.ID = promptID
 	prompt.CreatorID = userID
