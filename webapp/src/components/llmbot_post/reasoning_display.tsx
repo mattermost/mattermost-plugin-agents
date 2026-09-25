@@ -40,7 +40,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
     if (isReasoningCollapsed) {
         return (
             <MinimalReasoningContainer onClick={handleExpand}>
-                <MinimalExpandIcon isExpanded={false}>
+                <MinimalExpandIcon $isExpanded={false}>
                     <ChevronRightIcon/>
                 </MinimalExpandIcon>
                 {isReasoningLoading && <SpinnerWrapper><LoadingSpinner/></SpinnerWrapper>}
@@ -63,7 +63,7 @@ export const ReasoningDisplay: React.FC<ReasoningDisplayProps> = ({
             </ExpandedReasoningHeader>
             {reasoningSummary && (
                 <ExpandedReasoningContainer>
-                    <ReasoningContent collapsed={false}>
+                    <ReasoningContent $collapsed={false}>
                         <ReasoningText>
                             {reasoningSummary}
                         </ReasoningText>
@@ -153,14 +153,14 @@ export const MinimalReasoningContainer = styled.div`
 	}
 `;
 
-const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
+const MinimalExpandIcon = styled.div<{$isExpanded: boolean}>`
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	width: 16px;
 	height: 16px;
 	transition: transform 0.2s ease;
-	transform: ${(props) => (props.isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
+	transform: ${(props) => (props.$isExpanded ? 'rotate(180deg)' : 'rotate(0)')};
 
 	svg {
 		width: 14px;
@@ -168,11 +168,11 @@ const MinimalExpandIcon = styled.div<{isExpanded: boolean}>`
 	}
 `;
 
-const ReasoningContent = styled.div<{collapsed: boolean}>`
-	max-height: ${(props) => (props.collapsed ? '0' : '600px')};
+const ReasoningContent = styled.div<{$collapsed: boolean}>`
+	max-height: ${(props) => (props.$collapsed ? '0' : '600px')};
 	overflow-y: auto;
 	transition: max-height 0.3s ease-in-out;
-	opacity: ${(props) => (props.collapsed ? '0' : '1')};
+	opacity: ${(props) => (props.$collapsed ? '0' : '1')};
 	transition: opacity 0.2s ease-in-out, max-height 0.3s ease-in-out;
 `;
 

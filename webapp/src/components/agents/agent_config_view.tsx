@@ -277,10 +277,11 @@ const AgentConfigView = (props: Props) => {
         setShowDiscardDialog(false);
     }, []);
 
-    // Escape key: same as back — confirm when there are unsaved changes
+    // Escape key: same as back — confirm when there are unsaved changes.
+    // Skip Escapes a child already handled (e.g. closing a react-select menu or a nested dialog).
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') {
+            if (e.key !== 'Escape' || e.defaultPrevented) {
                 return;
             }
             if (showDiscardDialogRef.current) {
