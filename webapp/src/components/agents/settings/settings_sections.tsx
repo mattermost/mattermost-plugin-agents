@@ -126,6 +126,11 @@ export const defaultConfig: PluginConfig = {
             baseURL: '',
             resultLimit: 5,
         },
+        serply: {
+            apiKey: '',
+            resultLimit: 5,
+            apiURL: '',
+        },
     },
     dictation: defaultDictationConfig,
 };

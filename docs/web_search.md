@@ -1,10 +1,10 @@
 # Web search
 
-Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave or SearXNG search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
+Give agents web search through the provider's native tool (Professional) or Mattermost's built-in Brave, SearXNG, or Serply search (Enterprise). If your provider has native web search, use that. Use built-in search for models that don't.
 
 | | Native web search | Built-in web search |
 |---|---|---|
-| Who runs the search | The model provider | Mattermost, through Brave or SearXNG |
+| Who runs the search | The model provider | Mattermost, through Brave, SearXNG, or Serply |
 | Providers | Anthropic, OpenAI, Google Gemini, Google Vertex AI, and OpenAI Compatible or Azure with **Use Responses API** on | Any model that supports tool calling |
 | Where to turn it on | Per agent, under **Advanced configuration** | **Agents > Settings > Web search**. Applies to agents that don't use native search. |
 | License | Professional | Enterprise |
@@ -48,12 +48,13 @@ Mattermost's own search tool lets an agent retrieve current information when the
 |---|---|---|
 | **Brave Search** | **Brave API Key**, **Brave Result Limit** (1 to 10, default 5), **Brave API URL (optional)** | Returns summaries with each result, which reduces page fetches. You must have Brave's **Pro AI plan**. Using another Brave plan for AI use violates Brave's terms and can get the account suspended. |
 | **SearXNG (self-hosted)** | **SearXNG Base URL**, **SearXNG Result Limit** | Good for air-gapped or sovereign setups. The instance must allow the `json` format (`search.formats` in its settings). If it's on a private or reserved address, add it to the Mattermost Server's `AllowedUntrustedInternalConnections` setting. |
+| **Serply** | **Serply API Key**, **Serply Result Limit** (1 to 10, default 5), **Serply API URL (optional)** (HTTPS only) | Returns Google web results with one API key, sent in the `X-Api-Key` header. Results are titles, links, and snippets, so agents may still fetch pages for detail. |
 
 **Domain Denylist (optional)** takes a comma-separated list such as `example.com, spam-site.org`. It applies to every provider. Matching results are removed before the agent sees them, and the agent can't fetch pages from those domains.
 
-Brave API keys come from [brave.com/search/api](https://brave.com/search/api/).
+Brave API keys come from [brave.com/search/api](https://brave.com/search/api/). Serply API keys come from [serply.io](https://serply.io), and the request format is in the [Serply API documentation](https://serply.io/docs).
 
-Google Custom Search is no longer supported. If **Provider** was set to Google, built-in web search stays off and the settings page shows an error until you choose Brave or SearXNG.
+Google Custom Search is no longer supported. If **Provider** was set to Google, built-in web search stays off and the settings page shows an error until you choose Brave, SearXNG, or Serply.
 
 ### Limits
 
