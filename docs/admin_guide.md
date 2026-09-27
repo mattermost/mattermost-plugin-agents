@@ -223,7 +223,7 @@ For configuration details on native web search with supported providers, see the
 
 #### Provider comparison
 
-Mattermost supports two web search providers, each with varying capabilities:
+Mattermost supports several web search providers, each with varying capabilities:
 
 ##### Brave Search (Recommended)
 
@@ -244,6 +244,10 @@ Google Custom Search provides access to Google's search index but has several im
 - **Rate limits**: Google Custom Search has strict daily quota limits
 
 Due to these limitations, Google Custom Search may not always provide optimal results for agent queries.
+
+##### Serply
+
+[Serply](https://serply.io) returns Google web results through a single API key, with no Programmable Search Engine to create or Search Engine ID to manage. Like Google Custom Search, it returns titles, links, and snippets rather than pre-summarized content, so agents may still fetch pages for detail.
 
 #### Configuration
 
@@ -287,6 +291,16 @@ To obtain Google Custom Search credentials:
 3. Create API credentials (API key)
 4. Set up a custom search engine at [Google Programmable Search Engine](https://programmablesearchengine.google.com)
 5. Note the Search Engine ID (cx parameter)
+
+##### Serply configuration
+
+| Setting | Description | Required |
+|---------|-------------|----------|
+| **Serply API Key** | Your Serply API key, sent in the `X-Api-Key` header | Yes |
+| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **API URL** | Override the default Serply endpoint (`https://api.serply.io/v1/search`) if needed | No |
+
+To obtain a Serply API key, sign up at [serply.io](https://serply.io) and copy the key from the dashboard. The request format is described in the [Serply API documentation](https://serply.io/docs).
 
 ##### Shared configuration
 
@@ -475,7 +489,7 @@ When enabled, the plugin creates spans for:
 - **Tool execution**: Tool name, ID, resolution status, and errors for both built-in and MCP tools
 - **MCP tool calls**: Remote MCP server and tool name
 - **Semantic search**: Search queries and result retrieval
-- **Web search**: Brave and Google search API calls
+- **Web search**: Brave, Google, SearXNG, and Serply search API calls
 - **Post streaming**: Duration and context for streaming LLM responses to posts
 
 Spans are organized in a parent-child hierarchy that follows the request flow, so a single user message produces a trace like:

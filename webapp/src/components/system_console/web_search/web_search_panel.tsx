@@ -28,12 +28,19 @@ export type WebSearchSearXNGConfig = {
     resultLimit: number;
 };
 
+export type WebSearchSerplyConfig = {
+    apiKey: string;
+    resultLimit: number;
+    apiURL: string;
+};
+
 export type WebSearchConfig = {
     enabled: boolean;
     provider: string;
     google: WebSearchGoogleConfig;
     brave: WebSearchBraveConfig;
     searxng: WebSearchSearXNGConfig;
+    serply: WebSearchSerplyConfig;
     domainDenylist: string[] | null; // server sends nil Go slice as JSON null
 };
 
@@ -45,6 +52,7 @@ type Props = {
 const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
 const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
+const DEFAULT_SERPLY_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
 
 const WebSearchPanel = ({value, onChange}: Props) => {
     const intl = useIntl();
@@ -54,6 +62,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     const google = value.google || DEFAULT_GOOGLE_CONFIG;
     const brave = value.brave || DEFAULT_BRAVE_CONFIG;
     const searxng = value.searxng || DEFAULT_SEARXNG_CONFIG;
+    const serply = value.serply || DEFAULT_SERPLY_CONFIG;
     const domainDenylist = value.domainDenylist || [];
 
     const handleUpdate = (patch: Partial<WebSearchConfig>) => {
@@ -70,6 +79,10 @@ const WebSearchPanel = ({value, onChange}: Props) => {
 
     const handleSearxngUpdate = (patch: Partial<WebSearchSearXNGConfig>) => {
         handleUpdate({searxng: {...searxng, ...patch}});
+    };
+
+    const handleSerplyUpdate = (patch: Partial<WebSearchSerplyConfig>) => {
+        handleUpdate({serply: {...serply, ...patch}});
     };
 
     return (
@@ -97,6 +110,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     <SelectionItemOption value='google'>{'Google Custom Search'}</SelectionItemOption>
                     <SelectionItemOption value='brave'>{'Brave Search'}</SelectionItemOption>
                     <SelectionItemOption value='searxng'>{intl.formatMessage({defaultMessage: 'SearXNG (self-hosted)'})}</SelectionItemOption>
+                    <SelectionItemOption value='serply'>{'Serply'}</SelectionItemOption>
                 </SelectionItem>
                 {value.provider === 'google' && (
                     <>
@@ -178,6 +192,35 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                                 const parsed = parseInt(e.target.value, 10);
                                 handleSearxngUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
                             }}
+                            disabled={!value.enabled}
+                        />
+                    </>
+                )}
+                {value.provider === 'serply' && (
+                    <>
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Serply API Key'})}
+                            type='password'
+                            value={serply.apiKey}
+                            onChange={(e) => handleSerplyUpdate({apiKey: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Serply API key, sent in the X-Api-Key header. Serply returns Google web results without a Programmable Search Engine ID.'})}
+                            disabled={!value.enabled}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Serply Result Limit'})}
+                            type='number'
+                            value={serply.resultLimit.toString()}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                handleSerplyUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
+                            }}
+                            disabled={!value.enabled}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Serply API URL (optional)'})}
+                            value={serply.apiURL}
+                            onChange={(e) => handleSerplyUpdate({apiURL: e.target.value})}
+                            helptext={intl.formatMessage({defaultMessage: 'Override the default Serply search endpoint if necessary.'})}
                             disabled={!value.enabled}
                         />
                     </>
