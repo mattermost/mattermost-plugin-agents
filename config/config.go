@@ -63,6 +63,7 @@ type WebSearchConfig struct {
 	Google         WebSearchGoogleConfig  `json:"google"`
 	Brave          WebSearchBraveConfig   `json:"brave"`
 	SearXNG        WebSearchSearXNGConfig `json:"searxng"`
+	Serply         WebSearchSerplyConfig  `json:"serply"`
 	DomainDenylist []string               `json:"domainDenylist"`
 }
 
@@ -75,6 +76,12 @@ type WebSearchGoogleConfig struct {
 
 type WebSearchSearXNGConfig struct {
 	BaseURL     string `json:"baseURL"`
+	ResultLimit int    `json:"resultLimit"`
+}
+
+type WebSearchSerplyConfig struct {
+	APIKey      string `json:"apiKey"`
+	APIURL      string `json:"apiURL"`
 	ResultLimit int    `json:"resultLimit"`
 }
 
