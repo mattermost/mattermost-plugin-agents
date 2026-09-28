@@ -13,6 +13,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
@@ -109,8 +111,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+	if !a.requireCapability(c, enterprise.CapThreadSummarization) {
 		return
 	}
 
@@ -207,8 +208,17 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -227,8 +237,13 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, meetings.ErrNotMeetingBotPost) {
 			c.AbortWithError(http.StatusBadRequest, err)
 			return
@@ -294,6 +309,15 @@ func (a *API) handleRegenerate(c *gin.Context) {
 
 	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
 	}
@@ -441,6 +465,11 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 
+	// Meeting transcription summaries are available at Enterprise and above.
+	if !a.requireCapability(c, enterprise.CapMeetings) {
+		return
+	}
+
 	if err := a.enforceEmptyBody(c); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
@@ -448,6 +477,11 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, meetings.ErrNoTranscriptionPostReference) {
 			c.AbortWithError(http.StatusBadRequest, err)
 		} else {
@@ -472,7 +506,16 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+	detachedCtx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	if err := a.conversationsService.HandleLoopInAgent(detachedCtx, userID, bot, post, channel); err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}

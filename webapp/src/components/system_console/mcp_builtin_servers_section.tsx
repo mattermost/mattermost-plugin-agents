@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
+import {useABACSupport} from '../../utils/access_control';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
@@ -57,6 +58,9 @@ export const BuiltInPluginServersSection = ({
 }: BuiltInPluginServersSectionProps) => {
     const intl = useIntl();
 
+    // The warning is about access policies, which exist only where ABAC does.
+    const {supported: abacSupported} = useABACSupport();
+
     return (
         <BuiltInSection data-testid='built-in-plugin-servers-section'>
             <BuiltInSectionHeader>
@@ -75,7 +79,7 @@ export const BuiltInPluginServersSection = ({
                             <FormattedMessage defaultMessage='Built-in'/>
                         </TypeBadge>
                     )}
-                    helpText={(
+                    helpText={abacSupported && (
                         <FormattedMessage defaultMessage='Denying access to the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users. This has broader impact than denying a single remote MCP server.'/>
                     )}
                     policyId={embeddedServerId}

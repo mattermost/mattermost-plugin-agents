@@ -69,8 +69,10 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 		fileContentService = defaultFileContentService
 	}
 
-	// Register tools with local access mode
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService)
+	// Register tools with local access mode. Standalone stdio servers run
+	// outside the plugin and have no license information, so state-changing
+	// tools stay available.
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, func() bool { return true })
 
 	return mattermostServer, nil
 }
@@ -82,8 +84,13 @@ func (s *MattermostStdioMCPServer) Serve() error {
 
 // serveStdio starts the server using stdio transport
 func (s *MattermostMCPServer) serveStdio() error {
-	// Add context with cancellation for graceful shutdown
 	ctx := context.Background()
+	if cfg, ok := s.config.(StdioConfig); ok && cfg.PersonalAccessToken != "" {
+		// Tool handlers inherit this context. HTTP callbacks (read_file,
+		// semantic search) forward the PAT as a bearer token so the plugin
+		// can restore a Mattermost session for file-policy checks.
+		ctx = context.WithValue(ctx, auth.AuthTokenContextKey, cfg.PersonalAccessToken)
+	}
 
 	// Log startup
 	s.logger.Info("Starting MCP server with STDIO transport")

@@ -66,7 +66,7 @@ func TestInitEmbeddingsSearch(t *testing.T) {
 			},
 			licensed:      false,
 			expectError:   true,
-			errorContains: "without a valid license",
+			errorContains: "available at Enterprise and above",
 		},
 		{
 			name: "zero dimensions returns dimension error",

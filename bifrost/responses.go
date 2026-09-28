@@ -18,6 +18,7 @@ import (
 // convertToResponsesMessages converts llm.Post messages to Bifrost ResponsesMessage format.
 func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMessage {
 	messages := make([]schemas.ResponsesMessage, 0, len(posts))
+	maxDim := maxImageDimension(b.provider, countRequestImages(posts))
 
 	for _, post := range posts {
 		switch post.Role {
@@ -33,7 +34,7 @@ func (b *LLM) convertToResponsesMessages(posts []llm.Post) []schemas.ResponsesMe
 		case llm.PostRoleUser:
 			if len(post.Files) > 0 {
 				// Multimodal message with images
-				parts := b.createResponsesMultimodalContent(post)
+				parts := b.createResponsesMultimodalContent(post, maxDim)
 				msg := schemas.ResponsesMessage{
 					Role: new(schemas.ResponsesInputMessageRoleUser),
 					Content: &schemas.ResponsesMessageContent{
@@ -140,8 +141,8 @@ func assistantReplayMessages(post llm.Post) []schemas.ResponsesMessage {
 }
 
 // createResponsesMultimodalContent creates content blocks for Responses API messages with images.
-func (b *LLM) createResponsesMultimodalContent(post llm.Post) []schemas.ResponsesMessageContentBlock {
-	return multimodalContent(post,
+func (b *LLM) createResponsesMultimodalContent(post llm.Post, maxDim int) []schemas.ResponsesMessageContentBlock {
+	return multimodalContent(post, maxDim,
 		func(text string) schemas.ResponsesMessageContentBlock {
 			return schemas.ResponsesMessageContentBlock{
 				Type: schemas.ResponsesInputMessageContentBlockTypeText,
@@ -195,6 +196,9 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	for _, nativeTool := range b.enabledNativeTools {
 		switch nativeTool {
 		case llm.NativeToolWebSearch:
+			if cfg.SkipNativeWebSearch {
+				continue
+			}
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 		case llm.NativeToolWebFetch:
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
@@ -206,8 +210,8 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	}
 
 	// When NativeWebSearchAllowed is true but web_search is not in enabledNativeTools,
-	// add it dynamically
-	if cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
+	// add it dynamically. SkipNativeWebSearch is the license gate for that tool.
+	if !cfg.SkipNativeWebSearch && cfg.NativeWebSearchAllowed && !b.isNativeToolEnabled(llm.NativeToolWebSearch) {
 		result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebSearch))
 	}
 

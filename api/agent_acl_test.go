@@ -174,7 +174,7 @@ func baseSAOnBotConfig() llm.BotConfig {
 		ReasoningEnabled:        false,
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          1024,
-		StructuredOutputEnabled: false,
+		StructuredOutputEnabled: false, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            10,
 		BotUserID:               "bot-1",
 		CreatorID:               "creator-1",

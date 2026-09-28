@@ -17,6 +17,17 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 const testTool: MCPToolInfo = {
     name: 'get_issue',
     description: 'Upstream issue description',
@@ -129,5 +140,44 @@ describe('MCPToolConfigRow', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Show tool details'}));
 
         expect((screen.getByLabelText('Retrieval description override') as HTMLInputElement).disabled).toBe(true);
+    });
+});
+
+describe('MCPToolConfigRow license gating', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    test('policy selector is enabled at Enterprise', () => {
+        render(
+            <MCPToolConfigRow
+                tool={testTool}
+                toolConfig={testToolConfig()}
+                onToolConfigChange={jest.fn()}
+            />,
+        );
+
+        expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(false);
+    });
+
+    test('policy selector is disabled below Enterprise while the enabled toggle stays usable', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'tool_approval_policies');
+
+        const onToolConfigChange = jest.fn();
+        render(
+            <MCPToolConfigRow
+                tool={testTool}
+                toolConfig={testToolConfig()}
+                onToolConfigChange={onToolConfigChange}
+            />,
+        );
+
+        expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true);
+        expect(screen.getByText('Enterprise')).not.toBeNull();
+
+        fireEvent.click(screen.getAllByRole('checkbox')[0]);
+        expect(onToolConfigChange).toHaveBeenCalledWith(expect.objectContaining({enabled: false}));
     });
 });

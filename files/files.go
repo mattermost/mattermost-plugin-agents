@@ -6,7 +6,8 @@
 // used for PDFs and Office documents) is tagged json:"-" and is never returned
 // over the REST API, so the MCP server's user-scoped client cannot read it.
 // This service reaches that content through the admin plugin API and therefore
-// must enforce the requesting user's channel permissions itself.
+// must enforce the requesting session's file-download policy and the user's
+// channel permissions itself.
 package files
 
 import (
@@ -16,6 +17,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -31,8 +33,9 @@ const (
 	maxDownloadBytes = 10 * 1024 * 1024
 )
 
-// ErrForbidden is returned when the requesting user lacks permission to read the
-// file's channel. Callers map it to a 403 / access-denied tool result.
+// ErrForbidden is returned when the requesting session is denied the file or
+// the user lacks permission to read the file's channel. Callers map it to a
+// 403 / access-denied tool result.
 var ErrForbidden = errors.New("you do not have permission to access this file")
 
 // Content is a ranged slice of a file's text plus the metadata needed to page
@@ -61,15 +64,20 @@ func New(mm mmapi.Client) *Service {
 }
 
 // GetContent returns the [offset, offset+limit) rune window of a file's text for
-// userID, after verifying that user may read the file's channel. Documents use
-// the server-extracted text; plain text files fall back to the raw bytes.
+// userID, after verifying the requesting session's file policy and the user's
+// channel permission. Documents use the server-extracted text; plain text files
+// fall back to the raw bytes.
 func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset, limit int) (Content, error) {
 	if !model.IsValidId(fileID) {
 		return Content{}, fmt.Errorf("invalid file id")
 	}
 
-	fileInfo, err := s.mm.GetFileInfo(fileID)
+	mm := mmapi.WithFilePolicy(s.mm, auth.SessionIDFromContext(ctx))
+	fileInfo, err := mm.GetFileInfo(fileID)
 	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return Content{}, ErrForbidden
+		}
 		return Content{}, fmt.Errorf("failed to get file info: %w", err)
 	}
 
@@ -78,7 +86,13 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, ErrForbidden
 	}
 
-	text := s.extractText(ctx, fileInfo)
+	text, err := s.extractText(mm, fileInfo)
+	if err != nil {
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return Content{}, ErrForbidden
+		}
+		return Content{}, err
+	}
 	if text == "" {
 		return Content{Name: fileInfo.Name, MimeType: fileInfo.MimeType, HasText: false}, nil
 	}
@@ -121,27 +135,33 @@ func Slice(name, mimeType, text string, offset, limit int) Content {
 
 // extractText prefers the server-extracted content (the only source for PDFs and
 // Office documents) and falls back to the raw bytes for plain text files.
-func (s *Service) extractText(_ context.Context, fileInfo *model.FileInfo) string {
+// Policy denials from GetFile are returned so GetContent can map them to
+// ErrForbidden instead of treating the file as empty. Other download errors
+// still yield empty text (best-effort).
+func (s *Service) extractText(mm mmapi.Client, fileInfo *model.FileInfo) (string, error) {
 	if trimmed := strings.TrimSpace(fileInfo.Content); trimmed != "" {
-		return trimmed
+		return trimmed, nil
 	}
 
 	if !strings.HasPrefix(fileInfo.MimeType, "text/") {
-		return ""
+		return "", nil
 	}
 
-	reader, err := s.mm.GetFile(fileInfo.Id)
+	reader, err := mm.GetFile(fileInfo.Id)
 	if err != nil {
-		s.mm.LogError("failed to get file for read_file", "error", err, "file_id", fileInfo.Id)
-		return ""
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			return "", err
+		}
+		mm.LogError("failed to get file for read_file", "error", err, "file_id", fileInfo.Id)
+		return "", nil
 	}
 	body, err := io.ReadAll(io.LimitReader(reader, maxDownloadBytes))
 	if closeErr := reader.Close(); closeErr != nil {
-		s.mm.LogWarn("failed to close file reader for read_file", "error", closeErr, "file_id", fileInfo.Id)
+		mm.LogWarn("failed to close file reader for read_file", "error", closeErr, "file_id", fileInfo.Id)
 	}
 	if err != nil {
-		s.mm.LogError("failed to read file for read_file", "error", err, "file_id", fileInfo.Id)
-		return ""
+		mm.LogError("failed to read file for read_file", "error", err, "file_id", fileInfo.Id)
+		return "", nil
 	}
-	return string(body)
+	return string(body), nil
 }

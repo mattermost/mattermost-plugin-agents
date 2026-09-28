@@ -68,6 +68,10 @@ func NewAskUserQuestionTool() llm.Tool {
 		Description:     askUserQuestionDescription,
 		Schema:          llm.NewJSONSchemaFromStruct[AskUserQuestionArgs](),
 		UserInteraction: llm.UserInteractionSelect,
+		ValidateArguments: func(input json.RawMessage) error {
+			_, err := parseAskUserQuestionArgs(input)
+			return err
+		},
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "", errors.New("AskUserQuestion must be answered by the user and cannot be executed directly")
 		},
@@ -90,11 +94,8 @@ func ResolveUserInteractionAnswer(kind string, input json.RawMessage, answer Use
 // resolveAskUserQuestionAnswer validates the answer against the options the LLM
 // offered and returns the JSON tool result.
 func resolveAskUserQuestionAnswer(input json.RawMessage, answer UserInteractionAnswer) (string, error) {
-	var args AskUserQuestionArgs
-	if err := json.Unmarshal(input, &args); err != nil {
-		return "", fmt.Errorf("failed to parse question arguments: %w", err)
-	}
-	if err := validateAskUserQuestionArgs(args); err != nil {
+	args, err := parseAskUserQuestionArgs(input)
+	if err != nil {
 		return "", err
 	}
 
@@ -139,6 +140,14 @@ func resolveAskUserQuestionAnswer(input json.RawMessage, answer UserInteractionA
 		return "", fmt.Errorf("failed to marshal question result: %w", err)
 	}
 	return string(result), nil
+}
+
+func parseAskUserQuestionArgs(input json.RawMessage) (AskUserQuestionArgs, error) {
+	var args AskUserQuestionArgs
+	if err := json.Unmarshal(input, &args); err != nil {
+		return args, fmt.Errorf("failed to parse question arguments: %w", err)
+	}
+	return args, validateAskUserQuestionArgs(args)
 }
 
 // validateAskUserQuestionArgs rejects questions whose answers would be

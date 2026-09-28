@@ -128,7 +128,7 @@ test.describe('Agent provider configuration', () => {
         });
     });
 
-    test('creates direct OpenAI agents with native tools and structured output off by default', async ({page}) => {
+    test('creates direct OpenAI agents with native tools on by default and no structured output control', async ({page}) => {
         test.setTimeout(providerConfigTestTimeoutMs);
 
         const mm = await startFixture({
@@ -167,7 +167,9 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getNativeToolsSection('Native OpenAI Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native OpenAI Tools')).toBeChecked();
         await expect(agentPage.getReasoningEffortSelect()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();
+
+        // Structured output is a per-service policy now; the agent editor must not offer it.
+        await expect(page.getByText('Structured Output', {exact: true})).toHaveCount(0);
     });
 
     test('edits migrated OpenAI-compatible settings from the agent builder', async ({page}) => {
@@ -298,11 +300,10 @@ test.describe('Agent provider configuration', () => {
         await agentPage.getNativeToolCheckbox('Native Claude Tools').click();
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
 
-        await agentPage.setBooleanField('Structured Output', true);
-        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
-        await expect(agentPage.getStructuredOutputNote()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
+        // Structured output is a per-service policy now; the agent editor must not
+        // offer it even for a migrated agent whose stored config carries the
+        // deprecated structuredOutputEnabled field.
+        await expect(page.getByText('Structured Output', {exact: true})).toHaveCount(0);
 
         await agentPage.getModalSaveButton().click();
         await agentPage.waitForModalClosed();
@@ -314,14 +315,6 @@ test.describe('Agent provider configuration', () => {
 
         await expect(agentPage.getNativeToolsSection('Native Claude Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
-        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(0)).toBeChecked();
-        await expect(agentPage.getStructuredOutputNote()).toBeVisible({timeout: 10000});
-        await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
-
-        await agentPage.setBooleanField('Structured Output', false);
-        await expect(agentPage.getBooleanFieldRadios('Structured Output').nth(1)).toBeChecked();
-        await expect(agentPage.getStructuredOutputNote()).toHaveCount(0);
         await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
         await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
     });

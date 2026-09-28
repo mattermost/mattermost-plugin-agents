@@ -21,6 +21,7 @@ import {
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {useIsLicensedFor} from '@/license';
 import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
@@ -55,7 +56,6 @@ export type AgentDraft = {
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
-    structuredOutputEnabled: boolean;
     maxToolTurns: number;
 }
 
@@ -81,7 +81,6 @@ const emptyDraft: AgentDraft = {
     reasoningEnabled: true,
     reasoningEffort: 'medium',
     thinkingBudget: 0,
-    structuredOutputEnabled: false,
     maxToolTurns: DefaultMaxToolTurns,
 };
 
@@ -128,7 +127,6 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEnabled: draft.reasoningEnabled,
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
-        structuredOutputEnabled: draft.structuredOutputEnabled,
         maxToolTurns: draft.maxToolTurns,
     };
 }
@@ -160,7 +158,6 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEnabled: draft.reasoningEnabled,
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
-        structuredOutputEnabled: draft.structuredOutputEnabled,
         maxToolTurns: draft.maxToolTurns,
     };
 }
@@ -188,7 +185,6 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEnabled: agent.reasoningEnabled ?? true,
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
-        structuredOutputEnabled: agent.structuredOutputEnabled ?? false,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
 }
@@ -210,6 +206,7 @@ const AgentConfigView = (props: Props) => {
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
     const canEditServiceAccountAuth = useCurrentUserHasSystemPermission('manage_system');
     const {supported: abacSupported} = useABACSupport();
+    const providerWebSearchLicensed = useIsLicensedFor('provider_web_search');
 
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
@@ -220,8 +217,13 @@ const AgentConfigView = (props: Props) => {
         if (services.length > 0) {
             draft.serviceId = services[0].id;
         }
+
+        // Provider-native web search is on by default where it is available.
+        if (!providerWebSearchLicensed) {
+            draft.enabledNativeTools = draft.enabledNativeTools.filter((tool) => tool !== 'web_search');
+        }
         return draft;
-    }, [agent, services]);
+    }, [agent, services, providerWebSearchLicensed]);
     const [draft, setDraft] = useState<AgentDraft>(initialDraft);
     const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -275,10 +277,11 @@ const AgentConfigView = (props: Props) => {
         setShowDiscardDialog(false);
     }, []);
 
-    // Escape key: same as back — confirm when there are unsaved changes
+    // Escape key: same as back — confirm when there are unsaved changes.
+    // Skip Escapes a child already handled (e.g. closing a react-select menu or a nested dialog).
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            if (e.key !== 'Escape') {
+            if (e.key !== 'Escape' || e.defaultPrevented) {
                 return;
             }
             if (showDiscardDialogRef.current) {

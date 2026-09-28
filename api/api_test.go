@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -66,6 +68,7 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
+	services                        []llm.ServiceConfig
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -90,6 +93,10 @@ func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
 	return false
+}
+
+func (tc *testConfigImpl) GetServices() []llm.ServiceConfig {
+	return slices.Clone(tc.services)
 }
 
 type testLLMContextToolProvider struct {
@@ -1166,7 +1173,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), nil)
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
