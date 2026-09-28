@@ -4,23 +4,14 @@
 import React from 'react';
 import {render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
-import {useSelector} from 'react-redux';
 
 import ToolCard from './tool_card';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
-
-jest.mock('react-redux', () => ({
-    useSelector: jest.fn(),
-}));
 
 jest.mock('react-bootstrap', () => ({
     OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
     Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
 }), {virtual: true});
-
-const mockUseSelector = useSelector as unknown as jest.Mock;
-const formatTextMock = jest.fn((text: string) => text);
-const messageHtmlToComponentMock = jest.fn((text: string) => <div>{text}</div>);
 
 function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     return {
@@ -34,7 +25,8 @@ function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
 
 function renderComponent(
     tool: ToolCall,
-    decisionProps: {
+    extra: {
+        showResults?: boolean;
         onApprove?: () => void;
         onReject?: () => void;
         approvalStage?: ToolApprovalStage;
@@ -43,47 +35,18 @@ function renderComponent(
     return render(
         <IntlProvider locale='en'>
             <ToolCard
-                postID='post_1'
                 tool={tool}
                 isCollapsed={false}
                 isProcessing={false}
                 onToggleCollapse={jest.fn()}
                 canExpand={false}
                 showArguments={true}
-                showResults={false}
-                {...decisionProps}
+                showResults={extra.showResults ?? false}
+                {...extra}
             />
         </IntlProvider>,
     );
 }
-
-beforeEach(() => {
-    mockUseSelector.mockImplementation((selector) => selector({
-        entities: {
-            general: {
-                config: {
-                    SiteURL: 'http://localhost:8065',
-                },
-            },
-            teams: {
-                currentTeamId: 'team_1',
-            },
-        },
-    }));
-
-    formatTextMock.mockClear();
-    messageHtmlToComponentMock.mockClear();
-
-    (window as unknown as Window & {
-        PostUtils: {
-            formatText: typeof formatTextMock;
-            messageHtmlToComponent: typeof messageHtmlToComponentMock;
-        };
-    }).PostUtils = {
-        formatText: formatTextMock,
-        messageHtmlToComponent: messageHtmlToComponentMock,
-    };
-});
 
 describe('ToolCard argument rendering', () => {
     test('shows the no-parameters message for explicit empty object arguments', () => {
@@ -92,12 +55,56 @@ describe('ToolCard argument rendering', () => {
         expect(screen.getByText(/No parameters required/)).not.toBeNull();
     });
 
-    test('does not show the no-parameters message for hidden arguments', () => {
+    test('renders no arguments section for hidden (redacted) arguments', () => {
         renderComponent(makeTool({}));
 
         expect(screen.queryByText(/No parameters required/)).toBeNull();
-        expect(formatTextMock).not.toHaveBeenCalled();
-        expect(messageHtmlToComponentMock).not.toHaveBeenCalled();
+        expect(screen.queryByText('View raw')).toBeNull();
+    });
+
+    test('renders a readable field list for non-empty arguments (not a JSON blob)', () => {
+        renderComponent(makeTool({arguments: {channel_id: 'c1', message: 'hi'}}));
+
+        expect(screen.getByText('Channel Id')).not.toBeNull();
+        expect(screen.getByText('c1')).not.toBeNull();
+        expect(screen.getByText('Message')).not.toBeNull();
+        expect(screen.getByText('hi')).not.toBeNull();
+
+        // The required raw-inspection affordance is present.
+        expect(screen.getByText('View raw')).not.toBeNull();
+    });
+});
+
+describe('ToolCard result rendering', () => {
+    test('renders a plain-text result without markdown side effects', () => {
+        const {container} = renderComponent(
+            makeTool({
+                status: ToolCallStatus.Success,
+                arguments: {q: 'x'},
+                result: 'line one\n![img](http://evil.example/x.png)',
+            }),
+            {showResults: true},
+        );
+
+        expect(screen.getByText('Response')).not.toBeNull();
+        expect(screen.getByText(/line one/)).not.toBeNull();
+        expect(container.querySelector('img')).toBeNull();
+    });
+
+    test('renders a JSON-object result as a labeled field list', () => {
+        renderComponent(
+            makeTool({
+                status: ToolCallStatus.Success,
+                arguments: {q: 'x'},
+                result: JSON.stringify({total: 2, note: 'ok'}),
+            }),
+            {showResults: true},
+        );
+
+        expect(screen.getByText('Total')).not.toBeNull();
+        expect(screen.getByText('2')).not.toBeNull();
+        expect(screen.getByText('Note')).not.toBeNull();
+        expect(screen.getByText('ok')).not.toBeNull();
     });
 });
 

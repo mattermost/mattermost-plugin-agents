@@ -32,7 +32,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("CreatePostTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id":           testData.Channel.Id,
 				"channel_display_name": testData.Channel.DisplayName,
 				"team_display_name":    testData.Team.DisplayName,
@@ -57,7 +57,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": "invalid-channel-id",
 				"message":    "This should fail",
 			}
@@ -67,7 +67,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("MissingParameters", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": testData.Channel.Id,
 				// missing message
 			}
@@ -82,7 +82,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			// Create a test post first
 			testPost := testhelpers.CreateTestPost(t, client, testData.Channel.Id, "Test message for reading")
 
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": testData.Channel.Id,
 				"limit":      10,
 			}
@@ -100,7 +100,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": "invalid-channel-id",
 				"limit":      10,
 			}
@@ -112,7 +112,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("GetChannelInfoTool", func(t *testing.T) {
 		t.Run("HappyPathWithChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": testData.Channel.Id,
 			}
 
@@ -129,7 +129,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("LookupByDisplayName", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_name": testData.Channel.DisplayName,
 				"team_id":      testData.Team.Id,
 			}
@@ -140,7 +140,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("LookupByURLName", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_name": testData.Channel.Name,
 				"team_id":      testData.Team.Id,
 			}
@@ -150,7 +150,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_id": "invalid-channel-id",
 			}
 
@@ -159,7 +159,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("CrossTeamLookup", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"channel_name": testData.Channel.Name,
 				// missing team_id - should fall back to cross-team search
 			}
@@ -172,7 +172,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("GetTeamInfoTool", func(t *testing.T) {
 		t.Run("HappyPathWithTeamID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"team_id": testData.Team.Id,
 			}
 
@@ -189,7 +189,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("LookupByDisplayName", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"team_name": testData.Team.DisplayName,
 			}
 
@@ -198,7 +198,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidTeamID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"team_id": "invalid-team-id",
 			}
 
@@ -209,7 +209,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("SearchUsersTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"term":  testData.User.Username,
 				"limit": 10,
 			}
@@ -226,7 +226,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("NoResultsFound", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"term":  "nonexistent-user-xyz123",
 				"limit": 10,
 			}
@@ -237,7 +237,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("MissingSearchTerm", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"limit": 10,
 				// missing term
 			}
@@ -252,7 +252,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		testPost := testhelpers.CreateTestPost(t, client, testData.Channel.Id, "Test post for reading")
 
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"post_id":        testPost.Id,
 				"include_thread": true,
 			}
@@ -270,7 +270,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidPostID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"post_id": "invalid-post-id",
 			}
 
@@ -281,7 +281,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("CreateChannelTool", func(t *testing.T) {
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"name":         "test-created-channel",
 				"display_name": "Test Created Channel",
 				"type":         "O",
@@ -294,7 +294,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidTeamID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"name":         "test-channel-fail",
 				"display_name": "Test Channel Fail",
 				"type":         "O",
@@ -313,7 +313,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			createdPost := testhelpers.CreateTestPost(t, client, testData.Channel.Id, testMessage)
 
 			// Simple search test - just verify the API call works
-			args := map[string]interface{}{
+			args := map[string]any{
 				"query":   testMessage,
 				"team_id": testData.Team.Id,
 				"limit":   10,
@@ -336,7 +336,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("NoResultsFound", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"query": "nonexistent-search-term-xyz123",
 				"limit": 10,
 			}
@@ -352,7 +352,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		testhelpers.AddUserToTeam(t, client, testData.Team.Id, newUser.Id)
 
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id":    newUser.Id,
 				"channel_id": testData.Channel.Id,
 			}
@@ -382,7 +382,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidChannelID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id":    newUser.Id,
 				"channel_id": "invalid-channel-id",
 			}
@@ -392,7 +392,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id":    "invalid-user-id",
 				"channel_id": testData.Channel.Id,
 			}
@@ -407,7 +407,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		newUser := testhelpers.CreateTestUser(t, client, "teammember", "teammember@example.com", "testpassword")
 
 		t.Run("HappyPath", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id": newUser.Id,
 				"team_id": testData.Team.Id,
 			}
@@ -424,7 +424,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidUserID", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"user_id": "invalid-user-id",
 				"team_id": testData.Team.Id,
 			}
@@ -436,7 +436,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 
 	t.Run("DMTool", func(t *testing.T) {
 		t.Run("DMToSelf", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"message": "Test DM to myself from integration test!",
 			}
 
@@ -479,7 +479,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			// Create a target user to DM
 			targetUser := testhelpers.CreateTestUser(t, client, "dmtarget", "dmtarget@example.com", "testpassword")
 
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username": targetUser.Username,
 				"message":  "Hello from DM integration test!",
 			}
@@ -521,7 +521,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			currentUser, _, err := client.GetMe(context.Background(), "")
 			require.NoError(t, err)
 
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username": currentUser.Username,
 				"message":  "DM to myself by username!",
 			}
@@ -538,7 +538,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("InvalidUsername", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"username": "nonexistent-user-xyz999",
 				"message":  "This should fail",
 			}
@@ -548,7 +548,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("EmptyMessage", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				"message": "",
 			}
 
@@ -557,7 +557,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		})
 
 		t.Run("MissingMessage", func(t *testing.T) {
-			args := map[string]interface{}{
+			args := map[string]any{
 				// missing message field
 			}
 
@@ -572,7 +572,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 			gmUser1 := testhelpers.CreateTestUser(t, client, "gmuser1", "gmuser1@example.com", "testpassword")
 			gmUser2 := testhelpers.CreateTestUser(t, client, "gmuser2", "gmuser2@example.com", "testpassword")
 
-			args := map[string]interface{}{
+			args := map[string]any{
 				"usernames": []string{gmUser1.Username, gmUser2.Username},
 				"message":   "Hello group from integration test!",
 			}
@@ -610,7 +610,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 		t.Run("TooFewTargets", func(t *testing.T) {
 			gmUser := testhelpers.CreateTestUser(t, client, "gmuser-solo", "gmuser-solo@example.com", "testpassword")
 
-			args := map[string]interface{}{
+			args := map[string]any{
 				"usernames": []string{gmUser.Username},
 				"message":   "This should fail — only one target",
 			}
@@ -622,7 +622,7 @@ func TestMCPToolsIntegration(t *testing.T) {
 }
 
 // executeToolWithMCP creates a test MCP client session connected to the server and calls the tool
-func executeToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+func executeToolWithMCP(t *testing.T, suite *TestSuite, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
 	require.NotNil(t, suite.mcpServer, "MCP server must be created before creating client sessions")
 	return testhelpers.ExecuteMCPTool(t, suite.mcpServer.GetMCPServer(), toolName, args)
 }

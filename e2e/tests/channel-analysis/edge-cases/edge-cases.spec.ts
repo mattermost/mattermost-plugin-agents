@@ -3,7 +3,7 @@
 
 import { test, expect, Page } from '@playwright/test';
 import RunContainer from 'helpers/plugincontainer';
-import { RunOpenAIMocks, OpenAIMockContainer } from 'helpers/openai-mock';
+import { RunOpenAIMocks, OpenAIMockContainer, buildChatCompletionMockRule, titleGenerationMockRule } from 'helpers/openai-mock';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
@@ -222,73 +222,49 @@ data: [DONE]
         // 4. Open channel analysis popover and send first question
         await aiPlugin.openChannelAnalysisPopover();
 
-        // Mock response 1
-        const mockResponse1 = `
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The project status is currently in the Development phase."},"finish_reason":null}]}
-data: {"id":"chatcmpl-104a","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+        const mockResponse1Text = 'The project status is currently in the Development phase.';
+        const mockResponse2Text = 'The workstream ship date is 12 March 2099.';
+        const mockResponse3Text = 'The team consists of 5 developers.';
+        const followUp1UserText = 'What is the ship date for this workstream?';
+        const followUp2UserText = 'How many developers are assigned to this workstream?';
+        const sse = (id: string, content: string) => `
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"${content}"},"finish_reason":null}]}
+data: {"id":"${id}","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
 data: [DONE]
 `.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse1, "project status");
+
+        // Follow-ups stay in the analysis thread, so they still contain the
+        // AnalyzeChannel user prompt and often omit the typed follow-up phrase.
+        // Smocker last-in-list wins: do not register overlapping follow-up
+        // matchers up front (the analysis rule would steal them). Resetting
+        // between turns hangs the next ChatCompletion; append after idle instead.
+        const analyzeChannelUserPrompt = 'Please summarize the channel activity as requested.';
+        await openAIMock.addMocks([
+            titleGenerationMockRule(),
+            buildChatCompletionMockRule(sse('chatcmpl-104a', mockResponse1Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
 
         await aiPlugin.sendChannelAnalysisMessage('What is the project status?');
 
-        // 5. Wait for first response to complete
         await llmBotHelper.waitForStreamingComplete();
-
-        // 6. Verify first response is visible
         const firstPostText = llmBotHelper.getPostText();
         await expect(firstPostText).toBeVisible();
-        const firstContent = await firstPostText.textContent();
-        expect(firstContent).toBeTruthy();
-        expect(firstContent!.length).toBeGreaterThan(10);
-        expect(firstContent).toContain('Development');
+        await expect(firstPostText).toContainText('Development');
 
-        // Mock response 2
-        const mockResponse2 = `
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The timeline is set for a Q1 deadline."},"finish_reason":null}]}
-data: {"id":"chatcmpl-104b","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse2, "timeline");
+        await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(sse('chatcmpl-104b', mockResponse2Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
+        await aiPlugin.sendMessage(followUp1UserText);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse2Text, { timeout: 30000 });
 
-        // 7. Send second question in the same RHS conversation
-        await aiPlugin.sendMessage('What is the timeline?');
-
-        // 8. Wait for second response to complete
-        await llmBotHelper.waitForStreamingComplete();
-
-        // 9. Verify second response is visible
-        const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
-        const secondContent = await secondPostText.textContent();
-        expect(secondContent).toBeTruthy();
-        expect(secondContent!.length).toBeGreaterThan(10);
-        expect(secondContent).toContain('Q1');
-
-        // Mock response 3
-        const mockResponse3 = `
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"The team consists of 5 developers."},"finish_reason":null}]}
-data: {"id":"chatcmpl-104c","object":"chat.completion.chunk","created":1694268190,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
-data: [DONE]
-`.trim().split('\n').filter(l => l).join('\n\n') + '\n\n';
-        await openAIMock.addCompletionMockWithRequestBody(mockResponse3, "many developers");
-
-        // 10. Send third question in the same RHS conversation
-        await aiPlugin.sendMessage('How many developers?');
-
-        // 11. Wait for third response to complete
-        await llmBotHelper.waitForStreamingComplete();
-
-        // 12. Verify third response is visible and system handled multiple questions without crashes
-        const thirdPostText = llmBotHelper.getPostText();
-        await expect(thirdPostText).toBeVisible();
-        const thirdContent = await thirdPostText.textContent();
-        expect(thirdContent).toBeTruthy();
-        expect(thirdContent!.length).toBeGreaterThan(10);
-        expect(thirdContent).toContain('5 developers');
+        await aiPlugin.waitForThreadComposerIdle();
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(sse('chatcmpl-104c', mockResponse3Text), { bodyContains: analyzeChannelUserPrompt }),
+        ]);
+        await aiPlugin.sendMessage(followUp2UserText);
+        await expect(llmBotHelper.getPostText()).toContainText(mockResponse3Text, { timeout: 30000 });
     });
 
     test('Channel analysis while RHS already open', async ({ page }) => {

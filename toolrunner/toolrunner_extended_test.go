@@ -173,7 +173,7 @@ func TestToolRunner_OnToolTurnsNotCalledWithoutToolUse(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	callbackCalled := false
@@ -201,7 +201,7 @@ func TestToolRunner_UnloadedMCPToolReturnsLoadFirstError(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	shouldExecuteCalls := 0
@@ -247,7 +247,7 @@ func TestToolRunnerUnloadedToolErrorTelemetry(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 	telemetry := &fakeMCPDynamicTelemetry{}
 
@@ -360,7 +360,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 		},
 	}
 	resolverCalls := 0
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -384,7 +384,7 @@ func TestToolRunner_MixedVisibleAndUnloadedDoesNotExecuteVisible(t *testing.T) {
 	assert.Zero(t, resolverCalls)
 	require.Len(t, result.ToolTurns, 1)
 	require.Len(t, result.ToolTurns[0].ToolResults, 3)
-	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): jira__get_issue, ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained rejected tool call(s): jira__get_issue, ghost_tool")
 	assert.Contains(t, result.ToolTurns[0].ToolResults[1].Result, `load_tool`)
 	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[2].Result)
 }
@@ -406,10 +406,11 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 			"summary": map[string]any{"type": "string"},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name:         "jira__create_issue",
 		Description:  "Create a Jira issue",
+		Title:        "Create Issue",
 		ServerOrigin: "https://jira.example.com",
 		Schema:       schema,
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -432,16 +433,85 @@ func TestToolRunner_ApprovalToolCallsPersistSchemaMetadata(t *testing.T) {
 	}
 	require.Len(t, pendingCalls, 1)
 	assert.Equal(t, "Create a Jira issue", pendingCalls[0].Description)
+	assert.Equal(t, "Create Issue", pendingCalls[0].Title)
 	assert.Equal(t, "https://jira.example.com", pendingCalls[0].ServerOrigin)
 	assert.Equal(t, "create_issue", pendingCalls[0].MCPBareName)
-	assert.Equal(t, schema, pendingCalls[0].Schema)
 	assert.Empty(t, result.ToolTurns)
 }
 
-func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {
-	store := llm.NewNoTools()
+func TestToolRunner_InvalidArgumentsFailBatchAndModelRetries(t *testing.T) {
+	inner := &testLLM{responses: []testResponse{
+		{events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "q1", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":"not a list"}`)},
+				{ID: "tc1", Name: "safe_tool", Arguments: json.RawMessage(`{}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		}},
+		{events: []llm.TextStreamEvent{
+			{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+				{ID: "q2", Name: "AskUserQuestion", Arguments: json.RawMessage(`{"options":["A"]}`)},
+			}},
+			{Type: llm.EventTypeEnd},
+		}},
+	}}
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
-		{Name: "jira__create_issue", Description: "Create a Jira issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
+		{
+			Name:            "AskUserQuestion",
+			UserInteraction: llm.UserInteractionSelect,
+			ValidateArguments: func(args json.RawMessage) error {
+				var parsed struct {
+					Options []string `json:"options"`
+				}
+				return json.Unmarshal(args, &parsed)
+			},
+		},
+		{
+			Name: "safe_tool",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				t.Fatal("a call batched with invalid arguments must not execute")
+				return "", nil
+			},
+		},
+	})
+
+	var decided []string
+	result, err := New(inner).Run(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "ask"}},
+		Context: &llm.Context{Tools: store},
+	}, func(tc llm.ToolCall) bool {
+		decided = append(decided, tc.ID)
+		return false
+	}, nil)
+	require.NoError(t, err)
+
+	var lastEmitted []llm.ToolCall
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeToolCalls {
+			lastEmitted = event.Value.([]llm.ToolCall)
+		}
+	}
+
+	require.Len(t, result.ToolTurns, 1)
+	failed := result.ToolTurns[0].ToolResults
+	require.Len(t, failed, 2)
+	assert.True(t, failed[0].IsError)
+	assert.Contains(t, failed[0].Result, "invalid arguments for tool AskUserQuestion")
+	assert.True(t, failed[1].IsError)
+	assert.True(t, llm.IsBatchSkippedToolResult(failed[1].Result))
+
+	require.Len(t, inner.capturedRequests, 2, "the model must see the failure so it can retry")
+	assert.Equal(t, []string{"q2"}, decided, "only the valid retry may reach the approval decision")
+	require.Len(t, lastEmitted, 1)
+	assert.Equal(t, "q2", lastEmitted[0].ID)
+	assert.Equal(t, llm.ToolCallStatusPending, lastEmitted[0].Status)
+}
+
+func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {
+	store := llm.NewToolStore()
+	store.AddTools([]llm.Tool{
+		{Name: "jira__create_issue", Description: "Create a Jira issue", Title: "Create Issue", ServerOrigin: "https://jira.example.com", Schema: map[string]any{"type": "object"}},
 		{Name: "github__create_issue", Description: "Create a GitHub issue", ServerOrigin: "https://github.example.com"},
 	})
 
@@ -454,9 +524,9 @@ func TestEnrichToolCallsForApprovalUsesScopedCatalogMetadata(t *testing.T) {
 
 	require.Len(t, enriched, 1)
 	assert.Equal(t, "Create a Jira issue", enriched[0].Description)
+	assert.Equal(t, "Create Issue", enriched[0].Title)
 	assert.Equal(t, "https://jira.example.com", enriched[0].ServerOrigin)
 	assert.Equal(t, "create_issue", enriched[0].MCPBareName)
-	assert.Equal(t, map[string]any{"type": "object"}, enriched[0].Schema)
 }
 
 func TestToolRunner_AutoExecutesScopedBareToolCall(t *testing.T) {
@@ -474,7 +544,7 @@ func TestToolRunner_AutoExecutesScopedBareToolCall(t *testing.T) {
 			}},
 		},
 	}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{
 		{
 			Name:         "jira__create_issue",
@@ -526,7 +596,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 	})
 
 	inner := &testLLM{responses: responses}
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "safe_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -554,7 +624,7 @@ func TestToolRunner_MixedBatchSkippedDoesNotDisableToolsAfterRetryLimit(t *testi
 }
 
 func TestExecuteToolsDefensiveUnloadedGuard(t *testing.T) {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.SetUnloadedMCPTools([]llm.Tool{{Name: "jira__get_issue", Description: "Get issue", ServerOrigin: "https://jira.example.com"}})
 
 	results := New(nil).executeTools(context.Background(), []llm.ToolCall{{

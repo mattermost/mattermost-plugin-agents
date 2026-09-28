@@ -22,7 +22,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/v2/utils"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -109,8 +108,8 @@ func TestShouldIndexPost(t *testing.T) {
 					DeleteAt: 0,
 				}
 				p.SetProps(model.StringInterface{
-					"attachments": []interface{}{
-						map[string]interface{}{"text": "attachment content"},
+					"attachments": []any{
+						map[string]any{"text": "attachment content"},
 					},
 				})
 				return p
@@ -132,7 +131,7 @@ func TestShouldIndexPost(t *testing.T) {
 					DeleteAt: 0,
 				}
 				p.SetProps(model.StringInterface{
-					"attachments": []interface{}{},
+					"attachments": []any{},
 				})
 				return p
 			}(),
@@ -255,7 +254,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			docs := indexer.filterAndCreateDocs(tt.posts)
+			docs := indexer.filterAndCreateDocsWithFloor(tt.posts, 0)
 			assert.Equal(t, tt.expectedCount, len(docs))
 		})
 	}
@@ -273,7 +272,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Contains(t, docs[0].Content, "attachment content")
 	})
@@ -291,7 +290,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Contains(t, docs[0].Content, "Hello")
 		assert.Contains(t, docs[0].Content, "T")
@@ -311,7 +310,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Equal(t, "Hello", docs[0].Content)
 	})
@@ -329,7 +328,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 				ChannelType: "O",
 			},
 		}
-		docs := indexer.filterAndCreateDocs(posts)
+		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
 		require.Equal(t, 1, len(docs))
 		assert.Equal(t, "Hello", docs[0].Content)
 	})
@@ -666,7 +665,7 @@ func TestModelInfoOperations(t *testing.T) {
 		}
 
 		// SaveModelInfo should set IndexedAt to a non-zero timestamp before saving
-		mockClient.On("KVSet", IndexerModelKey, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVSet", IndexerModelKey, mock.MatchedBy(func(v any) bool {
 			saved := v.(ModelInfo)
 			return saved.ProviderType == info.ProviderType &&
 				saved.ModelName == info.ModelName &&
@@ -718,7 +717,7 @@ func (k *jobKVStore) getJob() (JobStatus, error) {
 
 func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 	mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			status, err := k.getJob()
 			if err != nil {
 				return err
@@ -727,7 +726,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.Anything).
-		Return(func(key string, oldValue, newValue interface{}) (bool, error) {
+		Return(func(key string, oldValue, newValue any) (bool, error) {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			if oldValue == nil {
@@ -756,7 +755,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return true, nil
 		}).Maybe()
 	mockClient.On("KVGet", IndexerModelKey, mock.AnythingOfType("*indexer.ModelInfo")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			if k.model == nil {
@@ -766,7 +765,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVSet", IndexerModelKey, mock.AnythingOfType("indexer.ModelInfo")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			info := value.(ModelInfo)
@@ -774,7 +773,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVGet", IndexerCursorKey, mock.AnythingOfType("*indexer.Cursor")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			if k.cursor == nil {
@@ -784,7 +783,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVSet", IndexerCursorKey, mock.AnythingOfType("indexer.Cursor")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			c := value.(Cursor)
@@ -799,7 +798,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVGet", IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			if k.lastIdx == nil {
@@ -809,7 +808,7 @@ func (k *jobKVStore) wire(mockClient *mocks.MockClient) {
 			return nil
 		}).Maybe()
 	mockClient.On("KVSet", IndexerLastIndexedKey, mock.AnythingOfType("int64")).
-		Return(func(key string, value interface{}) error {
+		Return(func(key string, value any) error {
 			k.mu.Lock()
 			defer k.mu.Unlock()
 			ts := value.(int64)
@@ -836,6 +835,26 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 	require.NoError(t, err, "job row missing while waiting for %s", want)
 	require.Equal(t, want, status.Status, "timed out waiting for job status %s; last error=%q", want, status.Error)
 	return status
+}
+
+// waitForStoredModelName waits for IndexerModelKey, which a finishing job writes
+// only after its row has already flipped to completed.
+func waitForStoredModelName(t *testing.T, store *jobKVStore, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		got := store.model
+		store.mu.Unlock()
+		if got != nil && got.ModelName == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.NotNil(t, store.model, "timed out waiting for stored model %q", want)
+	require.Equal(t, want, store.model.ModelName, "timed out waiting for stored model")
 }
 
 func waitForStoredRetentionDays(t *testing.T, store *jobKVStore, want int, timeout time.Duration) {
@@ -949,9 +968,8 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			require.NotNil(t, completed.ModelInfo)
 			assert.Equal(t, "model-a", completed.ModelInfo.ModelName, "resume must carry the original snapshot")
 
+			waitForStoredModelName(t, store, tt.wantStoredModel, 5*time.Second)
 			store.mu.Lock()
-			require.NotNil(t, store.model)
-			assert.Equal(t, tt.wantStoredModel, store.model.ModelName)
 			assert.Equal(t, 1536, store.model.Dimensions)
 			store.mu.Unlock()
 
@@ -978,7 +996,7 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		store := &jobKVStore{}
 		lastIndexed := now - 5000
 		store.lastIdx = &lastIndexed
-		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: utils.Ptr(365)}
+		store.model = &ModelInfo{ProviderType: "openai", ModelName: "old-model", Dimensions: 768, IndexRetentionDays: new(365)}
 
 		mockClient := mocks.NewMockClient(t)
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
@@ -1002,12 +1020,10 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		assert.Nil(t, completed.ModelInfo, "catch-up must not set a model snapshot")
 		assert.Equal(t, JobOperationCatchUp, completed.Operation)
 
+		waitForStoredRetentionDays(t, store, 0, 5*time.Second)
 		store.mu.Lock()
-		require.NotNil(t, store.model)
 		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite model identity")
 		assert.Equal(t, 768, store.model.Dimensions)
-		require.NotNil(t, store.model.IndexRetentionDays)
-		assert.Equal(t, 0, *store.model.IndexRetentionDays)
 		store.mu.Unlock()
 	})
 }
@@ -1186,7 +1202,7 @@ func TestCheckIndexHealth(t *testing.T) {
 
 		// Add 10 posts to Posts table
 		now := model.GetMillis()
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -1194,7 +1210,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		// Add 10 posts to llm_posts_embeddings table
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -1221,7 +1237,7 @@ func TestCheckIndexHealth(t *testing.T) {
 
 		// Add 100 posts to Posts table
 		now := model.GetMillis()
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -1229,7 +1245,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		// Add 99 posts to llm_posts_embeddings (1% missing, within tolerance)
-		for i := 0; i < 99; i++ {
+		for i := range 99 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -1256,7 +1272,7 @@ func TestCheckIndexHealth(t *testing.T) {
 
 		// Add 100 posts to Posts table
 		now := model.GetMillis()
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -1264,7 +1280,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		// Add only 80 posts to llm_posts_embeddings (20% missing, exceeds tolerance)
-		for i := 0; i < 80; i++ {
+		for i := range 80 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -1292,7 +1308,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		now := model.GetMillis()
 
 		// Add 5 active posts
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -1308,7 +1324,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		// Add 5 posts to llm_posts_embeddings
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -1335,7 +1351,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		now := model.GetMillis()
 
 		// Add 5 posts with messages
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -1351,7 +1367,7 @@ func TestCheckIndexHealth(t *testing.T) {
 		}
 
 		// Add 5 posts to llm_posts_embeddings
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -1378,7 +1394,7 @@ func TestCountIndexedPosts(t *testing.T) {
 		mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 
 		// Add post1 with 3 chunks
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			id := fmt.Sprintf("post1_chunk_%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding, is_chunk, chunk_index, total_chunks) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]', true, $4, 3)",
 				id, "post1", fmt.Sprintf("Chunk %d", i), i)
@@ -1844,7 +1860,7 @@ func TestStartReindexJob(t *testing.T) {
 		// own CAS calls, concurrently with the test goroutine's asserts.
 		var savedMu sync.Mutex
 		var savedStatus *JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -1958,7 +1974,7 @@ func TestCancelJob(t *testing.T) {
 			}).
 			Return(nil)
 
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -2043,7 +2059,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		mockClient.On("KVGet", ReindexJobKey, mock.AnythingOfType("*indexer.JobStatus")).
 			Return(mmapi.ErrKVNotFound)
 
-		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -2052,7 +2068,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		})).Return(true, nil).Once()
 
 		// Save cursor
-		mockClient.On("KVSet", IndexerCursorKey, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVSet", IndexerCursorKey, mock.MatchedBy(func(v any) bool {
 			cursor := v.(Cursor)
 			return cursor.LastCreateAt == 0 && cursor.LastID == ""
 		})).Return(nil).Once()
@@ -2140,7 +2156,7 @@ func TestStartCatchUpJob_AdditionalCases(t *testing.T) {
 		// the matcher re-runs on the background job's own CAS calls.
 		var savedMu sync.Mutex
 		var savedStatus JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -2302,7 +2318,7 @@ func TestRunReindexJob(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2388,7 +2404,7 @@ func TestRunReindexJob(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2460,7 +2476,7 @@ func TestJobProgressAndHeartbeat(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 600; i++ { // More than 500 to trigger progress save
+		for i := range 600 { // More than 500 to trigger progress save
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2520,7 +2536,7 @@ func TestBatchProcessing(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 250; i++ {
+		for i := range 250 {
 			postID := fmt.Sprintf("post%03d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2530,10 +2546,10 @@ func TestBatchProcessing(t *testing.T) {
 		mockSearch.On("Clear", mock.Anything).Return(nil)
 
 		// Track store calls to verify batch processing (atomic: concurrent workers)
-		var storeCallCount int32
+		var storeCallCount atomic.Int32
 		mockSearch.On("Store", mock.Anything, mock.Anything).
 			Run(func(args mock.Arguments) {
-				atomic.AddInt32(&storeCallCount, 1)
+				storeCallCount.Add(1)
 			}).
 			Return(nil).Maybe()
 
@@ -2558,7 +2574,7 @@ func TestBatchProcessing(t *testing.T) {
 		}
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
-		assert.GreaterOrEqual(t, atomic.LoadInt32(&storeCallCount), int32(3)) // Should have at least 3 batches (250/100)
+		assert.GreaterOrEqual(t, storeCallCount.Load(), int32(3)) // Should have at least 3 batches (250/100)
 		assert.Equal(t, int64(250), jobStatus.ProcessedRows)
 	})
 }
@@ -2579,7 +2595,7 @@ func TestCutoffTimestampHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add posts before cutoff
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("old-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, cutoffTime-100+int64(i), fmt.Sprintf("Old message %d", i))
@@ -2587,7 +2603,7 @@ func TestCutoffTimestampHandling(t *testing.T) {
 		}
 
 		// Add posts after cutoff (should not be in main pass, but caught in catch-up)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			postID := fmt.Sprintf("new-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, cutoffTime+1+int64(i), fmt.Sprintf("New message %d", i))
@@ -2696,7 +2712,7 @@ func TestCheckIndexHealth_ExcludesBotDMChannels(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add 5 posts in regular channel (should be counted)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("regular-post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'regular-channel', 'regular-user-id')",
 				postID, now+int64(i), fmt.Sprintf("Regular message %d", i))
@@ -2704,7 +2720,7 @@ func TestCheckIndexHealth_ExcludesBotDMChannels(t *testing.T) {
 		}
 
 		// Add 3 posts in DM with bot (should be excluded)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			postID := fmt.Sprintf("dm-post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'dm-with-bot', 'regular-user-id')",
 				postID, now+int64(100+i), fmt.Sprintf("DM message %d", i))
@@ -2712,7 +2728,7 @@ func TestCheckIndexHealth_ExcludesBotDMChannels(t *testing.T) {
 		}
 
 		// Add 5 indexed posts (only regular posts)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("regular-post%d", i)
 			_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -2756,7 +2772,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add 5 posts from regular users in regular channel
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("user-post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'regular-channel', 'regular-user-id')",
 				postID, now+int64(i), fmt.Sprintf("User message %d", i))
@@ -2764,7 +2780,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		// Add 3 posts from the bot user (should be excluded)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			postID := fmt.Sprintf("bot-post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId, UserId) VALUES ($1, $2, 0, $3, '', 'regular-channel', 'bot-user-id')",
 				postID, now+int64(100+i), fmt.Sprintf("Bot message %d", i))
@@ -2772,7 +2788,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		// Add 5 indexed posts (matching the user posts)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("user-post%d", i)
 			_, err = db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -2799,7 +2815,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		now := model.GetMillis()
 
 		// Add 5 posts
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2807,7 +2823,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		// Add 5 indexed posts
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -2837,7 +2853,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		now := model.GetMillis()
 
 		// Add 5 posts
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type) VALUES ($1, $2, 0, $3, '')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -2845,7 +2861,7 @@ func TestCheckIndexHealth_ExcludesBotPosts(t *testing.T) {
 		}
 
 		// Add 5 indexed posts
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err := db.Exec("INSERT INTO llm_posts_embeddings (id, post_id, content, embedding) VALUES ($1, $2, $3, '[0.1, 0.2, 0.3]')",
 				postID, postID, fmt.Sprintf("Content %d", i))
@@ -2878,7 +2894,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
 
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			postID := fmt.Sprintf("post%02d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
@@ -2963,7 +2979,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
 
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%02d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
@@ -3018,7 +3034,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
 
-		for i := 0; i < 150; i++ {
+		for i := range 150 {
 			postID := fmt.Sprintf("post%03d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i*1000), fmt.Sprintf("Message %d", i))
@@ -3028,11 +3044,11 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		mockSearch.On("Clear", mock.Anything).Return(nil)
 
 		// First batch succeeds, second batch fails (after all retries)
-		var batchCount int32
+		var batchCount atomic.Int32
 		mockSearch.On("Store", mock.Anything, mock.Anything).
 			Return(func(ctx context.Context, docs []embeddings.PostDocument) error {
 				// First batch succeeds, all subsequent calls fail
-				if atomic.AddInt32(&batchCount, 1) > 1 {
+				if batchCount.Add(1) > 1 {
 					return errors.New("simulated storage failure")
 				}
 				return nil
@@ -3097,7 +3113,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			Return(nil)
 
 		var savedStatus *JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -3138,7 +3154,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			Return(nil)
 
 		var savedStatus *JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -3177,7 +3193,7 @@ func TestMarkOrphanedJobAsFailed(t *testing.T) {
 			Return(nil)
 
 		var saved JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -3325,7 +3341,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add posts AFTER the cutoff (these will be processed by catch-up pass)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("catchup-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
@@ -3374,7 +3390,7 @@ func TestCatchUpPassHeartbeat(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add 600+ posts after cutoff to trigger progress save during catch-up
-		for i := 0; i < 650; i++ {
+		for i := range 650 {
 			postID := fmt.Sprintf("catchup-post%03d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
@@ -3434,7 +3450,7 @@ func TestCatchUpFailureHandling(t *testing.T) {
 		require.NoError(t, err)
 
 		// Add posts AFTER the cutoff (catch-up posts)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("catchup-post%d", i)
 			_, err := db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, cutoffTime+1+int64(i), fmt.Sprintf("Catch-up message %d", i))
@@ -3502,12 +3518,13 @@ func TestResumePreservation(t *testing.T) {
 			Return(nil)
 
 		var savedJobStatus *JobStatus
+		// Once: only capture StartReindexJob's synchronous commit, not the worker's later writes.
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.AnythingOfType("indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(2).(JobStatus)
 				savedJobStatus = &status
 			}).
-			Return(true, nil)
+			Return(true, nil).Once()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -3544,7 +3561,7 @@ func TestResumePreservation(t *testing.T) {
 		now := model.GetMillis() - 1000
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err = db.Exec("INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
 				postID, now+int64(i), fmt.Sprintf("Message %d", i))
@@ -3559,12 +3576,14 @@ func TestResumePreservation(t *testing.T) {
 
 		// Capture the new job status
 		var savedJobStatus *JobStatus
+		// Once: KVGet always reports not-found here, so the worker's progress
+		// writes also CAS against nil and would otherwise overwrite the capture.
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.AnythingOfType("indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(2).(JobStatus)
 				savedJobStatus = &status
 			}).
-			Return(true, nil)
+			Return(true, nil).Once()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -3748,7 +3767,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err = db.Exec(
 				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
@@ -3833,7 +3852,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 		now := model.GetMillis()
 		_, err := db.Exec("INSERT INTO Channels (Id, Type, Name) VALUES ('channel1', 'O', 'town-square')")
 		require.NoError(t, err)
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			postID := fmt.Sprintf("post%d", i)
 			_, err = db.Exec(
 				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, Type, ChannelId) VALUES ($1, $2, 0, $3, '', 'channel1')",
@@ -3856,7 +3875,7 @@ func TestReindexJobCancelReplicaLagRace(t *testing.T) {
 
 		var sawCancelCAS bool
 		var cancelMu sync.Mutex
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.Anything, mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false
@@ -4041,7 +4060,7 @@ func TestCancelRequestedIsRecoverableWhenStale(t *testing.T) {
 			Return(nil)
 
 		var saved JobStatus
-		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v interface{}) bool {
+		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.MatchedBy(func(v any) bool {
 			status, ok := v.(JobStatus)
 			if !ok {
 				return false

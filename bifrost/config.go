@@ -21,6 +21,8 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 		return schemas.OpenAI, nil
 	case llm.ServiceTypeOpenAICompatible:
 		return schemas.OpenAI, nil // Uses OpenAI with custom base URL
+	case llm.ServiceTypeNorth:
+		return schemas.OpenAI, nil // Responses API-compatible with a custom base URL
 	case llm.ServiceTypeAzure:
 		return schemas.Azure, nil
 	case llm.ServiceTypeAnthropic:
@@ -44,21 +46,36 @@ func MapServiceTypeToProvider(serviceType string) (schemas.ModelProvider, error)
 // native tools (currently, web search). This gates both request-time filtering
 // and the effective-behavior checks used by built-in Mattermost tools so that
 // built-in fallbacks do not get suppressed when native tools would be stripped.
+// North maps to the OpenAI provider but does not expose native tools, so this
+// is keyed off SupportedNativeToolsForServiceType rather than the Bifrost
+// provider constant.
 func SupportsNativeTools(serviceType string) bool {
-	provider, err := MapServiceTypeToProvider(serviceType)
-	if err != nil {
-		return false
-	}
-	return supportsNativeToolsProvider(provider)
-}
-
-func supportsNativeTools(serviceType string) bool {
-	return SupportsNativeTools(serviceType)
+	return len(SupportedNativeToolsForServiceType(serviceType)) > 0
 }
 
 func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 	switch provider {
 	case schemas.OpenAI, schemas.Azure, schemas.Anthropic, schemas.Gemini, schemas.Vertex:
+		return true
+	default:
+		return false
+	}
+}
+
+// SupportsProviderFileDownload is independent of sandbox execution: OpenAI can
+// run code_interpreter, but its container files use an endpoint Bifrost does
+// not surface yet. Anthropic's GET /v1/files/{id}/content is supported.
+func SupportsProviderFileDownload(serviceType string) bool {
+	provider, err := MapServiceTypeToProvider(serviceType)
+	if err != nil {
+		return false
+	}
+	return supportsProviderFileDownloadProvider(provider)
+}
+
+func supportsProviderFileDownloadProvider(provider schemas.ModelProvider) bool {
+	switch provider {
+	case schemas.Anthropic:
 		return true
 	default:
 		return false
@@ -75,9 +92,11 @@ func supportsNativeToolsProvider(provider schemas.ModelProvider) bool {
 // vector-store configuration surface yet, so sending the bare tool would 400
 // every completion.
 //
-// Only the primary provider needs gating here; Bifrost strips unsupported
-// native tools per attempted fallback provider (pinned by
-// TestAnthropicOnlyWebFetchDroppedForOpenAI).
+// Bifrost strips unsupported native tools per Bifrost provider, not per
+// plugin service type. Service types that share a Bifrost provider but
+// lack its tools (North, registered as OpenAI) must therefore be rejected
+// as fallbacks in NewFromServiceConfig; per-hop stripping would otherwise
+// treat them as OpenAI and forward web_search/code_interpreter.
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
 	case llm.ServiceTypeAnthropic:
@@ -86,6 +105,9 @@ func SupportedNativeToolsForServiceType(serviceType string) []string {
 		return []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}
 	case llm.ServiceTypeGemini, llm.ServiceTypeVertex:
 		return []string{llm.NativeToolWebSearch}
+	case llm.ServiceTypeNorth:
+		// North does not expose provider-native tools (web_search, code_interpreter, ...).
+		return nil
 	default:
 		return nil
 	}
@@ -143,6 +165,14 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	}
 
 	for _, fbSvc := range fallbackServices {
+		if fbSvc.Type == llm.ServiceTypeNorth {
+			if !llm.ServiceUsesResponsesAPI(serviceConfig) {
+				return nil, fmt.Errorf("fallback service %q (Cohere North) requires a primary service that uses the Responses API; %q (%s) does not", fbSvc.ID, serviceConfig.ID, serviceConfig.Type)
+			}
+			if len(cfg.EnabledNativeTools) > 0 {
+				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			}
+		}
 		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
 		if fbErr != nil {
 			// Fail bot setup rather than silently dropping the fallback: an
@@ -162,7 +192,7 @@ func providerSettingsFromService(provider schemas.ModelProvider, svc llm.Service
 	return ProviderSettings{
 		Provider:              provider,
 		APIKey:                svc.APIKey,
-		APIURL:                normalizeOpenAIBaseURL(provider, svc.APIURL),
+		APIURL:                normalizeServiceBaseURL(provider, svc),
 		OrgID:                 svc.OrgID,
 		Region:                svc.Region,
 		AWSAccessKeyID:        svc.AWSAccessKeyID,
@@ -172,6 +202,7 @@ func providerSettingsFromService(provider schemas.ModelProvider, svc llm.Service
 		VertexAuthCredentials: svc.VertexAuthCredentials,
 		DefaultModel:          svc.DefaultModel,
 		StreamingTimeout:      time.Duration(svc.StreamingTimeoutSeconds) * time.Second,
+		DisableStore:          svc.Type == llm.ServiceTypeNorth,
 	}
 }
 
@@ -208,6 +239,33 @@ func serviceConfigToFallbackEntry(svc llm.ServiceConfig) (FallbackEntry, error) 
 	}, nil
 }
 
+// normalizeServiceBaseURL applies the per-service-type base-URL rewrite so
+// Bifrost's /v1/... paths land on the right host prefix.
+func normalizeServiceBaseURL(provider schemas.ModelProvider, svc llm.ServiceConfig) string {
+	if svc.Type == llm.ServiceTypeNorth {
+		return normalizeNorthBaseURL(svc.APIURL)
+	}
+	return normalizeOpenAIBaseURL(provider, svc.APIURL)
+}
+
+// normalizeNorthBaseURL turns an admin-entered instance URL into the
+// OpenAI-compatible base Bifrost expects (scheme://host/api). Admins may
+// enter the instance root, a trailing /api, or /api/v1; the result is always
+// the /api prefix so Bifrost's /v1/responses (and /v2/models listing) land
+// on the right paths.
+func normalizeNorthBaseURL(apiURL string) string {
+	if apiURL == "" {
+		return ""
+	}
+	apiURL = strings.TrimRight(apiURL, "/")
+	apiURL = strings.TrimSuffix(apiURL, "/v1")
+	apiURL = strings.TrimRight(apiURL, "/")
+	if !strings.HasSuffix(apiURL, "/api") {
+		apiURL += "/api"
+	}
+	return apiURL
+}
+
 // normalizeOpenAIBaseURL strips a trailing /v1 suffix from API URLs for OpenAI-type providers.
 // Bifrost constructs full request paths starting with /v1/ (e.g., /v1/chat/completions,
 // /v1/responses), so the base URL must not include a /v1 suffix. This maintains backward
@@ -232,7 +290,8 @@ func IsSupported(serviceType string) bool {
 		llm.ServiceTypeCohere,
 		llm.ServiceTypeMistral,
 		llm.ServiceTypeGemini,
-		llm.ServiceTypeVertex:
+		llm.ServiceTypeVertex,
+		llm.ServiceTypeNorth:
 		return true
 	default:
 		return false

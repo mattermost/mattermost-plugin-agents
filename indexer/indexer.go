@@ -137,7 +137,7 @@ func (s *Indexer) RunDataRetention(ctx context.Context, nowTime, batchSize int64
 // If clearIndex is false, the job will resume from where it left off (if applicable).
 func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	if s.getSearch == nil || s.getSearch() == nil {
-		return JobStatus{}, fmt.Errorf("search functionality is not configured")
+		return JobStatus{}, ErrNotConfigured
 	}
 
 	sess, err := s.beginExclusiveJob()
@@ -207,9 +207,7 @@ func (s *Indexer) StartReindexJob(clearIndex bool) (JobStatus, error) {
 	deferRun, deferErr := s.resolveDeferredRebuild(clearIndex, newJobStatus.JobID)
 	if deferErr != nil {
 		failedStatus := newJobStatus
-		failedStatus.Status = JobStatusFailed
-		failedStatus.Error = deferErr.Error()
-		failedStatus.CompletedAt = time.Now()
+		failedStatus.fail(deferErr.Error())
 		if _, casErr := s.pluginAPI.KVCompareAndSet(ReindexJobKey, newJobStatus, failedStatus); casErr != nil {
 			s.pluginAPI.LogError("Failed to record reindex job failure", "error", casErr)
 		}
@@ -267,7 +265,7 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 	}
 
 	if jobStatus.Status != JobStatusRunning {
-		return JobStatus{}, fmt.Errorf("not running")
+		return JobStatus{}, ErrNotRunning
 	}
 
 	newStatus := jobStatus
@@ -279,7 +277,7 @@ func (s *Indexer) CancelJob() (JobStatus, error) {
 	}
 	if !ok {
 		// Row changed between read and CAS: nothing to cancel.
-		return JobStatus{}, fmt.Errorf("not running")
+		return JobStatus{}, ErrNotRunning
 	}
 
 	return newStatus, nil
@@ -326,12 +324,12 @@ func (s *Indexer) shouldIndexPostWithFloor(post *model.Post, channel *model.Chan
 // StartCatchUpJob indexes posts created since the last successful index
 func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 	if s.getSearch == nil || s.getSearch() == nil {
-		return JobStatus{}, fmt.Errorf("search functionality is not configured")
+		return JobStatus{}, ErrNotConfigured
 	}
 
 	lastIndexed := s.getLastIndexedTimestamp()
 	if lastIndexed == 0 {
-		return JobStatus{}, fmt.Errorf("no previous index found, run a full reindex first")
+		return JobStatus{}, ErrNoPreviousIndex
 	}
 
 	sess, err := s.beginExclusiveJob()
@@ -379,7 +377,7 @@ func (s *Indexer) StartCatchUpJob() (JobStatus, error) {
 // CheckIndexHealth compares database posts with indexed posts
 func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, error) {
 	if s.getSearch == nil || s.getSearch() == nil {
-		return HealthCheckResult{}, fmt.Errorf("search functionality is not configured")
+		return HealthCheckResult{}, ErrNotConfigured
 	}
 
 	result := HealthCheckResult{
@@ -466,10 +464,9 @@ func (s *Indexer) CheckIndexHealth(ctx context.Context) (HealthCheckResult, erro
 	}
 
 	// Determine status based on 1% tolerance
-	tolerance := int64(float64(result.DBPostCount) * 0.01)
-	if tolerance < 10 {
-		tolerance = 10 // Minimum tolerance of 10 posts
-	}
+	tolerance := max(int64(float64(result.DBPostCount)*0.01),
+		// Minimum tolerance of 10 posts
+		10)
 
 	switch {
 	case result.MissingPosts > tolerance:

@@ -39,12 +39,6 @@ type Client struct {
 	httpClient http.Client
 }
 
-// ToolHookConfig holds an optional HTTP callback path (plugin-relative) for a tool.
-// The calling plugin encodes run context in the path; the agents plugin does not inspect it.
-type ToolHookConfig struct {
-	BeforeCallback string `json:"before_callback,omitempty"`
-}
-
 // Post represents a single message in the conversation
 type Post struct {
 	Role    string   `json:"role"`               // user|assistant|system
@@ -62,7 +56,7 @@ type CompletionRequest struct {
 	// or converted into prompt instructions — is decided by the structured output policy
 	// an administrator configures on the target service, not by this client and not by
 	// agent configuration.
-	JSONOutputFormat map[string]interface{} `json:"json_output_format,omitempty"`
+	JSONOutputFormat map[string]any `json:"json_output_format,omitempty"`
 	// AllowedTools is an optional allowlist for agent completions. Each entry is a tool
 	// name as returned by GET .../agents/{id}/tools (MCP and embedded tools only; built-in
 	// tools are not discoverable or allowlistable via the bridge).
@@ -84,10 +78,6 @@ type CompletionRequest struct {
 	// On agent endpoints, providing it along with UserID makes the bridge check both user
 	// and channel permissions. On service endpoints it is attribution only, like UserID.
 	ChannelID string `json:"channel_id,omitempty"`
-	// ToolHooks maps tool names to optional before-callback paths for that tool.
-	// Requires Mattermost-Plugin-ID on the bridge request; callbacks hit that plugin's routes.
-	// Ignored on service endpoints, where tools are disabled.
-	ToolHooks map[string]ToolHookConfig `json:"tool_hooks,omitempty"`
 }
 
 // CompletionResponse represents a non-streaming completion response

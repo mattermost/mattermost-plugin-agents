@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -82,8 +84,9 @@ type ServiceConfig struct {
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`
 
-	// UseResponsesAPI determines whether to use the new OpenAI Responses API
-	// Only applicable to OpenAI and OpenAI-compatible services
+	// UseResponsesAPI determines whether to use the OpenAI Responses API.
+	// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor
+	// this operator toggle. Other service types ignore it.
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 
 	// FallbackServiceID is the ID of another service to fall back to when this
@@ -112,12 +115,12 @@ func (c ServiceConfig) EffectiveStructuredOutputPolicy() StructuredOutputPolicy 
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
-// Direct OpenAI always uses it; OpenAI-compatible and Azure honor the operator toggle.
+// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor the operator toggle.
 // All other service types ignore UseResponsesAPI — a stale flag carried over from a
 // previous service type must not be allowed to route the request through Responses.
 func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
 	switch cfg.Type {
-	case ServiceTypeOpenAI:
+	case ServiceTypeOpenAI, ServiceTypeNorth:
 		return true
 	case ServiceTypeOpenAICompatible, ServiceTypeAzure:
 		return cfg.UseResponsesAPI
@@ -142,6 +145,9 @@ const (
 	UserAccessLevelAllow
 	UserAccessLevelBlock
 	UserAccessLevelNone
+	// UserAccessLevelAttributeBased makes the ABAC resource policy the sole
+	// user-access gate; UserIDs/TeamIDs are ignored. A missing policy denies.
+	UserAccessLevelAttributeBased
 )
 
 // EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
@@ -193,6 +199,11 @@ type BotConfig struct {
 	// MCPDynamicToolLoading controls whether this bot uses the JIT MCP tool loading flow.
 	// It defaults to true for omitted legacy config.
 	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
+
+	// UseServiceAccountAuth switches external MCP access for this agent to
+	// admin-configured ServiceAccountHeaders instead of per-user OAuth.
+	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
 
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
@@ -270,7 +281,7 @@ func (c *BotConfig) Validate() error {
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
 		return errors.New("channelAccessLevel is out of range")
 	}
-	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
+	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelAttributeBased {
 		return errors.New("userAccessLevel is out of range")
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
@@ -379,6 +390,8 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeCohere:
 		return service.APIKey != ""
+	case ServiceTypeNorth:
+		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeBedrock:
 		// Bedrock requires AWS region
 		// API key is optional as AWS credentials can come from environment/IAM role
@@ -399,7 +412,8 @@ func IsValidService(service ServiceConfig) bool {
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
 	case ServiceTypeLoadTestMock:
-		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
+		_, err := profile.Parse(service.LoadTestMockConfig)
+		return err == nil
 	default:
 		return false
 	}

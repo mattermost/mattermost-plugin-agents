@@ -70,8 +70,8 @@ response, err := client.AgentCompletion("bot-user-id", request)
 response, err := client.ServiceCompletion("openai", request)
 ```
 
-`allowed_tools` is supported only on agent endpoints. Service endpoints reject it, tools are
-disabled there, and `tool_hooks` are ignored.
+`allowed_tools` is supported only on agent endpoints. Service endpoints reject it, and tools are
+disabled there.
 
 ### Streaming
 
@@ -161,76 +161,6 @@ When `AllowedTools` is provided:
   rejected; pass the namespaced name (`server__tool`) to target a specific
   server's tool
 
-### Tool hooks
-
-`ToolHooks` lets your plugin approve or reject each tool call before it runs. Keys are tool
-names (bare or namespaced, same as `allowed_tools`); each value carries an HTTP path in your
-own plugin that the agents plugin calls first. Don't key the same tool twice — supplying
-both `search_posts` and `mattermost__search_posts` is rejected.
-
-```go
-import "github.com/mattermost/mattermost-plugin-agents/v2/public/mcptool"
-
-request := bridgeclient.CompletionRequest{
-    Posts:        []bridgeclient.Post{{Role: "user", Message: "Search for the incident"}},
-    AllowedTools: []string{"mattermost__search_posts"},
-    UserID:       userID,
-    ToolHooks: map[string]bridgeclient.ToolHookConfig{
-        "mattermost__search_posts": {BeforeCallback: "/hooks/tool-check/run-abc123"},
-    },
-}
-```
-
-`BeforeCallback` must start with `/` and is resolved under `/plugins/<your-plugin-id>`; a
-path that escapes that namespace is rejected. It must be a **path only — a query string is
-rejected**, so encode run context in path segments (`/hooks/tool-check/run-abc123`, not
-`/hooks/tool-check?run=abc123`). The agents plugin never inspects the path beyond those
-checks.
-
-Your handler receives a `POST` with `Content-Type: application/json` and this body:
-
-```go
-type BeforeHookRequest struct {
-    ToolName string          `json:"tool_name"`
-    Args     json.RawMessage `json:"args"` // validated, decoded tool arguments
-    UserID   string          `json:"user_id"`
-}
-```
-
-An `Authorization: Bearer` header carrying the acting user's token is included when the
-MCP client has one, so treat it as optional. Authorize on `user_id` from the body rather
-than depending on that header.
-
-Reply `2xx` with a `mcptool.BeforeHookResponse`. An empty `error` lets the call proceed; a
-non-empty `error` rejects it, and that string is handed to the model as the tool's error:
-
-```go
-func (p *MyPlugin) handleToolCheck(w http.ResponseWriter, r *http.Request) {
-    var hookReq mcptool.BeforeHookRequest
-    _ = json.NewDecoder(r.Body).Decode(&hookReq)
-
-    resp := mcptool.BeforeHookResponse{}
-    if !p.userMayRunTool(hookReq.UserID, hookReq.ToolName) {
-        resp.Error = "not permitted for this user"
-    }
-
-    w.Header().Set("Content-Type", "application/json")
-    _ = json.NewEncoder(w).Encode(resp)
-}
-```
-
-Hooks are **fail-closed**: if your endpoint is unreachable, returns a non-2xx, or returns a
-body that doesn't parse, the tool call fails.
-
-Three requirements, each a `400` when missing:
-
-- `allowed_tools` must be set — hooks only apply to allowlisted tools
-- `user_id` must be set
-- the request must carry the `Mattermost-Plugin-ID` header, which identifies the plugin
-  whose namespace the callback resolves in (the client's transports set this for you)
-
-`ToolHooks` is ignored on service endpoints, where tools are disabled.
-
 ## Permission Checking
 
 By default, the bridge does not check permissions. On **agent** endpoints, `UserID` and
@@ -294,6 +224,26 @@ response and SSE formats, so callers parse JSON from the completion text as usua
 
 Agent-level structured output configuration is deprecated and ignored; the service policy
 applies to both agent and direct-service completions.
+
+## Service Account Agents
+
+An agent can be configured (on its MCPs tab) to use **service account authentication**: external
+MCP tool calls run with admin-configured service account credentials instead of per-user OAuth.
+Embedded Mattermost and plugin tools still run as the caller-asserted user. For bridge callers
+this changes what `UserID` means:
+
+- **External MCP tools come from the agent's service account catalog.** For a service account
+  agent, `GetAgentTools` and `AllowedTools` resolution use that catalog for remotes. External
+  MCP servers without service account headers configured are excluded (fail closed) — they never
+  appear in discovery and never execute. Mattermost and plugin tools are discovered and executed
+  as the caller-asserted `UserID`.
+- **`UserID` selects Mattermost and plugin identity, and is still used for permission checks
+  and attribution.** Passing `UserID` still enforces the agent's user and channel access rules
+  and is recorded in token usage logs.
+- **`UserID` is still required for `AllowedTools`**, in both modes.
+
+Service account authentication requires a license. Without one, an agent flagged for it behaves
+like any other agent: the caller-asserted `user_id` selects per-user MCP credentials.
 
 ## Token Usage Dimensions
 

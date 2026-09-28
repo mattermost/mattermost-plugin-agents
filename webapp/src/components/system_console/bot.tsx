@@ -13,12 +13,14 @@ import {DangerPill} from '../pill';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import {LicenseChip} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -32,6 +34,10 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+
+    // AttributeBased makes the ABAC resource policy the sole user-access
+    // gate; user/team lists are ignored in this mode. Wire value 4.
+    AttributeBased,
 }
 
 export type LLMBotConfig = {
@@ -61,6 +67,7 @@ export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
     provider?: 'openai' | 'anthropic' | 'google'
+    disabled?: boolean
 }
 
 const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
@@ -139,6 +146,7 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
 
     const availableNativeTools = nativeToolOptions(provider, intl);
 
@@ -161,19 +169,25 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                 {titleMessage}
             </ItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <NativeToolField key={tool.id}>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && <LicenseChip capability='provider_web_search'/>}
+                            </FieldControlRow>
+                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                        </NativeToolField>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );
@@ -211,7 +225,8 @@ const Bot = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -223,12 +238,16 @@ const Bot = (props: Props) => {
 
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region
         // - others: API key
         let hasRequiredCredentials: string | boolean = false;
         switch (selectedService.type) {
         case 'openaicompatible':
             hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(selectedService.apiKey && selectedService.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
@@ -380,7 +399,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;

@@ -6,11 +6,14 @@ import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {useServiceLimit} from '@/license';
+
 import {TertiaryButton} from '../assets/buttons';
 import ConfirmationDialog from '../confirmation_dialog';
 
 import Service, {LLMService} from './service';
 import {LLMBotConfig} from './bot';
+import EnterpriseChip, {useLicenseChipProps} from './enterprise_chip';
 
 const defaultNewService: LLMService = {
     id: '',
@@ -49,67 +52,86 @@ const Services = (props: Props) => {
     const intl = useIntl();
     const [showErrorDialog, setShowErrorDialog] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
+    const serviceLimit = useServiceLimit();
+    const serviceChip = useLicenseChipProps('multiple_llm_services');
+    const addDisabled = serviceLimit !== null && props.services.length >= serviceLimit;
 
+    // No id is assigned client-side: the backend mints the stable ID on save
+    // (normalizeAdminConfig); policy authoring needs a persisted id.
     const addNewService = (e: React.MouseEvent<HTMLButtonElement>) => {
         e.preventDefault();
-        const id = crypto.randomUUID();
         if (props.services.length === 0) {
-            props.onChange([{
-                ...firstNewService,
-                id,
-            }]);
+            props.onChange([{...firstNewService}]);
         } else {
-            props.onChange([...props.services, {
-                ...defaultNewService,
-                id,
-            }]);
+            props.onChange([...props.services, {...defaultNewService}]);
         }
     };
 
-    const onChange = (newService: LLMService) => {
-        props.onChange(props.services.map((b) => (b.id === newService.id ? newService : b)));
+    // Entries added this session have no id yet, so services are addressed by
+    // index rather than by id.
+    const onChange = (index: number, newService: LLMService) => {
+        props.onChange(props.services.map((s, i) => (i === index ? newService : s)));
     };
 
-    const onDelete = (id: string) => {
-        // Check if any bot is using this service
-        const botsUsingService = props.bots.filter((bot) => bot.serviceID === id);
+    const onDelete = (index: number) => {
+        const id = props.services[index].id;
 
-        if (botsUsingService.length > 0) {
-            const botNames = botsUsingService.map((bot) => bot.displayName).join(', ');
-            const message = intl.formatMessage(
-                {defaultMessage: 'Cannot delete this service because it is being used by the following bot(s): {botNames}'},
-                {botNames},
-            );
-            setErrorMessage(message);
-            setShowErrorDialog(true);
-            return;
+        // Only persisted services can be referenced by bots or as fallbacks.
+        if (id) {
+            const botsUsingService = props.bots.filter((bot) => bot.serviceID === id);
+
+            if (botsUsingService.length > 0) {
+                const botNames = botsUsingService.map((bot) => bot.displayName).join(', ');
+                const message = intl.formatMessage(
+                    {defaultMessage: 'Cannot delete this service because it is being used by the following bot(s): {botNames}'},
+                    {botNames},
+                );
+                setErrorMessage(message);
+                setShowErrorDialog(true);
+                return;
+            }
         }
 
         // Drop the service and clear any remaining service's fallback link to it,
         // so deletion never leaves a dangling fallbackServiceID behind.
         const remaining = props.services.
-            filter((b) => b.id !== id).
-            map((b) => (b.fallbackServiceID === id ? {...b, fallbackServiceID: ''} : b));
+            filter((_, i) => i !== index).
+            map((s) => (id && s.fallbackServiceID === id ? {...s, fallbackServiceID: ''} : s));
         props.onChange(remaining);
     };
 
     return (
         <>
             <ServicesList>
-                {props.services.map((service) => (
+                {props.services.map((service, index) => (
                     <Service
-                        key={service.id}
+                        key={service.id || `unsaved-${index}`}
                         service={service}
                         services={props.services}
-                        onChange={onChange}
-                        onDelete={() => onDelete(service.id)}
+                        onChange={(updated) => onChange(index, updated)}
+                        onDelete={() => onDelete(index)}
                     />
                 ))}
             </ServicesList>
-            <TertiaryButton onClick={addNewService} >
-                <PlusAIServiceIcon/>
-                <FormattedMessage defaultMessage='Add an AI Service'/>
-            </TertiaryButton>
+            <AddServiceRow>
+                <TertiaryButton
+                    onClick={addNewService}
+                    disabled={addDisabled}
+                >
+                    <PlusAIServiceIcon/>
+                    <FormattedMessage defaultMessage='Add an AI Service'/>
+                </TertiaryButton>
+                {addDisabled && (
+                    <EnterpriseChip
+                        title={serviceChip.title}
+                        text={serviceChip.text}
+                        subtext={intl.formatMessage(
+                            {defaultMessage: 'Your current plan allows {count, plural, one {# LLM service} other {# LLM services}}. Additional services are available on {plan} plans and above.'},
+                            {count: serviceLimit, plan: serviceChip.levelName},
+                        )}
+                    />
+                )}
+            </AddServiceRow>
             <ConfirmationDialog
                 show={showErrorDialog}
                 title={<FormattedMessage defaultMessage='Cannot Delete Service'/>}
@@ -126,6 +148,13 @@ const PlusAIServiceIcon = styled(PlusIcon)`
 	width: 18px;
 	height: 18px;
 	margin-right: 8px;
+`;
+
+const AddServiceRow = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 8px;
 `;
 
 const ServicesList = styled.div`

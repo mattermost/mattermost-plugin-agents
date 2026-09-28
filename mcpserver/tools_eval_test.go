@@ -6,6 +6,7 @@ package mcpserver_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -56,13 +57,7 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	// Assert that each required tool was actually called (not just that the LLM claims it was)
 	calledTools := setup.logger.CalledTools()
 	for _, requiredTool := range requiredTools {
-		found := false
-		for _, called := range calledTools {
-			if called == requiredTool {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(calledTools, requiredTool)
 		assert.True(e.T, found, "Required tool %q was not called by the LLM (called tools: %v)", requiredTool, calledTools)
 	}
 
@@ -102,7 +97,7 @@ func TestReadChannelOutputQualityEval(t *testing.T) {
 	}
 
 	evals.Run(t, "read_channel output quality", func(e *evals.EvalT) {
-		result, err := executeToolWithMCP(e.T, suite, "read_channel", map[string]interface{}{
+		result, err := executeToolWithMCP(e.T, suite, "read_channel", map[string]any{
 			"channel_id": data.channel.Id,
 			"limit":      20,
 		})
@@ -142,7 +137,7 @@ func TestSearchPostsOutputQualityEval(t *testing.T) {
 
 		evals.Run(t, "search_posts keyword quality", func(e *evals.EvalT) {
 			// Use a single term to avoid AND logic requiring all terms in one post
-			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]interface{}{
+			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]any{
 				"query":   "migration",
 				"team_id": data.team.Id,
 				"limit":   10,
@@ -168,7 +163,7 @@ func TestSearchPostsOutputQualityEval(t *testing.T) {
 		// Mock embeddings don't produce semantically meaningful similarity scores, so this tests
 		// that the pipeline wiring works end-to-end (index, query, format), not search relevance.
 		evals.Run(t, "search_posts semantic pipeline", func(e *evals.EvalT) {
-			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]interface{}{
+			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]any{
 				"query":   "database migration plan",
 				"team_id": data.team.Id,
 				"limit":   10,
@@ -205,7 +200,7 @@ func TestGetChannelMembersOutputQualityEval(t *testing.T) {
 	}
 
 	evals.Run(t, "get_channel_members output quality", func(e *evals.EvalT) {
-		result, err := executeToolWithMCP(e.T, suite, "get_channel_members", map[string]interface{}{
+		result, err := executeToolWithMCP(e.T, suite, "get_channel_members", map[string]any{
 			"channel_id": data.channel.Id,
 			"limit":      50,
 		})
@@ -493,11 +488,11 @@ func TestReadFilePagingFlowEval(t *testing.T) {
 	// Build a log well past the max single-read window so the model cannot get
 	// the planted secret in one call and must page with offset to reach the end.
 	var log strings.Builder
-	for i := 0; i < 1500; i++ {
+	for i := range 1500 {
 		fmt.Fprintf(&log, "2026-05-01T10:%02d:%02dZ [info] request %d handled in %dms\n", i%60, i%60, i, i%200)
 	}
 	log.WriteString("2026-05-01T11:00:00Z [warn] leaked credential detected: api_key=zephyr-9931-omega\n")
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		log.WriteString("2026-05-01T11:00:01Z [info] worker shutting down\n")
 	}
 	require.Greater(t, len([]rune(log.String())), files.MaxReadRunes, "log must exceed one read window to force paging")

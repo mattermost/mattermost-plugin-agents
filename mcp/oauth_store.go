@@ -334,7 +334,7 @@ func (m *OAuthManager) loadClientCredentials(serverURL string) (*ClientCredentia
 func (m *OAuthManager) storeClientCredentials(creds *ClientCredentials) error {
 	credKey := buildClientCredentialsKey(creds.ServerURL)
 
-	credData, err := json.Marshal(creds)
+	credData, err := json.Marshal(creds) //nolint:gosec // OAuth client credentials are persisted to the plugin KV store by design.
 	if err != nil {
 		return fmt.Errorf("failed to marshal client credentials: %w", err)
 	}

@@ -28,7 +28,7 @@ func DeriveLoadedMCPTools(turns []store.Turn) []string {
 	var names []string
 
 	for _, turn := range turns {
-		blocks, err := unmarshalBlocks(turn.Content)
+		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			continue
 		}

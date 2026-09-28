@@ -36,7 +36,7 @@ func measureEnsureBotsGoroutineGrowth(t *testing.T, svc llm.ServiceConfig, agent
 		bots:     nil,
 		services: []llm.ServiceConfig{svc},
 	}
-	mmBots := newEnsureBotsHarness(t, cfg, store)
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 
 	baseline = settleGoroutines()
 

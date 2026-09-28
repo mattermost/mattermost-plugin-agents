@@ -26,35 +26,35 @@ func TestRecencyMultiplier(t *testing.T) {
 		},
 		{
 			name:         "future timestamp (negative age) has no decay",
-			ageMillis:    -5 * millisPerDay,
+			ageMillis:    -5 * MillisPerDay,
 			halfLifeDays: 7,
 			floor:        0.7,
 			expected:     1,
 		},
 		{
 			name:         "age of one half-life decays half the boostable range",
-			ageMillis:    7 * millisPerDay,
+			ageMillis:    7 * MillisPerDay,
 			halfLifeDays: 7,
 			floor:        0.7,
 			expected:     0.85, // 0.7 + 0.3*0.5
 		},
 		{
 			name:         "age of two half-lives decays to a quarter of the range",
-			ageMillis:    14 * millisPerDay,
+			ageMillis:    14 * MillisPerDay,
 			halfLifeDays: 7,
 			floor:        0.7,
 			expected:     0.775, // 0.7 + 0.3*0.25
 		},
 		{
 			name:         "very old age converges to the floor",
-			ageMillis:    10 * 365 * millisPerDay,
+			ageMillis:    10 * 365 * MillisPerDay,
 			halfLifeDays: 7,
 			floor:        0.7,
 			expected:     0.7,
 		},
 		{
 			name:         "zero floor allows full decay",
-			ageMillis:    1 * millisPerDay,
+			ageMillis:    1 * MillisPerDay,
 			halfLifeDays: 1,
 			floor:        0,
 			expected:     0.5,
@@ -202,7 +202,7 @@ func TestRerankByRecency(t *testing.T) {
 	result := func(postID string, score float32, ageDays int64) SearchResult {
 		createAt := int64(0)
 		if ageDays >= 0 {
-			createAt = now - ageDays*millisPerDay
+			createAt = now - ageDays*MillisPerDay
 		}
 		return SearchResult{
 			Document: PostDocument{PostID: postID, CreateAt: createAt},

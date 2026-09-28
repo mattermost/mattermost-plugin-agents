@@ -112,7 +112,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 				Input:           questionInput,
 				Status:          conversation.StatusPending,
 				UserInteraction: llm.UserInteractionSelect,
-				Shared:          conversation.BoolPtr(false),
+				Shared:          new(false),
 			}}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -129,7 +129,7 @@ func TestHandleToolCallAnswersUserQuestion(t *testing.T) {
 			mockAPI := &plugintest.API{}
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 			lm := &loadedStateLLM{}
 			bot := loadedStateBot(lm)
 			botsService.SetBotsForTesting([]*bots.Bot{bot})
@@ -223,7 +223,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 			Name:   "jira__get_issue",
 			Input:  json.RawMessage(`{}`),
 			Status: conversation.StatusPending,
-			Shared: conversation.BoolPtr(false),
+			Shared: new(false),
 		},
 		{
 			Type: conversation.BlockTypeToolUse,
@@ -235,7 +235,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 			}`),
 			Status:          conversation.StatusPending,
 			UserInteraction: llm.UserInteractionSelect,
-			Shared:          conversation.BoolPtr(false),
+			Shared:          new(false),
 		},
 	}
 	content, err := json.Marshal(blocks)
@@ -253,7 +253,7 @@ func TestHandleToolCallMixedBatchInChannelAwaitsShareDecision(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	lm := &loadedStateLLM{}
 	bot := loadedStateBot(lm)
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
@@ -499,7 +499,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 				Name:             "jira__get_issue",
 				Input:            json.RawMessage(`{}`),
 				Status:           conversation.StatusPending,
-				Shared:           conversation.BoolPtr(false),
+				Shared:           new(false),
 				WouldAutoExecute: tc.wouldAutoExecute,
 			}}
 			if tc.includeQuestion {
@@ -513,7 +513,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 					}`),
 					Status:          conversation.StatusPending,
 					UserInteraction: llm.UserInteractionSelect,
-					Shared:          conversation.BoolPtr(false),
+					Shared:          new(false),
 				})
 			}
 			content, err := json.Marshal(blocks)
@@ -532,7 +532,7 @@ func TestHandleToolCallAutoExecutesPolicyEligiblePendingTools(t *testing.T) {
 			mockLicenseState(mockAPI, !tc.unlicensed)
 			pluginAPI := pluginapi.NewClient(mockAPI, nil)
 			licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+			botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 			lm := &loadedStateLLM{}
 			bot := loadedStateBot(lm)
 			botsService.SetBotsForTesting([]*bots.Bot{bot})

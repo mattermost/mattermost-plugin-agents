@@ -17,10 +17,51 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:release-11.9";
+// release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
+const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
+export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
+
+export function mattermostImage(): string {
+    return process.env.MM_IMAGE || defaultMattermostImage;
+}
 
 type PluginConfig = Record<string, unknown>;
 type PluginConfigInput = PluginConfig | {config: PluginConfig};
+
+export type TownSquareChannel = {
+    id: string;
+    displayName: string;
+    teamDisplayName: string;
+};
+
+/**
+ * Looks up the default channel of `username`'s first team. Specs need its real
+ * ID to build tool-call arguments that the server will accept.
+ */
+export async function getTownSquareChannel(
+    mattermost: MattermostContainer,
+    username: string,
+    password: string,
+): Promise<TownSquareChannel> {
+    const client = await mattermost.getClient(username, password);
+    const teams = await client.getMyTeams();
+    const team = teams[0];
+    if (!team) {
+        throw new Error(`User ${username} is not a member of any team`);
+    }
+    const channels = await client.getMyChannels(team.id);
+    const townSquare = channels.find((channel: {name: string}) => channel.name === 'town-square');
+
+    if (!townSquare) {
+        throw new Error('Could not find town-square channel');
+    }
+
+    return {
+        id: townSquare.id,
+        displayName: townSquare.display_name || 'Town Square',
+        teamDisplayName: team.display_name || 'Test',
+    };
+}
 
 // MattermostContainer represents the mattermost container type used in the module
 export default class MattermostContainer {
@@ -82,20 +123,45 @@ export default class MattermostContainer {
         }
     }
 
+    // container.exec resolves even when the command exits non-zero, so check the exit code
+    // explicitly; otherwise a failed setup step only surfaces later as an unrelated error.
+    mmctl = async (...args: string[]): Promise<string> => {
+        const {output, exitCode} = await this.container.exec(["mmctl", "--local", ...args])
+        if (exitCode !== 0) {
+            throw new Error(`mmctl ${args.join(" ")} exited with code ${exitCode}: ${output.trim()}`)
+        }
+        return output
+    }
+
+    // "Server is listening" is logged before the local-mode socket accepts mmctl connections.
+    waitForLocalMode = async (timeoutMs = 60000) => {
+        const deadline = Date.now() + timeoutMs
+        let lastOutput = ""
+        while (Date.now() < deadline) {
+            const {output, exitCode} = await this.container.exec(["mmctl", "--local", "system", "version"])
+            if (exitCode === 0) {
+                return
+            }
+            lastOutput = output.trim()
+            await new Promise(resolve => setTimeout(resolve, 250))
+        }
+        throw new Error(`mmctl local mode not ready after ${timeoutMs}ms: ${lastOutput}`)
+    }
+
     createAdmin = async (email: string, username: string, password: string) => {
-        await this.container.exec(["mmctl", "--local", "user", "create", "--email", email, "--username", username, "--password", password, "--system-admin", "--email-verified"])
+        await this.mmctl("user", "create", "--email", email, "--username", username, "--password", password, "--system-admin", "--email-verified")
     }
 
     createUser = async (email: string, username: string, password: string) => {
-        await this.container.exec(["mmctl", "--local", "user", "create", "--email", email, "--username", username, "--password", password, "--email-verified"])
+        await this.mmctl("user", "create", "--email", email, "--username", username, "--password", password, "--email-verified")
     }
 
     createTeam = async (name: string, displayName: string) => {
-        await this.container.exec(["mmctl", "--local", "team", "create", "--name", name, "--display-name", displayName])
+        await this.mmctl("team", "create", "--name", name, "--display-name", displayName)
     }
 
     addUserToTeam = async (username: string, teamname: string) => {
-        await this.container.exec(["mmctl", "--local", "team", "users", "add", teamname, username])
+        await this.mmctl("team", "users", "add", teamname, username)
     }
 
     /**
@@ -104,22 +170,14 @@ export default class MattermostContainer {
      * updating migrated legacy bots (no creator id) via manage_others_agent.
      */
     grantSelfServiceAgentPermissions = async (): Promise<void> => {
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_user', 'manage_own_agent',
-        ]);
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_own_agent',
-        ]);
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'add', 'system_admin', 'manage_others_agent',
-        ]);
+        await this.mmctl('permissions', 'add', 'system_user', 'manage_own_agent');
+        await this.mmctl('permissions', 'add', 'system_admin', 'manage_own_agent');
+        await this.mmctl('permissions', 'add', 'system_admin', 'manage_others_agent');
     }
 
     /** Undo {@link grantSelfServiceAgentPermissions} for the system_user role only (system_admin unchanged). */
     revokeManageOwnAgentFromSystemUser = async (): Promise<void> => {
-        await this.container.exec([
-            'mmctl', '--local', 'permissions', 'remove', 'system_user', 'manage_own_agent',
-        ]);
+        await this.mmctl('permissions', 'remove', 'system_user', 'manage_own_agent');
     }
 
     getLogs = async (lines: number): Promise<string> => {
@@ -128,17 +186,14 @@ export default class MattermostContainer {
     }
 
     setSiteURL = async () => {
-        const url = this.url()
-        await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.SiteURL", url])
-        const containerPort = this.container.getMappedPort(8065)
-        await this.container.exec(["mmctl", "--local", "config", "set", "ServiceSettings.ListenAddress", `${containerPort}`])
+        await this.mmctl("config", "set", "ServiceSettings.SiteURL", this.url())
     }
 
     installPlugin = async (pluginPath: string, pluginID: string, pluginConfig?: PluginConfigInput) => {
         await this.container.copyFilesToContainer([{source: pluginPath, target: `/tmp/plugin.tar.gz`}])
 
-        await this.container.exec(["mmctl", "--local", "plugin", "add", '/tmp/plugin.tar.gz'])
-        await this.container.exec(["mmctl", "--local", "plugin", "enable", pluginID])
+        await this.mmctl("plugin", "add", "/tmp/plugin.tar.gz")
+        await this.mmctl("plugin", "enable", pluginID)
 
         // Set config via plugin admin API (replaces mmctl config patch)
         if (pluginConfig) {
@@ -217,17 +272,14 @@ export default class MattermostContainer {
     }
 
     start = async (): Promise<MattermostContainer> => {
-        let image = defaultMattermostImage;
+        const image = mattermostImage();
         const isCustomImage = !!process.env.MM_IMAGE;
-        if (isCustomImage) {
-            image = process.env.MM_IMAGE;
-        }
         console.log(`\n🚀 Starting Mattermost container`);
         console.log(`   Image: ${image}${isCustomImage ? ' (custom via MM_IMAGE)' : ' (default)'}`);
 
         this.network = await new Network().start()
         // Use pgvector image to enable semantic search functionality
-        this.pgContainer = await new PostgreSqlContainer("pgvector/pgvector:pg15")
+        this.pgContainer = await new PostgreSqlContainer(POSTGRES_IMAGE)
             .withExposedPorts(5432)
             .withDatabase("mattermost_test")
             .withUsername("user")
@@ -301,6 +353,7 @@ export default class MattermostContainer {
             console.log("Note: Could not install ffmpeg (container may not support apt-get)")
         }
 
+        await this.waitForLocalMode()
         await this.setSiteURL()
         await this.createAdmin(this.email, this.username, this.password)
         await this.createTeam(this.teamName, this.teamDisplayName)

@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func openAIService(id string) llm.ServiceConfig {
+func registryOpenAIService(id string) llm.ServiceConfig {
 	return llm.ServiceConfig{
 		ID:           id,
 		Name:         id,
@@ -29,7 +29,7 @@ func TestServiceCanServeCompletions(t *testing.T) {
 	}{
 		{
 			name: "openai with a default model can serve",
-			svc:  openAIService("s1"),
+			svc:  registryOpenAIService("s1"),
 			want: true,
 		},
 		{
@@ -122,12 +122,12 @@ func TestServiceCanServeCompletions(t *testing.T) {
 
 func TestResolveBridgeFallbacks(t *testing.T) {
 	primaryWithFallback := func(id, fallbackID string) llm.ServiceConfig {
-		svc := openAIService(id)
+		svc := registryOpenAIService(id)
 		svc.FallbackServiceID = fallbackID
 		return svc
 	}
 	withModel := func(id, model string) llm.ServiceConfig {
-		svc := openAIService(id)
+		svc := registryOpenAIService(id)
 		svc.DefaultModel = model
 		return svc
 	}
@@ -142,8 +142,8 @@ func TestResolveBridgeFallbacks(t *testing.T) {
 	}{
 		{
 			name:     "no fallback configured resolves to an empty chain",
-			services: []llm.ServiceConfig{openAIService("a")},
-			primary:  openAIService("a"),
+			services: []llm.ServiceConfig{registryOpenAIService("a")},
+			primary:  registryOpenAIService("a"),
 			wantIDs:  nil,
 		},
 		{
@@ -151,7 +151,7 @@ func TestResolveBridgeFallbacks(t *testing.T) {
 			services: []llm.ServiceConfig{
 				primaryWithFallback("a", "b"),
 				primaryWithFallback("b", "c"),
-				openAIService("c"),
+				registryOpenAIService("c"),
 			},
 			primary:    primaryWithFallback("a", "b"),
 			wantIDs:    []string{"b", "c"},

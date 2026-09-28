@@ -4,6 +4,7 @@ import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { AIMockContainer, RunAIMockSidecar } from 'helpers/aimock-container';
 import { buildToolCallAndTextResponse } from 'helpers/aimock-fixtures';
+import { expectNoToolActivity } from 'helpers/llmbot-post';
 import { RunToolConfigAIMockContainer, setupRegularTestUser } from 'helpers/tool-config-container';
 
 const username = 'regularuser';
@@ -59,9 +60,14 @@ test.describe('Ask Policy (Aimock)', () => {
         const botPosts = rhsContainer.locator('[data-testid="llm-bot-post"]');
         const latestBotPost = botPosts.last();
         await expect(latestBotPost).toBeVisible({ timeout: 90000 });
+
+        // The round awaiting a decision renders in full, below where the
+        // activity area would be. Nothing else ran, so there is no activity
+        // area and the approval card is the only place the tool is named.
         await expect(latestBotPost.getByText(getChannelInfoLabel, { exact: true })).toBeVisible({
             timeout: 90000,
         });
+        await expectNoToolActivity(latestBotPost);
 
         const acceptButton = rhsContainer.getByRole('button', { name: /^accept$/i });
         const rejectButton = rhsContainer.getByRole('button', { name: /^reject$/i });

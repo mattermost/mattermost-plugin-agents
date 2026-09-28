@@ -1,35 +1,38 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-package llm
+package llm_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 )
 
 // benchFakeLLM is a minimal LanguageModel implementation for benchmarks.
 // It returns a pre-configured stream without any external dependencies.
 type benchFakeLLM struct {
-	generator StreamGenerator
+	generator llmtest.StreamGenerator
 }
 
-func (f *benchFakeLLM) ChatCompletion(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (*TextStreamResult, error) {
+func (f *benchFakeLLM) ChatCompletion(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	return f.generator.Generate(), nil
 }
 
-func (f *benchFakeLLM) ChatCompletionNoStream(ctx context.Context, _ CompletionRequest, _ ...LanguageModelOption) (string, error) {
-	result, err := f.ChatCompletion(ctx, CompletionRequest{})
+func (f *benchFakeLLM) ChatCompletionNoStream(ctx context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (string, error) {
+	result, err := f.ChatCompletion(ctx, llm.CompletionRequest{})
 	if err != nil {
 		return "", err
 	}
 	return result.ReadAll()
 }
 
-func (f *benchFakeLLM) CountTokens(_ context.Context, _ CompletionRequest, _ ...LanguageModelOption) (int, error) {
-	return 0, ErrUnsupportedTokenCount
+func (f *benchFakeLLM) CountTokens(_ context.Context, _ llm.CompletionRequest, _ ...llm.LanguageModelOption) (int, error) {
+	return 0, llm.ErrUnsupportedTokenCount
 }
 
 func (f *benchFakeLLM) InputTokenLimit() int {
@@ -42,12 +45,12 @@ func (f *benchFakeLLM) OutputTokenLimit() int {
 
 // BenchmarkTokenTracking benchmarks the TokenUsageLoggingWrapper performance.
 func BenchmarkTokenTracking(b *testing.B) {
-	logger, err := CreateTokenLogger()
+	logger, err := llm.CreateTokenLogger()
 	if err != nil {
 		b.Skip("Could not create token logger:", err)
 	}
 
-	scenarios := BenchmarkScenarios()
+	scenarios := llmtest.BenchmarkScenarios()
 
 	for _, sc := range scenarios {
 		// Skip tool_calls scenario since ReadAll returns error for tool calls
@@ -62,15 +65,15 @@ func BenchmarkTokenTracking(b *testing.B) {
 		b.Run(sc.Name, func(b *testing.B) {
 			for b.Loop() {
 				fakeLLM := &benchFakeLLM{generator: generator}
-				sinks := NewTokenUsageSinks(nil)
+				sinks := llm.NewTokenUsageSinks(nil)
 				sinks.SetLoggingEnabled(true)
 				sinks.SetPluginEnabled(false)
 				sinks.SetFileEnabled(true)
 				sinks.SetFileLogger(logger)
-				wrapper := NewTokenUsageLoggingWrapper(fakeLLM, TokenUsageIdentity{BotUsername: "bench-bot"}, sinks, nil)
+				wrapper := llm.NewTokenUsageLoggingWrapper(fakeLLM, llm.TokenUsageIdentity{BotUsername: "bench-bot"}, sinks, nil)
 
-				result, err := wrapper.ChatCompletion(context.Background(), CompletionRequest{
-					Context: &Context{
+				result, err := wrapper.ChatCompletion(context.Background(), llm.CompletionRequest{
+					Context: &llm.Context{
 						RequestingUser: &model.User{Id: "user-bench"},
 						Team:           &model.Team{Id: "team-bench"},
 					},

@@ -78,9 +78,9 @@ func newAgentLLMTestBots(t *testing.T) (*MMBots, *stubAgentStore, *fakeServiceLL
 		agents: dbAgents(1, "svc"),
 	}
 	cfg := &mockConfig{
-		services: []llm.ServiceConfig{openAIService("svc")},
+		services: []llm.ServiceConfig{openAIService("svc", "")},
 	}
-	mmBots := newEnsureBotsHarness(t, cfg, store)
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 	builder := &fakeServiceLLMBuilder{}
 	mmBots.SetBaseLLMBuilderForTest(builder.build)
 	return mmBots, store, builder
@@ -114,8 +114,8 @@ func TestEnsureBotsUnchangedSkipsRebuildAndShutdown(t *testing.T) {
 
 func TestEnsureBotsInFlightRequestSurvivesReplace(t *testing.T) {
 	store := &stubAgentStore{agents: dbAgents(1, "svc")}
-	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc")}}
-	mmBots := newEnsureBotsHarness(t, cfg, store)
+	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 
 	first := &staticLanguageModel{response: "first", started: make(chan struct{}), release: make(chan struct{}), block: true}
 	second := &staticLanguageModel{response: "second"}
@@ -187,8 +187,8 @@ func TestShutdownAgentLLMsReleasesLiveAndRetired(t *testing.T) {
 
 func TestEnsureBotsFailedBuildShutsDownAlreadyBuilt(t *testing.T) {
 	store := &stubAgentStore{agents: dbAgents(2, "svc")}
-	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc")}}
-	mmBots := newEnsureBotsHarness(t, cfg, store)
+	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 
 	builder := &fakeServiceLLMBuilder{}
 	mmBots.SetBaseLLMBuilderForTest(func(svc llm.ServiceConfig, botCfg llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {

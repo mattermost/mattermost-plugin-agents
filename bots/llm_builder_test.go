@@ -108,7 +108,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			service: mockServiceWithPolicy("mock", llm.StructuredOutputPolicyAuto),
 			botConfig: &llm.BotConfig{
 				Name:                    "agent",
-				StructuredOutputEnabled: true,
+				StructuredOutputEnabled: true, //nolint:staticcheck // the deprecated flag must be ignored at runtime
 			},
 			wantPromptFallback: true,
 		},
@@ -117,7 +117,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			service: mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative),
 			botConfig: &llm.BotConfig{
 				Name:                    "agent",
-				StructuredOutputEnabled: false,
+				StructuredOutputEnabled: false, //nolint:staticcheck // the deprecated flag must be ignored at runtime
 			},
 			wantPromptFallback: false,
 		},
@@ -227,7 +227,7 @@ func TestAgentModelOverrideParticipatesInCapabilityResolution(t *testing.T) {
 		},
 		{
 			name:               "deprecated structured output flag does not change the decision",
-			botConfig:          &llm.BotConfig{Name: "agent", Model: "gemma-3-27b-it", StructuredOutputEnabled: true},
+			botConfig:          &llm.BotConfig{Name: "agent", Model: "gemma-3-27b-it", StructuredOutputEnabled: true}, //nolint:staticcheck // the deprecated flag must be ignored at runtime
 			wantPromptFallback: true,
 		},
 	}

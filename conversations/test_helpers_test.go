@@ -12,22 +12,31 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/stretchr/testify/mock"
 )
+
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+}
 
 type fakeWebSocketEvent struct {
 	event     string
-	payload   map[string]interface{}
+	payload   map[string]any
 	broadcast *model.WebsocketBroadcast
 }
 
 type fakeMMClient struct {
 	users                map[string]*model.User
 	postThreads          map[string]*model.PostList
-	kv                   map[string]interface{}
+	kv                   map[string]any
 	createdPosts         []*model.Post
 	allowCreatePost      bool
 	updatedPosts         []*model.Post
@@ -78,7 +87,7 @@ func (c *fakeMMClient) UpdatePost(post *model.Post) error {
 	return nil
 }
 
-func (c *fakeMMClient) KVGet(key string, value interface{}) error {
+func (c *fakeMMClient) KVGet(key string, value any) error {
 	stored, ok := c.kv[key]
 	if !ok {
 		return errors.New("not found")
@@ -90,21 +99,21 @@ func (c *fakeMMClient) KVGet(key string, value interface{}) error {
 	return json.Unmarshal(data, value)
 }
 
-func (c *fakeMMClient) KVSet(key string, value interface{}) error {
+func (c *fakeMMClient) KVSet(key string, value any) error {
 	if c.kv == nil {
-		c.kv = make(map[string]interface{})
+		c.kv = make(map[string]any)
 	}
 	c.kv[key] = value
 	return nil
 }
 
-func (c *fakeMMClient) KVSetWithExpiry(key string, value interface{}, _ time.Duration) error {
+func (c *fakeMMClient) KVSetWithExpiry(key string, value any, _ time.Duration) error {
 	return c.KVSet(key, value)
 }
 
-func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{}) (bool, error) {
+func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
 	if c.kv == nil {
-		c.kv = make(map[string]interface{})
+		c.kv = make(map[string]any)
 	}
 	current, ok := c.kv[key]
 	if oldValue == nil {
@@ -132,7 +141,7 @@ func (c *fakeMMClient) KVCompareAndSet(key string, oldValue, newValue interface{
 	return true, nil
 }
 
-func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue interface{}, _ time.Duration) (bool, error) {
+func (c *fakeMMClient) KVCompareAndSetWithExpiry(key string, oldValue, newValue any, _ time.Duration) (bool, error) {
 	return c.KVCompareAndSet(key, oldValue, newValue)
 }
 
@@ -184,7 +193,7 @@ func (c *fakeMMClient) GetDirectChannel(string, string) (*model.Channel, error) 
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]interface{}, broadcast *model.WebsocketBroadcast) {
+func (c *fakeMMClient) PublishWebSocketEvent(event string, payload map[string]any, broadcast *model.WebsocketBroadcast) {
 	c.websocketEvents = append(c.websocketEvents, fakeWebSocketEvent{
 		event:     event,
 		payload:   payload,
@@ -196,7 +205,7 @@ func (c *fakeMMClient) GetConfig() *model.Config {
 	return &model.Config{}
 }
 
-func (c *fakeMMClient) LogError(msg string, _ ...interface{}) {
+func (c *fakeMMClient) LogError(msg string, _ ...any) {
 	c.logMu.Lock()
 	defer c.logMu.Unlock()
 	c.logErrors = append(c.logErrors, msg)
@@ -209,7 +218,7 @@ func (c *fakeMMClient) loggedErrors() []string {
 	return append([]string(nil), c.logErrors...)
 }
 
-func (c *fakeMMClient) LogWarn(string, ...interface{}) {}
+func (c *fakeMMClient) LogWarn(string, ...any) {}
 
 func (c *fakeMMClient) GetUserByUsername(string) (*model.User, error) {
 	return nil, errors.New("not implemented")
@@ -231,7 +240,7 @@ func (c *fakeMMClient) PluginHTTP(*http.Request) *http.Response {
 	return nil
 }
 
-func (c *fakeMMClient) LogDebug(string, ...interface{}) {}
+func (c *fakeMMClient) LogDebug(string, ...any) {}
 
 func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, error) {
 	return nil, errors.New("not implemented")
@@ -239,6 +248,10 @@ func (c *fakeMMClient) GetChannelByName(string, string, bool) (*model.Channel, e
 
 func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission) bool {
 	return true
+}
+
+func (c *fakeMMClient) HasPermissionToFileAction(sessionID, _, _ string) bool {
+	return sessionID != ""
 }
 
 func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
@@ -319,4 +332,17 @@ func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 
 func (c *testToolCallingConfig) MCP() mcp.Config {
 	return mcp.Config{}
+}
+
+// overrideMockLicense replaces GetLicense expectations so a LicenseChecker
+// built over mockAPI reports the given license.
+func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
+	filtered := make([]*mock.Call, 0, len(mockAPI.ExpectedCalls))
+	for _, call := range mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" {
+			filtered = append(filtered, call)
+		}
+	}
+	mockAPI.ExpectedCalls = filtered
+	mockAPI.On("GetLicense").Return(license).Maybe()
 }

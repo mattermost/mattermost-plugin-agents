@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -27,8 +28,8 @@ import (
 )
 
 // setupChannelAutoReplyTest prepares a test environment with a registered bot
-// (the selectable target for PUT bodies), a real license checker backed by the
-// mock API's default Enterprise license, and a channel of the given type
+// (the selectable target for PUT bodies), a real license checker at Enterprise
+// Advanced so enabling modes can be exercised, and a channel of the given type
 // resolvable by the channelReadAuthorizationRequired middleware.
 func setupChannelAutoReplyTest(t *testing.T, channelType model.ChannelType) *TestEnvironment {
 	t.Helper()
@@ -38,6 +39,7 @@ func setupChannelAutoReplyTest(t *testing.T, channelType model.ChannelType) *Tes
 	e := SetupTestEnvironment(t)
 	e.setupTestBot(llm.BotConfig{Name: "permtest"})
 	e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
 		Id:     "channelid",
 		Type:   channelType,
@@ -482,6 +484,54 @@ func TestPutChannelAutoReplyUnlicensed(t *testing.T) {
 	}
 }
 
+func TestPutChannelAutoReplyByLevel(t *testing.T) {
+	enablingBody := fmt.Sprintf(`{"bot_id":%q,"mode":"root_posts"}`, testBotUserID)
+
+	for _, level := range enterprisetest.AllLevels {
+		t.Run("enable/"+level.String(), func(t *testing.T) {
+			e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+			defer e.Cleanup(t)
+			e.OverrideLicense(enterprisetest.LicenseFor(level))
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+
+			resp := e.doChannelAutoReplyRequest(t, http.MethodPut, enablingBody)
+			if level < enterprise.LevelEnterpriseAdvanced {
+				requireLicenseDenied(t, resp, enterprise.CapChannelAutoReply)
+				require.Empty(t, e.autoReplyStore.setCalls)
+				return
+			}
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+
+	t.Run("off is never gated", func(t *testing.T) {
+		for _, level := range enterprisetest.AllLevels {
+			t.Run(level.String(), func(t *testing.T) {
+				e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+				defer e.Cleanup(t)
+				e.OverrideLicense(enterprisetest.LicenseFor(level))
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+
+				resp := e.doChannelAutoReplyRequest(t, http.MethodPut, `{"bot_id":"","mode":"off"}`)
+				require.Equal(t, http.StatusOK, resp.StatusCode)
+			})
+		}
+	})
+
+	t.Run("nil checker fails closed for enabling", func(t *testing.T) {
+		e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+		defer e.Cleanup(t)
+		e.api.licenseChecker = nil
+		e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+		e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+
+		resp := e.doChannelAutoReplyRequest(t, http.MethodPut, enablingBody)
+		requireLicenseDenied(t, resp, enterprise.CapChannelAutoReply)
+	})
+}
+
 func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 	e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
 	defer e.Cleanup(t)
@@ -490,14 +540,14 @@ func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 
 	type wsEvent struct {
 		name      string
-		payload   map[string]interface{}
+		payload   map[string]any
 		broadcast *model.WebsocketBroadcast
 	}
 	var events []wsEvent
 	mmClient := mmapimocks.NewMockClient(t)
 	mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
 		Run(func(args mock.Arguments) {
-			payload, _ := args.Get(1).(map[string]interface{})
+			payload, _ := args.Get(1).(map[string]any)
 			broadcast, _ := args.Get(2).(*model.WebsocketBroadcast)
 			events = append(events, wsEvent{name: args.String(0), payload: payload, broadcast: broadcast})
 		}).Return()

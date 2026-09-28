@@ -10,6 +10,7 @@ import manifest from './manifest';
 
 import {
     doLoopInAgent,
+    doThreadAnalysis,
     getChannelAutoReply,
     getConversation,
     getConversationContext,
@@ -325,5 +326,36 @@ describe('getConversationContext', () => {
         await expect(getConversationContext(id)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('license denial errors', () => {
+    test('403 responses surface the server error text', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 403,
+            json: () => Promise.resolve({
+                error: 'Thread summarization is available on Professional plans and above.',
+                license_required: 'professional',
+            }),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 403,
+            message: 'Thread summarization is available on Professional plans and above.',
+        });
+    });
+
+    test('non-403 responses keep an empty message', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({error: 'internal'}),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 500,
+            message: '',
+        });
     });
 });

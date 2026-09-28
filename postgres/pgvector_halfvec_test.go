@@ -326,16 +326,14 @@ func TestSchemaMismatchConcurrentWithClear(t *testing.T) {
 	vec := [][]float32{{0.1, 0.2, 0.3}}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 40; j++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 40 {
 				_ = halfStore.CheckSchema(ctx)
 				_ = halfStore.Store(ctx, doc, vec)
 				_, _ = halfStore.Search(ctx, vec[0], embeddings.SearchOptions{UserID: "user1"})
 			}
-		}()
+		})
 	}
 
 	require.NoError(t, halfStore.Clear(ctx))

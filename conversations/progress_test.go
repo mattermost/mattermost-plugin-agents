@@ -27,11 +27,11 @@ func TestResponseProgressReporterAdvancesMonotonically(t *testing.T) {
 		otel.SetTracerProvider(previousProvider)
 	})
 
-	var payloads []map[string]interface{}
+	var payloads []map[string]any
 	client := mocks.NewMockClient(t)
 	client.On("PublishWebSocketEvent", "postupdate", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
-			payloads = append(payloads, args.Get(1).(map[string]interface{}))
+			payloads = append(payloads, args.Get(1).(map[string]any))
 			broadcast := args.Get(2).(*model.WebsocketBroadcast)
 			require.Equal(t, "channel-id", broadcast.ChannelId)
 			require.True(t, broadcast.ReliableClusterSend)

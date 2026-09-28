@@ -15,6 +15,7 @@ export type ToolConfigAIMockOptions = {
     defaultBotName?: string;
     botId?: string;
     botDisplayName?: string;
+    reasoningEnabled?: boolean;
 };
 
 export const MULTIPLAYER_ASK_TOOL_CONFIGS: ToolPolicyConfig[] = [
@@ -192,6 +193,7 @@ export async function RunToolConfigAIMockContainer(
         defaultBotName,
         botId = 'aimock-toolbot',
         botDisplayName = 'Aimock Tool Bot',
+        reasoningEnabled = false,
     } = resolved;
 
     return RunSystemConsoleContainer({
@@ -209,6 +211,7 @@ export async function RunToolConfigAIMockContainer(
                 disableTools: false,
                 mcpDynamicToolLoading: false,
                 enabledNativeTools: [],
+                reasoningEnabled,
             },
         ],
         mcp: {

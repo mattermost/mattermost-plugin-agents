@@ -12,7 +12,9 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -23,6 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+}
+
 type failingAgentStore struct{}
 
 func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
@@ -30,8 +38,9 @@ func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 }
 
 type mockConfig struct {
-	bots     []llm.BotConfig
-	services []llm.ServiceConfig
+	bots               []llm.BotConfig
+	services           []llm.ServiceConfig
+	enableTokenLogging bool
 }
 
 func (m *mockConfig) GetBots() []llm.BotConfig {
@@ -47,12 +56,16 @@ func (m *mockConfig) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
 
+func (m *mockConfig) GetServices() []llm.ServiceConfig {
+	return m.services
+}
+
 func (m *mockConfig) GetDefaultBotName() string {
 	return "testbot"
 }
 
 func (m *mockConfig) EnableTokenUsageLogging() bool {
-	return false
+	return m.enableTokenLogging
 }
 
 func (m *mockConfig) EnableTokenUsageLogToPlugin() bool {
@@ -70,10 +83,23 @@ func (m *mockConfig) GetTranscriptGenerator() string {
 func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
 	t.Helper()
 	mockAPI := &plugintest.API{}
+	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
 	client := pluginapi.NewClient(mockAPI, nil)
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	return New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
+	return New(mockAPI, client, licenseChecker, cfg, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+}
+
+func allowBotsLogging(mockAPI *plugintest.API) {
+	for arity := 1; arity <= 12; arity++ {
+		args := make([]any, arity)
+		for i := range args {
+			args[i] = mock.Anything
+		}
+		mockAPI.On("LogWarn", args...).Return().Maybe()
+		mockAPI.On("LogError", args...).Return().Maybe()
+		mockAPI.On("LogDebug", args...).Return().Maybe()
+	}
 }
 
 func loadTestService(raw json.RawMessage) llm.ServiceConfig {
@@ -147,25 +173,76 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	model, _, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, providerServices, _, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
 	n, err := model.CountTokens(context.Background(), llm.CompletionRequest{Posts: []llm.Post{{Message: "abcd"}}})
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
+
+	// The mock talks to no provider, so tools needing provider-side services
+	// (e.g. sandbox file attachment) must not be offered for a load-test bot.
+	require.False(t, providerServices.CanDownloadFiles())
+}
+
+func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+
+	service := llm.ServiceConfig{
+		ID:           "anthropic-svc",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "test-key",
+		DefaultModel: "claude-sonnet-4-6",
+	}
+	botCfg := llm.BotConfig{
+		Name:               "sandbox-bot",
+		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	}
+
+	model, providerServices, entry, err := mmBots.getLLM(service, botCfg, nil)
+	require.NoError(t, err)
+	t.Cleanup(entry.shutdownNow)
+	require.NotNil(t, model)
+
+	require.True(t, providerServices.CanDownloadFiles(), "an Anthropic bot must expose provider file download")
+
+	_, assertable := model.(llm.ProviderFileDownloader)
+	require.False(t, assertable, "the wrapped model must not be relied on for provider capabilities")
+}
+
+func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
+	cfg := &mockConfig{}
+	mmBots := newTestMMBots(t, cfg)
+
+	service := llm.ServiceConfig{
+		ID:           "openai-svc",
+		Type:         llm.ServiceTypeOpenAI,
+		APIKey:       "test-key",
+		DefaultModel: "gpt-5",
+	}
+	botCfg := llm.BotConfig{
+		Name:               "openai-sandbox-bot",
+		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
+	}
+
+	_, providerServices, entry, err := mmBots.getLLM(service, botCfg, nil)
+	require.NoError(t, err)
+	t.Cleanup(entry.shutdownNow)
+	require.False(t, providerServices.CanDownloadFiles())
 }
 
 func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
+	_, _, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 	require.Contains(t, err.Error(), "loadtest profile")
 
-	_, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
+	_, _, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 }
@@ -814,14 +891,14 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
 			// Mock logging
-			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+			allowBotsLogging(mockAPI)
 
 			licenseChecker := enterprise.NewLicenseChecker(client)
 			cfg := &mockConfig{
 				bots:     tc.cfgBots,
 				services: tc.cfgServices,
 			}
-			mmBots := New(mockAPI, client, licenseChecker, cfg, nil, &http.Client{}, nil)
+			mmBots := New(mockAPI, client, licenseChecker, cfg, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 
 			defer mockAPI.AssertExpectations(t)
 
@@ -853,13 +930,13 @@ func (s *stubAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 // newEnsureBotsHarness returns an MMBots whose plugin API accepts every call
 // EnsureBots makes, so tests can drive real rebuilds against cfg and store.
 // Agent and service LLMs are shut down when the test ends.
-func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore) *MMBots {
+func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore, license *model.License) *MMBots {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
 	client := pluginapi.NewClient(mockAPI, nil)
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(license).Maybe()
 	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
 	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 1}, nil).Maybe()
@@ -868,16 +945,17 @@ func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore) *MMBo
 	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	allowBotsLogging(mockAPI)
 
-	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, store, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, store, newPassthroughAccessChecker(), &http.Client{}, nil)
 	t.Cleanup(mmBots.ShutdownAgentLLMs)
 	t.Cleanup(mmBots.ShutdownServiceLLMs)
 	return mmBots
+}
+
+func enterpriseAdvancedLicense() *model.License {
+	return &model.License{SkuShortName: model.LicenseShortSkuEnterpriseAdvanced}
 }
 
 // dbAgents returns n DB-backed agent configs that all reference serviceID.
@@ -903,8 +981,7 @@ func TestSnapshotBotsAndServicesDoesNotMutateConfigBots(t *testing.T) {
 	client := pluginapi.NewClient(mockAPI, nil)
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	originalBots := []llm.BotConfig{
 		{ID: "file-bot-1", Name: "filebot1", DisplayName: "File Bot 1", ServiceID: "svc1"},
@@ -921,7 +998,7 @@ func TestSnapshotBotsAndServicesDoesNotMutateConfigBots(t *testing.T) {
 			{ID: "db-agent-1", Name: "dbagent1", DisplayName: "DB Agent 1", ServiceID: "svc1"},
 		},
 	}
-	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, agentStore, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, agentStore, newPassthroughAccessChecker(), &http.Client{}, nil)
 
 	_, _, _, err := mmBots.snapshotBotsAndServices()
 	require.NoError(t, err)
@@ -955,7 +1032,7 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := newEnsureBotsHarness(t, cfg, agentStore)
+	mmBots := newEnsureBotsHarness(t, cfg, agentStore, nil)
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()
@@ -1019,7 +1096,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 			{ID: "bot1", Name: "openai", DisplayName: "OpenAI", ServiceID: "svc1"},
 		},
 	}
-	mmBots := newEnsureBotsHarness(t, cfg, agentStore)
+	mmBots := newEnsureBotsHarness(t, cfg, agentStore, enterpriseAdvancedLicense())
 
 	require.NoError(t, mmBots.EnsureBots())
 	bots := mmBots.GetAllBots()
@@ -1062,7 +1139,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
 	cfg := &mockConfig{
@@ -1073,7 +1150,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 			{ID: "service1", Type: llm.ServiceTypeOpenAI, APIKey: "key"},
 		},
 	}
-	mmBots := New(mockAPI, client, licenseChecker, cfg, failingAgentStore{}, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, cfg, failingAgentStore{}, newPassthroughAccessChecker(), &http.Client{}, nil)
 
 	defer mockAPI.AssertExpectations(t)
 
@@ -1141,6 +1218,11 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
 			expected: true,
 		},
+		{
+			name:     "north does not deliver native web search",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeNorth},
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1154,6 +1236,109 @@ func TestHasNativeWebSearchEnabledRequiresResponsesAPIForOpenAICompatibleService
 			require.Equal(t, tt.expected, b.HasNativeWebSearchEnabled())
 		})
 	}
+}
+
+// Independent of file retrieval: OpenAI runs the sandbox but cannot serve its files.
+func TestHasNativeCodeExecutionEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		service  llm.ServiceConfig
+		expected bool
+	}{
+		{
+			name:     "anthropic with code_interpreter enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+			expected: true,
+		},
+		{
+			name:     "openai with code_interpreter enabled",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAI},
+			expected: true,
+		},
+		{
+			name:     "openai-compatible without responses api cannot deliver native tools",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible},
+			expected: false,
+		},
+		{
+			name:     "openai-compatible with responses api",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeOpenAICompatible, UseResponsesAPI: true},
+			expected: true,
+		},
+		{
+			// Gemini supports native tools, but not code_interpreter.
+			name:     "gemini does not support code_interpreter",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeGemini},
+			expected: false,
+		},
+		{
+			name:     "service without native tool support",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeCohere},
+			expected: false,
+		},
+		{
+			name:     "north does not support code_interpreter",
+			service:  llm.ServiceConfig{Type: llm.ServiceTypeNorth},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := NewBot(
+				llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter}},
+				tt.service,
+				&model.Bot{UserId: "b1"},
+				nil,
+			)
+			require.Equal(t, tt.expected, b.HasNativeCodeExecutionEnabled())
+		})
+	}
+}
+
+func TestHasNativeCodeExecutionEnabledRequiresBotOptIn(t *testing.T) {
+	b := NewBot(
+		llm.BotConfig{EnabledNativeTools: []string{llm.NativeToolWebSearch}},
+		llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.False(t, b.HasNativeCodeExecutionEnabled())
+
+	b = NewBot(
+		llm.BotConfig{},
+		llm.ServiceConfig{Type: llm.ServiceTypeAnthropic},
+		&model.Bot{UserId: "b1"},
+		nil,
+	)
+	require.False(t, b.HasNativeCodeExecutionEnabled())
+}
+
+func TestWithConfigPreservesDependencies(t *testing.T) {
+	mmBot := &model.Bot{UserId: "b1"}
+	service := llm.ServiceConfig{ID: "svc-1", Type: llm.ServiceTypeAnthropic}
+	services := &llm.ProviderServices{FileDownloader: stubFileDownloader{}}
+
+	original := NewBot(llm.BotConfig{Name: "agent", AutoEnableNewMCPTools: false}, service, mmBot, nil)
+	original.SetProviderServicesForTest(services)
+
+	derivedCfg := original.GetConfig()
+	derivedCfg.AutoEnableNewMCPTools = true
+	derived := original.WithConfig(derivedCfg)
+
+	require.True(t, derived.GetConfig().AutoEnableNewMCPTools)
+	require.Equal(t, "agent", derived.GetConfig().Name)
+	require.Equal(t, service, derived.GetService())
+	require.Equal(t, mmBot, derived.GetMMBot())
+	require.True(t, derived.ProviderServices().CanDownloadFiles())
+
+	require.False(t, original.GetConfig().AutoEnableNewMCPTools)
+}
+
+type stubFileDownloader struct{}
+
+func (stubFileDownloader) DownloadProviderFile(context.Context, llm.ProviderFileReference, int64) (llm.ProviderFile, error) {
+	return llm.ProviderFile{Name: "out.txt", ContentType: "text/plain", Content: []byte("x")}, nil
 }
 
 func TestPoweredByDescription(t *testing.T) {
