@@ -21,8 +21,8 @@ type serviceLLMEntry struct {
 	svc       llm.ServiceConfig
 	fallbacks []llm.ServiceConfig
 
-	// inUse counts the direct requests and agent models currently holding the
-	// client. Retired entries shut down once it drains.
+	// inUse counts the requests currently holding the model. Retired entries
+	// shut down once it drains.
 	inUse sync.WaitGroup
 
 	shutdownOnce sync.Once
@@ -131,7 +131,7 @@ func (b *MMBots) ReconcileServiceLLMs(services []llm.ServiceConfig) {
 }
 
 // ShutdownServiceLLMs shuts every provider client down, cached or retired,
-// regardless of outstanding leases, including those held by agents. Called on
+// regardless of outstanding leases. Agents use these clients too. Called on
 // plugin deactivation.
 func (b *MMBots) ShutdownServiceLLMs() {
 	b.serviceLLMMu.Lock()

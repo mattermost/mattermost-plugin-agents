@@ -162,14 +162,8 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			mockAPI := mockPluginAPI(mmBots)
 			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			model, shutdown, err := buildTestLLM(mmBots, tt.service, tt.botConfig, tt.fallbacks)
-			require.NoError(t, err)
+			model := buildTestLLM(t, mmBots, tt.service, tt.botConfig, tt.fallbacks)
 			require.NotNil(t, model)
-			require.NotNil(t, shutdown)
-			// Release only after the model has been exercised: today the
-			// primary is always the load-test mock so shutdown is a no-op,
-			// but a future Bifrost-backed case must not call a released client.
-			defer shutdown()
 
 			assert.Equal(t, tt.wantPromptFallback, promptFallbackApplied(t, model))
 		})
@@ -184,9 +178,7 @@ func TestBuildLLMServiceCallKeepsServiceDefaults(t *testing.T) {
 	service := mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative)
 	service.LoadTestMockConfig = buildTinyLoadTestProfile(t, nil)
 
-	model, shutdown, err := buildTestLLM(mmBots, service, nil, nil)
-	require.NoError(t, err)
-	defer shutdown()
+	model := buildTestLLM(t, mmBots, service, nil, nil)
 
 	// The chain is usable end to end without an agent behind it.
 	assert.Equal(t, 100000, model.InputTokenLimit())
@@ -314,25 +306,25 @@ func TestTokenUsageIdentity(t *testing.T) {
 	}
 }
 
-// recordingLanguageModel captures the request and options it was called with.
-// buildTestLLM builds a wrapped model outside the service LLM registry. A nil
-// botConfig builds a direct service call's model.
-func buildTestLLM(mmBots *MMBots, svc llm.ServiceConfig, botConfig *llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-	client, err := mmBots.newProviderClient(svc, fallbacks)
-	if err != nil {
-		return nil, nil, err
+// buildTestLLM returns the model production hands out: an agent's when
+// botConfig is set, otherwise a direct service call's. Provider clients are
+// shut down when the test ends.
+func buildTestLLM(t *testing.T, mmBots *MMBots, svc llm.ServiceConfig, botConfig *llm.BotConfig, fallbacks []llm.ServiceConfig) llm.LanguageModel {
+	t.Helper()
+	t.Cleanup(mmBots.ShutdownServiceLLMs)
+
+	if botConfig == nil {
+		model, release, err := mmBots.AcquireServiceLLM(svc, fallbacks)
+		require.NoError(t, err)
+		t.Cleanup(release)
+		return model
 	}
-	base := client.model
-	if botConfig != nil {
-		base, _, err = client.forAgent(*botConfig)
-		if err != nil {
-			client.shutdown()
-			return nil, nil, err
-		}
-	}
-	return mmBots.wrapLLM(base, svc, botConfig, fallbacks), client.shutdown, nil
+	model, _, err := mmBots.getLLM(svc, *botConfig, fallbacks)
+	require.NoError(t, err)
+	return model
 }
 
+// recordingLanguageModel captures the request and options it was called with.
 type recordingLanguageModel struct {
 	posts  []llm.Post
 	config llm.LanguageModelConfig

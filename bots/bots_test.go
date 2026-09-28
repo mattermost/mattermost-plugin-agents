@@ -102,19 +102,10 @@ func allowBotsLogging(mockAPI *plugintest.API) {
 	}
 }
 
-// agentBaseLLM returns the unwrapped model an agent on svc would get.
-func agentBaseLLM(mmBots *MMBots, svc llm.ServiceConfig, botCfg llm.BotConfig) (llm.LanguageModel, error) {
-	client, err := mmBots.newProviderClient(svc, nil)
-	if err != nil {
-		return nil, err
-	}
-	model, _, err := client.forAgent(botCfg)
-	return model, err
-}
-
 func loadTestService(raw json.RawMessage) llm.ServiceConfig {
 	return llm.ServiceConfig{
 		ID:                 "loadtest-svc",
+		Name:               "Load test",
 		Type:               llm.ServiceTypeLoadTestMock,
 		LoadTestMockConfig: raw,
 	}
@@ -165,14 +156,14 @@ func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
 
 	mockAPI.On("LogInfo",
 		"Initialized load-test mock LLM",
-		"bot_name", loadTestBot().Name,
 		"service_id", "loadtest-svc",
+		"service_name", "Load test",
 		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
 	).Return().Once()
 
-	model, err := agentBaseLLM(mmBots, loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
+	client, err := mmBots.newProviderClient(loadTestService(buildTinyLoadTestProfile(t, nil)), nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, client.model)
 	mockAPI.AssertExpectations(t)
 }
 
@@ -265,8 +256,8 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	var summary string
 	mockAPI.On("LogInfo",
 		"Initialized load-test mock LLM",
-		"bot_name", loadTestBot().Name,
 		"service_id", "loadtest-svc",
+		"service_name", "Load test",
 		"profile_summary", mock.MatchedBy(func(s string) bool {
 			summary = s
 			return strings.Contains(s, "name=read_search_heavy_default") &&
@@ -287,9 +278,9 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	svc := loadTestService(nil)
 	svc.LoadTestMockConfig = nil
 
-	model, err := agentBaseLLM(mmBots, svc, loadTestBot())
+	client, err := mmBots.newProviderClient(svc, nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, client.model)
 	require.NotEmpty(t, summary)
 	mockAPI.AssertExpectations(t)
 }
@@ -302,8 +293,8 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 	var summary string
 	mockAPI.On("LogInfo",
 		"Initialized load-test mock LLM",
-		"bot_name", loadTestBot().Name,
 		"service_id", "loadtest-svc",
+		"service_name", "Load test",
 		"profile_summary", mock.MatchedBy(func(s string) bool {
 			summary = s
 			return strings.Contains(s, "realistic_default=1.0000") &&
@@ -317,9 +308,9 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 		"realistic_fast":    0.0,
 		"realistic_slow":    0.0,
 	}
-	model, err := agentBaseLLM(mmBots, loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot())
+	client, err := mmBots.newProviderClient(loadTestService(buildTinyLoadTestProfile(t, weights)), nil)
 	require.NoError(t, err)
-	require.IsType(t, &loadtest.MockLLM{}, model)
+	require.IsType(t, &loadtest.MockLLM{}, client.model)
 	require.NotEmpty(t, summary)
 	mockAPI.AssertExpectations(t)
 }

@@ -548,23 +548,23 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 // captured here cannot be recovered later.
 //
 // serviceConfig must be the service as configured, without the agent's model
-// override: agents on the same service share the provider client cached for
-// it. The returned model holds a lease on that client (see agentLLMHandle), so
-// replacing the service's configuration never shuts the client down under it.
+// override: agents on the same service share the provider client cached for it.
 func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
 	entry, err := b.leaseServiceLLM(serviceConfig, fallbackServices)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer entry.inUse.Done()
 
-	base, providerServices, err := entry.client.forAgent(botConfig)
-	if err != nil {
-		entry.inUse.Done()
-		return nil, nil, err
+	base, providerServices := entry.client.model, &llm.ProviderServices{}
+	if serviceLLM := entry.client.bifrost; serviceLLM != nil {
+		agentLLM, err := serviceLLM.ForAgent(botConfig)
+		if err != nil {
+			return nil, nil, err
+		}
+		base, providerServices = agentLLM, agentLLM.ProviderServices()
 	}
-
-	model := b.wrapLLM(base, serviceConfig, &botConfig, fallbackServices)
-	return newAgentLLMHandle(model, entry), providerServices, nil
+	return b.wrapLLM(base, serviceConfig, &botConfig, fallbackServices), providerServices, nil
 }
 
 // wrapLLM builds the wrapper chain shared by agent LLMs and service LLMs.
@@ -638,9 +638,10 @@ func tokenUsageIdentity(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfi
 type providerClient struct {
 	// model is the unwrapped client with no agent settings.
 	model llm.LanguageModel
-	// forAgent returns the unwrapped model for one agent. It never starts
-	// another worker pool: agent settings are applied per request.
-	forAgent func(botConfig llm.BotConfig) (llm.LanguageModel, *llm.ProviderServices, error)
+	// bifrost is model when it is a Bifrost client, which agents derive their
+	// own settings from. Other clients have no agent settings or provider
+	// services, so agents use model as is.
+	bifrost *bifrost.LLM
 	// shutdown releases the Bifrost worker pool and queue. It is a no-op for
 	// the load-test mock.
 	shutdown func()
@@ -652,13 +653,7 @@ func (b *MMBots) newProviderClient(serviceConfig llm.ServiceConfig, fallbackServ
 		if err != nil {
 			return nil, err
 		}
-		return &providerClient{
-			model: model,
-			forAgent: func(llm.BotConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
-				return model, &llm.ProviderServices{}, nil
-			},
-			shutdown: shutdown,
-		}, nil
+		return &providerClient{model: model, shutdown: shutdown}, nil
 	}
 
 	if serviceConfig.Type == llm.ServiceTypeLoadTestMock {
@@ -666,26 +661,16 @@ func (b *MMBots) newProviderClient(serviceConfig llm.ServiceConfig, fallbackServ
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse load-test mock profile for service %s: %w", serviceConfig.ID, err)
 		}
-		// The load-test mock talks to no provider, so it has no provider-side
-		// services. Each agent gets its own mock so its seeded response
-		// sequence does not depend on other agents' traffic; mocks start no
-		// goroutines, so this costs nothing to retire.
-		return &providerClient{
-			model: loadtest.NewMockLLM(profile),
-			forAgent: func(botConfig llm.BotConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
-				if b.pluginAPI != nil {
-					// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
-					b.pluginAPI.Log.Info(
-						"Initialized load-test mock LLM",
-						"bot_name", botConfig.Name,
-						"service_id", serviceConfig.ID,
-						"profile_summary", profile.Summary(),
-					)
-				}
-				return loadtest.NewMockLLM(profile), &llm.ProviderServices{}, nil
-			},
-			shutdown: func() {},
-		}, nil
+		if b.pluginAPI != nil {
+			// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
+			b.pluginAPI.Log.Info(
+				"Initialized load-test mock LLM",
+				"service_id", serviceConfig.ID,
+				"service_name", serviceConfig.Name,
+				"profile_summary", profile.Summary(),
+			)
+		}
+		return &providerClient{model: loadtest.NewMockLLM(profile), shutdown: func() {}}, nil
 	}
 
 	serviceLLM, err := bifrost.NewServiceLLM(serviceConfig, fallbackServices)
@@ -695,17 +680,7 @@ func (b *MMBots) newProviderClient(serviceConfig llm.ServiceConfig, fallbackServ
 		}
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	return &providerClient{
-		model: serviceLLM,
-		forAgent: func(botConfig llm.BotConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
-			agentLLM, err := serviceLLM.ForAgent(botConfig)
-			if err != nil {
-				return nil, nil, err
-			}
-			return agentLLM, agentLLM.ProviderServices(), nil
-		},
-		shutdown: serviceLLM.Shutdown,
-	}, nil
+	return &providerClient{model: serviceLLM, bifrost: serviceLLM, shutdown: serviceLLM.Shutdown}, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.

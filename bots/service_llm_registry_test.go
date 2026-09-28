@@ -390,3 +390,77 @@ func TestShutdownServiceLLMs(t *testing.T) {
 	releaseSecond()
 	assert.ElementsMatch(t, []string{"a", "b"}, builder.shutdownIDs())
 }
+
+func newAgentRegistryTestBots(t *testing.T, agents int) (*MMBots, *mockConfig, *stubAgentStore, *fakeServiceLLMBuilder) {
+	t.Helper()
+
+	store := &stubAgentStore{agents: dbAgents(agents, "svc")}
+	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
+	builder := &fakeServiceLLMBuilder{}
+	mmBots.SetBaseLLMBuilderForTest(builder.build)
+	return mmBots, cfg, store, builder
+}
+
+func TestEnsureBotsAgentsShareServiceClient(t *testing.T) {
+	mmBots, cfg, _, builder := newAgentRegistryTestBots(t, 3)
+
+	require.NoError(t, mmBots.EnsureBots())
+	require.Len(t, mmBots.GetAllBots(), 3)
+	require.Equal(t, 1, builder.buildCount(), "agents on one service must share its provider client")
+
+	_, release, err := mmBots.AcquireServiceLLM(cfg.services[0], nil)
+	require.NoError(t, err)
+	release()
+	require.Equal(t, 1, builder.buildCount(), "direct service calls must share the agents' provider client")
+}
+
+func TestEnsureBotsAgentChangesReuseServiceClient(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*llm.BotConfig)
+	}{
+		{name: "custom instructions", change: func(a *llm.BotConfig) { a.CustomInstructions = "changed" }},
+		// EnsureBots folds the override into the agent's copy of the service,
+		// which must not become a second cache key.
+		{name: "model override", change: func(a *llm.BotConfig) { a.Model = "gpt-5" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmBots, _, store, builder := newAgentRegistryTestBots(t, 2)
+
+			require.NoError(t, mmBots.EnsureBots())
+			before := mmBots.GetAllBots()[0].LLM()
+
+			tt.change(&store.agents[0])
+			require.NoError(t, mmBots.EnsureBots())
+			require.NotSame(t, before, mmBots.GetAllBots()[0].LLM(), "the agent must be rebuilt")
+
+			require.Equal(t, 1, builder.buildCount())
+			assert.Empty(t, builder.shutdownIDs())
+		})
+	}
+}
+
+func TestEnsureBotsServiceChangeReplacesAgentClient(t *testing.T) {
+	mmBots, cfg, _, builder := newAgentRegistryTestBots(t, 2)
+
+	require.NoError(t, mmBots.EnsureBots())
+
+	cfg.services[0].APIKey = "rotated"
+	require.NoError(t, mmBots.EnsureBots())
+
+	require.Equal(t, 2, builder.buildCount())
+	require.Equal(t, "rotated", builder.builds[1].APIKey)
+	requireShutdownIDs(t, builder, []string{"svc"})
+}
+
+func TestShutdownServiceLLMsReleasesAgentClients(t *testing.T) {
+	mmBots, _, _, builder := newAgentRegistryTestBots(t, 2)
+
+	require.NoError(t, mmBots.EnsureBots())
+	mmBots.ShutdownServiceLLMs()
+
+	require.Equal(t, []string{"svc"}, builder.shutdownIDs())
+}

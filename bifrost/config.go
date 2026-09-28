@@ -95,7 +95,7 @@ func supportsProviderFileDownloadProvider(provider schemas.ModelProvider) bool {
 // Bifrost strips unsupported native tools per Bifrost provider, not per
 // plugin service type. Service types that share a Bifrost provider but
 // lack its tools (North, registered as OpenAI) must therefore be rejected
-// as fallbacks in NewFromServiceConfig; per-hop stripping would otherwise
+// as fallbacks in NewServiceLLM and ForAgent; per-hop stripping would otherwise
 // treat them as OpenAI and forward web_search/code_interpreter.
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
@@ -129,23 +129,6 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 		}
 	}
 	return filtered
-}
-
-// NewFromServiceConfig creates a LLM instance from ServiceConfig and BotConfig.
-// fallbackServices is an ordered slice of fallback services resolved from the
-// primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
-// service's DefaultModel is used as the fallback model.
-func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
-	service, err := NewServiceLLM(serviceConfig, fallbackServices)
-	if err != nil {
-		return nil, err
-	}
-	agent, err := service.ForAgent(botConfig)
-	if err != nil {
-		service.Shutdown()
-		return nil, err
-	}
-	return agent, nil
 }
 
 // NewServiceLLM creates the LLM for a service and its fallback chain, with no

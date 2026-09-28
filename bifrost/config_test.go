@@ -13,6 +13,21 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
+// NewFromServiceConfig creates an agent's LLM that owns its Bifrost client, so
+// the caller shuts it down.
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+	service, err := NewServiceLLM(serviceConfig, fallbackServices)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := service.ForAgent(botConfig)
+	if err != nil {
+		service.Shutdown()
+		return nil, err
+	}
+	return agent, nil
+}
+
 func TestSupportsNativeTools(t *testing.T) {
 	tests := []struct {
 		serviceType string
