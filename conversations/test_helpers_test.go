@@ -17,6 +17,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/stretchr/testify/mock"
 )
 
 // newPassthroughAccessChecker builds an ABAC checker that always reports
@@ -330,4 +332,17 @@ func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 
 func (c *testToolCallingConfig) MCP() mcp.Config {
 	return mcp.Config{}
+}
+
+// overrideMockLicense replaces GetLicense expectations so a LicenseChecker
+// built over mockAPI reports the given license.
+func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
+	filtered := make([]*mock.Call, 0, len(mockAPI.ExpectedCalls))
+	for _, call := range mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" {
+			filtered = append(filtered, call)
+		}
+	}
+	mockAPI.ExpectedCalls = filtered
+	mockAPI.On("GetLicense").Return(license).Maybe()
 }

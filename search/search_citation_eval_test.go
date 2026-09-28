@@ -100,7 +100,7 @@ func TestSearchCitationFormat(t *testing.T) {
 				mockClient,
 				t.Prompts,
 				nil,
-				nil,
+				licensedChecker(),
 				nil,
 			)
 

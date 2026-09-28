@@ -6,6 +6,8 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {useIsLicensedFor} from '@/license';
+
 import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
@@ -22,6 +24,9 @@ type MCPServerToolRowProps = {
 const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServerToolRowProps) => {
     const [expanded, setExpanded] = useState(false);
     const intl = useIntl();
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
+    const isRemoteMcp = server.serverType === 'remote' || server.serverType === 'plugin';
+    const enableRemoteBlocked = isRemoteMcp && !remoteMcpLicensed;
 
     const getToolConfig = (toolName: string): MCPToolConfig => {
         const existing = serverConfig?.tool_configs?.find((tc) => tc.name === toolName);
@@ -112,7 +117,13 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                     <ToggleWrapper>
                         <ToggleSwitch
                             checked={serverEnabled}
-                            onChange={handleServerToggle}
+                            onChange={(enabled) => {
+                                if (enabled && enableRemoteBlocked) {
+                                    return;
+                                }
+                                handleServerToggle(enabled);
+                            }}
+                            disabled={enableRemoteBlocked && !serverEnabled}
                             size='medium'
                             ariaLabel={intl.formatMessage(
                                 {defaultMessage: 'Enable {serverName}'},
@@ -146,11 +157,13 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                                     <FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>
                                 </OAuthDescription>
                             </div>
-                            <OAuthButton
-                                onClick={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
-                            >
-                                <FormattedMessage defaultMessage='Connect Account'/>
-                            </OAuthButton>
+                            {remoteMcpLicensed && (
+                                <OAuthButton
+                                    onClick={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
+                                >
+                                    <FormattedMessage defaultMessage='Connect Account'/>
+                                </OAuthButton>
+                            )}
                         </OAuthMessage>
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length === 0 && (

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -37,8 +38,9 @@ func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 }
 
 type mockConfig struct {
-	bots     []llm.BotConfig
-	services []llm.ServiceConfig
+	bots               []llm.BotConfig
+	services           []llm.ServiceConfig
+	enableTokenLogging bool
 }
 
 func (m *mockConfig) GetBots() []llm.BotConfig {
@@ -54,12 +56,16 @@ func (m *mockConfig) GetServiceByID(id string) (llm.ServiceConfig, bool) {
 	return llm.ServiceConfig{}, false
 }
 
+func (m *mockConfig) GetServices() []llm.ServiceConfig {
+	return m.services
+}
+
 func (m *mockConfig) GetDefaultBotName() string {
 	return "testbot"
 }
 
 func (m *mockConfig) EnableTokenUsageLogging() bool {
-	return false
+	return m.enableTokenLogging
 }
 
 func (m *mockConfig) EnableTokenUsageLogToPlugin() bool {
@@ -77,10 +83,23 @@ func (m *mockConfig) GetTranscriptGenerator() string {
 func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
 	t.Helper()
 	mockAPI := &plugintest.API{}
+	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
 	client := pluginapi.NewClient(mockAPI, nil)
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 	licenseChecker := enterprise.NewLicenseChecker(client)
 	return New(mockAPI, client, licenseChecker, cfg, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
+}
+
+func allowBotsLogging(mockAPI *plugintest.API) {
+	for arity := 1; arity <= 12; arity++ {
+		args := make([]any, arity)
+		for i := range args {
+			args[i] = mock.Anything
+		}
+		mockAPI.On("LogWarn", args...).Return().Maybe()
+		mockAPI.On("LogError", args...).Return().Maybe()
+		mockAPI.On("LogDebug", args...).Return().Maybe()
+	}
 }
 
 func loadTestService(raw json.RawMessage) llm.ServiceConfig {
@@ -870,7 +889,7 @@ func TestEnsureBots(t *testing.T) {
 			mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
 			// Mock logging
-			mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+			allowBotsLogging(mockAPI)
 
 			licenseChecker := enterprise.NewLicenseChecker(client)
 			cfg := &mockConfig{
@@ -915,8 +934,7 @@ func TestSnapshotBotsAndServicesDoesNotMutateConfigBots(t *testing.T) {
 	client := pluginapi.NewClient(mockAPI, nil)
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	originalBots := []llm.BotConfig{
 		{ID: "file-bot-1", Name: "filebot1", DisplayName: "File Bot 1", ServiceID: "svc1"},
@@ -961,10 +979,7 @@ func TestEnsureBotsRebuildsBotWhenServiceInputTokenLimitChanges(t *testing.T) {
 	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
 	// DB-backed agent only — no file-config bot — exercises the path
@@ -1028,7 +1043,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterpriseAdvanced}).Maybe()
 	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 	mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(func(bot *model.Bot) *model.Bot { return bot }, nil).Maybe()
 	mockAPI.On("GetUser", mock.AnythingOfType("string")).Return(&model.User{LastPictureUpdate: 0}, nil).Maybe()
@@ -1037,10 +1052,7 @@ func TestEnsureBotsRebuildsBotWhenFallbackServiceChanges(t *testing.T) {
 	mockAPI.On("PatchBot", mock.AnythingOfType("string"), mock.AnythingOfType("*model.BotPatch")).Return(&model.Bot{}, nil).Maybe()
 	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything).Return(nil).Maybe()
-	mockAPI.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
 	primaryWithFallback := func(fallbackModel string) []llm.ServiceConfig {
@@ -1112,7 +1124,7 @@ func TestEnsureBotsFailsWhenListAgentsFails(t *testing.T) {
 	mockAPI.On("GetBots", mock.AnythingOfType("*model.BotGetOptions")).Return([]*model.Bot{}, nil).Maybe()
 	mockAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
-	mockAPI.On("LogError", mock.Anything).Return(nil).Maybe()
+	allowBotsLogging(mockAPI)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
 	cfg := &mockConfig{

@@ -33,12 +33,18 @@ export class AgentPageHelper {
         await this.page.waitForLoadState('domcontentloaded');
         // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
         // (e.g. users without manage permission might differ in future).
-        await this.page.getByRole('heading', { name: 'Agents' }).waitFor({ state: 'visible', timeout: 15000 });
+        await this.getListingHeading().waitFor({ state: 'visible', timeout: 15000 });
         await this.getSearchInput().waitFor({ state: 'visible', timeout: 15000 });
         await expect(this.page.getByText('Loading agents...')).not.toBeVisible({ timeout: 15000 });
     }
 
     // --- Listing Page Locators ---
+
+    /** Mattermost's global header also renders a screen-reader-only "Agents" h1 once the product loads. */
+    getListingHeading(): Locator {
+        return this.page.getByRole('heading', { name: 'Agents', exact: true })
+            .and(this.page.locator(':not(#global-header *)'));
+    }
 
     getCreateButton(): Locator {
         return this.page.getByText('Create agent');

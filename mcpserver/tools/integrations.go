@@ -46,10 +46,10 @@ const (
 // getIntegrationTools returns the bot and webhook tools.
 func (p *MattermostToolProvider) getIntegrationTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_bot", getBotDescription, p.toolGetBot),
-		mcpTool(p, "list_bots", listBotsDescription, p.toolListBots),
-		mcpTool(p, "list_incoming_webhooks", listIncomingWebhooksDescription, p.toolListIncomingWebhooks),
-		mcpTool(p, "list_outgoing_webhooks", listOutgoingWebhooksDescription, p.toolListOutgoingWebhooks),
+		mcpReadTool(p, "get_bot", getBotDescription, p.toolGetBot),
+		mcpReadTool(p, "list_bots", listBotsDescription, p.toolListBots),
+		mcpReadTool(p, "list_incoming_webhooks", listIncomingWebhooksDescription, p.toolListIncomingWebhooks),
+		mcpReadTool(p, "list_outgoing_webhooks", listOutgoingWebhooksDescription, p.toolListOutgoingWebhooks),
 	}
 }
 

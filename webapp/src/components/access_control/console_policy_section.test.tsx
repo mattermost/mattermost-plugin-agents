@@ -21,6 +21,11 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('@/utils/access_control', () => {
     const actual = jest.requireActual('@/utils/access_control');
     return {
@@ -28,6 +33,12 @@ jest.mock('@/utils/access_control', () => {
         useABACSupport: () => ({supported: true, loading: false}),
     };
 });
+
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise Advanced'),
+    requiredLevelFor: jest.fn(() => 3),
+}));
 
 jest.mock('@/client/access_control', () => ({
     getAgentAccessPolicy: jest.fn(),
