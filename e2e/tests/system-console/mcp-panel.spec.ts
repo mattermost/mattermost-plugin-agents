@@ -113,6 +113,13 @@ test.describe.serial('MCP Panel', () => {
             const copyButton = callbackRow.getByRole('button', {name: /copy to clipboard/i});
             await expect(copyButton).toBeVisible();
 
+            // navigator.clipboard only exists in secure contexts. Inside a container, testcontainers
+            // reports the Docker gateway IP as the host, which is not a secure origin.
+            expect(
+                await page.evaluate(() => window.isSecureContext),
+                `${mattermost.url()} is not a secure context; set TESTCONTAINERS_HOST_OVERRIDE=localhost when running e2e inside a container`,
+            ).toBe(true);
+
             // Grant clipboard permissions so navigator.clipboard.writeText succeeds.
             await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 

@@ -31,6 +31,10 @@ var (
 
 // HandleTranscribeFile handles file transcription requests
 func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel, fileID, sessionID string) (map[string]string, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
 	user, err := s.pluginAPI.User.Get(userID)
 	if err != nil {
 		return nil, err
@@ -63,6 +67,10 @@ func (s *Service) HandleTranscribeFile(userID string, bot *bots.Bot, post *model
 
 // HandleSummarizeTranscription handles transcription summarization requests
 func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, post *model.Post, channel *model.Channel, sessionID string) (map[string]string, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
 	user, err := s.pluginAPI.User.Get(userID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get user: %w", err)
@@ -90,8 +98,13 @@ func (s *Service) HandleSummarizeTranscription(userID string, bot *bots.Bot, pos
 	}, nil
 }
 
-// HandlePostbackSummary handles posting back a summary to the original channel
+// HandlePostbackSummary posts a meeting transcription summary back to the
+// original channel. Available at Enterprise and above.
 func (s *Service) HandlePostbackSummary(userID string, post *model.Post) (map[string]string, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
 	bot := s.bots.GetBotByID(post.UserId)
 	if bot == nil {
 		return nil, fmt.Errorf("unable to get bot")

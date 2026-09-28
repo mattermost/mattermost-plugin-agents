@@ -28,6 +28,11 @@ import (
 var channelMentionTestConnStr string
 
 func TestMain(m *testing.M) {
+	if !channelMentionDockerAvailable() {
+		fmt.Println("docker unavailable; skipping channel-mention postgres fixture")
+		os.Exit(m.Run())
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	container, err := tcpostgres.Run(ctx,
 		"postgres:16-alpine",
@@ -57,6 +62,21 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func channelMentionDockerAvailable() bool {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return true
+	}
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(home + "/.docker/run/docker.sock"); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // channelMentionBotLookup implements conversation.BotLookup for testing.
 type channelMentionBotLookup struct {
 	botIDs map[string]bool
@@ -72,6 +92,10 @@ func (b *channelMentionBotLookup) GetBotConfigByID(botID string) (bool, int64, b
 
 func setupChannelMentionService(t *testing.T) (*conversation.Service, *store.Store) {
 	t.Helper()
+
+	if channelMentionTestConnStr == "" {
+		t.Skip("postgres testcontainer not available")
+	}
 
 	db, err := sqlx.Connect("postgres", channelMentionTestConnStr)
 	require.NoError(t, err)

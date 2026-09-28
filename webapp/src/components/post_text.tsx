@@ -35,8 +35,8 @@ const blinkKeyframes = keyframes`
 	100% { opacity: 0.12; }
 `;
 
-const TextContainer = styled.div<{showCursor?: boolean}>`
-	${(props) => props.showCursor && css`
+const TextContainer = styled.div<{$showCursor?: boolean}>`
+	${(props) => props.$showCursor && css`
 		>ul:last-child>li:last-child>span:not(:has(li))::after,
 		>ol:last-child>li:last-child>span:not(:has(li))::after,
 		>ul:last-child>li:last-child>span>ul>li:last-child>span:not(:has(li))::after,
@@ -102,7 +102,7 @@ const PostText = (props: Props) => {
     );
 
     if (!text) {
-        return <TextContainer showCursor={props.showCursor}>{<p/>}</TextContainer>;
+        return <TextContainer $showCursor={props.showCursor}>{<p/>}</TextContainer>;
     }
 
     // Post-process the rendered JSX to replace citation markers with React components
@@ -113,7 +113,7 @@ const PostText = (props: Props) => {
     return (
         <TextContainer
             data-testid='posttext'
-            showCursor={props.showCursor}
+            $showCursor={props.showCursor}
         >
             {processedText}
         </TextContainer>

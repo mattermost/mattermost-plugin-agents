@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
+import { expandToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -180,12 +181,21 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
 
-        // Meta-tools auto-run during the dynamic prelude before the ask-policy business tool.
-        await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(initialBotPost.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
+        // The ask-policy business tool needs a decision, so its approval card
+        // renders in full without expanding the activity area.
+        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({
+            timeout: 45000,
+        });
 
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({timeout: 45000});
+        // The meta-tools auto-ran during the dynamic prelude, so they are
+        // folded away; only the newest of them names the collapsed row.
+        await expectToolActivityCurrent(initialBotPost, loadToolLabel);
+        await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
+
+        const activityRounds = await expandToolActivity(initialBotPost);
+        await expect(activityRounds.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(activityRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
         // Pending-tool responses must not be masked by the empty-result fallback.
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
@@ -196,7 +206,8 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         await acceptButton.click();
 
         await expect(initialBotPost.getByText(continuationMarker)).toBeVisible({timeout: 45000});
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
+        const settledRounds = await expandToolActivity(initialBotPost);
+        await expect(settledRounds.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
         await expect(botPosts).toHaveCount(1);
         await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();

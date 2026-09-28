@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -250,6 +251,13 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
 	if restrictionErr := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); restrictionErr != nil {
 		return restrictionErr
+	}
+
+	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
+		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
+			c.postMultiplayerChannelsUnavailable(bot, channel, post)
+			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
+		}
 	}
 
 	// Check config to determine if tools should be allowed in channel mentions
@@ -592,6 +600,36 @@ func (c *Conversations) responseLocale(postingUser *model.User, channel *model.C
 		return postingUser.Locale
 	}
 	return defaultLocale
+}
+
+// postMultiplayerChannelsUnavailable replies in the thread as the agent so
+// everyone in the channel sees why it did not answer. The reply uses the
+// server locale because it is visible to the whole channel.
+func (c *Conversations) postMultiplayerChannelsUnavailable(bot *bots.Bot, channel *model.Channel, post *model.Post) {
+	if c.mmClient == nil || bot == nil || channel == nil || post == nil {
+		return
+	}
+
+	fallback := "Agents can reply in channels and group messages on Mattermost Professional and above. You can still chat with me in a direct message."
+	message := fallback
+	if c.i18n != nil {
+		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(""))
+		message = T("agents.multiplayer_channels_requires_professional", fallback)
+	}
+
+	rootID := post.RootId
+	if rootID == "" {
+		rootID = post.Id
+	}
+	reply := &model.Post{
+		UserId:    bot.GetMMBot().UserId,
+		ChannelId: channel.Id,
+		RootId:    rootID,
+		Message:   message,
+	}
+	if err := c.mmClient.CreatePost(reply); err != nil {
+		c.mmClient.LogError("Failed to post multiplayer availability reply", "error", err.Error())
+	}
 }
 
 func (c *Conversations) fallbackLocale(userLocale string) string {
