@@ -5,10 +5,8 @@ package bifrost
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/maximhq/bifrost/core/schemas"
-	"go.opentelemetry.io/otel/codes"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -35,13 +33,9 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	// Make streaming request
 	streamChan, bifrostErr := b.client.ChatCompletionStreamRequest(bifrostCtx, bifrostReq)
 	if bifrostErr != nil {
-		recordBifrostError(span, bifrostErr)
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
 		output <- llm.TextStreamEvent{
 			Type:  llm.EventTypeError,
-			Value: err,
+			Value: providerError(span, "bifrost error", bifrostErr, b.redactionKeys()...),
 		}
 		return
 	}
@@ -57,13 +51,9 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 		ping()
 
 		if chunk.BifrostError != nil {
-			recordBifrostError(span, chunk.BifrostError)
-			err := llm.SanitizeProviderError(fmt.Errorf("bifrost stream error: %s", bifrostErrorString(chunk.BifrostError)), b.redactionKeys()...)
-			span.RecordError(err)
-			span.SetStatus(codes.Error, err.Error())
 			output <- llm.TextStreamEvent{
 				Type:  llm.EventTypeError,
-				Value: err,
+				Value: providerError(span, "bifrost stream error", chunk.BifrostError, b.redactionKeys()...),
 			}
 			return
 		}
