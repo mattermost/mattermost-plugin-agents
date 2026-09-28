@@ -14,9 +14,9 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/config"
-	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/config"
+	"github.com/mattermost/mattermost-plugin-agents/embeddings"
+	"github.com/mattermost/mattermost-plugin-agents/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -48,8 +48,6 @@ func credentialSentinels() []credentialSentinel {
 		{"config.bots[0].service.vertexAuthCredentials", "sentinel-bot-service-vertex-auth-credentials"},
 		{"config.mcp.servers[0].clientSecret", "sentinel-mcp-client-secret"},
 		{"config.mcp.servers[0].headers", "sentinel-mcp-header-value"},
-		{"config.mcp.servers[0].serviceAccountHeaders", "sentinel-mcp-service-account-header-value"},
-		{"config.mcp.servers[1].serviceAccountHeaders", "sentinel-second-mcp-service-account-header-value"},
 		{"config.webSearch.google.apiKey", "sentinel-websearch-google-api-key"},
 		{"config.webSearch.brave.apiKey", "sentinel-websearch-brave-api-key"},
 		{"config.embeddingSearchConfig.embeddingProvider.parameters.apiKey", "sentinel-embedding-provider-api-key"},
@@ -120,21 +118,17 @@ func credentialSentinelConfig() *config.Config {
 			Enabled: true,
 			Servers: []config.MCPServerConfig{
 				{
-					ID:                    "mcp-1",
-					Name:                  "jira",
-					Enabled:               true,
-					BaseURL:               "https://mcp.example.com",
-					Headers:               map[string]string{"X-Api-Key": "sentinel-mcp-header-value"},
-					ServiceAccountHeaders: map[string]string{"Authorization": "sentinel-mcp-service-account-header-value"},
-					ClientID:              "mcp-client",
-					ClientSecret:          "sentinel-mcp-client-secret",
+					Name:         "jira",
+					Enabled:      true,
+					BaseURL:      "https://mcp.example.com",
+					Headers:      map[string]string{"X-Api-Key": "sentinel-mcp-header-value"},
+					ClientID:     "mcp-client",
+					ClientSecret: "sentinel-mcp-client-secret",
 				},
 				{
-					ID:                    "mcp-2",
-					Name:                  "github",
-					Enabled:               false,
-					BaseURL:               "https://mcp2.example.com",
-					ServiceAccountHeaders: map[string]string{"Authorization": "sentinel-second-mcp-service-account-header-value"},
+					Name:    "github",
+					Enabled: false,
+					BaseURL: "https://mcp2.example.com",
 				},
 			},
 		},
@@ -149,7 +143,6 @@ func credentialSentinelConfig() *config.Config {
 				APIKey: "sentinel-websearch-brave-api-key",
 			},
 		},
-		TelemetryOutput: "logs",
 	}
 }
 
