@@ -20,7 +20,7 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 	if err != nil {
 		return nil, err
 	}
-	agent, err := service.ForAgent(botConfig)
+	agent, err := service.ForAgent(serviceConfig, botConfig, fallbackServices)
 	if err != nil {
 		service.Shutdown()
 		return nil, err
@@ -353,22 +353,23 @@ func TestProviderSettingsDisableStore(t *testing.T) {
 }
 
 func TestForAgentSharesServiceClient(t *testing.T) {
-	serviceLLM, err := NewServiceLLM(llm.ServiceConfig{
+	service := llm.ServiceConfig{
 		ID:           "svc-anthropic",
 		Type:         llm.ServiceTypeAnthropic,
 		APIKey:       "anthropic-key",
 		DefaultModel: "claude-sonnet-4-6",
-	}, nil)
+	}
+	serviceLLM, err := NewServiceLLM(service, nil)
 	require.NoError(t, err)
 	defer serviceLLM.Shutdown()
 
-	agent, err := serviceLLM.ForAgent(llm.BotConfig{
+	agent, err := serviceLLM.ForAgent(service, llm.BotConfig{
 		Model:              "claude-opus-4-1",
 		EnabledNativeTools: []string{llm.NativeToolWebSearch, "unsupported"},
 		ReasoningEnabled:   true,
 		ReasoningEffort:    "high",
 		ThinkingBudget:     2048,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	assert.Same(t, serviceLLM.client, agent.client, "an agent must not start its own Bifrost client")

@@ -152,15 +152,9 @@ func NewServiceLLM(serviceConfig llm.ServiceConfig, fallbackServices []llm.Servi
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
 	}
 
-	var northFallbackID string
 	for _, fbSvc := range fallbackServices {
-		if fbSvc.Type == llm.ServiceTypeNorth {
-			if !llm.ServiceUsesResponsesAPI(serviceConfig) {
-				return nil, fmt.Errorf("fallback service %q (Cohere North) requires a primary service that uses the Responses API; %q (%s) does not", fbSvc.ID, serviceConfig.ID, serviceConfig.Type)
-			}
-			if northFallbackID == "" {
-				northFallbackID = fbSvc.ID
-			}
+		if fbSvc.Type == llm.ServiceTypeNorth && !llm.ServiceUsesResponsesAPI(serviceConfig) {
+			return nil, fmt.Errorf("fallback service %q (Cohere North) requires a primary service that uses the Responses API; %q (%s) does not", fbSvc.ID, serviceConfig.ID, serviceConfig.Type)
 		}
 		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
 		if fbErr != nil {
@@ -171,23 +165,22 @@ func NewServiceLLM(serviceConfig llm.ServiceConfig, fallbackServices []llm.Servi
 		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
 	}
 
-	service, err := New(cfg)
-	if err != nil {
-		return nil, err
-	}
-	service.serviceType = serviceConfig.Type
-	service.northFallbackID = northFallbackID
-	return service, nil
+	return New(cfg)
 }
 
 // ForAgent returns an LLM that sends requests with the agent's model, native
 // tools, and reasoning settings over b's Bifrost client. Every agent setting is
 // per request, so no worker pool is started. The result shares b's client:
-// shut down b, never the result.
-func (b *LLM) ForAgent(botConfig llm.BotConfig) (*LLM, error) {
-	nativeTools := filterNativeToolsForServiceType(b.serviceType, botConfig.EnabledNativeTools)
-	if b.northFallbackID != "" && len(nativeTools) > 0 {
-		return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", b.northFallbackID)
+// shut down b, never the result. serviceConfig and fallbackServices must be the
+// ones b was built from.
+func (b *LLM) ForAgent(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+	nativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
+	if len(nativeTools) > 0 {
+		for _, fbSvc := range fallbackServices {
+			if fbSvc.Type == llm.ServiceTypeNorth {
+				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			}
+		}
 	}
 
 	agent := *b

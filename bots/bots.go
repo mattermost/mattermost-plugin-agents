@@ -558,7 +558,7 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 
 	base, providerServices := entry.client.model, &llm.ProviderServices{}
 	if serviceLLM := entry.client.bifrost; serviceLLM != nil {
-		agentLLM, err := serviceLLM.ForAgent(botConfig)
+		agentLLM, err := serviceLLM.ForAgent(serviceConfig, botConfig, fallbackServices)
 		if err != nil {
 			return nil, nil, err
 		}
