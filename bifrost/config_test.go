@@ -16,11 +16,11 @@ import (
 // NewFromServiceConfig creates an agent's LLM that owns its Bifrost client, so
 // the caller shuts it down.
 func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
-	service, err := NewServiceLLM(serviceConfig, fallbackServices)
+	service, err := NewServiceClient(serviceConfig, fallbackServices)
 	if err != nil {
 		return nil, err
 	}
-	agent, err := service.ForAgent(serviceConfig, botConfig, fallbackServices)
+	agent, err := service.ForAgent(botConfig)
 	if err != nil {
 		service.Shutdown()
 		return nil, err
@@ -359,17 +359,18 @@ func TestForAgentSharesServiceClient(t *testing.T) {
 		APIKey:       "anthropic-key",
 		DefaultModel: "claude-sonnet-4-6",
 	}
-	serviceLLM, err := NewServiceLLM(service, nil)
+	client, err := NewServiceClient(service, nil)
 	require.NoError(t, err)
-	defer serviceLLM.Shutdown()
+	defer client.Shutdown()
+	serviceLLM := client.LLM()
 
-	agent, err := serviceLLM.ForAgent(service, llm.BotConfig{
+	agent, err := client.ForAgent(llm.BotConfig{
 		Model:              "claude-opus-4-1",
 		EnabledNativeTools: []string{llm.NativeToolWebSearch, "unsupported"},
 		ReasoningEnabled:   true,
 		ReasoningEffort:    "high",
 		ThinkingBudget:     2048,
-	}, nil)
+	})
 	require.NoError(t, err)
 
 	assert.Same(t, serviceLLM.client, agent.client, "an agent must not start its own Bifrost client")

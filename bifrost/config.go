@@ -95,7 +95,7 @@ func supportsProviderFileDownloadProvider(provider schemas.ModelProvider) bool {
 // Bifrost strips unsupported native tools per Bifrost provider, not per
 // plugin service type. Service types that share a Bifrost provider but
 // lack its tools (North, registered as OpenAI) must therefore be rejected
-// as fallbacks in NewServiceLLM and ForAgent; per-hop stripping would otherwise
+// as fallbacks in NewServiceClient and ForAgent; per-hop stripping would otherwise
 // treat them as OpenAI and forward web_search/code_interpreter.
 func SupportedNativeToolsForServiceType(serviceType string) []string {
 	switch serviceType {
@@ -131,10 +131,19 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 	return filtered
 }
 
-// NewServiceLLM creates the LLM for a service and its fallback chain, with no
-// agent settings. It owns a Bifrost client and its worker pool; ForAgent
-// derives per-agent LLMs that share that client.
-func NewServiceLLM(serviceConfig llm.ServiceConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+// ServiceClient is the Bifrost client for one service and its fallback chain,
+// together with the configuration it was built from. It owns the worker pool:
+// direct service calls use LLM, and agents on the service use ForAgent, which
+// shares the client.
+type ServiceClient struct {
+	model            *LLM
+	serviceConfig    llm.ServiceConfig
+	fallbackServices []llm.ServiceConfig
+}
+
+// NewServiceClient builds the Bifrost client for a service and its fallback
+// chain.
+func NewServiceClient(serviceConfig llm.ServiceConfig, fallbackServices []llm.ServiceConfig) (*ServiceClient, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -165,25 +174,41 @@ func NewServiceLLM(serviceConfig llm.ServiceConfig, fallbackServices []llm.Servi
 		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
 	}
 
-	return New(cfg)
+	model, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &ServiceClient{
+		model:            model,
+		serviceConfig:    serviceConfig,
+		fallbackServices: slices.Clone(fallbackServices),
+	}, nil
+}
+
+// LLM returns the service's LLM, with no agent settings.
+func (c *ServiceClient) LLM() *LLM {
+	return c.model
+}
+
+// Shutdown releases the worker pool shared by LLM and every ForAgent result.
+func (c *ServiceClient) Shutdown() {
+	c.model.Shutdown()
 }
 
 // ForAgent returns an LLM that sends requests with the agent's model, native
-// tools, and reasoning settings over b's Bifrost client. Every agent setting is
-// per request, so no worker pool is started. The result shares b's client:
-// shut down b, never the result. serviceConfig and fallbackServices must be the
-// ones b was built from.
-func (b *LLM) ForAgent(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
-	nativeTools := filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools)
+// tools, and reasoning settings over the service's client. Every agent setting
+// is per request, so no worker pool is started. Shut down c, never the result.
+func (c *ServiceClient) ForAgent(botConfig llm.BotConfig) (*LLM, error) {
+	nativeTools := filterNativeToolsForServiceType(c.serviceConfig.Type, botConfig.EnabledNativeTools)
 	if len(nativeTools) > 0 {
-		for _, fbSvc := range fallbackServices {
+		for _, fbSvc := range c.fallbackServices {
 			if fbSvc.Type == llm.ServiceTypeNorth {
 				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
 			}
 		}
 	}
 
-	agent := *b
+	agent := *c.model
 	if botConfig.Model != "" {
 		agent.defaultModel = botConfig.Model
 	}

@@ -557,8 +557,8 @@ func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig
 	defer entry.inUse.Done()
 
 	base, providerServices := entry.client.model, &llm.ProviderServices{}
-	if serviceLLM := entry.client.bifrost; serviceLLM != nil {
-		agentLLM, err := serviceLLM.ForAgent(serviceConfig, botConfig, fallbackServices)
+	if serviceClient := entry.client.bifrost; serviceClient != nil {
+		agentLLM, err := serviceClient.ForAgent(botConfig)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -638,10 +638,10 @@ func tokenUsageIdentity(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfi
 type providerClient struct {
 	// model is the unwrapped client with no agent settings.
 	model llm.LanguageModel
-	// bifrost is model when it is a Bifrost client, which agents derive their
+	// bifrost is set when model is a Bifrost client, which agents derive their
 	// own settings from. Other clients have no agent settings or provider
 	// services, so agents use model as is.
-	bifrost *bifrost.LLM
+	bifrost *bifrost.ServiceClient
 	// shutdown releases the Bifrost worker pool and queue. It is a no-op for
 	// the load-test mock.
 	shutdown func()
@@ -673,14 +673,14 @@ func (b *MMBots) newProviderClient(serviceConfig llm.ServiceConfig, fallbackServ
 		return &providerClient{model: loadtest.NewMockLLM(profile), shutdown: func() {}}, nil
 	}
 
-	serviceLLM, err := bifrost.NewServiceLLM(serviceConfig, fallbackServices)
+	serviceClient, err := bifrost.NewServiceClient(serviceConfig, fallbackServices)
 	if err != nil {
 		if b.pluginAPI != nil {
 			b.pluginAPI.Log.Error("Failed to create Bifrost client for service", "service_id", serviceConfig.ID, "service_type", serviceConfig.Type)
 		}
 		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	return &providerClient{model: serviceLLM, bifrost: serviceLLM, shutdown: serviceLLM.Shutdown}, nil
+	return &providerClient{model: serviceClient.LLM(), bifrost: serviceClient, shutdown: serviceClient.Shutdown}, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.
