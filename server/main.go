@@ -198,6 +198,8 @@ func (p *Plugin) OnActivate() error {
 
 		pluginAPI.Log.Info("Config migrated from config.json to database")
 	}
+
+	clearMigratedPluginSettings(pluginAPI)
 	mtx2.Unlock()
 
 	// ABAC ID migrations must run after the config.json->DB migration and

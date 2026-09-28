@@ -8,7 +8,7 @@ This guide covers installing, configuring, and managing the Mattermost Agents pl
 
 Before installing the Agents plugin, ensure your environment meets these requirements:
 
-- Mattermost Server v11.11.0+
+- Mattermost Server v12.0.0+
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
@@ -353,7 +353,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Prerequisites:**
 
-- A Mattermost server (v11.11.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
+- A Mattermost server (v12.0.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
 - User attributes (custom profile attributes) configured on the server, since policies are written against them.
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
