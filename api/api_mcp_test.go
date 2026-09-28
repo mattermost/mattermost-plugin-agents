@@ -814,6 +814,42 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Empty(t, response.Servers[1].Tools)
 	})
 
+	t.Run("connects embedded and plugin servers as the bot only when it uses bot permissions", func(t *testing.T) {
+		tests := []struct {
+			name                  string
+			useServiceAccountAuth bool
+			useBotPermissions     bool
+			wantLocalActor        string
+		}{
+			{name: "bot permissions on", useServiceAccountAuth: true, useBotPermissions: true, wantLocalActor: testBotUserID},
+			{name: "bot permissions off", useServiceAccountAuth: true, useBotPermissions: false, wantLocalActor: ""},
+			{name: "service account auth off", useServiceAccountAuth: false, useBotPermissions: true, wantLocalActor: ""},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+
+				e.agentStore.agents["agent-1"] = &llm.BotConfig{
+					ID:                            "agent-1",
+					CreatorID:                     testUserID,
+					BotUserID:                     testBotUserID,
+					UseServiceAccountAuth:         tt.useServiceAccountAuth,
+					ExperimentalUseBotPermissions: tt.useBotPermissions,
+				}
+				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(true).Maybe()
+				mcpMock := &mockMCPClientManager{serviceAccountTools: []llm.Tool{saTool}}
+				e.api.mcpClientManager = mcpMock
+				e.config.mcpConfig = mcp.Config{Enabled: true, Servers: []mcp.ServerConfig{n8nServer}}
+
+				_, status := requestUserMCPTools(t, e.api, "catalog=service_account&agent_id=agent-1")
+				require.Equal(t, http.StatusOK, status)
+				require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
+				require.Equal(t, []string{tt.wantLocalActor}, mcpMock.getServiceAccountLocalActors)
+			})
+		}
+	})
+
 	t.Run("rejects catalog=service_account without manage access", func(t *testing.T) {
 		e := SetupTestEnvironment(t)
 		defer e.Cleanup(t)

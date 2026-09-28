@@ -152,6 +152,7 @@ type mockMCPClientManager struct {
 	getContexts                   []context.Context
 	getServiceAccountCalls        []string
 	getServiceAccountInvokerCalls []string
+	getServiceAccountLocalActors  []string
 	getServiceAccountContexts     []context.Context
 	serviceAccountTools           []llm.Tool
 	serviceAccountErrors          *mcp.Errors
@@ -262,6 +263,7 @@ func (m *mockMCPClientManager) GetCatalogAccess(ctx context.Context, req mcp.Cat
 	if req.ServiceAccount {
 		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID)
 		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID)
+		m.getServiceAccountLocalActors = append(m.getServiceAccountLocalActors, req.LocalActorID)
 		m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
 		return m.catalogAccess(req)
 	}
