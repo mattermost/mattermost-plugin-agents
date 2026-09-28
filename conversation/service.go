@@ -68,6 +68,7 @@ func NewService(
 // CreateConversationParams contains parameters for creating a new conversation.
 type CreateConversationParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    *string // nullable for non-channel conversations
 	RootPostID   *string // nullable for non-thread conversations
@@ -108,7 +109,7 @@ func (s *Service) CreateConversation(params CreateConversationParams) (*CreateCo
 	}
 
 	turnID := model.NewId()
-	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient))
+	content, err := marshalBlocks(userBlocksWithAttachments(params.UserMessage, params.FileIDs, s.mmClient, params.SessionID))
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -172,6 +173,7 @@ func (s *Service) UpdateConversationTitle(id, title string) error {
 // GetOrCreateParams contains parameters for GetOrCreateConversation.
 type GetOrCreateParams struct {
 	UserID       string
+	SessionID    string
 	BotID        string
 	ChannelID    string
 	RootPostID   string // the thread root post ID
@@ -198,7 +200,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	}
 
 	if existing != nil {
-		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(existing.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -215,6 +217,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 	rootPostID := params.RootPostID
 	createResult, err := s.CreateConversation(CreateConversationParams{
 		UserID:       params.UserID,
+		SessionID:    params.SessionID,
 		BotID:        params.BotID,
 		ChannelID:    &channelID,
 		RootPostID:   &rootPostID,
@@ -233,7 +236,7 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		if raceConv == nil {
 			return nil, fmt.Errorf("conversation vanished after conflict")
 		}
-		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs)
+		turnID, appendErr := s.appendUserTurn(raceConv.ID, params.UserMessage, params.UserPostID, params.FileIDs, params.SessionID)
 		if appendErr != nil {
 			return nil, appendErr
 		}
@@ -260,8 +263,8 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 }
 
 // appendUserTurn creates a new user turn at the next available sequence number.
-func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string) (string, error) {
-	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient))
+func (s *Service) appendUserTurn(conversationID, message string, postID *string, fileIDs []string, sessionID string) (string, error) {
+	content, err := marshalBlocks(userBlocksWithAttachments(message, fileIDs, s.mmClient, sessionID))
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal user message: %w", err)
 	}
@@ -286,6 +289,7 @@ func (s *Service) appendUserTurn(conversationID, message string, postID *string,
 // BuildOptions controls optional behavior of BuildCompletionRequest.
 type BuildOptions struct {
 	ExcludeAfterPostID string
+	SessionID          string
 
 	// AllowUnsharedToolContent opts IN to sending tool_result content whose
 	// Shared flag is not true to the LLM. The default is to redact — any
@@ -297,6 +301,13 @@ type BuildOptions struct {
 	// requester (e.g. the DM follow-up stream), since DM tool_results are
 	// always shared=true anyway and nothing would be redacted in that case.
 	AllowUnsharedToolContent bool
+}
+
+func firstBuildOptions(opts []BuildOptions) BuildOptions {
+	if len(opts) == 0 {
+		return BuildOptions{}
+	}
+	return opts[0]
 }
 
 // BuildCompletionRequest builds an llm.CompletionRequest from the conversation's
@@ -314,6 +325,7 @@ func (s *Service) BuildCompletionRequest(
 	// Default: redact unshared tool_result content so privacy is the
 	// fail-safe. Callers whose LLM response will NOT reach other users
 	// (DM follow-ups) can opt in to full content via AllowUnsharedToolContent.
+	buildOpts := firstBuildOptions(opts)
 	redactUnshared := true
 	if len(opts) > 0 {
 		redactUnshared = !opts[0].AllowUnsharedToolContent
@@ -339,7 +351,7 @@ func (s *Service) BuildCompletionRequest(
 	})
 
 	enableVision, maxFileSize := s.attachmentConfigForBot(conv.BotID)
-	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize)
+	turnPosts, err := turnsToLLMPosts(turns, redactUnshared, s.mmClient, enableVision, maxFileSize, buildOpts.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -377,6 +389,7 @@ func turnsToLLMPosts(
 	mmClient mmapi.Client,
 	enableVision bool,
 	maxFileSize int64,
+	sessionID string,
 ) ([]llm.Post, error) {
 	posts := make([]llm.Post, 0, len(turns))
 	for i := 0; i < len(turns); i++ {
@@ -393,7 +406,7 @@ func turnsToLLMPosts(
 			blocks = append(blocks, nextBlocks...)
 			i++
 		}
-		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize))
+		posts = append(posts, BlocksToPost(blocks, turn.Role, redactUnshared, mmClient, enableVision, maxFileSize, sessionID))
 	}
 	return posts, nil
 }
@@ -558,6 +571,7 @@ func (s *Service) BuildChannelMentionRequest(
 	threadData *mmapi.ThreadData,
 	opts ...BuildOptions,
 ) (*llm.CompletionRequest, error) {
+	buildOpts := firstBuildOptions(opts)
 	// Default redacts (safe); AllowUnsharedToolContent opts out.
 	redactUnshared := true
 	if len(opts) > 0 {
@@ -634,7 +648,7 @@ func (s *Service) BuildChannelMentionRequest(
 	// (precedingSeq = 0). Route through turnsToLLMPosts so tool_use and
 	// tool_result within the same tool round merge into a single llm.Post,
 	// matching BuildCompletionRequest's behavior.
-	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize)
+	leadingPosts, err := turnsToLLMPosts(turnsByPrecedingPost[0], redactUnshared, s.mmClient, enableVision, maxFileSize, buildOpts.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -647,7 +661,7 @@ func (s *Service) BuildChannelMentionRequest(
 			// preceding assistant turn's tool_use blocks.
 			turn := turnByPostID[threadPost.Id]
 			run := append([]store.Turn{turn}, turnsByPrecedingPost[turn.Sequence]...)
-			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize)
+			runPosts, err := turnsToLLMPosts(run, redactUnshared, s.mmClient, enableVision, maxFileSize, buildOpts.SessionID)
 			if err != nil {
 				return nil, err
 			}

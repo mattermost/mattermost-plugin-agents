@@ -19,6 +19,16 @@ import (
 // upstream pluginapi.KV.Get returns (nil err, empty bytes) for missing keys.
 var ErrKVNotFound = errors.New("kv key not found")
 
+// ErrFileActionForbidden is returned before an admin-level file read when the
+// requesting session is absent or denied by the server's file policy.
+var ErrFileActionForbidden = errors.New("file action is not permitted")
+
+// FileActionPermissionAPI is the narrow raw plugin API surface needed to
+// enforce session-scoped file download policy.
+type FileActionPermissionAPI interface {
+	HasPermissionToFileAction(sessionID, fileID, action string) bool
+}
+
 type Client interface {
 	GetUser(userID string) (*model.User, error)
 	GetPost(postID string) (*model.Post, error)
@@ -49,18 +59,24 @@ type Client interface {
 	LogDebug(msg string, keyValuePairs ...interface{})
 	GetChannelByName(teamID, name string, includeDeleted bool) (*model.Channel, error)
 	HasPermissionToChannel(userID, channelID string, permission *model.Permission) bool
+	HasPermissionToFileAction(sessionID, fileID, action string) bool
 	GetFileInfo(fileID string) (*model.FileInfo, error)
 	GetFile(fileID string) (io.ReadCloser, error)
 	SendEphemeralPost(userID string, post *model.Post)
 }
 
-func NewClient(pluginAPI *pluginapi.Client) Client {
+func NewClient(pluginAPI *pluginapi.Client, fileActionAPI ...FileActionPermissionAPI) Client {
+	var policyAPI FileActionPermissionAPI
+	if len(fileActionAPI) > 0 {
+		policyAPI = fileActionAPI[0]
+	}
 	return &client{
 		PostService:          pluginAPI.Post,
 		UserService:          pluginAPI.User,
 		FrontendService:      pluginAPI.Frontend,
 		ConfigurationService: pluginAPI.Configuration,
 		pluginAPI:            pluginAPI,
+		fileActionAPI:        policyAPI,
 	}
 }
 
@@ -69,7 +85,8 @@ type client struct {
 	pluginapi.UserService
 	pluginapi.FrontendService
 	pluginapi.ConfigurationService
-	pluginAPI *pluginapi.Client
+	pluginAPI     *pluginapi.Client
+	fileActionAPI FileActionPermissionAPI
 }
 
 func (m *client) GetUser(userID string) (*model.User, error) {
@@ -169,12 +186,27 @@ func (m *client) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	return m.pluginAPI.File.GetInfo(fileID)
 }
 
+func (m *client) HasPermissionToFileAction(sessionID, fileID, action string) bool {
+	return m.fileActionAPI != nil && m.fileActionAPI.HasPermissionToFileAction(sessionID, fileID, action)
+}
+
 func (m *client) GetFile(fileID string) (io.ReadCloser, error) {
 	file, err := m.pluginAPI.File.Get(fileID)
 	if err != nil {
 		return nil, err
 	}
 	return io.NopCloser(file), nil
+}
+
+// CheckFileDownloadPermission gates admin-level file metadata and content
+// reads using the requesting session. It intentionally does not accept a user
+// ID: channel RBAC remains a separate, additive check at each call site.
+func CheckFileDownloadPermission(mm Client, sessionID, fileID string) error {
+	if mm == nil || sessionID == "" ||
+		!mm.HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment) {
+		return ErrFileActionForbidden
+	}
+	return nil
 }
 
 func (m *client) SendEphemeralPost(userID string, post *model.Post) {

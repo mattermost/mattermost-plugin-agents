@@ -4,6 +4,7 @@
 package api
 
 import (
+	stdcontext "context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,12 +14,14 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/bots"
 	"github.com/mattermost/mattermost-plugin-agents/llm"
+	"github.com/mattermost/mattermost-plugin-agents/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // convertLLMBridgeRequestToInternal converts the API request format to internal llm.CompletionRequest
-func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
+func (a *API) convertLLMBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts := make([]llm.Post, len(req.Posts))
 
 	for i, apiPost := range req.Posts {
@@ -42,6 +45,10 @@ func (a *API) convertLLMBridgeRequestToInternal(bot *bots.Bot, req bridgeclient.
 			for j, fileID := range apiPost.FileIDs {
 				if fileID == "" {
 					return llm.CompletionRequest{}, fmt.Errorf("file ID cannot be empty for file %d in post %d", j, i)
+				}
+
+				if err := mmapi.CheckFileDownloadPermission(a.mmClient, auth.SessionIDFromContext(ctx), fileID); err != nil {
+					return llm.CompletionRequest{}, fmt.Errorf("file access denied for file ID %s", fileID)
 				}
 
 				// Get file info
@@ -381,7 +388,7 @@ func (a *API) handleAgentCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(c.Request.Context(), bot, req, llm.OperationBridgeAgent, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -443,7 +450,7 @@ func (a *API) handleAgentCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(c.Request.Context(), bot, req, llm.OperationBridgeAgent, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -508,7 +515,7 @@ func (a *API) handleServiceCompletionStreaming(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(c.Request.Context(), bot, req, llm.OperationBridgeService, llm.SubTypeStreaming)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),
@@ -573,7 +580,7 @@ func (a *API) handleServiceCompletionNoStream(c *gin.Context) {
 	}
 
 	// Convert request to internal format
-	llmRequest, err := a.convertLLMBridgeRequestToInternal(bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
+	llmRequest, err := a.convertLLMBridgeRequestToInternal(c.Request.Context(), bot, req, llm.OperationBridgeService, llm.SubTypeNoStream)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
 			Error: fmt.Sprintf("invalid request: %v", err),

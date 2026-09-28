@@ -1682,12 +1682,26 @@ func setupTestServiceWithClient(
 	return svc, s
 }
 
+const serviceTestSessionID = "authorized-service-session"
+
+func allowServiceTestFileDownloads(mmClient *mmapimocks.MockClient, fileIDs ...string) {
+	for _, fileID := range fileIDs {
+		mmClient.On(
+			"HasPermissionToFileAction",
+			serviceTestSessionID,
+			fileID,
+			model.AccessControlPolicyActionDownloadFileAttachment,
+		).Return(true)
+	}
+}
+
 // TestCreateConversation_FileIDsPersistsAsContentBlocks pins the user-turn
 // schema for attachments. CreateConversation must store FileIDs as
 // BlockTypeImage / BlockTypeFile entries (lazy-load: NO inlined Content)
 // alongside the leading text block.
 func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	allowServiceTestFileDownloads(mmClient, "img1", "doc1")
 	// No .Maybe(): GetFileInfo MUST be called for every FileID so the
 	// MIME type is read from the server (not inferred from the filename
 	// extension). Mockery fails the test if either expectation is unmet.
@@ -1702,6 +1716,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    serviceTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -1740,6 +1755,7 @@ func TestCreateConversation_FileIDsPersistsAsContentBlocks(t *testing.T) {
 // when appending a new user turn to an existing conversation.
 func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	allowServiceTestFileDownloads(mmClient, "doc2")
 	// No .Maybe(): GetFileInfo for the appended attachment MUST run so
 	// MIME comes from the server, not the filename extension.
 	mmClient.On("GetFileInfo", "doc2").Return(&model.FileInfo{
@@ -1765,6 +1781,7 @@ func TestGetOrCreateConversation_AppendsFileIDs(t *testing.T) {
 
 	res, err := svc.GetOrCreateConversation(GetOrCreateParams{
 		UserID:       userID,
+		SessionID:    serviceTestSessionID,
 		BotID:        botID,
 		ChannelID:    "chan1",
 		RootPostID:   rootPostID,
@@ -1824,6 +1841,7 @@ func TestCreateConversation_EmptyFileIDsAndMessage(t *testing.T) {
 // be created with the rest. Mirrors the old PostToAIPost behavior.
 func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 	mmClient := mmapimocks.NewMockClient(t)
+	allowServiceTestFileDownloads(mmClient, "broken", "ok1")
 	// Both GetFileInfo calls MUST happen — the bad one returns an error,
 	// but production must still attempt the fetch (otherwise an
 	// implementation that filtered FileIDs by some local rule would
@@ -1839,6 +1857,7 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 
 	result, err := svc.CreateConversation(CreateConversationParams{
 		UserID:       model.NewId(),
+		SessionID:    serviceTestSessionID,
 		BotID:        model.NewId(),
 		Operation:    "conversation",
 		SystemPrompt: "system",
@@ -1868,6 +1887,7 @@ func TestCreateConversation_FileIDInfoErrorIsSkipped(t *testing.T) {
 func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 	t.Run("EnableVision=true populates Files and message gets file content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
+		allowServiceTestFileDownloads(mmClient, "img1", "doc1")
 
 		// Used twice: once for user-turn creation (read MIME) and once at
 		// request build time (lazy resolve).
@@ -1892,6 +1912,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    serviceTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -1903,7 +1924,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: serviceTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user")
@@ -1921,6 +1942,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
+		allowServiceTestFileDownloads(mmClient, "img1", "doc1")
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
@@ -1943,6 +1965,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       model.NewId(),
+			SessionID:    serviceTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -1954,7 +1977,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 		conv, err := svc.GetConversation(result.ConversationID)
 		require.NoError(t, err)
 
-		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{}, BuildOptions{SessionID: serviceTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
@@ -1984,6 +2007,7 @@ func TestBuildCompletionRequest_AttachmentsResolveLazily(t *testing.T) {
 func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 	t.Run("EnableVision=true populates Files and message gets file content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
+		allowServiceTestFileDownloads(mmClient, "img1", "doc1")
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
@@ -2008,6 +2032,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    serviceTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2034,7 +2059,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: serviceTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2, "system + user (resolved from the user turn)")
@@ -2051,6 +2076,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 	t.Run("EnableVision=false drops image but keeps file text content", func(t *testing.T) {
 		mmClient := mmapimocks.NewMockClient(t)
+		allowServiceTestFileDownloads(mmClient, "img1", "doc1")
 
 		mmClient.On("GetFileInfo", "img1").Return(&model.FileInfo{
 			Id: "img1", Name: "pic.png", MimeType: "image/png", Size: 100,
@@ -2076,6 +2102,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 
 		result, err := svc.CreateConversation(CreateConversationParams{
 			UserID:       userID,
+			SessionID:    serviceTestSessionID,
 			BotID:        botID,
 			Operation:    "conversation",
 			SystemPrompt: "system",
@@ -2098,7 +2125,7 @@ func TestBuildChannelMentionRequest_AttachmentsResolveLazily(t *testing.T) {
 			},
 		}
 
-		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData)
+		req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{SessionID: serviceTestSessionID})
 		require.NoError(t, err)
 
 		require.Len(t, req.Posts, 2)
