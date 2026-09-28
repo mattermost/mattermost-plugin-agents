@@ -79,8 +79,6 @@ type LLM struct {
 	// alternative providers when the primary fails.
 	fallbacks []fallbackHop
 
-	logger ErrorLogger
-
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
@@ -139,10 +137,6 @@ type Config struct {
 	// Fallbacks is the ordered list of providers Bifrost tries sequentially
 	// when the primary provider fails.
 	Fallbacks []FallbackEntry
-
-	// Logger receives provider error bodies that are too unstructured to be
-	// carried in the returned error. Optional; nil disables that logging.
-	Logger ErrorLogger
 }
 
 // FallbackEntry holds the settings for a single fallback in the chain.
@@ -264,7 +258,6 @@ func New(cfg Config) (*LLM, error) {
 		useResponsesAPI:            cfg.UseResponsesAPI,
 		fallbacks:                  fallbacks,
 		providerFileDownloadRoutes: providerFileDownloadRoutes,
-		logger:                     cfg.Logger,
 	}, nil
 }
 
@@ -475,7 +468,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := b.providerError("bifrost file retrieve error", bifrostErr)
+		err := providerError(nil, "bifrost file retrieve error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if meta == nil {
@@ -490,7 +483,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := b.providerError("bifrost file content error", bifrostErr)
+		err := providerError(nil, "bifrost file content error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if resp == nil {

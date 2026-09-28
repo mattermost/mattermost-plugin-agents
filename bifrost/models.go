@@ -40,10 +40,6 @@ type FetchModelsConfig struct {
 	VertexProjectID       string
 	VertexProjectNumber   string
 	VertexAuthCredentials string
-
-	// Logger receives provider error bodies too unstructured to be carried in
-	// the returned error. Optional.
-	Logger ErrorLogger
 }
 
 // FetchModels retrieves the list of available models from a provider using Bifrost.
@@ -75,7 +71,7 @@ func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, e
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, providerError(cfg.Logger, []string{cfg.APIKey}, "bifrost list models error", bifrostErr)
+		return nil, providerError(nil, "bifrost list models error", bifrostErr, cfg.APIKey)
 	}
 
 	if resp == nil {
@@ -118,7 +114,7 @@ func convertBifrostModels(in []schemas.Model) []llm.ModelInfo {
 // region, and service-account JSON) that cannot be expressed as a single API
 // key. The admin handler builds a ServiceConfig from raw type/key/url fields
 // and calls this, so North listing is served from the same entry point.
-func FetchModelsForService(ctx context.Context, svc llm.ServiceConfig, logger ErrorLogger) ([]llm.ModelInfo, error) {
+func FetchModelsForService(ctx context.Context, svc llm.ServiceConfig) ([]llm.ModelInfo, error) {
 	if svc.Type == llm.ServiceTypeNorth {
 		return fetchNorthModels(ctx, svc.APIURL, svc.APIKey)
 	}
@@ -137,7 +133,6 @@ func FetchModelsForService(ctx context.Context, svc llm.ServiceConfig, logger Er
 		VertexProjectID:       svc.VertexProjectID,
 		VertexProjectNumber:   svc.VertexProjectNumber,
 		VertexAuthCredentials: svc.VertexAuthCredentials,
-		Logger:                logger,
 	})
 }
 

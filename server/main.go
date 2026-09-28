@@ -355,7 +355,6 @@ func (p *Plugin) OnActivate() error {
 		p.configuration.EmbeddingSearchConfig(),
 		licenseChecker,
 		indexer.DeferredIndexRebuildActive(mmClient),
-		&pluginAPI.Log,
 	)
 	if err != nil {
 		pluginAPI.Log.Warn("failed to initialize search infrastructure", "error", err)
@@ -418,7 +417,6 @@ func (p *Plugin) OnActivate() error {
 			p.configuration.EmbeddingSearchConfig(),
 			licenseChecker,
 			indexer.DeferredIndexRebuildActive(mmClient),
-			&pluginAPI.Log,
 		)
 		if initErr != nil {
 			pluginAPI.Log.Error("Failed to reinitialize embedding search", "trigger", trigger, "error", initErr)

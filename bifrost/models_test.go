@@ -176,7 +176,7 @@ func TestFetchNorthModels(t *testing.T) {
 				Type:   llm.ServiceTypeNorth,
 				APIKey: apiKey,
 				APIURL: server.URL,
-			}, nil)
+			})
 
 			if tt.wantAuth {
 				assert.Equal(t, "Bearer "+apiKey, sawAuth)

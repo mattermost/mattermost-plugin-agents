@@ -15,10 +15,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// TestProviderErrorDetailReachesCaller drives real provider error responses
-// through Bifrost and asserts the provider's own explanation survives into the
-// error the plugin logs. Regression for a quota-exhausted OpenAI account that
-// was reported only as "bifrost stream error: empty bifrost error (type=error)".
+// TestProviderErrorDetailReachesCaller drives in-band stream errors through
+// Bifrost and checks the caller sees the provider's message and code.
 func TestProviderErrorDetailReachesCaller(t *testing.T) {
 	const quotaMessage = "You exceeded your current quota, please check your plan and billing details."
 
@@ -27,9 +25,7 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 		useResponsesAPI bool
 		handler         http.HandlerFunc
 		wantSubstrings  []string
-		// wantLoggedBody, when set, must appear in the server-log line that
-		// carries the raw provider body, and must NOT appear in the error.
-		wantLoggedBody string
+		wantAbsent      []string
 	}{
 		{
 			name:            "Responses API in-band SSE error event on HTTP 200",
@@ -39,37 +35,17 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				fmt.Fprint(w, "event: response.created\ndata: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\",\"object\":\"response\",\"status\":\"in_progress\",\"output\":[]}}\n\n")
 				fmt.Fprintf(w, "event: error\ndata: {\"type\":\"error\",\"sequence_number\":1,\"error\":{\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\",\"message\":%q,\"param\":null}}\n\n", quotaMessage)
 			},
-			wantSubstrings: []string{"bifrost stream error", quotaMessage, "insufficient_quota"},
+			wantSubstrings: []string{"bifrost stream error", quotaMessage, "code=insufficient_quota", "provider=openai"},
 		},
 		{
-			name:            "Responses API in-band SSE error event with only an event name",
+			name:            "Responses API in-band SSE error event without a message still reports its type",
 			useResponsesAPI: true,
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"sequence_number\":0,\"details\":\"upstream exploded\"}\n\n")
 			},
 			wantSubstrings: []string{"bifrost stream error", "type=error"},
-			wantLoggedBody: `"details":"upstream exploded"`,
-		},
-		{
-			name:            "Responses API HTTP 429 with OpenAI error body",
-			useResponsesAPI: true,
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				fmt.Fprintf(w, `{"error":{"message":%q,"type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, quotaMessage)
-			},
-			wantSubstrings: []string{quotaMessage, "status=429", "insufficient_quota"},
-		},
-		{
-			name:            "Chat Completions HTTP 429 with OpenAI error body",
-			useResponsesAPI: false,
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				fmt.Fprintf(w, `{"error":{"message":%q,"type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, quotaMessage)
-			},
-			wantSubstrings: []string{quotaMessage, "status=429", "insufficient_quota"},
+			wantAbsent:     []string{"upstream exploded"},
 		},
 		{
 			name:            "Chat Completions in-band SSE error object",
@@ -78,17 +54,7 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprintf(w, "data: {\"error\":{\"message\":%q,\"type\":\"insufficient_quota\",\"param\":null,\"code\":\"insufficient_quota\"}}\n\n", quotaMessage)
 			},
-			wantSubstrings: []string{quotaMessage, "insufficient_quota"},
-		},
-		{
-			name:            "non-JSON HTTP 502 body still reports status and cause",
-			useResponsesAPI: false,
-			handler: func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/html")
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprint(w, "<html>502 Bad Gateway from proxy</html>")
-			},
-			wantSubstrings: []string{"status=502", "HTML response received from provider"},
+			wantSubstrings: []string{quotaMessage, "code=insufficient_quota"},
 		},
 	}
 
@@ -113,10 +79,8 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 			}
 			bot := llm.BotConfig{ID: "bot-1", ServiceID: service.ID, DisableTools: true}
 
-			logger := &recordingLogger{}
-			llmInstance, err := NewFromServiceConfig(service, bot, nil, WithLogger(logger))
+			llmInstance, err := NewFromServiceConfig(service, bot, nil)
 			require.NoError(t, err)
-			require.NotNil(t, llmInstance.logger)
 			defer llmInstance.Shutdown()
 
 			_, err = llmInstance.ChatCompletionNoStream(
@@ -128,13 +92,8 @@ func TestProviderErrorDetailReachesCaller(t *testing.T) {
 			for _, want := range tt.wantSubstrings {
 				require.Contains(t, err.Error(), want)
 			}
-			if tt.wantLoggedBody == "" {
-				require.NotContains(t, err.Error(), "empty bifrost error (type=error)")
-			} else {
-				require.NotContains(t, err.Error(), tt.wantLoggedBody)
-				require.NotEmpty(t, logger.entries)
-				body, _ := logger.entries[len(logger.entries)-1].kv["provider_response"].(string)
-				require.Contains(t, body, tt.wantLoggedBody)
+			for _, absent := range tt.wantAbsent {
+				require.NotContains(t, err.Error(), absent)
 			}
 		})
 	}

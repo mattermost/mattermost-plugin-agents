@@ -62,7 +62,7 @@ func TestInitEmbeddingsSearchLicense(t *testing.T) {
 
 	for _, level := range enterprisetest.AllLevels {
 		t.Run(level.String(), func(t *testing.T) {
-			search, err := InitEmbeddingsSearch(nil, cfg, enterprisetest.CheckerAt(level), false, nil)
+			search, err := InitEmbeddingsSearch(nil, cfg, enterprisetest.CheckerAt(level), false)
 			if level < enterprise.LevelEnterprise {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), "available at Enterprise and above")
@@ -76,7 +76,7 @@ func TestInitEmbeddingsSearchLicense(t *testing.T) {
 	}
 
 	t.Run("nil checker fails closed", func(t *testing.T) {
-		search, err := InitEmbeddingsSearch(nil, cfg, nil, false, nil)
+		search, err := InitEmbeddingsSearch(nil, cfg, nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "available at Enterprise and above")
 		require.Nil(t, search)
