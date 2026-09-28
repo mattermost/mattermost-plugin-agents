@@ -87,6 +87,7 @@ async function townSquarePostsWithMessage(message: string) {
 
 test.describe('Experimental service account settings (Mocked LLM)', () => {
     test.beforeAll(async () => {
+        test.setTimeout(180000);
         mattermost = await RunToolConfigContainerWithServiceAccountBots();
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
