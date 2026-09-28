@@ -337,6 +337,37 @@ func TestProviderSettingsDisableStore(t *testing.T) {
 	}
 }
 
+func TestForAgentSharesServiceClient(t *testing.T) {
+	serviceLLM, err := NewServiceLLM(llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-6",
+	}, nil)
+	require.NoError(t, err)
+	defer serviceLLM.Shutdown()
+
+	agent, err := serviceLLM.ForAgent(llm.BotConfig{
+		Model:              "claude-opus-4-1",
+		EnabledNativeTools: []string{llm.NativeToolWebSearch, "unsupported"},
+		ReasoningEnabled:   true,
+		ReasoningEffort:    "high",
+		ThinkingBudget:     2048,
+	})
+	require.NoError(t, err)
+
+	assert.Same(t, serviceLLM.client, agent.client, "an agent must not start its own Bifrost client")
+	assert.Equal(t, "claude-opus-4-1", agent.defaultModel)
+	assert.Equal(t, []string{llm.NativeToolWebSearch}, agent.enabledNativeTools)
+	assert.True(t, agent.reasoningEnabled)
+	assert.Equal(t, "high", agent.reasoningEffort)
+	assert.Equal(t, 2048, agent.thinkingBudget)
+
+	assert.Equal(t, "claude-sonnet-4-6", serviceLLM.defaultModel, "ForAgent must not change the service LLM")
+	assert.Empty(t, serviceLLM.enabledNativeTools)
+	assert.False(t, serviceLLM.reasoningEnabled)
+}
+
 func TestNewFromServiceConfigNorthFallbackCompatibility(t *testing.T) {
 	northFallback := llm.ServiceConfig{
 		ID:           "svc-north",

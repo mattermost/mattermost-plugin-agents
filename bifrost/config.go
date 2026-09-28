@@ -136,6 +136,22 @@ func filterNativeToolsForServiceType(serviceType string, tools []string) []strin
 // primary service's fallback chain (see llm.ResolveFallbackChain). Each fallback
 // service's DefaultModel is used as the fallback model.
 func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+	service, err := NewServiceLLM(serviceConfig, fallbackServices)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := service.ForAgent(botConfig)
+	if err != nil {
+		service.Shutdown()
+		return nil, err
+	}
+	return agent, nil
+}
+
+// NewServiceLLM creates the LLM for a service and its fallback chain, with no
+// agent settings. It owns a Bifrost client and its worker pool; ForAgent
+// derives per-agent LLMs that share that client.
+func NewServiceLLM(serviceConfig llm.ServiceConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
 	provider, err := MapServiceTypeToProvider(serviceConfig.Type)
 	if err != nil {
 		return nil, err
@@ -146,31 +162,21 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		settings.StreamingTimeout = DefaultStreamingTimeout
 	}
 
-	// Use bot's model if specified, otherwise use service's default model
-	if botConfig.Model != "" {
-		settings.DefaultModel = botConfig.Model
-	}
-
 	cfg := Config{
 		ProviderSettings: settings,
 		InputTokenLimit:  serviceConfig.InputTokenLimit,
 		OutputTokenLimit: serviceConfig.OutputTokenLimit,
 		UseResponsesAPI:  llm.ServiceUsesResponsesAPI(serviceConfig),
-
-		// Bot-specific configuration
-		EnabledNativeTools: filterNativeToolsForServiceType(serviceConfig.Type, botConfig.EnabledNativeTools),
-		ReasoningEnabled:   botConfig.ReasoningEnabled,
-		ReasoningEffort:    botConfig.ReasoningEffort,
-		ThinkingBudget:     botConfig.ThinkingBudget,
 	}
 
+	var northFallbackID string
 	for _, fbSvc := range fallbackServices {
 		if fbSvc.Type == llm.ServiceTypeNorth {
 			if !llm.ServiceUsesResponsesAPI(serviceConfig) {
 				return nil, fmt.Errorf("fallback service %q (Cohere North) requires a primary service that uses the Responses API; %q (%s) does not", fbSvc.ID, serviceConfig.ID, serviceConfig.Type)
 			}
-			if len(cfg.EnabledNativeTools) > 0 {
-				return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", fbSvc.ID)
+			if northFallbackID == "" {
+				northFallbackID = fbSvc.ID
 			}
 		}
 		fbEntry, fbErr := serviceConfigToFallbackEntry(fbSvc)
@@ -182,7 +188,34 @@ func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConf
 		cfg.Fallbacks = append(cfg.Fallbacks, fbEntry)
 	}
 
-	return New(cfg)
+	service, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	service.serviceType = serviceConfig.Type
+	service.northFallbackID = northFallbackID
+	return service, nil
+}
+
+// ForAgent returns an LLM that sends requests with the agent's model, native
+// tools, and reasoning settings over b's Bifrost client. Every agent setting is
+// per request, so no worker pool is started. The result shares b's client:
+// shut down b, never the result.
+func (b *LLM) ForAgent(botConfig llm.BotConfig) (*LLM, error) {
+	nativeTools := filterNativeToolsForServiceType(b.serviceType, botConfig.EnabledNativeTools)
+	if b.northFallbackID != "" && len(nativeTools) > 0 {
+		return nil, fmt.Errorf("fallback service %q (Cohere North) does not support provider-native tools; disable native tools on the agent or remove the fallback", b.northFallbackID)
+	}
+
+	agent := *b
+	if botConfig.Model != "" {
+		agent.defaultModel = botConfig.Model
+	}
+	agent.enabledNativeTools = nativeTools
+	agent.reasoningEnabled = botConfig.ReasoningEnabled
+	agent.reasoningEffort = botConfig.ReasoningEffort
+	agent.thinkingBudget = botConfig.ThinkingBudget
+	return &agent, nil
 }
 
 // providerSettingsFromService maps a ServiceConfig's provider connection fields

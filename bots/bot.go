@@ -29,10 +29,6 @@ type Bot struct {
 	mmBot            *model.Bot
 	llm              llm.LanguageModel
 	providerServices *llm.ProviderServices
-	// llmEntry is the lifecycle entry behind llm, set by EnsureBots before the
-	// bot is published and never changed afterwards. It is nil for bots built
-	// outside EnsureBots (NewBot, SetLLMForTest).
-	llmEntry *agentLLMEntry
 }
 
 func (b *Bot) GetConfig() llm.BotConfig {
@@ -115,8 +111,8 @@ func (b *Bot) SandboxFileAttachmentAvailable() bool {
 	return b.HasNativeCodeExecutionEnabled() && b.ProviderServices().CanDownloadFiles()
 }
 
-func (b *Bot) SetLLMForTest(model llm.LanguageModel) {
-	b.llm = model
+func (b *Bot) SetLLMForTest(llm llm.LanguageModel) {
+	b.llm = llm
 }
 
 func (b *Bot) SetServiceForTest(service llm.ServiceConfig) {

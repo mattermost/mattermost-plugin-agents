@@ -82,6 +82,11 @@ type LLM struct {
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
+
+	// serviceType and northFallbackID are recorded by NewServiceLLM so
+	// ForAgent can validate agent settings against the service.
+	serviceType     string
+	northFallbackID string
 }
 
 // fallbackHop pairs a Bifrost fallback with the durable service ID it came

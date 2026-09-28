@@ -76,13 +76,6 @@ type MMBots struct {
 	// serviceLLMBuildMu serializes concurrent first builds. It is held across a
 	// build, so it must never be taken while holding serviceLLMMu.
 	serviceLLMBuildMu sync.Mutex
-	// agentLLMMu guards retiredAgentLLMs. It is never held while a model is
-	// being built or while waiting for an entry's leases to drain.
-	agentLLMMu sync.Mutex
-	// retiredAgentLLMs holds agent models that are no longer assigned to a
-	// live bot but may still have in-flight holders; each shuts down once
-	// its leases drain.
-	retiredAgentLLMs map[*agentLLMEntry]struct{}
 	// baseLLMBuilderForTest replaces provider client construction so tests can
 	// exercise the real wrapper chain and the registry without starting Bifrost
 	// worker pools. Always nil in production;
@@ -407,17 +400,7 @@ func (b *MMBots) EnsureBots() error {
 	}
 	botCfgs := currentBotCfgs
 
-	b.botsLock.RLock()
-	previousEntries := make([]*agentLLMEntry, 0, len(b.bots))
-	for _, bot := range b.bots {
-		if bot.llmEntry != nil {
-			previousEntries = append(previousEntries, bot.llmEntry)
-		}
-	}
-	b.botsLock.RUnlock()
-
 	var bots []*Bot
-	var builtEntries []*agentLLMEntry
 	aiBotsByUsername := make(map[string]*Bot)
 	for _, botCfg := range botCfgs {
 		if !botCfg.IsValid() {
@@ -510,18 +493,14 @@ func (b *MMBots) EnsureBots() error {
 			var ferr error
 			fallbackServices, ferr = llm.ResolveFallbackChain(bot.service.ID, b.config.GetServiceByID)
 			if ferr != nil {
-				b.shutdownAgentLLMEntries(builtEntries)
 				return fmt.Errorf("failed to resolve fallback chain for bot %s: %w", bot.cfg.Name, ferr)
 			}
 		}
 
-		model, providerServices, entry, err := b.getLLM(bot.service, bot.cfg, fallbackServices)
+		bot.llm, bot.providerServices, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
 		if err != nil {
-			b.shutdownAgentLLMEntries(builtEntries)
 			return err
 		}
-		bot.llm, bot.providerServices, bot.llmEntry = model, providerServices, entry
-		builtEntries = append(builtEntries, entry)
 	}
 
 	b.botsLock.Lock()
@@ -534,19 +513,12 @@ func (b *MMBots) EnsureBots() error {
 	copiedBotCfgs, copyErr := config.DeepCopyJSON(currentBotCfgs)
 	if copyErr != nil {
 		b.botsLock.Unlock()
-		for _, entry := range previousEntries {
-			b.retireAgentLLM(entry)
-		}
 		return fmt.Errorf("failed to deep copy bot configs for change tracking: %w", copyErr)
 	}
 	b.lastEnsuredBotCfgs = copiedBotCfgs
 	b.lastEnsuredServiceCfgs = currentServiceCfgs
 	b.forceRefresh = false
 	b.botsLock.Unlock()
-
-	for _, entry := range previousEntries {
-		b.retireAgentLLM(entry)
-	}
 
 	return nil
 }
@@ -567,17 +539,14 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-// getLLM returns the wrapped model, provider services resolved from the
-// unwrapped client, and the lifecycle entry that EnsureBots retires when the
-// agent is rebuilt or removed. Wrappers expose only LanguageModel, so
-// capabilities not captured here cannot be recovered later.
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, *agentLLMEntry, error) {
-	model, providerServices, shutdown, err := b.assembleLLM(serviceConfig, &botConfig, fallbackServices)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	entry := &agentLLMEntry{shutdown: shutdown}
-	return newAgentLLMHandle(model, entry), providerServices, entry, nil
+// getLLM returns the wrapped model plus provider services resolved from the
+// unwrapped client. Wrappers expose only LanguageModel, so capabilities not
+// captured here cannot be recovered later. The base client's shutdown handle
+// is discarded: agent LLMs are replaced wholesale by EnsureBots, and the
+// replaced clients are not currently shut down.
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
+	model, providerServices, _, err := b.assembleLLM(serviceConfig, &botConfig, fallbackServices)
+	return model, providerServices, err
 }
 
 // buildLLM assembles the wrapper chain shared by agent LLMs and service LLMs.
