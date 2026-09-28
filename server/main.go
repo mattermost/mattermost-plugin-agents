@@ -187,6 +187,8 @@ func (p *Plugin) OnActivate() error {
 
 		pluginAPI.Log.Info("Config migrated from config.json to database")
 	}
+
+	clearMigratedPluginSettings(pluginAPI)
 	mtx2.Unlock()
 
 	// Load config from DB into memory and set migrated flag
