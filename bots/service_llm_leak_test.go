@@ -67,3 +67,29 @@ func TestEnsureBotsOpenAIWorkerPoolIsSharedAndReleased(t *testing.T) {
 	}, 15*time.Second, 50*time.Millisecond, "replaced service clients leaked their worker pools")
 	t.Logf("after service changes: %+d goroutines", settleGoroutines()-afterFirst)
 }
+
+// TestEnsureBotsRejectedAgentDoesNotPinClient covers an agent whose settings
+// the service rejects after its client was built: the failed build must not
+// keep that client alive once the service is gone.
+func TestEnsureBotsRejectedAgentDoesNotPinClient(t *testing.T) {
+	const workers = schemas.DefaultConcurrency
+
+	agents := dbAgents(1, "openai-svc")
+	agents[0].EnabledNativeTools = []string{llm.NativeToolWebSearch}
+	store := &stubAgentStore{agents: agents}
+	cfg := &mockConfig{services: []llm.ServiceConfig{
+		{ID: "openai-svc", Name: "OpenAI", Type: llm.ServiceTypeOpenAI, APIKey: "sk-test", DefaultModel: "gpt-4o", FallbackServiceID: "north-svc"},
+		{ID: "north-svc", Name: "North", Type: llm.ServiceTypeNorth, APIKey: "north-key", APIURL: "http://localhost", DefaultModel: "command-a"},
+	}}
+	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
+
+	baseline := settleGoroutines()
+	err := mmBots.EnsureBots()
+	require.ErrorContains(t, err, "does not support provider-native tools")
+	require.Greater(t, settleGoroutines()-baseline, workers/2, "no client was built; the measurement is invalid")
+
+	mmBots.ReconcileServiceLLMs(nil)
+	require.Eventually(t, func() bool {
+		return settleGoroutines()-baseline < workers/2
+	}, 15*time.Second, 50*time.Millisecond, "the rejected agent kept the retired client alive")
+}
