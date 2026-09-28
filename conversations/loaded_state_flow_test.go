@@ -672,6 +672,7 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 		&model.Post{Id: "root-post-id"},
 		conv,
 		true,
+		false,
 		nil,
 	)
 	require.NoError(t, err)

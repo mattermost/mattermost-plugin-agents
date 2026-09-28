@@ -130,23 +130,55 @@ jest.mock('./tabs/config_tab', () => ({
     ),
 }));
 
-jest.mock('./tabs/access_tab', () => ({
-    __esModule: true,
-    default: ({onChange}: {onChange: (updates: Partial<AgentDraft>) => void}) => (
-        <>
-            <input
-                aria-label='Channel access'
-                type='checkbox'
-            />
-            <button
-                type='button'
-                onClick={() => onChange({userAccessLevel: 0})}
-            >
-                {'Switch user access to everyone'}
-            </button>
-        </>
-    ),
-}));
+jest.mock('./tabs/access_tab', () => {
+    const {useState} = jest.requireActual('react');
+    const Select = jest.requireActual('react-select').default;
+    const ConfirmationDialog = jest.requireActual('@/components/confirmation_dialog').default;
+
+    const MockAccessTab = ({onChange}: {onChange: (updates: Partial<AgentDraft>) => void}) => {
+        const [showNestedDialog, setShowNestedDialog] = useState(false);
+        return (
+            <>
+                <input
+                    aria-label='Channel access'
+                    type='checkbox'
+                />
+                <button
+                    type='button'
+                    onClick={() => onChange({userAccessLevel: 0})}
+                >
+                    {'Switch user access to everyone'}
+                </button>
+                <Select
+                    aria-label='Agent admins'
+                    options={[{value: 'user_1', label: 'Admin User'}]}
+                />
+                <button
+                    type='button'
+                    onClick={() => setShowNestedDialog(true)}
+                >
+                    {'Open nested dialog'}
+                </button>
+                {showNestedDialog && (
+                    <ConfirmationDialog
+                        title='Remove access policy?'
+                        titleId='nested-dialog-title'
+                        message='Nested dialog'
+                        confirmButtonText='Remove'
+                        onConfirm={() => setShowNestedDialog(false)}
+                        onCancel={() => setShowNestedDialog(false)}
+                        managedAccessibility={true}
+                    />
+                )}
+            </>
+        );
+    };
+
+    return {
+        __esModule: true,
+        default: MockAccessTab,
+    };
+});
 
 jest.mock('./tabs/mcps_tab', () => ({
     __esModule: true,
@@ -434,6 +466,41 @@ describe('AgentConfigView', () => {
 
         expect(onBack).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test.each([
+        {
+            name: 'closing an open react-select menu',
+            dismissChild: () => {
+                const input = screen.getByLabelText('Agent admins');
+                fireEvent.keyDown(input, {key: 'ArrowDown'});
+                expect(screen.getByText('Admin User')).not.toBeNull();
+
+                fireEvent.keyDown(input, {key: 'Escape'});
+                expect(screen.queryByText('Admin User')).toBeNull();
+            },
+        },
+        {
+            name: 'cancelling a nested confirmation dialog',
+            dismissChild: () => {
+                fireEvent.click(screen.getByRole('button', {name: 'Open nested dialog'}));
+                expect(screen.getByRole('dialog', {name: 'Remove access policy?'})).not.toBeNull();
+
+                fireEvent.keyDown(document, {key: 'Escape'});
+                expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull();
+            },
+        },
+    ])('Escape used for $name stays on the page; a plain Escape still goes back', ({dismissChild}) => {
+        const {onBack} = renderView();
+        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+
+        dismissChild();
+
+        expect(onBack).not.toHaveBeenCalled();
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        expect(onBack).toHaveBeenCalledTimes(1);
     });
 
     test('serializes dynamic tool loading default true on create', async () => {

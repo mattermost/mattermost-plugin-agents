@@ -8,7 +8,7 @@ This guide covers installing, configuring, and managing the Mattermost Agents pl
 
 Before installing the Agents plugin, ensure your environment meets these requirements:
 
-- Mattermost Server v11.11.0+
+- Mattermost Server v12.0.0+
 - PostgreSQL database
 - For semantic search: PostgreSQL with pgvector extension
 - Network access to your chosen LLM provider
@@ -353,7 +353,7 @@ Attribute-based access control lets you restrict who can use agents, LLM service
 
 **Prerequisites:**
 
-- A Mattermost server (v11.11.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
+- A Mattermost server (v12.0.0 or later) with attribute-based access control enabled and licensed (Enterprise Advanced). The plugin probes the server and hides all ABAC UI when the feature is unavailable. On servers without ABAC: legacy access modes keep their user/team-list checks, services and MCP servers are unrestricted — but **agents in attribute-based mode are unusable** (every user is denied, since the plugin cannot check whether a policy restricts them) until the server is upgraded or the agent is switched to a legacy access mode.
 - User attributes (custom profile attributes) configured on the server, since policies are written against them.
 
 **Policy-addressable resources.** Policies always grant or deny the `use` action for one resource:
@@ -868,14 +868,6 @@ The plugin also registers an extended catalog of read and write tools spanning M
 - **Integrations**: get_bot, list_bots, list_incoming_webhooks, list_outgoing_webhooks
 - **Groups**: get_group_info, list_groups, get_user_groups, get_channel_groups, get_team_groups, get_users_in_group_channels
 - **Roles & permissions**: get_role, get_channel_moderations, ⚠ update_channel_member_roles, ⚠ update_team_member_roles
-
-When the Channel Automation plugin is installed, the MCP server also exposes the following tools. They proxy requests to that plugin; execution follows the same MCP tool policies as other tools and each user's Mattermost permissions.
-
-- **list_automations**: List channel automations, filter them by channel, or retrieve a specific automation by ID
-- **get_automation_instructions**: Retrieve the Channel Automation plugin's current automation authoring guidance
-- **create_automation**: Create a channel automation
-- **update_automation**: Update a channel automation
-- **delete_automation**: Delete a channel automation
 
 These are the native Mattermost tools included by the Agents plugin itself. Plugin-registered MCP tools are configured separately in the **Tools** tab and are not part of the built-in list above.
 

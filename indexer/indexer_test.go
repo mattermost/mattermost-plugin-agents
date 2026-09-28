@@ -837,6 +837,26 @@ func waitForJobStatus(t *testing.T, store *jobKVStore, want string, timeout time
 	return status
 }
 
+// waitForStoredModelName waits for IndexerModelKey, which a finishing job writes
+// only after its row has already flipped to completed.
+func waitForStoredModelName(t *testing.T, store *jobKVStore, want string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		got := store.model
+		store.mu.Unlock()
+		if got != nil && got.ModelName == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.NotNil(t, store.model, "timed out waiting for stored model %q", want)
+	require.Equal(t, want, store.model.ModelName, "timed out waiting for stored model")
+}
+
 func waitForStoredRetentionDays(t *testing.T, store *jobKVStore, want int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -948,9 +968,8 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 			require.NotNil(t, completed.ModelInfo)
 			assert.Equal(t, "model-a", completed.ModelInfo.ModelName, "resume must carry the original snapshot")
 
+			waitForStoredModelName(t, store, tt.wantStoredModel, 5*time.Second)
 			store.mu.Lock()
-			require.NotNil(t, store.model)
-			assert.Equal(t, tt.wantStoredModel, store.model.ModelName)
 			assert.Equal(t, 1536, store.model.Dimensions)
 			store.mu.Unlock()
 
@@ -1001,12 +1020,10 @@ func TestResumeRefreshesModelInfo(t *testing.T) {
 		assert.Nil(t, completed.ModelInfo, "catch-up must not set a model snapshot")
 		assert.Equal(t, JobOperationCatchUp, completed.Operation)
 
+		waitForStoredRetentionDays(t, store, 0, 5*time.Second)
 		store.mu.Lock()
-		require.NotNil(t, store.model)
 		assert.Equal(t, "old-model", store.model.ModelName, "catch-up must not rewrite model identity")
 		assert.Equal(t, 768, store.model.Dimensions)
-		require.NotNil(t, store.model.IndexRetentionDays)
-		assert.Equal(t, 0, *store.model.IndexRetentionDays)
 		store.mu.Unlock()
 	})
 }
@@ -3501,12 +3518,13 @@ func TestResumePreservation(t *testing.T) {
 			Return(nil)
 
 		var savedJobStatus *JobStatus
+		// Once: only capture StartReindexJob's synchronous commit, not the worker's later writes.
 		mockClient.On("KVCompareAndSet", ReindexJobKey, mock.AnythingOfType("indexer.JobStatus"), mock.AnythingOfType("indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(2).(JobStatus)
 				savedJobStatus = &status
 			}).
-			Return(true, nil)
+			Return(true, nil).Once()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
@@ -3558,12 +3576,14 @@ func TestResumePreservation(t *testing.T) {
 
 		// Capture the new job status
 		var savedJobStatus *JobStatus
+		// Once: KVGet always reports not-found here, so the worker's progress
+		// writes also CAS against nil and would otherwise overwrite the capture.
 		mockClient.On("KVCompareAndSet", ReindexJobKey, nil, mock.AnythingOfType("indexer.JobStatus")).
 			Run(func(args mock.Arguments) {
 				status := args.Get(2).(JobStatus)
 				savedJobStatus = &status
 			}).
-			Return(true, nil)
+			Return(true, nil).Once()
 		mockClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Return(true, nil).Maybe()
 		mockClient.On("KVSet", mock.Anything, mock.Anything).Return(nil).Maybe()
 		mockClient.On("KVGet", mock.Anything, mock.Anything).Return(mmapi.ErrKVNotFound).Maybe()
