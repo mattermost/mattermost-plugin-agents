@@ -9,74 +9,80 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"regexp"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"go.opentelemetry.io/otel/codes"
 )
 
-const defaultBraveSearchEndpoint = "https://api.search.brave.com"
+const (
+	defaultBraveSearchEndpoint = "https://api.search.brave.com"
 
-// BraveProvider implements the Provider interface for Brave Search API.
+	// defaultBraveResultLimit is used when the caller does not specify a limit.
+	defaultBraveResultLimit = 5
+	// maxBraveResultLimit is the ceiling Brave enforces on maximum_number_of_urls.
+	maxBraveResultLimit = 50
+	// defaultBraveMaxTokens is the approximate token budget Brave applies
+	// across all extracted page content in a single response, used when the
+	// admin has not set one. Deliberately below Brave's own 8192 default:
+	// agents may run several searches per turn, and oversized tool results
+	// push older conversation posts out of the model's context window.
+	defaultBraveMaxTokens = 4096
+	// minBraveMaxTokens and maxBraveMaxTokens are the bounds Brave enforces on
+	// maximum_number_of_tokens.
+	minBraveMaxTokens = 1024
+	maxBraveMaxTokens = 32768
+)
+
+// BraveProvider implements the Provider interface for the Brave LLM Context
+// API, which returns page content already extracted for LLM grounding.
 type BraveProvider struct {
-	apiKey       string
-	apiURL       string
-	httpClient   *http.Client
-	logger       Logger
-	pollTimeout  time.Duration
-	pollInterval time.Duration
+	apiKey     string
+	apiURL     string
+	maxTokens  int
+	httpClient *http.Client
+	logger     Logger
 }
 
-// NewBraveProvider creates a new BraveProvider instance.
-func NewBraveProvider(apiKey, apiURL string, pollTimeout, pollInterval int, httpClient *http.Client, logger Logger) *BraveProvider {
+// NewBraveProvider creates a new BraveProvider instance. maxTokens is the
+// approximate budget for extracted page content; zero selects the default and
+// out-of-range values are clamped to what Brave accepts.
+func NewBraveProvider(apiKey, apiURL string, maxTokens int, httpClient *http.Client, logger Logger) *BraveProvider {
 	if apiURL == "" {
 		apiURL = defaultBraveSearchEndpoint
 	}
-	timeout := time.Duration(pollTimeout) * time.Second
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	interval := time.Duration(pollInterval) * time.Millisecond
-	if interval <= 0 {
-		interval = 250 * time.Millisecond
+	switch {
+	case maxTokens <= 0:
+		maxTokens = defaultBraveMaxTokens
+	case maxTokens < minBraveMaxTokens:
+		maxTokens = minBraveMaxTokens
+	case maxTokens > maxBraveMaxTokens:
+		maxTokens = maxBraveMaxTokens
 	}
 	return &BraveProvider{
-		apiKey:       apiKey,
-		apiURL:       apiURL,
-		httpClient:   httpClient,
-		logger:       logger,
-		pollTimeout:  timeout,
-		pollInterval: interval,
+		apiKey:     apiKey,
+		apiURL:     apiURL,
+		maxTokens:  maxTokens,
+		httpClient: httpClient,
+		logger:     logger,
 	}
 }
 
-// Search performs a Brave Search and returns the results with optional pre-formatted answer.
+// Search performs a Brave LLM Context search and returns the extracted content
+// for each source. Brave does not synthesize an answer on this endpoint, so
+// SearchResponse.Answer is always empty and the calling agent writes its own
+// answer from the results.
 func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*SearchResponse, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "brave web search")
 	defer span.End()
 
 	if limit <= 0 {
-		limit = 5
+		limit = defaultBraveResultLimit
 	}
-	if limit > 10 {
-		limit = 10
+	if limit > maxBraveResultLimit {
+		limit = maxBraveResultLimit
 	}
-
-	// Step 1: Initial web search with summary request
-	webSearchURL := fmt.Sprintf("%s/res/v1/web/search", strings.TrimSuffix(b.apiURL, "/"))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, webSearchURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create web search request: %w", err)
-	}
-
-	values := url.Values{}
-	values.Set("q", query)
-	values.Set("summary", "1")
-	req.URL.RawQuery = values.Encode()
-	req.Header.Set("X-Subscription-Token", b.apiKey)
-	req.Header.Set("Accept", "application/json")
 
 	client := b.httpClient
 	if client == nil {
@@ -86,204 +92,111 @@ func (b *BraveProvider) Search(ctx context.Context, query string, limit int) (*S
 		return nil, fmt.Errorf("web search http client is not configured")
 	}
 
+	contextURL := fmt.Sprintf("%s/res/v1/llm/context", strings.TrimSuffix(b.apiURL, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, contextURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create brave llm context request: %w", err)
+	}
+
+	values := url.Values{}
+	values.Set("q", query)
+	values.Set("maximum_number_of_urls", strconv.Itoa(limit))
+	values.Set("maximum_number_of_tokens", strconv.Itoa(b.maxTokens))
+	req.URL.RawQuery = values.Encode()
+	req.Header.Set("X-Subscription-Token", b.apiKey)
+	req.Header.Set("Accept", "application/json")
+
 	resp, err := client.Do(req)
 	if err != nil {
 		if b.logger != nil {
-			b.logger.Error("brave web search request failed", "error", err)
+			b.logger.Error("brave llm context request failed", "error", err)
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return nil, fmt.Errorf("brave web search request failed: %w", err)
+		return nil, fmt.Errorf("brave llm context request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("brave web search request failed: status %s", resp.Status)
+		err := fmt.Errorf("brave llm context request failed: status %s", resp.Status)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
 	}
 
-	var webSearchResp braveWebSearchResponse
-	err = json.NewDecoder(resp.Body).Decode(&webSearchResp)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode brave web search response: %w", err)
+	var contextResp braveLLMContextResponse
+	if err := json.NewDecoder(resp.Body).Decode(&contextResp); err != nil {
+		return nil, fmt.Errorf("failed to decode brave llm context response: %w", err)
 	}
 
-	// Build fallback results from web search response
-	fallbackResults := b.extractWebResults(webSearchResp, limit)
-
-	// Step 2: Check for summarizer key and fetch summary if available
-	if webSearchResp.Summarizer.Key == "" {
-		if b.logger != nil {
-			b.logger.Debug("no summarizer key found, returning web results only")
-		}
-		return &SearchResponse{
-			Answer:  "",
-			Results: fallbackResults,
-		}, nil
-	}
-
-	// Fetch the summary using the key
-	summarizerURL := fmt.Sprintf("%s/res/v1/summarizer/search", strings.TrimSuffix(b.apiURL, "/"))
-	summaryReq, err := http.NewRequestWithContext(ctx, http.MethodGet, summarizerURL, nil)
-	if err != nil {
-		if b.logger != nil {
-			b.logger.Warn("failed to create summarizer request, using fallback", "error", err)
-		}
-		return &SearchResponse{
-			Answer:  "",
-			Results: fallbackResults,
-		}, nil
-	}
-
-	summaryValues := url.Values{}
-	summaryValues.Set("key", webSearchResp.Summarizer.Key)
-	summaryValues.Set("entity_info", "1")
-	summaryReq.URL.RawQuery = summaryValues.Encode()
-	summaryReq.Header.Set("X-Subscription-Token", b.apiKey)
-	summaryReq.Header.Set("Accept", "application/json")
-
-	// Poll for completion
-	summary, err := b.pollSummarizer(ctx, client, summaryReq)
-	if err != nil {
-		if b.logger != nil {
-			b.logger.Warn("failed to get summary, using fallback", "error", err)
-		}
-		return &SearchResponse{
-			Answer:  "",
-			Results: fallbackResults,
-		}, nil
-	}
-
-	// Extract all context results - keep the full array so citations map directly
-	// Brave's [1] will point to our result [1], [7] to result [7], etc.
-	allContextResults := b.extractContextResults(summary.Enrichments.Context, len(summary.Enrichments.Context))
-
-	// If no context results, use fallback
-	if len(allContextResults) == 0 {
-		return &SearchResponse{
-			Answer:  "",
-			Results: fallbackResults,
-		}, nil
-	}
-
-	// Simple citation conversion: [N] → !!CITEN!!
-	// No remapping needed since we're returning all results in order
-	answer := b.convertBraveCitations(summary.Enrichments.Raw)
-
-	// Return ALL context results - this keeps citation indices aligned
-	// and gives the LLM access to all sources for additional context
 	return &SearchResponse{
-		Answer:  answer,
-		Results: allContextResults,
+		Answer:  "",
+		Results: b.extractResults(contextResp, limit),
 	}, nil
 }
 
-// pollSummarizer polls the summarizer endpoint until status is complete or timeout.
-func (b *BraveProvider) pollSummarizer(ctx context.Context, client *http.Client, req *http.Request) (*braveSummarizerResponse, error) {
-	deadline := time.Now().Add(b.pollTimeout)
-
-	for {
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("summarizer polling timed out after %v", b.pollTimeout)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("summarizer request failed: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("summarizer request failed: status %s", resp.Status)
-		}
-
-		var summaryResp braveSummarizerResponse
-		if err := json.NewDecoder(resp.Body).Decode(&summaryResp); err != nil {
-			resp.Body.Close()
-			return nil, fmt.Errorf("failed to decode summarizer response: %w", err)
-		}
-		resp.Body.Close()
-
-		if summaryResp.Status == "complete" {
-			return &summaryResp, nil
-		}
-
-		if b.logger != nil {
-			b.logger.Debug("summarizer not ready, polling again", "status", summaryResp.Status)
-		}
-
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(b.pollInterval):
-			// Continue polling
-		}
-	}
-}
-
-// extractWebResults extracts search results from the web search response.
-func (b *BraveProvider) extractWebResults(resp braveWebSearchResponse, limit int) []SearchResult {
+// extractResults flattens the grounding payload into search results, using the
+// sources map to fill in a title when the grounding entry does not carry one.
+func (b *BraveProvider) extractResults(resp braveLLMContextResponse, limit int) []SearchResult {
 	results := make([]SearchResult, 0, limit)
-	for i, item := range resp.Web.Results {
-		if i >= limit {
+	for _, item := range resp.Grounding.Generic {
+		if len(results) >= limit {
 			break
 		}
+
+		itemURL := strings.TrimSpace(item.URL)
+		if itemURL == "" {
+			continue
+		}
+
+		title := strings.TrimSpace(item.Title)
+		if title == "" {
+			source := resp.Sources[item.URL]
+			title = strings.TrimSpace(source.Title)
+			if title == "" {
+				title = strings.TrimSpace(source.Hostname)
+			}
+		}
+
 		results = append(results, SearchResult{
-			Title:   strings.TrimSpace(item.Title),
-			URL:     strings.TrimSpace(item.URL),
-			Snippet: strings.TrimSpace(item.Description),
+			Title:   title,
+			URL:     itemURL,
+			Snippet: joinSnippets(item.Snippets),
 		})
 	}
+
 	return results
 }
 
-// extractContextResults extracts search results from the summarizer context array.
-func (b *BraveProvider) extractContextResults(contexts []braveContextItem, limit int) []SearchResult {
-	results := make([]SearchResult, 0, limit)
-	for i, item := range contexts {
-		if i >= limit {
-			break
+// joinSnippets concatenates the extracted chunks for a single page, dropping
+// blank ones. Chunks may be plain text or JSON-serialized structured data
+// (tables, code blocks); both are passed through to the model unchanged.
+func joinSnippets(snippets []string) string {
+	parts := make([]string, 0, len(snippets))
+	for _, snippet := range snippets {
+		if trimmed := strings.TrimSpace(snippet); trimmed != "" {
+			parts = append(parts, trimmed)
 		}
-		results = append(results, SearchResult{
-			Title:   strings.TrimSpace(item.Title),
-			URL:     strings.TrimSpace(item.URL),
-			Snippet: "", // Context items don't have snippets
-		})
 	}
-	return results
+	return strings.Join(parts, "\n\n")
 }
 
-// convertBraveCitations converts Brave's [1], [2] citation format to !!CITE1!!, !!CITE2!! format.
-// Since we return all context results in order, the indices map directly.
-func (b *BraveProvider) convertBraveCitations(text string) string {
-	// Replace [digit] with !!CITEdigit!!
-	re := regexp.MustCompile(`\[(\d+)\]`)
-	return re.ReplaceAllString(text, "!!CITE$1!!")
+type braveLLMContextResponse struct {
+	Grounding braveGrounding         `json:"grounding"`
+	Sources   map[string]braveSource `json:"sources"`
 }
 
-type braveWebSearchResponse struct {
-	Summarizer struct {
-		Key string `json:"key"`
-	} `json:"summarizer"`
-	Web struct {
-		Results []struct {
-			Title       string `json:"title"`
-			URL         string `json:"url"`
-			Description string `json:"description"`
-		} `json:"results"`
-	} `json:"web"`
+type braveGrounding struct {
+	Generic []braveGroundingItem `json:"generic"`
 }
 
-type braveSummarizerResponse struct {
-	Type        string `json:"type"`
-	Status      string `json:"status"`
-	Title       string `json:"title"`
-	Enrichments struct {
-		Raw     string             `json:"raw"`
-		Context []braveContextItem `json:"context"`
-	} `json:"enrichments"`
+type braveGroundingItem struct {
+	URL      string   `json:"url"`
+	Title    string   `json:"title"`
+	Snippets []string `json:"snippets"`
 }
 
-type braveContextItem struct {
-	Title string `json:"title"`
-	URL   string `json:"url"`
+type braveSource struct {
+	Title    string `json:"title"`
+	Hostname string `json:"hostname"`
 }

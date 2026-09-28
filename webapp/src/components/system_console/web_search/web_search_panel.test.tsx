@@ -33,7 +33,7 @@ const enabledConfig: WebSearchConfig = {
     enabled: true,
     provider: 'brave',
     google: {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''},
-    brave: {apiKey: '', resultLimit: 5, apiURL: ''},
+    brave: {apiKey: '', resultLimit: 5, apiURL: '', maxTokens: 4096},
     searxng: {baseURL: '', resultLimit: 5},
     domainDenylist: [],
 };

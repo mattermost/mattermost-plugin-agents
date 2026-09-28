@@ -179,8 +179,7 @@ func (s *webSearchService) Tool() *llm.Tool {
 		s.provider = websearch.NewBraveProvider(
 			webCfg.Brave.APIKey,
 			webCfg.Brave.APIURL,
-			webCfg.Brave.PollTimeout,
-			webCfg.Brave.PollInterval,
+			webCfg.Brave.MaxTokens,
 			s.httpClient,
 			s.logger,
 		)
