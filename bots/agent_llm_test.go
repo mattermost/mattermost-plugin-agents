@@ -62,78 +62,85 @@ func (m *staticLanguageModel) CountTokens(context.Context, llm.CompletionRequest
 func (m *staticLanguageModel) InputTokenLimit() int  { return 4096 }
 func (m *staticLanguageModel) OutputTokenLimit() int { return 4096 }
 
-func requireAgentShutdownIDs(t *testing.T, builder *fakeServiceLLMBuilder, want []string) {
+// requireShutdownIDsAfterGC waits for retired clients to shut down. Agent
+// handles release their lease when collected, so the wait forces GC.
+func requireShutdownIDsAfterGC(t *testing.T, builder *fakeServiceLLMBuilder, want []string) {
 	t.Helper()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		runtime.GC()
 		runtime.GC()
-		assert.Equal(c, want, builder.shutdownIDs())
+		assert.ElementsMatch(c, want, builder.shutdownIDs())
 	}, 5*time.Second, 10*time.Millisecond)
 }
 
-func newAgentLLMTestBots(t *testing.T) (*MMBots, *stubAgentStore, *fakeServiceLLMBuilder) {
+func newAgentLLMTestBots(t *testing.T, agents int) (*MMBots, *mockConfig, *stubAgentStore, *fakeServiceLLMBuilder) {
 	t.Helper()
 
-	store := &stubAgentStore{
-		agents: dbAgents(1, "svc"),
-	}
-	cfg := &mockConfig{
-		services: []llm.ServiceConfig{openAIService("svc", "")},
-	}
+	store := &stubAgentStore{agents: dbAgents(agents, "svc")}
+	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
 	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 	builder := &fakeServiceLLMBuilder{}
 	mmBots.SetBaseLLMBuilderForTest(builder.build)
-	return mmBots, store, builder
+	return mmBots, cfg, store, builder
 }
 
-func TestEnsureBotsShutsDownReplacedAgentLLM(t *testing.T) {
-	mmBots, store, builder := newAgentLLMTestBots(t)
+func TestEnsureBotsAgentsShareServiceClient(t *testing.T) {
+	mmBots, cfg, _, builder := newAgentLLMTestBots(t, 3)
 
 	require.NoError(t, mmBots.EnsureBots())
-	require.Equal(t, 1, builder.buildCount())
-	assert.Empty(t, builder.shutdownIDs())
+	require.Len(t, mmBots.GetAllBots(), 3)
+	require.Equal(t, 1, builder.buildCount(), "agents on one service must share its provider client")
 
-	store.agents[0].CustomInstructions = "changed"
-	require.NoError(t, mmBots.EnsureBots())
-	require.Equal(t, 2, builder.buildCount())
-
-	requireAgentShutdownIDs(t, builder, []string{"svc"})
+	_, release, err := mmBots.AcquireServiceLLM(cfg.services[0], nil)
+	require.NoError(t, err)
+	release()
+	require.Equal(t, 1, builder.buildCount(), "direct service calls must share the agents' provider client")
 }
 
-func TestEnsureBotsUnchangedSkipsRebuildAndShutdown(t *testing.T) {
-	mmBots, _, builder := newAgentLLMTestBots(t)
+func TestEnsureBotsAgentChangesReuseServiceClient(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*llm.BotConfig)
+	}{
+		{name: "custom instructions", change: func(a *llm.BotConfig) { a.CustomInstructions = "changed" }},
+		{name: "model override", change: func(a *llm.BotConfig) { a.Model = "gpt-5" }},
+		{name: "native tools", change: func(a *llm.BotConfig) { a.EnabledNativeTools = []string{llm.NativeToolWebSearch} }},
+		{name: "reasoning", change: func(a *llm.BotConfig) { a.ReasoningEnabled = true; a.ReasoningEffort = "high" }},
+	}
 
-	require.NoError(t, mmBots.EnsureBots())
-	initial := mmBots.GetAllBots()[0].LLM()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mmBots, _, store, builder := newAgentLLMTestBots(t, 2)
 
-	require.NoError(t, mmBots.EnsureBots())
-	require.Same(t, initial, mmBots.GetAllBots()[0].LLM())
-	require.Equal(t, 1, builder.buildCount())
-	assert.Empty(t, builder.shutdownIDs())
+			require.NoError(t, mmBots.EnsureBots())
+			before := mmBots.GetAllBots()[0].LLM()
+
+			tt.change(&store.agents[0])
+			require.NoError(t, mmBots.EnsureBots())
+			require.NotSame(t, before, mmBots.GetAllBots()[0].LLM(), "the agent must be rebuilt")
+
+			require.Equal(t, 1, builder.buildCount())
+			runtime.GC()
+			runtime.GC()
+			assert.Empty(t, builder.shutdownIDs())
+		})
+	}
 }
 
-func TestEnsureBotsInFlightRequestSurvivesReplace(t *testing.T) {
+func TestEnsureBotsServiceChangeKeepsClientForInFlightRequest(t *testing.T) {
 	store := &stubAgentStore{agents: dbAgents(1, "svc")}
 	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
 	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
 
 	first := &staticLanguageModel{response: "first", started: make(chan struct{}), release: make(chan struct{}), block: true}
 	second := &staticLanguageModel{response: "second"}
-	var builds int
-	var shutdowns int
-	var shutdownMu sync.Mutex
-	mmBots.SetBaseLLMBuilderForTest(func(llm.ServiceConfig, llm.BotConfig, []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-		builds++
-		n := builds
-		model := second
-		if n == 1 {
-			model = first
+	builder := &fakeServiceLLMBuilder{}
+	mmBots.SetBaseLLMBuilderForTest(func(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+		_, shutdown, err := builder.build(svc, fallbacks)
+		if builder.buildCount() == 1 {
+			return first, shutdown, err
 		}
-		return model, func() {
-			shutdownMu.Lock()
-			shutdowns++
-			shutdownMu.Unlock()
-		}, nil
+		return second, shutdown, err
 	})
 
 	require.NoError(t, mmBots.EnsureBots())
@@ -148,59 +155,40 @@ func TestEnsureBotsInFlightRequestSurvivesReplace(t *testing.T) {
 	}()
 	<-first.started
 
-	store.agents[0].CustomInstructions = "changed"
+	cfg.services[0].APIKey = "rotated"
 	require.NoError(t, mmBots.EnsureBots())
-	require.Equal(t, 2, builds)
+	mmBots.ReconcileServiceLLMs(cfg.services)
+	require.Equal(t, 2, builder.buildCount())
 
-	shutdownMu.Lock()
-	assert.Equal(t, 0, shutdowns, "in-flight holder must keep the replaced client alive")
-	shutdownMu.Unlock()
+	runtime.GC()
+	runtime.GC()
+	assert.Empty(t, builder.shutdownIDs(), "an in-flight holder must keep the replaced client alive")
 
 	close(first.release)
 	require.NoError(t, <-errCh)
 	require.Equal(t, "first", <-done)
 
+	answer, err := mmBots.GetAllBots()[0].LLM().ChatCompletionNoStream(context.Background(), llm.CompletionRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "second", answer)
+
 	held = nil
-	require.Eventually(t, func() bool {
-		runtime.GC()
-		runtime.GC()
-		shutdownMu.Lock()
-		defer shutdownMu.Unlock()
-		return shutdowns == 1
-	}, 5*time.Second, time.Millisecond)
+	requireShutdownIDsAfterGC(t, builder, []string{"svc"})
 }
 
-func TestShutdownAgentLLMsReleasesLiveAndRetired(t *testing.T) {
-	mmBots, store, builder := newAgentLLMTestBots(t)
+func TestShutdownServiceLLMsReleasesAgentClients(t *testing.T) {
+	mmBots, cfg, _, builder := newAgentLLMTestBots(t, 1)
 
 	require.NoError(t, mmBots.EnsureBots())
 	held := mmBots.GetAllBots()[0].LLM()
 
-	store.agents[0].CustomInstructions = "changed"
+	cfg.services[0].APIKey = "rotated"
 	require.NoError(t, mmBots.EnsureBots())
 
-	mmBots.ShutdownAgentLLMs()
+	mmBots.ShutdownServiceLLMs()
 	require.ElementsMatch(t, []string{"svc", "svc"}, builder.shutdownIDs())
 
-	_ = held
-}
-
-func TestEnsureBotsFailedBuildShutsDownAlreadyBuilt(t *testing.T) {
-	store := &stubAgentStore{agents: dbAgents(2, "svc")}
-	cfg := &mockConfig{services: []llm.ServiceConfig{openAIService("svc", "")}}
-	mmBots := newEnsureBotsHarness(t, cfg, store, enterpriseAdvancedLicense())
-
-	builder := &fakeServiceLLMBuilder{}
-	mmBots.SetBaseLLMBuilderForTest(func(svc llm.ServiceConfig, botCfg llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-		if botCfg.Name == "agent2" {
-			return nil, nil, assert.AnError
-		}
-		return builder.build(svc, botCfg, fallbacks)
-	})
-
-	require.Error(t, mmBots.EnsureBots())
-	require.Empty(t, mmBots.GetAllBots())
-	require.Equal(t, []string{"svc"}, builder.shutdownIDs())
+	runtime.KeepAlive(held)
 }
 
 func TestReleaseStreamWhenConsumedDropsLeaseOnCancel(t *testing.T) {

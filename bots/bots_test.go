@@ -102,6 +102,16 @@ func allowBotsLogging(mockAPI *plugintest.API) {
 	}
 }
 
+// agentBaseLLM returns the unwrapped model an agent on svc would get.
+func agentBaseLLM(mmBots *MMBots, svc llm.ServiceConfig, botCfg llm.BotConfig) (llm.LanguageModel, error) {
+	client, err := mmBots.newProviderClient(svc, nil)
+	if err != nil {
+		return nil, err
+	}
+	model, _, err := client.forAgent(botCfg)
+	return model, err
+}
+
 func loadTestService(raw json.RawMessage) llm.ServiceConfig {
 	return llm.ServiceConfig{
 		ID:                 "loadtest-svc",
@@ -160,7 +170,7 @@ func TestGetBaseLLMLoadTestMockReturnsMock(t *testing.T) {
 		"profile_summary", mock.MatchedBy(func(summary string) bool { return summary != "" }),
 	).Return().Once()
 
-	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, err := agentBaseLLM(mmBots, loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot())
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	mockAPI.AssertExpectations(t)
@@ -173,7 +183,7 @@ func TestGetLLMLoadTestMockUsesWrapperChain(t *testing.T) {
 
 	mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	model, providerServices, _, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
+	model, providerServices, err := mmBots.getLLM(loadTestService(buildTinyLoadTestProfile(t, nil)), loadTestBot(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, model)
 	require.Equal(t, 100000, model.InputTokenLimit())
@@ -201,9 +211,9 @@ func TestGetLLMResolvesProviderServicesThroughWrapperChain(t *testing.T) {
 		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
 	}
 
-	model, providerServices, entry, err := mmBots.getLLM(service, botCfg, nil)
+	model, providerServices, err := mmBots.getLLM(service, botCfg, nil)
 	require.NoError(t, err)
-	t.Cleanup(entry.shutdownNow)
+	t.Cleanup(mmBots.ShutdownServiceLLMs)
 	require.NotNil(t, model)
 
 	require.True(t, providerServices.CanDownloadFiles(), "an Anthropic bot must expose provider file download")
@@ -227,9 +237,9 @@ func TestGetLLMProviderServicesForNonDownloadableProvider(t *testing.T) {
 		EnabledNativeTools: []string{llm.NativeToolCodeInterpreter},
 	}
 
-	_, providerServices, entry, err := mmBots.getLLM(service, botCfg, nil)
+	_, providerServices, err := mmBots.getLLM(service, botCfg, nil)
 	require.NoError(t, err)
-	t.Cleanup(entry.shutdownNow)
+	t.Cleanup(mmBots.ShutdownServiceLLMs)
 	require.False(t, providerServices.CanDownloadFiles())
 }
 
@@ -237,12 +247,12 @@ func TestGetLLMLoadTestMockInvalidProfileJSON(t *testing.T) {
 	cfg := &mockConfig{}
 	mmBots := newTestMMBots(t, cfg)
 
-	_, _, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
+	_, _, err := mmBots.getLLM(loadTestService(json.RawMessage(`{`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 	require.Contains(t, err.Error(), "loadtest profile")
 
-	_, _, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
+	_, _, err = mmBots.getLLM(loadTestService(json.RawMessage(`{"unknown_top_level":true}`)), loadTestBot(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to parse load-test mock profile")
 }
@@ -277,7 +287,7 @@ func TestGetBaseLLMLoadTestMockEmptyConfigUsesDefaultProfile(t *testing.T) {
 	svc := loadTestService(nil)
 	svc.LoadTestMockConfig = nil
 
-	model, _, err := mmBots.getBaseLLM(svc, loadTestBot(), nil)
+	model, err := agentBaseLLM(mmBots, svc, loadTestBot())
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)
@@ -307,7 +317,7 @@ func TestGetBaseLLMLoadTestMockProfileWeightOverride(t *testing.T) {
 		"realistic_fast":    0.0,
 		"realistic_slow":    0.0,
 	}
-	model, _, err := mmBots.getBaseLLM(loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot(), nil)
+	model, err := agentBaseLLM(mmBots, loadTestService(buildTinyLoadTestProfile(t, weights)), loadTestBot())
 	require.NoError(t, err)
 	require.IsType(t, &loadtest.MockLLM{}, model)
 	require.NotEmpty(t, summary)
@@ -929,7 +939,7 @@ func (s *stubAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 
 // newEnsureBotsHarness returns an MMBots whose plugin API accepts every call
 // EnsureBots makes, so tests can drive real rebuilds against cfg and store.
-// Agent and service LLMs are shut down when the test ends.
+// Provider clients are shut down when the test ends.
 func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore, license *model.License) *MMBots {
 	t.Helper()
 
@@ -949,7 +959,6 @@ func newEnsureBotsHarness(t *testing.T, cfg *mockConfig, store AgentStore, licen
 	allowBotsLogging(mockAPI)
 
 	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), cfg, store, newPassthroughAccessChecker(), &http.Client{}, nil)
-	t.Cleanup(mmBots.ShutdownAgentLLMs)
 	t.Cleanup(mmBots.ShutdownServiceLLMs)
 	return mmBots
 }

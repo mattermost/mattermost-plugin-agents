@@ -26,7 +26,7 @@ type fakeServiceLLMBuilder struct {
 	failWith     error
 }
 
-func (f *fakeServiceLLMBuilder) build(svc llm.ServiceConfig, _ llm.BotConfig, _ []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+func (f *fakeServiceLLMBuilder) build(svc llm.ServiceConfig, _ []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	f.mu.Lock()
 	f.builds = append(f.builds, svc)
 	beforeReturn := f.beforeReturn

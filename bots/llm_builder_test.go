@@ -162,7 +162,7 @@ func TestBuildLLMStructuredOutputPolicy(t *testing.T) {
 			mockAPI := mockPluginAPI(mmBots)
 			mockAPI.On("LogInfo", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-			model, shutdown, err := mmBots.buildLLM(tt.service, tt.botConfig, tt.fallbacks)
+			model, shutdown, err := buildTestLLM(mmBots, tt.service, tt.botConfig, tt.fallbacks)
 			require.NoError(t, err)
 			require.NotNil(t, model)
 			require.NotNil(t, shutdown)
@@ -184,7 +184,7 @@ func TestBuildLLMServiceCallKeepsServiceDefaults(t *testing.T) {
 	service := mockServiceWithPolicy("mock", llm.StructuredOutputPolicyNative)
 	service.LoadTestMockConfig = buildTinyLoadTestProfile(t, nil)
 
-	model, shutdown, err := mmBots.buildLLM(service, nil, nil)
+	model, shutdown, err := buildTestLLM(mmBots, service, nil, nil)
 	require.NoError(t, err)
 	defer shutdown()
 
@@ -315,6 +315,24 @@ func TestTokenUsageIdentity(t *testing.T) {
 }
 
 // recordingLanguageModel captures the request and options it was called with.
+// buildTestLLM builds a wrapped model outside the service LLM registry. A nil
+// botConfig builds a direct service call's model.
+func buildTestLLM(mmBots *MMBots, svc llm.ServiceConfig, botConfig *llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+	client, err := mmBots.newProviderClient(svc, fallbacks)
+	if err != nil {
+		return nil, nil, err
+	}
+	base := client.model
+	if botConfig != nil {
+		base, _, err = client.forAgent(*botConfig)
+		if err != nil {
+			client.shutdown()
+			return nil, nil, err
+		}
+	}
+	return mmBots.wrapLLM(base, svc, botConfig, fallbacks), client.shutdown, nil
+}
+
 type recordingLanguageModel struct {
 	posts  []llm.Post
 	config llm.LanguageModelConfig
