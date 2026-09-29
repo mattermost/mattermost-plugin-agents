@@ -24,6 +24,17 @@ func (f ToolPolicyFunc) GetToolPolicy(serverBaseURL string, toolName string) (st
 	return f(serverBaseURL, toolName)
 }
 
+// NewConfigToolPolicyChecker resolves effective policies against the current
+// config and license on every call. Callers pass the bare tool name (runtime
+// server namespace removed); it must not be stripped again, because MCP tool
+// names may themselves contain the separator (pluginmcp prefixes every plugin
+// tool with "{pluginID}__").
+func NewConfigToolPolicyChecker(getConfig func() Config, policiesLicensed func() bool) ToolPolicyChecker {
+	return ToolPolicyFunc(func(serverBaseURL string, toolName string) (string, bool) {
+		return LookupEffectiveToolPolicy(getConfig(), serverBaseURL, toolName, policiesLicensed())
+	})
+}
+
 // ToolPolicyLookupName returns the configured name to use for a runtime tool name.
 // Runtime MCP tools may be namespaced while persisted policy config is usually
 // stored by the server's bare tool name. An exact configured name still wins.
