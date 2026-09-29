@@ -80,7 +80,7 @@ type MMBots struct {
 	// exercise the real wrapper chain and the registry without starting Bifrost
 	// worker pools. Always nil in production;
 	// SetBaseLLMBuilderForTest is the only supported entry point.
-	baseLLMBuilderForTest func(svc llm.ServiceConfig, botConfig llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)
+	baseLLMBuilderForTest func(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)
 
 	// lastEnsuredBotCfgs stores the bot configs that were last successfully ensured.
 	// This is used for optimistic checking to avoid unnecessary cluster mutex acquisition.
@@ -96,7 +96,7 @@ type MMBots struct {
 
 // SetBaseLLMBuilderForTest installs a test-only provider client builder. The
 // wrapper chain around it stays the production one.
-func (b *MMBots) SetBaseLLMBuilderForTest(builder func(svc llm.ServiceConfig, botConfig llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)) {
+func (b *MMBots) SetBaseLLMBuilderForTest(builder func(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error)) {
 	b.baseLLMBuilderForTest = builder
 }
 
@@ -402,6 +402,9 @@ func (b *MMBots) EnsureBots() error {
 
 	var bots []*Bot
 	aiBotsByUsername := make(map[string]*Bot)
+	// Services as configured, before an agent's model override is folded into
+	// its copy. Agents share the provider client built from these.
+	servicesByID := make(map[string]llm.ServiceConfig)
 	for _, botCfg := range botCfgs {
 		if !botCfg.IsValid() {
 			b.pluginAPI.Log.Error("Configured bot is not valid", "bot_name", botCfg.Name, "bot_display_name", botCfg.DisplayName)
@@ -425,6 +428,7 @@ func (b *MMBots) EnsureBots() error {
 			// Duplicate bot names have to be fatal because they would cause a bot to be modified inappropreately.
 			return fmt.Errorf("duplicate bot name: %s", botCfg.Name)
 		}
+		servicesByID[service.ID] = service
 
 		// Use bot's model if specified, otherwise fall back to service's default model
 		if botCfg.Model != "" {
@@ -497,7 +501,7 @@ func (b *MMBots) EnsureBots() error {
 			}
 		}
 
-		bot.llm, bot.providerServices, err = b.getLLM(bot.service, bot.cfg, fallbackServices)
+		bot.llm, bot.providerServices, err = b.getLLM(servicesByID[bot.service.ID], bot.cfg, fallbackServices)
 		if err != nil {
 			return err
 		}
@@ -539,40 +543,33 @@ func (b *MMBots) ensureDefaultProfileImage(bot *Bot) {
 	}
 }
 
-// getLLM returns the wrapped model plus provider services resolved from the
-// unwrapped client. Wrappers expose only LanguageModel, so capabilities not
-// captured here cannot be recovered later. The base client's shutdown handle
-// is discarded: agent LLMs are replaced wholesale by EnsureBots, and the
-// replaced clients are not currently shut down.
-func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
-	model, providerServices, _, err := b.assembleLLM(serviceConfig, &botConfig, fallbackServices)
-	return model, providerServices, err
-}
-
-// buildLLM assembles the wrapper chain shared by agent LLMs and service LLMs.
-// botConfig carries the agent's provider capability settings (native tools,
-// reasoning) and is nil for direct service calls, which have no agent.
+// getLLM returns an agent's wrapped model plus provider services resolved from
+// the unwrapped model. Wrappers expose only LanguageModel, so capabilities not
+// captured here cannot be recovered later.
 //
-// The returned shutdown releases the underlying Bifrost client's worker pool
-// and queue. It is a no-op for the load-test mock.
-func (b *MMBots) buildLLM(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
-	model, _, shutdown, err := b.assembleLLM(serviceConfig, botConfig, fallbackServices)
-	return model, shutdown, err
+// serviceConfig must be the service as configured, without the agent's model
+// override: agents on the same service share the provider client cached for it.
+func (b *MMBots) getLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
+	entry, err := b.leaseServiceLLM(serviceConfig, fallbackServices)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer entry.inUse.Done()
+
+	base, providerServices := entry.client.model, &llm.ProviderServices{}
+	if serviceClient := entry.client.bifrost; serviceClient != nil {
+		agentLLM, err := serviceClient.ForAgent(botConfig)
+		if err != nil {
+			return nil, nil, err
+		}
+		base, providerServices = agentLLM, agentLLM.ProviderServices()
+	}
+	return b.wrapLLM(base, serviceConfig, &botConfig, fallbackServices), providerServices, nil
 }
 
-// assembleLLM builds the wrapped model, the provider services of the unwrapped
-// client, and that client's shutdown.
-func (b *MMBots) assembleLLM(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, func(), error) {
-	var effectiveBotConfig llm.BotConfig
-	if botConfig != nil {
-		effectiveBotConfig = *botConfig
-	}
-
-	base, providerServices, shutdown, err := b.newBaseLLM(serviceConfig, effectiveBotConfig, fallbackServices)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
+// wrapLLM builds the wrapper chain shared by agent LLMs and service LLMs.
+// botConfig is nil for direct service calls, which have no agent.
+func (b *MMBots) wrapLLM(base llm.LanguageModel, serviceConfig llm.ServiceConfig, botConfig *llm.BotConfig, fallbackServices []llm.ServiceConfig) llm.LanguageModel {
 	// Truncation Support
 	var result llm.LanguageModel = llm.NewLLMTruncationWrapper(base)
 
@@ -606,7 +603,7 @@ func (b *MMBots) assembleLLM(serviceConfig llm.ServiceConfig, botConfig *llm.Bot
 		result = newFallbackAccessLLM(result, b, serviceConfig.ID)
 	}
 
-	return result, providerServices, shutdown, nil
+	return result
 }
 
 // effectiveModelFor returns the model the primary service will actually run:
@@ -635,53 +632,55 @@ func tokenUsageIdentity(serviceConfig llm.ServiceConfig, botConfig *llm.BotConfi
 	return identity
 }
 
-// getBaseLLM builds the unwrapped client for a service and reports the
-// provider-side services it can perform.
-func (b *MMBots) getBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, error) {
-	model, providerServices, _, err := b.newBaseLLM(serviceConfig, botConfig, fallbackServices)
-	return model, providerServices, err
+// providerClient is the provider client behind one service and its fallback
+// chain. The service LLM registry owns it; direct service calls and every agent
+// on the service share it.
+type providerClient struct {
+	// model is the unwrapped client with no agent settings.
+	model llm.LanguageModel
+	// bifrost is set when model is a Bifrost client, which agents derive their
+	// own settings from. Other clients have no agent settings or provider
+	// services, so agents use model as is.
+	bifrost *bifrost.ServiceClient
+	// shutdown releases the Bifrost worker pool and queue. It is a no-op for
+	// the load-test mock.
+	shutdown func()
 }
 
-// newBaseLLM constructs the provider client behind a service. The returned
-// shutdown releases that client's Bifrost worker pool and queue — only the base
-// client owns it, and the wrappers assembleLLM adds hide it behind
-// llm.LanguageModel — and is a no-op for the load-test mock.
-func (b *MMBots) newBaseLLM(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (llm.LanguageModel, *llm.ProviderServices, func(), error) {
+func (b *MMBots) newProviderClient(serviceConfig llm.ServiceConfig, fallbackServices []llm.ServiceConfig) (*providerClient, error) {
 	if b.baseLLMBuilderForTest != nil {
-		model, shutdown, err := b.baseLLMBuilderForTest(serviceConfig, botConfig, fallbackServices)
+		model, shutdown, err := b.baseLLMBuilderForTest(serviceConfig, fallbackServices)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, err
 		}
-		return model, &llm.ProviderServices{}, shutdown, nil
+		return &providerClient{model: model, shutdown: shutdown}, nil
 	}
 
 	if serviceConfig.Type == llm.ServiceTypeLoadTestMock {
 		profile, err := loadtest.ParseProfile(serviceConfig.LoadTestMockConfig)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to parse load-test mock profile for bot %s: %w", botConfig.Name, err)
+			return nil, fmt.Errorf("failed to parse load-test mock profile for service %s: %w", serviceConfig.ID, err)
 		}
 		if b.pluginAPI != nil {
 			// Run-audit snapshot of the active mock profile (once per LLM init; not per request).
 			b.pluginAPI.Log.Info(
 				"Initialized load-test mock LLM",
-				"bot_name", botConfig.Name,
 				"service_id", serviceConfig.ID,
+				"service_name", serviceConfig.Name,
 				"profile_summary", profile.Summary(),
 			)
 		}
-		// The load-test mock talks to no provider, so it has no provider-side
-		// services.
-		return loadtest.NewMockLLM(profile), &llm.ProviderServices{}, func() {}, nil
+		return &providerClient{model: loadtest.NewMockLLM(profile), shutdown: func() {}}, nil
 	}
 
-	bifrostLLM, err := bifrost.NewFromServiceConfig(serviceConfig, botConfig, fallbackServices)
+	serviceClient, err := bifrost.NewServiceClient(serviceConfig, fallbackServices)
 	if err != nil {
 		if b.pluginAPI != nil {
-			b.pluginAPI.Log.Error("Unsupported service type for bot", "bot_name", botConfig.Name, "service_type", serviceConfig.Type)
+			b.pluginAPI.Log.Error("Failed to create Bifrost client for service", "service_id", serviceConfig.ID, "service_type", serviceConfig.Type)
 		}
-		return nil, nil, nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
+		return nil, fmt.Errorf("failed to create Bifrost client for %s: %w", serviceConfig.Type, err)
 	}
-	return bifrostLLM, bifrostLLM.ProviderServices(), bifrostLLM.Shutdown, nil
+	return &providerClient{model: serviceClient.LLM(), bifrost: serviceClient, shutdown: serviceClient.Shutdown}, nil
 }
 
 // TODO: This really doesn't belong here. Figure out where to put this.

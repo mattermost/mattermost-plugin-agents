@@ -13,6 +13,21 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
+// NewFromServiceConfig creates an agent's LLM that owns its Bifrost client, so
+// the caller shuts it down.
+func NewFromServiceConfig(serviceConfig llm.ServiceConfig, botConfig llm.BotConfig, fallbackServices []llm.ServiceConfig) (*LLM, error) {
+	service, err := NewServiceClient(serviceConfig, fallbackServices)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := service.ForAgent(botConfig)
+	if err != nil {
+		service.Shutdown()
+		return nil, err
+	}
+	return agent, nil
+}
+
 func TestSupportsNativeTools(t *testing.T) {
 	tests := []struct {
 		serviceType string
@@ -335,6 +350,39 @@ func TestProviderSettingsDisableStore(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestForAgentSharesServiceClient(t *testing.T) {
+	service := llm.ServiceConfig{
+		ID:           "svc-anthropic",
+		Type:         llm.ServiceTypeAnthropic,
+		APIKey:       "anthropic-key",
+		DefaultModel: "claude-sonnet-4-6",
+	}
+	client, err := NewServiceClient(service, nil)
+	require.NoError(t, err)
+	defer client.Shutdown()
+	serviceLLM := client.LLM()
+
+	agent, err := client.ForAgent(llm.BotConfig{
+		Model:              "claude-opus-4-1",
+		EnabledNativeTools: []string{llm.NativeToolWebSearch, "unsupported"},
+		ReasoningEnabled:   true,
+		ReasoningEffort:    "high",
+		ThinkingBudget:     2048,
+	})
+	require.NoError(t, err)
+
+	assert.Same(t, serviceLLM.client, agent.client, "an agent must not start its own Bifrost client")
+	assert.Equal(t, "claude-opus-4-1", agent.defaultModel)
+	assert.Equal(t, []string{llm.NativeToolWebSearch}, agent.enabledNativeTools)
+	assert.True(t, agent.reasoningEnabled)
+	assert.Equal(t, "high", agent.reasoningEffort)
+	assert.Equal(t, 2048, agent.thinkingBudget)
+
+	assert.Equal(t, "claude-sonnet-4-6", serviceLLM.defaultModel, "ForAgent must not change the service LLM")
+	assert.Empty(t, serviceLLM.enabledNativeTools)
+	assert.False(t, serviceLLM.reasoningEnabled)
 }
 
 func TestNewFromServiceConfigNorthFallbackCompatibility(t *testing.T) {

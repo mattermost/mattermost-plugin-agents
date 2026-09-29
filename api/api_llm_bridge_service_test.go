@@ -68,7 +68,7 @@ type recordingBaseLLMBuilder struct {
 	shutdowns int
 }
 
-func (r *recordingBaseLLMBuilder) build(svc llm.ServiceConfig, _ llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+func (r *recordingBaseLLMBuilder) build(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	r.mu.Lock()
 	r.builds = append(r.builds, serviceLLMBuild{svc: svc, fallbacks: fallbacks})
 	err := r.err
