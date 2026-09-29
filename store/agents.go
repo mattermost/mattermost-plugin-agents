@@ -21,6 +21,7 @@ const agentSelectColumns = `ID, BotUserID, CreatorID, DisplayName, Username, Ser
 	Model, EnableVision, DisableTools, EnabledNativeTools,
 	ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 	MaxToolTurns, UseServiceAccountAuth,
+	ExperimentalBypassToolApproval, ExperimentalUseBotPermissions,
 	CreateAt, UpdateAt, DeleteAt`
 
 // marshalJSONSlice serializes a slice for a JSON TEXT column.
@@ -49,63 +50,67 @@ func unmarshalJSONSlice[T any](raw string, target *[]T) error {
 // All JSON slice fields are stored as TEXT and scanned as strings.
 // Note: db tags must be lowercase because PostgreSQL folds unquoted identifiers to lowercase.
 type agentRow struct {
-	ID                      string `db:"id"`
-	BotUserID               string `db:"botuserid"`
-	CreatorID               string `db:"creatorid"`
-	DisplayName             string `db:"displayname"`
-	Username                string `db:"username"`
-	ServiceID               string `db:"serviceid"`
-	CustomInstructions      string `db:"custominstructions"`
-	ChannelAccessLevel      int    `db:"channelaccesslevel"`
-	ChannelIDs              string `db:"channelids"`
-	UserAccessLevel         int    `db:"useraccesslevel"`
-	UserIDs                 string `db:"userids"`
-	TeamIDs                 string `db:"teamids"`
-	AdminUserIDs            string `db:"adminuserids"`
-	EnabledTools            string `db:"enabledtools"`
-	AutoEnableNewMCPTools   bool   `db:"autoenablenewmcptools"`
-	MCPDynamicToolLoading   bool   `db:"mcp_dynamic_tool_loading"`
-	Model                   string `db:"model"`
-	EnableVision            bool   `db:"enablevision"`
-	DisableTools            bool   `db:"disabletools"`
-	EnabledNativeTools      string `db:"enablednativetools"`
-	ReasoningEnabled        bool   `db:"reasoningenabled"`
-	ReasoningEffort         string `db:"reasoningeffort"`
-	ThinkingBudget          int    `db:"thinkingbudget"`
-	StructuredOutputEnabled bool   `db:"structuredoutputenabled"`
-	MaxToolTurns            int    `db:"maxtoolturns"`
-	UseServiceAccountAuth   bool   `db:"useserviceaccountauth"`
-	CreateAt                int64  `db:"createat"`
-	UpdateAt                int64  `db:"updateat"`
-	DeleteAt                int64  `db:"deleteat"`
+	ID                             string `db:"id"`
+	BotUserID                      string `db:"botuserid"`
+	CreatorID                      string `db:"creatorid"`
+	DisplayName                    string `db:"displayname"`
+	Username                       string `db:"username"`
+	ServiceID                      string `db:"serviceid"`
+	CustomInstructions             string `db:"custominstructions"`
+	ChannelAccessLevel             int    `db:"channelaccesslevel"`
+	ChannelIDs                     string `db:"channelids"`
+	UserAccessLevel                int    `db:"useraccesslevel"`
+	UserIDs                        string `db:"userids"`
+	TeamIDs                        string `db:"teamids"`
+	AdminUserIDs                   string `db:"adminuserids"`
+	EnabledTools                   string `db:"enabledtools"`
+	AutoEnableNewMCPTools          bool   `db:"autoenablenewmcptools"`
+	MCPDynamicToolLoading          bool   `db:"mcp_dynamic_tool_loading"`
+	Model                          string `db:"model"`
+	EnableVision                   bool   `db:"enablevision"`
+	DisableTools                   bool   `db:"disabletools"`
+	EnabledNativeTools             string `db:"enablednativetools"`
+	ReasoningEnabled               bool   `db:"reasoningenabled"`
+	ReasoningEffort                string `db:"reasoningeffort"`
+	ThinkingBudget                 int    `db:"thinkingbudget"`
+	StructuredOutputEnabled        bool   `db:"structuredoutputenabled"`
+	MaxToolTurns                   int    `db:"maxtoolturns"`
+	UseServiceAccountAuth          bool   `db:"useserviceaccountauth"`
+	ExperimentalBypassToolApproval bool   `db:"experimentalbypasstoolapproval"`
+	ExperimentalUseBotPermissions  bool   `db:"experimentalusebotpermissions"`
+	CreateAt                       int64  `db:"createat"`
+	UpdateAt                       int64  `db:"updateat"`
+	DeleteAt                       int64  `db:"deleteat"`
 }
 
 // toBotConfig converts an agentRow (DB scan result) to an *llm.BotConfig.
 func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	cfg := &llm.BotConfig{
-		ID:                      r.ID,
-		BotUserID:               r.BotUserID,
-		CreatorID:               r.CreatorID,
-		DisplayName:             r.DisplayName,
-		Name:                    r.Username,
-		ServiceID:               r.ServiceID,
-		CustomInstructions:      r.CustomInstructions,
-		ChannelAccessLevel:      llm.ChannelAccessLevel(r.ChannelAccessLevel),
-		UserAccessLevel:         llm.UserAccessLevel(r.UserAccessLevel),
-		AutoEnableNewMCPTools:   r.AutoEnableNewMCPTools,
-		MCPDynamicToolLoading:   r.MCPDynamicToolLoading,
-		Model:                   r.Model,
-		EnableVision:            r.EnableVision,
-		DisableTools:            r.DisableTools,
-		ReasoningEnabled:        r.ReasoningEnabled,
-		ReasoningEffort:         r.ReasoningEffort,
-		ThinkingBudget:          r.ThinkingBudget,
-		StructuredOutputEnabled: r.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
-		MaxToolTurns:            r.MaxToolTurns,
-		UseServiceAccountAuth:   r.UseServiceAccountAuth,
-		CreateAt:                r.CreateAt,
-		UpdateAt:                r.UpdateAt,
-		DeleteAt:                r.DeleteAt,
+		ID:                             r.ID,
+		BotUserID:                      r.BotUserID,
+		CreatorID:                      r.CreatorID,
+		DisplayName:                    r.DisplayName,
+		Name:                           r.Username,
+		ServiceID:                      r.ServiceID,
+		CustomInstructions:             r.CustomInstructions,
+		ChannelAccessLevel:             llm.ChannelAccessLevel(r.ChannelAccessLevel),
+		UserAccessLevel:                llm.UserAccessLevel(r.UserAccessLevel),
+		AutoEnableNewMCPTools:          r.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:          r.MCPDynamicToolLoading,
+		Model:                          r.Model,
+		EnableVision:                   r.EnableVision,
+		DisableTools:                   r.DisableTools,
+		ReasoningEnabled:               r.ReasoningEnabled,
+		ReasoningEffort:                r.ReasoningEffort,
+		ThinkingBudget:                 r.ThinkingBudget,
+		StructuredOutputEnabled:        r.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
+		MaxToolTurns:                   r.MaxToolTurns,
+		UseServiceAccountAuth:          r.UseServiceAccountAuth,
+		ExperimentalBypassToolApproval: r.ExperimentalBypassToolApproval,
+		ExperimentalUseBotPermissions:  r.ExperimentalUseBotPermissions,
+		CreateAt:                       r.CreateAt,
+		UpdateAt:                       r.UpdateAt,
+		DeleteAt:                       r.DeleteAt,
 	}
 
 	if err := unmarshalJSONSlice(r.ChannelIDs, &cfg.ChannelIDs); err != nil {
@@ -148,8 +153,9 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 			Model, EnableVision, DisableTools, EnabledNativeTools,
 			ReasoningEnabled, ReasoningEffort, ThinkingBudget, StructuredOutputEnabled,
 			MaxToolTurns, UseServiceAccountAuth,
+			ExperimentalBypassToolApproval, ExperimentalUseBotPermissions,
 			CreateAt, UpdateAt, DeleteAt
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
 		cfg.ID,
 		cfg.BotUserID,
 		cfg.CreatorID,
@@ -176,6 +182,8 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		cfg.ExperimentalBypassToolApproval,
+		cfg.ExperimentalUseBotPermissions,
 		cfg.CreateAt,
 		cfg.UpdateAt,
 		cfg.DeleteAt,
@@ -303,8 +311,10 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 			StructuredOutputEnabled = $21,
 			MaxToolTurns = $22,
 			UseServiceAccountAuth = $23,
-			UpdateAt = $24
-		WHERE ID = $25 AND DeleteAt = 0`,
+			ExperimentalBypassToolApproval = $24,
+			ExperimentalUseBotPermissions = $25,
+			UpdateAt = $26
+		WHERE ID = $27 AND DeleteAt = 0`,
 		cfg.DisplayName,
 		cfg.Name,
 		cfg.ServiceID,
@@ -328,6 +338,8 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
+		cfg.ExperimentalBypassToolApproval,
+		cfg.ExperimentalUseBotPermissions,
 		cfg.UpdateAt,
 		cfg.ID,
 	)

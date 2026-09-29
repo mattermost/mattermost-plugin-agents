@@ -734,6 +734,15 @@ The agent setting is all-or-nothing:
 
 Service account authentication is available at Enterprise and above, the same as remote and external MCP servers (see [license requirements](#license-requirements)). Below that level, the service account header configuration cannot be added and the agent setting doesn't change how tool calls authenticate.
 
+#### Experimental service account options
+
+While **Use service accounts for authentication** is on, the agent's **MCPs** tab shows an **Advanced configuration** section with two experimental settings. They apply only to that agent, only while service account authentication is in effect, and are cleared when it is turned off. Only system administrators can change them.
+
+- **Skip tool call approvals**: the agent's tool calls run without asking the requesting user to approve them, whatever their tool policy, and in channels their results are shared without the **Share** / **Keep Private** step. Questions the agent asks the user (such as `AskUserQuestion`) still wait for an answer. Channel tool availability rules still apply.
+- **Use the agent's bot account permissions**: embedded Mattermost and plugin MCP tools run as the agent's bot account instead of the requesting user, so they can read and change whatever the bot account can. MCP server access policies are still evaluated for the requesting user.
+
+> **Warning:** Together with service account authentication, these settings let anyone who can use the agent act with the agent's access everywhere, with no per-call consent. Restrict who can use the agent on its **Access** tab.
+
 ### MCP dynamic tool loading
 
 When an agent's MCP dynamic tool loading setting is enabled, the model doesn't receive every full MCP tool schema at once. Instead, it sees `search_tools` and `load_tool` meta-tools, plus any preloaded or internal tools available for that request.

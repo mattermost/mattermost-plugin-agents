@@ -49,6 +49,11 @@ type Context struct {
 	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
 	ToolAuthMode string
 
+	// ToolApprovalBypassed means tool calls run and their results are shared
+	// without asking the requesting user. Set only for service account agents
+	// with BotConfig.ExperimentalBypassToolApproval.
+	ToolApprovalBypassed bool
+
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]any

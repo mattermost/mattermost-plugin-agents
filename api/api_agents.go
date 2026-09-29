@@ -107,6 +107,9 @@ type AgentRequestFields struct {
 	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 	MaxToolTurns            int  `json:"maxToolTurns"`
+	// Experimental; only stored while UseServiceAccountAuth is true.
+	ExperimentalBypassToolApproval bool `json:"experimentalBypassToolApproval"`
+	ExperimentalUseBotPermissions  bool `json:"experimentalUseBotPermissions"`
 }
 
 // applyTo overwrites the request-controlled fields on cfg.
@@ -124,6 +127,10 @@ func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	cfg.AutoEnableNewMCPTools = r.AutoEnableNewMCPTools
 	cfg.MCPDynamicToolLoading = r.MCPDynamicToolLoading
 	cfg.UseServiceAccountAuth = r.UseServiceAccountAuth
+	// Cleared with service account auth so a manager cannot pre-arm them for
+	// an admin to activate unknowingly by turning service account auth on.
+	cfg.ExperimentalBypassToolApproval = r.UseServiceAccountAuth && r.ExperimentalBypassToolApproval
+	cfg.ExperimentalUseBotPermissions = r.UseServiceAccountAuth && r.ExperimentalUseBotPermissions
 	cfg.Model = r.Model
 	cfg.EnableVision = r.EnableVision
 	cfg.DisableTools = r.DisableTools

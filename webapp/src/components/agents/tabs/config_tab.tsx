@@ -4,7 +4,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
 import {fetchModelsForAgentService} from '@/client';
 import {
@@ -40,6 +39,7 @@ import {LLMService} from '@/components/system_console/service';
 import {LicenseLevel, useIsLicensedFor, useLicenseLevelName, useServiceLimit} from '@/license';
 
 import {AgentDraft} from '../agent_config_view';
+import AdvancedSection from '../advanced_section';
 
 type Props = {
     draft: AgentDraft;
@@ -367,109 +367,94 @@ const ConfigTab = (props: Props) => {
                 />
             </ItemList>
 
-            <AdvancedSection>
-                <AdvancedHeader
-                    type='button'
-                    aria-expanded={advancedExpanded}
-                    onClick={() => setAdvancedExpanded((prev) => !prev)}
-                >
-                    <ChevronContainer aria-hidden={true}>
-                        {advancedExpanded ? <ChevronDownIcon size={16}/> : <ChevronRightIcon size={16}/>}
-                    </ChevronContainer>
-                    <AdvancedHeaderText>
-                        <FormattedMessage defaultMessage='Advanced configuration'/>
-                    </AdvancedHeaderText>
-                    <AdvancedHeaderHint>
-                        <FormattedMessage defaultMessage='Tool limits, vision, reasoning, and other model-specific options'/>
-                    </AdvancedHeaderHint>
-                </AdvancedHeader>
-                {advancedExpanded && (
-                    <AdvancedContent>
-                        <ItemList>
-                            <FormRow>
-                                <ItemLabel>
-                                    {intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
-                                </ItemLabel>
-                                <TextFieldContainer>
-                                    <FieldControlRow>
-                                        <InlineCheckbox
-                                            testId='mcp-dynamic-tool-loading'
-                                            inputAriaLabel={intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
-                                            label={intl.formatMessage({defaultMessage: 'Enable'})}
-                                            checked={draft.mcpDynamicToolLoading}
-                                            onChange={(checked) => onChange({mcpDynamicToolLoading: checked})}
-                                        />
-                                    </FieldControlRow>
-                                    <HelpText>
-                                        {intl.formatMessage({
-                                            defaultMessage:
-                                                'Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.',
-                                        })}
-                                    </HelpText>
-                                </TextFieldContainer>
-                            </FormRow>
-                            <IntItem
-                                label={intl.formatMessage({defaultMessage: 'Max tool turns'})}
-                                value={draft.maxToolTurns}
-                                min={1}
-                                max={MaxAllowedMaxToolTurns}
-                                allowEmpty={true}
-                                clampOnChange={false}
-                                defaultValue={DefaultMaxToolTurns}
-                                placeholder={String(DefaultMaxToolTurns)}
-                                onChange={(value: number) => onChange({maxToolTurns: value})}
-                                error={errors.maxToolTurns}
-                                helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
-                            />
+            <AdvancedSection
+                hint={<FormattedMessage defaultMessage='Tool limits, vision, reasoning, and other model-specific options'/>}
+                expanded={advancedExpanded}
+                onToggle={() => setAdvancedExpanded((prev) => !prev)}
+            >
+                <ItemList>
+                    <FormRow>
+                        <ItemLabel>
+                            {intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
+                        </ItemLabel>
+                        <TextFieldContainer>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId='mcp-dynamic-tool-loading'
+                                    inputAriaLabel={intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
+                                    label={intl.formatMessage({defaultMessage: 'Enable'})}
+                                    checked={draft.mcpDynamicToolLoading}
+                                    onChange={(checked) => onChange({mcpDynamicToolLoading: checked})}
+                                />
+                            </FieldControlRow>
+                            <HelpText>
+                                {intl.formatMessage({
+                                    defaultMessage:
+                                        'Expose search and load helper tools first, then load MCP tool schemas only when the agent needs them. Disable this to use the full MCP tool list for this agent.',
+                                })}
+                            </HelpText>
+                        </TextFieldContainer>
+                    </FormRow>
+                    <IntItem
+                        label={intl.formatMessage({defaultMessage: 'Max tool turns'})}
+                        value={draft.maxToolTurns}
+                        min={1}
+                        max={MaxAllowedMaxToolTurns}
+                        allowEmpty={true}
+                        clampOnChange={false}
+                        defaultValue={DefaultMaxToolTurns}
+                        placeholder={String(DefaultMaxToolTurns)}
+                        onChange={(value: number) => onChange({maxToolTurns: value})}
+                        error={errors.maxToolTurns}
+                        helptext={intl.formatMessage({defaultMessage: 'Maximum number of consecutive tool-call/execute rounds the agent will run before stopping. Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn.'})}
+                    />
 
-                            {supportsVisionAndTools && (
-                                <>
-                                    <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
-                                        value={draft.enableVision}
-                                        onChange={(to: boolean) => onChange({enableVision: to})}
-                                        helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}
-                                    />
-                                    <BooleanItem
-                                        label={intl.formatMessage({defaultMessage: 'Enable Tools'})}
-                                        value={!draft.disableTools}
-                                        onChange={(to: boolean) => onChange({disableTools: !to})}
-                                        helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
-                                    />
-                                    {isAnthropic && (
-                                        <NativeToolsItem
-                                            enabledTools={draft.enabledNativeTools}
-                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                            provider='anthropic'
-                                        />
-                                    )}
-                                    {isGoogle && (
-                                        <NativeToolsItem
-                                            enabledTools={draft.enabledNativeTools}
-                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                            provider='google'
-                                        />
-                                    )}
-                                    {isOpenAIWithResponses && (
-                                        <NativeToolsItem
-                                            enabledTools={draft.enabledNativeTools}
-                                            onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
-                                            provider='openai'
-                                        />
-                                    )}
-                                    {selectedServiceAsLLM && (
-                                        <ReasoningConfigItem
-                                            bot={reasoningBot}
-                                            service={selectedServiceAsLLM}
-                                            maxTokens={maxTokens}
-                                            onChange={handleReasoningBotChange}
-                                        />
-                                    )}
-                                </>
+                    {supportsVisionAndTools && (
+                        <>
+                            <BooleanItem
+                                label={intl.formatMessage({defaultMessage: 'Enable Vision'})}
+                                value={draft.enableVision}
+                                onChange={(to: boolean) => onChange({enableVision: to})}
+                                helpText={intl.formatMessage({defaultMessage: 'Enable Vision to allow the bot to process images. Requires a compatible model.'})}
+                            />
+                            <BooleanItem
+                                label={intl.formatMessage({defaultMessage: 'Enable Tools'})}
+                                value={!draft.disableTools}
+                                onChange={(to: boolean) => onChange({disableTools: !to})}
+                                helpText={intl.formatMessage({defaultMessage: 'By default some tool use is enabled to allow for features such as integrations with JIRA. Disabling this allows use of models that do not support or are not very good at tool use. Some features will not work without tools.'})}
+                            />
+                            {isAnthropic && (
+                                <NativeToolsItem
+                                    enabledTools={draft.enabledNativeTools}
+                                    onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                    provider='anthropic'
+                                />
                             )}
-                        </ItemList>
-                    </AdvancedContent>
-                )}
+                            {isGoogle && (
+                                <NativeToolsItem
+                                    enabledTools={draft.enabledNativeTools}
+                                    onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                    provider='google'
+                                />
+                            )}
+                            {isOpenAIWithResponses && (
+                                <NativeToolsItem
+                                    enabledTools={draft.enabledNativeTools}
+                                    onChange={(tools: string[]) => onChange({enabledNativeTools: tools})}
+                                    provider='openai'
+                                />
+                            )}
+                            {selectedServiceAsLLM && (
+                                <ReasoningConfigItem
+                                    bot={reasoningBot}
+                                    service={selectedServiceAsLLM}
+                                    maxTokens={maxTokens}
+                                    onChange={handleReasoningBotChange}
+                                />
+                            )}
+                        </>
+                    )}
+                </ItemList>
             </AdvancedSection>
         </FormContainer>
     );
@@ -484,55 +469,6 @@ const FormContainer = styled.div`
 const CharacterCounter = styled.div<{$hasError: boolean}>`
     color: ${({$hasError}) => ($hasError ? 'var(--error-text)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
     text-align: right;
-`;
-
-const AdvancedSection = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
-    overflow: hidden;
-`;
-
-const AdvancedHeader = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 12px 16px;
-    border: none;
-    background: rgba(var(--center-channel-color-rgb), 0.04);
-    cursor: pointer;
-    text-align: left;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-    }
-`;
-
-const ChevronContainer = styled.span`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    flex-shrink: 0;
-`;
-
-const AdvancedHeaderText = styled.span`
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    color: var(--center-channel-color);
-`;
-
-const AdvancedHeaderHint = styled.span`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    margin-left: auto;
-`;
-
-const AdvancedContent = styled.div`
-    padding: 24px 16px;
 `;
 
 export default ConfigTab;

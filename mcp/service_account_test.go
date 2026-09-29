@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	plugintest "github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -272,41 +273,67 @@ func TestClientManagerServiceAccountEmbeddedSessionAsInvoker(t *testing.T) {
 	require.Equal(t, []string{"user-a-session"}, embeddedServer.recordedSessionIDs())
 }
 
-func TestClientManagerServiceAccountPluginServerGetsInvokerUserIDHeader(t *testing.T) {
-	target := newFakePluginMCPServer(t, 1)
-	t.Cleanup(target.Close)
-
-	var mu sync.Mutex
-	var recordedUserIDs []string
-	mockAPI := &fakePluginHTTPClient{
-		pluginHTTP: func(req *http.Request) *http.Response {
-			mu.Lock()
-			recordedUserIDs = append(recordedUserIDs, req.Header.Get(MMUserIDHeader))
-			mu.Unlock()
-
-			rec := httptest.NewRecorder()
-			target.Config.Handler.ServeHTTP(rec, req)
-			return rec.Result()
+func TestClientManagerServiceAccountPluginServerUserIDHeader(t *testing.T) {
+	tests := []struct {
+		name       string
+		req        CatalogRequest
+		wantUserID string
+	}{
+		{
+			name:       "plugin servers see the invoking user",
+			req:        ServiceAccountCatalogRequest("bot-1", "user-a"),
+			wantUserID: "user-a",
+		},
+		{
+			name:       "plugin servers see the local actor",
+			req:        CatalogRequest{RemoteOwnerID: "bot-1", InvokingUserID: "user-a", LocalActorID: "bot-1", ServiceAccount: true},
+			wantUserID: "bot-1",
 		},
 	}
 
-	pluginTestAPI := &plugintest.API{}
-	setupClientManagerTestAPI(t, pluginTestAPI)
-	client := pluginapi.NewClient(pluginTestAPI, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target := newFakePluginMCPServer(t, 1)
+			t.Cleanup(target.Close)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed)
-	t.Cleanup(m.Close)
-	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
+			var mu sync.Mutex
+			var recordedUserIDs []string
+			mockAPI := &fakePluginHTTPClient{
+				pluginHTTP: func(req *http.Request) *http.Response {
+					mu.Lock()
+					recordedUserIDs = append(recordedUserIDs, req.Header.Get(MMUserIDHeader))
+					mu.Unlock()
 
-	tools, mcpErrors := m.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-1", "user-a"))
-	require.Nil(t, mcpErrors)
-	require.Len(t, tools, 1)
+					rec := httptest.NewRecorder()
+					target.Config.Handler.ServeHTTP(rec, req)
+					return rec.Result()
+				},
+			}
 
-	mu.Lock()
-	defer mu.Unlock()
-	require.NotEmpty(t, recordedUserIDs)
-	for _, userID := range recordedUserIDs {
-		require.Equal(t, "user-a", userID, "plugin MCP servers must see the invoking user ID")
+			pluginTestAPI := &plugintest.API{}
+			setupClientManagerTestAPI(t, pluginTestAPI)
+			client := pluginapi.NewClient(pluginTestAPI, nil)
+
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed)
+			t.Cleanup(m.Close)
+			m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.mcp", Name: "Example", Path: "/mcp", Enabled: true})
+
+			tools, mcpErrors := m.GetTools(context.Background(), tt.req)
+			require.Nil(t, mcpErrors)
+			require.Len(t, tools, 1)
+			_, err := tools[0].Resolver(context.Background(), &llm.Context{}, func(args any) error {
+				*(args.(*map[string]any)) = map[string]any{"message": "hi"}
+				return nil
+			})
+			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.NotEmpty(t, recordedUserIDs)
+			for _, userID := range recordedUserIDs {
+				require.Equal(t, tt.wantUserID, userID, "every plugin MCP request, including the tool call, must carry this user ID")
+			}
+		})
 	}
 }
 

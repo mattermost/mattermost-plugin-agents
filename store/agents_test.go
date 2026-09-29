@@ -32,18 +32,20 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 			{ServerOrigin: "https://mcp.example.com", ToolName: "web_search"},
 			{ServerOrigin: "https://mcp.example.com", ToolName: "file_search"},
 		},
-		AutoEnableNewMCPTools:   true,
-		MCPDynamicToolLoading:   true,
-		Model:                   "gpt-4",
-		EnableVision:            true,
-		DisableTools:            false,
-		EnabledNativeTools:      []string{"web_search"},
-		ReasoningEnabled:        true,
-		ReasoningEffort:         "medium",
-		ThinkingBudget:          10000,
-		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
-		MaxToolTurns:            42,
-		UseServiceAccountAuth:   true,
+		AutoEnableNewMCPTools:          true,
+		MCPDynamicToolLoading:          true,
+		Model:                          "gpt-4",
+		EnableVision:                   true,
+		DisableTools:                   false,
+		EnabledNativeTools:             []string{"web_search"},
+		ReasoningEnabled:               true,
+		ReasoningEffort:                "medium",
+		ThinkingBudget:                 10000,
+		StructuredOutputEnabled:        true, //nolint:staticcheck // deprecated but still persisted verbatim
+		MaxToolTurns:                   42,
+		UseServiceAccountAuth:          true,
+		ExperimentalBypassToolApproval: true,
+		ExperimentalUseBotPermissions:  true,
 	}
 }
 
@@ -104,6 +106,8 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
 	assert.True(t, fetched.UseServiceAccountAuth)
+	assert.True(t, fetched.ExperimentalBypassToolApproval)
+	assert.True(t, fetched.ExperimentalUseBotPermissions)
 }
 
 // TestAgentMaxToolTurnsDefaultsToThirty verifies that the SQL DEFAULT 30 supplied
@@ -225,6 +229,8 @@ func TestAgentUpdate(t *testing.T) {
 	agent.EnabledMCPTools = nil
 	agent.ServiceID = "svc-2"
 	agent.UseServiceAccountAuth = false
+	agent.ExperimentalBypassToolApproval = false
+	agent.ExperimentalUseBotPermissions = false
 
 	require.NoError(t, s.UpdateAgent(agent))
 
@@ -242,6 +248,8 @@ func TestAgentUpdate(t *testing.T) {
 	assert.Nil(t, fetched.EnabledMCPTools)
 	assert.Equal(t, "svc-2", fetched.ServiceID)
 	assert.False(t, fetched.UseServiceAccountAuth)
+	assert.False(t, fetched.ExperimentalBypassToolApproval)
+	assert.False(t, fetched.ExperimentalUseBotPermissions)
 
 	// Immutable fields should not change
 	assert.Equal(t, agent.CreatorID, fetched.CreatorID)

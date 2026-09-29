@@ -70,6 +70,8 @@ type RenderOpts = {
     enabledTools?: Array<{server_origin: string; tool_name: string}>;
     autoEnableNewMCPTools?: boolean;
     useServiceAccountAuth?: boolean;
+    experimentalBypassToolApproval?: boolean;
+    experimentalUseBotPermissions?: boolean;
     serviceAccountFieldsLocked?: boolean;
     canEditServiceAccountAuth?: boolean;
 };
@@ -79,6 +81,8 @@ function renderTab({
     enabledTools = [],
     autoEnableNewMCPTools = true,
     useServiceAccountAuth = false,
+    experimentalBypassToolApproval = false,
+    experimentalUseBotPermissions = false,
     serviceAccountFieldsLocked = false,
     canEditServiceAccountAuth = true,
 }: RenderOpts = {}) {
@@ -92,6 +96,8 @@ function renderTab({
                     enabledTools={enabledTools}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    experimentalBypassToolApproval={experimentalBypassToolApproval}
+                    experimentalUseBotPermissions={experimentalUseBotPermissions}
                     serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                     canEditServiceAccountAuth={canEditServiceAccountAuth}
                     onChange={onChange}
@@ -118,6 +124,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    experimentalBypassToolApproval={false}
+                    experimentalUseBotPermissions={false}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -157,6 +165,8 @@ describe('McpsTab', () => {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={false}
+                    experimentalBypassToolApproval={false}
+                    experimentalUseBotPermissions={false}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -236,7 +246,78 @@ describe('McpsTab', () => {
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
 
         fireEvent.click(toggle);
-        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false});
+        expect(on.onChange).toHaveBeenCalledWith({
+            useServiceAccountAuth: false,
+            experimentalBypassToolApproval: false,
+            experimentalUseBotPermissions: false,
+        });
+    });
+
+    describe('experimental service account options', () => {
+        const advancedToggleName = /Advanced configuration/;
+        const bypassName = /^Skip tool call approvals/;
+        const botPermissionsName = /^Use the agent's bot account permissions/;
+
+        test('are only offered while service account auth is on, behind the advanced section', async () => {
+            mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+
+            const off = renderTab({useServiceAccountAuth: false});
+            await screen.findByText('Mattermost');
+            expect(screen.queryByRole('button', {name: advancedToggleName})).toBeNull();
+            off.unmount();
+
+            renderTab({useServiceAccountAuth: true});
+            await screen.findByText('Mattermost');
+            expect(screen.queryByRole('checkbox', {name: bypassName})).toBeNull();
+            expect(screen.queryByRole('checkbox', {name: botPermissionsName})).toBeNull();
+
+            fireEvent.click(screen.getByRole('button', {name: advancedToggleName}));
+            expect(screen.getByRole('checkbox', {name: bypassName})).not.toBeNull();
+            expect(screen.getByRole('checkbox', {name: botPermissionsName})).not.toBeNull();
+            expect(screen.getAllByText('EXPERIMENTAL')).toHaveLength(2);
+        });
+
+        test.each([
+            {name: bypassName, update: {experimentalBypassToolApproval: true}},
+            {name: botPermissionsName, update: {experimentalUseBotPermissions: true}},
+        ])('lets system admins enable $name', async ({name, update}) => {
+            mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+
+            const {onChange} = renderTab({useServiceAccountAuth: true});
+            await screen.findByText('Mattermost');
+            fireEvent.click(screen.getByRole('button', {name: advancedToggleName}));
+            fireEvent.click(screen.getByRole('checkbox', {name}));
+
+            expect(onChange).toHaveBeenCalledWith(update);
+        });
+
+        test('are read-only for users without manage_system', async () => {
+            mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+
+            renderTab({
+                useServiceAccountAuth: true,
+                experimentalBypassToolApproval: true,
+                serviceAccountFieldsLocked: true,
+                canEditServiceAccountAuth: false,
+            });
+            await screen.findByText('Mattermost');
+            fireEvent.click(screen.getByRole('button', {name: advancedToggleName}));
+
+            const bypass = screen.getByRole('checkbox', {name: bypassName}) as HTMLInputElement;
+            expect(bypass.checked).toBe(true);
+            expect(bypass.disabled).toBe(true);
+            expect((screen.getByRole('checkbox', {name: botPermissionsName}) as HTMLInputElement).disabled).toBe(true);
+        });
+
+        test('warns that Mattermost tools use the bot account when bot permissions are on', async () => {
+            mockedGetUserMCPTools.mockResolvedValue({servers: [mattermostServer]});
+
+            renderTab({useServiceAccountAuth: true, experimentalUseBotPermissions: true});
+            await screen.findByText('Mattermost');
+
+            expect(screen.getByText(/with the agent's bot account permissions in Mattermost \(embedded\) and plugin tools/)).not.toBeNull();
+            expect(screen.queryByText(/run with each requesting user's own permissions. Restrict/)).toBeNull();
+        });
     });
 
     // Soft-lock mirrors the server sensitive-field ACL: auto-enable and tool
@@ -251,6 +332,8 @@ describe('McpsTab', () => {
                     enabledTools={[]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={true}
+                    experimentalBypassToolApproval={false}
+                    experimentalUseBotPermissions={false}
                     serviceAccountFieldsLocked={true}
                     canEditServiceAccountAuth={false}
                     onChange={onChange}

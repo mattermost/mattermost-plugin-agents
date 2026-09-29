@@ -340,6 +340,9 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 		if isAutoExecuteBuiltIn(lookup.Tool) {
 			return true
 		}
+		if llmCtx.ToolApprovalBypassed {
+			return true
+		}
 		if c.toolPolicyChecker == nil {
 			return false
 		}
@@ -375,7 +378,7 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			}
 			// Auto-execute built-ins never require approval, so a round made
 			// up only of them can still be written shared=true.
-			if isAutoExecuteBuiltIn(lookup.Tool) {
+			if isAutoExecuteBuiltIn(lookup.Tool) || llmCtx.ToolApprovalBypassed {
 				continue
 			}
 			if c.toolPolicyChecker == nil {

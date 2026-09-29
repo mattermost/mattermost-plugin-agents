@@ -30,9 +30,10 @@ type countingMCPToolProvider struct {
 	tools   []llm.Tool
 	saTools []llm.Tool
 
-	mu           sync.Mutex
-	saIdentities []string
-	saInvokers   []string
+	mu            sync.Mutex
+	saIdentities  []string
+	saInvokers    []string
+	saLocalActors []string
 }
 
 func (p *countingMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -40,6 +41,7 @@ func (p *countingMCPToolProvider) GetToolsWithSelection(_ context.Context, req m
 		p.mu.Lock()
 		p.saIdentities = append(p.saIdentities, req.RemoteOwnerID)
 		p.saInvokers = append(p.saInvokers, req.InvokingUserID)
+		p.saLocalActors = append(p.saLocalActors, req.LocalActorID)
 		p.mu.Unlock()
 		return slices.DeleteFunc(slices.Clone(p.saTools), func(tool llm.Tool) bool {
 			return !selection.Allows(tool.ServerOrigin)
@@ -65,6 +67,12 @@ func (p *countingMCPToolProvider) SAInvokers() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.saInvokers...)
+}
+
+func (p *countingMCPToolProvider) SALocalActors() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.saLocalActors...)
 }
 
 func newSingleBuildLLMContextBuilder(t *testing.T, mcpProvider llmcontext.MCPToolProvider) *llmcontext.Builder {

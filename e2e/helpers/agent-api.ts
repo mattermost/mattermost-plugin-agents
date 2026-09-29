@@ -29,6 +29,8 @@ export interface CreateAgentRequest {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth?: boolean;
+    experimentalBypassToolApproval?: boolean;
+    experimentalUseBotPermissions?: boolean;
     enabledNativeTools?: string[];
     model?: string;
     enableVision?: boolean;
@@ -65,6 +67,8 @@ export interface AgentResponse {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
+    experimentalBypassToolApproval?: boolean;
+    experimentalUseBotPermissions?: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
@@ -100,6 +104,8 @@ export function mergeAgentIntoUpdate(
         enabledMCPTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
         useServiceAccountAuth: agent.useServiceAccountAuth,
+        experimentalBypassToolApproval: agent.experimentalBypassToolApproval,
+        experimentalUseBotPermissions: agent.experimentalUseBotPermissions,
         enabledNativeTools: agent.enabledNativeTools,
         model: agent.model,
         enableVision: agent.enableVision,

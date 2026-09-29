@@ -109,7 +109,11 @@ func (a *API) resolveMCPToolsCatalog(c *gin.Context, userID string) (mcp.Catalog
 		c.AbortWithError(http.StatusInternalServerError, errors.New("agent has no bot user"))
 		return mcp.CatalogRequest{}, false
 	}
-	return mcp.ServiceAccountCatalogRequest(cfg.BotUserID, userID), true
+	req := mcp.ServiceAccountCatalogRequest(cfg.BotUserID, userID)
+	if cfg.UseServiceAccountAuth && cfg.ExperimentalUseBotPermissions {
+		req.LocalActorID = cfg.BotUserID
+	}
+	return req, true
 }
 
 // handleRefreshUserMCPTools forces rediscovery of the current user's MCP tools.

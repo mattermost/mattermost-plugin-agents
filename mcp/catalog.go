@@ -27,8 +27,13 @@ type CatalogRequest struct {
 	// RemoteOwnerID keys the pooled remote-server connections: the user in
 	// user mode, the agent's bot in service-account mode.
 	RemoteOwnerID string
-	// InvokingUserID is who embedded and plugin servers connect as, in both modes.
+	// InvokingUserID is the human the request is for. MCP server access policy
+	// is always evaluated for this user, and embedded and plugin servers
+	// connect as this user unless LocalActorID is set.
 	InvokingUserID string
+	// LocalActorID, when set, is who embedded and plugin servers connect as
+	// instead of InvokingUserID (an agent's bot user).
+	LocalActorID string
 	// ServiceAccount selects admin SA headers (and fail-closed exclusion of
 	// remotes without them) instead of per-user OAuth for remote servers.
 	ServiceAccount bool
@@ -66,6 +71,14 @@ func (r CatalogRequest) validate() error {
 		return ErrCatalogInvokerRequired
 	}
 	return nil
+}
+
+func (r CatalogRequest) localKey() clientKey {
+	userID := r.InvokingUserID
+	if r.LocalActorID != "" {
+		userID = r.LocalActorID
+	}
+	return clientKey{userID: userID, kind: clientKindLocal}
 }
 
 func (r CatalogRequest) remoteKey() clientKey {

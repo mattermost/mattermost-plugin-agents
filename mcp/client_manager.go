@@ -468,13 +468,15 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	embeddedClient := m.embeddedClient
 	plugins := m.snapshotEnabledPluginServers()
 	// Service-account remotes are pooled by the bot identity, but authorization
-	// and local MCP connections belong to the human invoking this request.
+	// belongs to the human invoking this request. Local MCP connections do too
+	// unless the request names a different local actor.
 	deniedOrigins := m.deniedMCPServerOrigins(ctx, req.InvokingUserID, cfg, embeddedClient, plugins)
 	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection, deniedOrigins, req.ServiceAccount)
 
+	localKey := req.localKey()
 	var localClients *UserClients
 	if servers.embedded || len(servers.plugins) > 0 {
-		localClients = m.getOrCreateClient(clientKey{userID: req.InvokingUserID, kind: clientKindLocal})
+		localClients = m.getOrCreateClient(localKey)
 	}
 
 	var sessionID string
@@ -482,7 +484,7 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	if servers.embedded {
 		// Mattermost session lookup, not an MCP dial. Kept inside the
 		// lifecycle read lock so task construction stays atomic with plan.
-		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(req.InvokingUserID)
+		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(localKey.userID)
 	}
 
 	remoteOnly := servers
@@ -730,7 +732,7 @@ func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 func (m *ClientManager) invalidateCatalogClients(req CatalogRequest) {
 	keys := []clientKey{
 		req.remoteKey(),
-		{userID: req.InvokingUserID, kind: clientKindLocal},
+		req.localKey(),
 	}
 
 	m.clientsMu.Lock()

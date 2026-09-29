@@ -561,6 +561,107 @@ func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ string, sessionID
 	return clientTransport, nil
 }
 
+// identityEchoEmbeddedMCPServer exposes a tool that reports the user and
+// session owner the embedded connection was opened for.
+type identityEchoEmbeddedMCPServer struct {
+	ctx      context.Context
+	sessions map[string]*model.Session
+}
+
+func (s *identityEchoEmbeddedMCPServer) CreateClientTransport(userID string, sessionID string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	identity := fmt.Sprintf("%s/%s", userID, s.sessions[sessionID].UserId)
+	server := gomcp.NewServer(&gomcp.Implementation{Name: "identity-echo", Version: "1.0"}, nil)
+	server.AddTool(&gomcp.Tool{
+		Name:        "session_identity",
+		Description: "Returns the user this connection acts as",
+		InputSchema: map[string]any{"type": "object"},
+	}, func(context.Context, *gomcp.CallToolRequest) (*gomcp.CallToolResult, error) {
+		return &gomcp.CallToolResult{
+			Content: []gomcp.Content{&gomcp.TextContent{Text: identity}},
+		}, nil
+	})
+	serverTransport, clientTransport := gomcp.NewInMemoryTransports()
+	go func() {
+		_ = server.Run(s.ctx, serverTransport)
+	}()
+	return clientTransport, nil
+}
+
+func TestGetCatalogAccessEmbeddedToolsActAsLocalActor(t *testing.T) {
+	const (
+		humanID = "human-user"
+		botID   = "agent-bot"
+	)
+
+	tests := []struct {
+		name         string
+		req          CatalogRequest
+		wantIdentity string
+	}{
+		{
+			name:         "service account catalog runs embedded tools as the requesting user",
+			req:          ServiceAccountCatalogRequest(botID, humanID),
+			wantIdentity: humanID + "/" + humanID,
+		},
+		{
+			name:         "local actor runs embedded tools as the agent bot",
+			req:          CatalogRequest{RemoteOwnerID: botID, InvokingUserID: humanID, LocalActorID: botID, ServiceAccount: true},
+			wantIdentity: botID + "/" + botID,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessions := map[string]*model.Session{}
+			fakeAPI := &plugintest.API{}
+			setupTestLogger(fakeAPI)
+			fakeAPI.On("KVGet", mock.AnythingOfType("string")).Return(nil, (*model.AppError)(nil))
+			fakeAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, (*model.AppError)(nil))
+			fakeAPI.On("GetUser", humanID).Return(&model.User{Id: humanID, Roles: "system_user"}, (*model.AppError)(nil)).Maybe()
+			fakeAPI.On("GetUser", botID).Return(&model.User{Id: botID, Roles: "system_user", IsBot: true}, (*model.AppError)(nil)).Maybe()
+			fakeAPI.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(func(session *model.Session) *model.Session {
+				session.Id = model.NewId()
+				sessions[session.Id] = session
+				return session
+			}, (*model.AppError)(nil))
+			fakeAPI.On("GetSession", mock.AnythingOfType("string")).Return(func(sessionID string) *model.Session {
+				return sessions[sessionID]
+			}, (*model.AppError)(nil))
+			defaultConfig := &model.Config{}
+			defaultConfig.SetDefaults()
+			fakeAPI.On("GetConfig").Return(defaultConfig)
+
+			runCtx, cancelRun := context.WithCancel(context.Background())
+			t.Cleanup(cancelRun)
+			checker := &stubServerAccessChecker{}
+			pluginAPI := pluginapi.NewClient(fakeAPI, nil)
+			manager := NewClientManager(
+				Config{
+					EmbeddedServer: EmbeddedServerConfig{
+						ID:          accessEmbeddedID,
+						Enabled:     true,
+						ToolConfigs: []ToolConfig{{Name: "session_identity", Policy: "ask", Enabled: true}},
+					},
+				},
+				pluginAPI.Log,
+				pluginAPI,
+				nil,
+				&identityEchoEmbeddedMCPServer{ctx: runCtx, sessions: sessions},
+				http.DefaultClient,
+				nil,
+				RemoteMCPAlwaysAllowed,
+				checker)
+			t.Cleanup(manager.Close)
+
+			tools, mcpErrors := manager.GetTools(context.Background(), tt.req)
+			require.Nil(t, mcpErrors)
+			require.Equal(t, tt.wantIdentity, callSessionIdentityTool(t, tools))
+			require.Equal(t, []string{humanID}, checker.users,
+				"MCP server access policy must be evaluated for the requesting user")
+		})
+	}
+}
+
 func TestUserClientsGetToolsResolverUsesResolverContext(t *testing.T) {
 	callCtx, cancel := context.WithCancel(context.Background())
 	cancel()
