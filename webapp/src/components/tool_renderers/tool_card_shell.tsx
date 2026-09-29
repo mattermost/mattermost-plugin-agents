@@ -13,6 +13,7 @@ import {toolDisplayName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
+import ToolStatusIcon from '../tool_status_icon';
 
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
@@ -41,14 +42,6 @@ const StyledChevronIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.56);
 	width: 16px;
     padding: 0 1px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-`;
-
-const StatusIcon = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-	width: 12px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -91,19 +84,8 @@ const ProcessingSpinner = styled(LoadingSpinner)`
     height: 12px;
 `;
 
-const SmallSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
-`;
-
 const SmallSuccessIcon = styled(CheckIcon)`
     color: var(--online-indicator);
-    width: 12px;
-    height: 12px;
-`;
-
-const SmallErrorIcon = styled(AlertCircleOutlineIcon)`
-    color: var(--error-text);
     width: 12px;
     height: 12px;
 `;
@@ -176,7 +158,7 @@ const AcceptRejectButton = styled.button<{$primary?: boolean}>`
     }
 `;
 
-const ResultDecisionButton = styled.button<{variant: 'primary' | 'secondary'}>`
+const ResultDecisionButton = styled.button<{$variant: 'primary' | 'secondary'}>`
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -188,16 +170,16 @@ const ResultDecisionButton = styled.button<{variant: 'primary' | 'secondary'}>`
     line-height: 16px;
     cursor: pointer;
 
-    border: 1px solid ${(props) => (props.variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.16)')};
-    background: ${(props) => (props.variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
-    color: ${(props) => (props.variant === 'primary' ? 'var(--button-color)' : 'var(--button-bg)')};
+    border: 1px solid ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.16)')};
+    background: ${(props) => (props.$variant === 'primary' ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
+    color: ${(props) => (props.$variant === 'primary' ? 'var(--button-color)' : 'var(--button-bg)')};
 
     &:hover {
-        background: ${(props) => (props.variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
+        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
     }
 
     &:active {
-        background: ${(props) => (props.variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
+        background: ${(props) => (props.$variant === 'primary' ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
     }
 `;
 
@@ -363,7 +345,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const [showRaw, setShowRaw] = useState(false);
 
     const isPending = tool.status === ToolCallStatus.Pending;
-    const isAccepted = tool.status === ToolCallStatus.Accepted;
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
@@ -371,7 +352,6 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const showDecisionButtons = Boolean(onApprove && onReject) &&
         (isResultApprovalStage ||
             (approvalStage === 'call' && isPending && !tool.would_auto_execute));
-    const showProcessingSpinner = isProcessing || isPending || isAccepted;
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
 
     const displayName = toolDisplayName(tool);
@@ -432,7 +412,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         >
                             <span>
                                 <ResultDecisionButton
-                                    variant='primary'
+                                    $variant='primary'
                                     onClick={onApprove}
                                     disabled={isProcessing}
                                 >
@@ -445,7 +425,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                             </span>
                         </OverlayTrigger>
                         <ResultDecisionButton
-                            variant='secondary'
+                            $variant='secondary'
                             onClick={onReject}
                             disabled={isProcessing}
                         >
@@ -505,12 +485,10 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         {isCollapsed ? <ChevronRightIcon size={16}/> : <ChevronDownIcon size={16}/>}
                     </StyledChevronIcon>
                 )}
-                <StatusIcon>
-                    {showProcessingSpinner && <SmallSpinner/>}
-                    {!showProcessingSpinner && isSuccess && <SmallSuccessIcon size={16}/>}
-                    {!showProcessingSpinner && isError && <SmallErrorIcon size={16}/>}
-                    {!showProcessingSpinner && isRejected && <SmallRejectedIcon size={16}/>}
-                </StatusIcon>
+                <ToolStatusIcon
+                    status={tool.status}
+                    isProcessing={isProcessing}
+                />
                 <ToolName title={displayName}>{displayName}</ToolName>
                 {(tool.status === ToolCallStatus.AutoApproved || isAutoApproved) && (
                     <AutoApprovedBadge>

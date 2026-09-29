@@ -393,7 +393,7 @@ func (h *runtimeHarness) newManagerMaybeRegister(registerPlugins bool) *ClientMa
 		embedded,
 		&http.Client{},
 		h.pluginForwarder(),
-	)
+		RemoteMCPAlwaysAllowed)
 	h.t.Cleanup(manager.Close)
 
 	if registerPlugins {

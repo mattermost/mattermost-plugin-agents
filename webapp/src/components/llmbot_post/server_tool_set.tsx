@@ -62,6 +62,19 @@ const hostnameOf = (url?: string): string => {
     }
 };
 
+export function serverToolTitle(tool: ServerToolUse, intl: ReturnType<typeof useIntl>): string {
+    switch (tool.tool) {
+    case ServerToolWebSearch:
+        return tool.query ? intl.formatMessage({defaultMessage: 'Searched the web for "{query}"'}, {query: tool.query}) : intl.formatMessage({defaultMessage: 'Searched the web'});
+    case ServerToolWebFetch:
+        return tool.url ? intl.formatMessage({defaultMessage: 'Fetched {host}'}, {host: hostnameOf(tool.url)}) : intl.formatMessage({defaultMessage: 'Fetched a web page'});
+    case ServerToolCodeInterpreter:
+        return tool.sub_tool === 'text_editor' ? intl.formatMessage({defaultMessage: 'Edited files in the provider sandbox'}) : intl.formatMessage({defaultMessage: 'Ran code in the provider sandbox'});
+    default:
+        return intl.formatMessage({defaultMessage: 'Used a provider tool'});
+    }
+}
+
 const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     const intl = useIntl();
     const [expanded, setExpanded] = useState(false);
@@ -69,23 +82,15 @@ const ServerToolCard: React.FC<{tool: ServerToolUse}> = ({tool}) => {
     const details = buildDetails(tool, intl);
     const canExpand = details.length > 0;
 
+    const title = serverToolTitle(tool, intl);
     let icon = <CodeTagsIcon/>;
-    let title = '';
     switch (tool.tool) {
     case ServerToolWebSearch:
         icon = <MagnifyIcon/>;
-        title = tool.query ? intl.formatMessage({defaultMessage: 'Searched the web for "{query}"'}, {query: tool.query}) : intl.formatMessage({defaultMessage: 'Searched the web'});
         break;
     case ServerToolWebFetch:
         icon = <LinkVariantIcon/>;
-        title = tool.url ? intl.formatMessage({defaultMessage: 'Fetched {host}'}, {host: hostnameOf(tool.url)}) : intl.formatMessage({defaultMessage: 'Fetched a web page'});
         break;
-    case ServerToolCodeInterpreter:
-        icon = <CodeTagsIcon/>;
-        title = tool.sub_tool === 'text_editor' ? intl.formatMessage({defaultMessage: 'Edited files in the provider sandbox'}) : intl.formatMessage({defaultMessage: 'Ran code in the provider sandbox'});
-        break;
-    default:
-        title = intl.formatMessage({defaultMessage: 'Used a provider tool'});
     }
 
     // Expandable cards render a semantic button so keyboard users can focus

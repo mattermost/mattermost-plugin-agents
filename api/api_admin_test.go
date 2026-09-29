@@ -14,6 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
+
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -59,6 +62,8 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 
 	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil, nil, newPassthroughAccessChecker())
 
+	// Admin routes are exercised at Enterprise; license gating has its own tests.
+	api.licenseChecker = enterprisetest.CheckerAt(enterprise.LevelEnterprise)
 	return api, mockAPI, stores
 }
 
@@ -1827,5 +1832,53 @@ func TestAuditUpdatePluginServer(t *testing.T) {
 			assert.Equal(t, "userid", rec.Actor.UserId)
 			tt.validateRecord(t, rec)
 		})
+	}
+}
+
+func TestHandleUpdatePluginServerLicenseGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  bool
+		policy   string
+		body     string
+		minLevel enterprise.Level
+	}{
+		{name: "enabling a disabled server", enabled: false, policy: config.MCPToolPolicyAsk, body: `{"enabled": true}`, minLevel: enterprise.LevelEnterprise},
+		{name: "widening a tool policy", enabled: true, policy: config.MCPToolPolicyAsk, body: `{"tool_configs": [{"name": "echo", "policy": "auto_run_everywhere", "enabled": true}]}`, minLevel: enterprise.LevelEnterprise},
+		{name: "disabling a server with an auto-run policy", enabled: true, policy: config.MCPToolPolicyAutoRunEverywhere, body: `{"enabled": false}`},
+		{name: "narrowing a tool policy", enabled: true, policy: config.MCPToolPolicyAutoRunEverywhere, body: `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": true}]}`},
+	}
+
+	for _, tc := range tests {
+		for _, level := range enterprisetest.AllLevels {
+			t.Run(tc.name+"/"+level.String(), func(t *testing.T) {
+				api, mockAPI, stores := setupAdminTestEnvironment(t)
+				api.licenseChecker = enterprisetest.CheckerAt(level)
+				mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+				mockAPI.On("LogError", mock.Anything).Return().Maybe()
+				mockAPI.On("LogAuditRec", mock.Anything).Return().Maybe()
+
+				mgr := api.mcpClientManager.(*mockMCPClientManager)
+				mgr.pluginServers = []mcp.PluginServerConfig{{PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: tc.enabled}}
+				stores.configStore.cfg = &config.Config{}
+				stores.configStore.cfg.MCP.PluginServers = []config.PluginServerConfig{{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: tc.enabled,
+					ToolConfigs: []config.MCPToolConfig{{Name: "echo", Policy: tc.policy, Enabled: true}},
+				}}
+
+				req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(tc.body))
+				req.Header.Set("Mattermost-User-Id", "admin-user")
+				req.Header.Set("Content-Type", "application/json")
+				recorder := httptest.NewRecorder()
+				api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+				if tc.minLevel != enterprise.LevelUnlicensed && level < tc.minLevel {
+					require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+					require.Empty(t, mgr.adminPatchCalls)
+					return
+				}
+				require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+			})
+		}
 	}
 }

@@ -144,19 +144,24 @@ func (s *Store) Delete(id string, userID string) error {
 	return nil
 }
 
-// ListForUser returns all prompts visible to a user: their own prompts and shared prompts from others.
-func (s *Store) ListForUser(userID string) ([]CustomPrompt, error) {
+// ListForUser returns prompts visible to a user. When includeShared is true,
+// the caller's own prompts and shared prompts from others are returned.
+// When includeShared is false, only the caller's own prompts are returned.
+func (s *Store) ListForUser(userID string, includeShared bool) ([]CustomPrompt, error) {
 	var prompts []CustomPrompt
-	if err := s.db.DoQuery(&prompts, s.db.Builder().
+	query := s.db.Builder().
 		Select("ID", "CreatorID", "Name", "Description", "Template", "IsShared", "CreatedAt", "UpdatedAt", "DeletedAt").
 		From("LLM_CustomPrompts").
-		Where(sq.Eq{"DeletedAt": 0}).
-		Where(sq.Or{
+		Where(sq.Eq{"DeletedAt": 0})
+	if includeShared {
+		query = query.Where(sq.Or{
 			sq.Eq{"CreatorID": userID},
 			sq.Eq{"IsShared": true},
-		}).
-		OrderBy("Name"),
-	); err != nil {
+		})
+	} else {
+		query = query.Where(sq.Eq{"CreatorID": userID})
+	}
+	if err := s.db.DoQuery(&prompts, query.OrderBy("Name")); err != nil {
 		return nil, fmt.Errorf("failed to list custom prompts: %w", err)
 	}
 

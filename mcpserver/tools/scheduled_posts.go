@@ -57,7 +57,7 @@ const (
 // getScheduledPostTools returns the scheduled-post and reminder tools.
 func (p *MattermostToolProvider) getScheduledPostTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "list_scheduled_posts", listScheduledPostsDescription, p.toolListScheduledPosts),
+		mcpReadTool(p, "list_scheduled_posts", listScheduledPostsDescription, p.toolListScheduledPosts),
 		mcpTool(p, "create_scheduled_post", createScheduledPostDescription, p.toolCreateScheduledPost),
 		mcpTool(p, "update_scheduled_post", updateScheduledPostDescription, p.toolUpdateScheduledPost),
 		mcpTool(p, "delete_scheduled_post", deleteScheduledPostDescription, p.toolDeleteScheduledPost),

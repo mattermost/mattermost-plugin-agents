@@ -108,13 +108,13 @@ const (
 // getChannelMemberTools returns the channel membership and per-channel settings tools.
 func (p *MattermostToolProvider) getChannelMemberTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_channel_member", getChannelMemberDescription, p.toolGetChannelMember),
-		mcpTool(p, "get_channel_members_by_ids", getChannelMembersByIDsDescription, p.toolGetChannelMembersByIDs),
-		mcpTool(p, "get_channel_members_by_status", getChannelMembersByStatusDescription, p.toolGetChannelMembersByStatus),
-		mcpTool(p, "get_user_channel_memberships", getUserChannelMembershipsDescription, p.toolGetUserChannelMemberships),
-		mcpTool(p, "get_users_not_in_channel", getUsersNotInChannelDescription, p.toolGetUsersNotInChannel),
-		mcpTool(p, "search_users_in_channel", searchUsersInChannelDescription, p.toolSearchUsersInChannel),
-		mcpTool(p, "list_sidebar_categories", listSidebarCategoriesDescription, p.toolListSidebarCategories),
+		mcpReadTool(p, "get_channel_member", getChannelMemberDescription, p.toolGetChannelMember),
+		mcpReadTool(p, "get_channel_members_by_ids", getChannelMembersByIDsDescription, p.toolGetChannelMembersByIDs),
+		mcpReadTool(p, "get_channel_members_by_status", getChannelMembersByStatusDescription, p.toolGetChannelMembersByStatus),
+		mcpReadTool(p, "get_user_channel_memberships", getUserChannelMembershipsDescription, p.toolGetUserChannelMemberships),
+		mcpReadTool(p, "get_users_not_in_channel", getUsersNotInChannelDescription, p.toolGetUsersNotInChannel),
+		mcpReadTool(p, "search_users_in_channel", searchUsersInChannelDescription, p.toolSearchUsersInChannel),
+		mcpReadTool(p, "list_sidebar_categories", listSidebarCategoriesDescription, p.toolListSidebarCategories),
 		mcpTool(p, "add_channel_members", addChannelMembersDescription, p.toolAddChannelMembers),
 		mcpTool(p, "remove_channel_member", removeChannelMemberDescription, p.toolRemoveChannelMember),
 		mcpTool(p, "set_channel_mute", setChannelMuteDescription, p.toolSetChannelMute),

@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
@@ -50,22 +51,46 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool call")
 
 // ErrRemoteMCPNotLicensed is returned when a tool decision would execute, or
-// share the output of, a tool served by a remote/external MCP server on a
-// server whose license does not include MCP support. Built-in tools (empty
-// ServerOrigin) and embedded Mattermost MCP tools (mcp.EmbeddedClientKey) are
-// basic tool integrations and never require a license. The HTTP layer maps
-// this to 403 Forbidden.
+// share the output of, a tool served by a remote/external MCP server.
+// Remote and plugin MCP servers are available at Enterprise and above.
+// Built-in tools (empty ServerOrigin) and embedded Mattermost MCP tools
+// (mcp.EmbeddedClientKey) are available at every license level. The HTTP
+// layer maps this to 403 Forbidden.
 //
 // This gate is the decision-time backstop for pending remote tool calls
 // persisted before a license change; the primary enforcement is at supply
 // time, where llmcontext.Builder drops remote MCP tools from the LLM context
-// entirely on unlicensed servers.
-var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers require a license with MCP support")
+// when CapRemoteMCP is not available.
+var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers are available at Enterprise and above")
 
-// isRemoteMCPLicensed reports whether the server license covers remote MCP
-// servers. A nil license checker fails closed.
+// Canned tool_result content for non-executing resolutions. These are shown
+// to the LLM (and, when terminal, in channels); they must not include tool
+// arguments or blame the user for an administrative policy/license change.
+const (
+	toolCallRejectedByUserResult = "Tool call rejected by user"
+	toolCallPolicyDeniedResult   = "Tool call was not executed because it is no longer permitted by policy or license"
+)
+
+// toolRejectionGuidance is appended as a final user message to follow-ups
+// after a user rejection. It must not include tool arguments.
+const toolRejectionGuidance = "The user rejected one or more of your tool calls; their results read \"" +
+	toolCallRejectedByUserResult + "\". Do not repeat a rejected call with the same arguments. " +
+	"Ask the user for clarification or take a different approach."
+
+// isUserRejectedToolUse reports whether block was rejected by the user, as
+// opposed to a skipped question (UserInteraction) or a policy/license denial
+// of a deferred auto-run (WouldAutoExecute).
+func isUserRejectedToolUse(block conversation.ContentBlock) bool {
+	return block.Type == conversation.BlockTypeToolUse &&
+		block.Status == conversation.StatusRejected &&
+		block.UserInteraction == "" &&
+		!block.WouldAutoExecute
+}
+
+// isRemoteMCPLicensed reports whether remote and plugin MCP servers are
+// available at the current license level. A nil license checker fails closed.
 func (c *Conversations) isRemoteMCPLicensed() bool {
-	return c.licenseChecker != nil && c.licenseChecker.IsBasicsLicensed()
+	return c.licenseChecker.Allows(enterprise.CapRemoteMCP)
 }
 
 // toolDecision carries the shared state resolved by beginToolDecision for a
@@ -170,14 +195,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Accepting tools from remote/external MCP servers is part of the
-	// licensed "MCP Support" feature. Built-in and embedded Mattermost MCP
-	// tools are basic tool integrations with no license requirement.
-	// Rejections are always allowed — they execute nothing. Blocks marked
-	// WouldAutoExecute are not gated here: their resume re-checks the policy
-	// via shouldAutoExecuteTool, which already refuses remote tools on an
-	// unlicensed server, so they resolve to a rejection instead of blocking
-	// the whole submission on a possibly stale marker.
+	// Accepting tools from remote/external MCP servers is available at
+	// Enterprise and above. Built-in and embedded Mattermost MCP tools are
+	// available at every license level. Rejections are always allowed —
+	// they execute nothing. Blocks marked WouldAutoExecute are not gated
+	// here: their resume re-checks the policy via shouldAutoExecuteTool,
+	// which already refuses remote tools when CapRemoteMCP is not
+	// available, so they resolve to a rejection instead of blocking the
+	// whole submission on a possibly stale marker.
 	for _, b := range pendingBlocks {
 		if b.Type != conversation.BlockTypeToolUse || !mcp.IsRemoteServerOrigin(b.ServerOrigin) {
 			continue
@@ -226,7 +251,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
 	autoExecutedNow := make(map[string]bool)
-	executedAny := false
+	userRejected := false
 	acceptedToolNames := []string{}
 	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
@@ -246,7 +271,6 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
 			block.Shared = new(true)
-			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -256,7 +280,6 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
-			executedAny = true
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -279,10 +302,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// Skipped question: record the decline as the result and stream a
 			// follow-up so the model can proceed without the answer, per the
 			// tool contract. Shared because the decline is user-authored, not
-			// private tool output.
+			// private tool output. UserInteraction stays on the block so the
+			// follow-up can distinguish this from a regular tool rejection.
 			block.Status = conversation.StatusRejected
 			block.Shared = new(true)
-			executedAny = true
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -298,7 +321,6 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// any auto-run round.
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
-			executedAny = true
 			block.Shared = new(true)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
@@ -317,13 +339,27 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 					IsError:    false,
 				})
 			}
-		default:
+		case block.WouldAutoExecute:
+			// Fresh policy/license check failed. Keep the WouldAutoExecute
+			// marker so isUserRejectedToolUse does not treat this as a user
+			// rejection, and record a result that does not blame the user
+			// for an admin change.
 			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "Tool call rejected by user",
+				Result:     toolCallPolicyDeniedResult,
+				IsError:    true,
+			})
+		default:
+			rejectedToolNames = append(rejectedToolNames, block.Name)
+			block.Status = conversation.StatusRejected
+			userRejected = true
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     toolCallRejectedByUserResult,
 				IsError:    true,
 			})
 		}
@@ -366,7 +402,11 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		// Interaction results (answered or skipped) are user-authored, so they
 		// are terminal and shared with no separate share/keep-private step.
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
+		// Rejected results (user rejection or policy/license denial) share only
+		// the canned reason; tool_use arguments stay unshared so they are not
+		// paraphrased into a channel reply.
+		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
@@ -374,7 +414,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			Status:    status,
 			Shared:    new(terminal),
 		}
-		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
+		if terminal {
 			rb.DecidedAt = new(now)
 		} else {
 			needsShareDecision = true
@@ -396,20 +436,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	if !executedAny {
+	if len(toolResults) == 0 {
 		return nil
 	}
 
 	// In channels the follow-up is a channel-visible post that may paraphrase tool
 	// output, so it must not stream until the requester approves sharing in
-	// HandleToolResult. When no share decision remains (every executed result
-	// was a user-interaction answer), HandleToolResult will never fire, so
-	// stream the follow-up now.
+	// HandleToolResult. When no share decision remains (every result is
+	// rejected, a user-interaction answer, or otherwise terminal),
+	// HandleToolResult will never fire, so stream the follow-up now.
 	if !isDM && needsShareDecision {
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, llmContext)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, userRejected, llmContext)
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -470,6 +510,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
+	clickedPostUserRejected := false
 	acceptedToolNames := []string{}
 	rejectedToolNames := []string{}
 	acceptedRemoteMCPTool := false
@@ -491,6 +532,9 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				b.Status == conversation.StatusError ||
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
+			}
+			if isUserRejectedToolUse(b) {
+				clickedPostUserRejected = true
 			}
 			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
 				acceptedRemoteMCPTool = true
@@ -530,8 +574,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
 	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
-	// Sharing output from remote/external MCP tools is part of the licensed
-	// "MCP Support" feature (see HandleToolCall). Keep-private decisions are
+	// Sharing output from remote/external MCP tools is available at
+	// Enterprise and above (see HandleToolCall). Keep-private decisions are
 	// always allowed — they disclose nothing.
 	if acceptedRemoteMCPTool && !c.isRemoteMCPLicensed() {
 		return ErrRemoteMCPNotLicensed
@@ -584,7 +628,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Only stream a follow-up when there is something to follow up on:
 	// at least one executed tool_result exists on this post. Rejected-only
-	// posts produce no output worth streaming.
+	// posts already streamed their continuation from HandleToolCall (no
+	// share decision remains), so a second-stage click must not stream again.
 	if !clickedPostHasExecutedTool {
 		return nil
 	}
@@ -596,7 +641,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false, nil)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false, clickedPostUserRejected, nil)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -613,6 +658,7 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	isDM bool,
+	userRejected bool,
 	approvalContext *llm.Context,
 ) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
@@ -646,6 +692,9 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM, auth.SessionIDFromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
+	}
+	if userRejected {
+		completionReq.Posts = append(completionReq.Posts, llm.Post{Role: llm.PostRoleUser, Message: toolRejectionGuidance})
 	}
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall

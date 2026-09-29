@@ -27,6 +27,17 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 /* eslint-disable import/first */
 import {IntlProvider} from 'react-intl';
 
@@ -125,5 +136,53 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         expect(updated.tool_configs).toEqual([
             {name: 'com_example_demo__echo', policy: 'ask', enabled: false},
         ]);
+    });
+});
+
+describe('MCPServerToolRow license gating', () => {
+    const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+
+    beforeEach(() => {
+        useIsLicensedFor.mockReturnValue(true);
+    });
+
+    test('keeps a remote server enable toggle usable at Enterprise', () => {
+        const server = {...makePluginServer(), serverType: 'remote' as const, name: 'Remote'};
+        const config = {...makePluginServerConfig(), enabled: false};
+        renderRow(server, config);
+
+        const enable = screen.getByLabelText('Enable Remote') as HTMLInputElement;
+        expect(enable.disabled).toBe(false);
+    });
+
+    test('disables enabling a remote server below Enterprise and still allows turning it off', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+
+        const server = {...makePluginServer(), serverType: 'remote' as const, name: 'Remote'};
+        const offConfig = {...makePluginServerConfig(), enabled: false};
+        const off = renderRow(server, offConfig);
+        expect((screen.getByLabelText('Enable Remote') as HTMLInputElement).disabled).toBe(true);
+        off.unmount();
+
+        const onConfig = {...makePluginServerConfig(), enabled: true};
+        const {onServerConfigChange} = renderRow(server, onConfig);
+        const toggle = screen.getByLabelText('Enable Remote') as HTMLInputElement;
+        expect(toggle.disabled).toBe(false);
+        fireEvent.click(toggle);
+        expect(onServerConfigChange).toHaveBeenCalledWith(expect.objectContaining({enabled: false}));
+    });
+
+    test('hides Connect Account when remote MCP is not licensed', () => {
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+        const server = {
+            ...makePluginServer(),
+            serverType: 'remote' as const,
+            name: 'Remote',
+            needsOAuth: true,
+            oauthURL: 'https://example.com/oauth',
+        };
+        renderRow(server, makePluginServerConfig());
+        fireEvent.click(screen.getByText('Remote'));
+        expect(screen.queryByText('Connect Account')).toBeNull();
     });
 });
