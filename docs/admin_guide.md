@@ -223,17 +223,19 @@ For configuration details on native web search with supported providers, see the
 
 #### Provider comparison
 
-Mattermost supports two web search providers, each with varying capabilities:
+Mattermost supports three web search providers, each with varying capabilities:
 
 ##### Brave Search (Recommended)
 
 Brave Search offers a superior experience for AI-powered search:
 
-- **Purpose-built for AI**: Brave's Search API is specifically designed and optimized for LLM integrations
-- **Better content extraction**: Returns pre-processed, LLM-ready summaries with citations
-- **Fewer tool calls**: Often provides complete answers without requiring follow-up web page fetches or scraping
+- **Purpose-built for AI**: Mattermost uses Brave's LLM Context endpoint, which Brave builds specifically for grounding LLM and agent responses
+- **Better content extraction**: Returns pre-extracted page content — text passages, tables, and code blocks — rather than the short snippets a conventional search API returns
+- **Fewer tool calls**: Agents can usually answer without follow-up web page fetches or scraping
 
-**Important**: Administrators must ensure they subscribe to Brave's **Pro AI plan** when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension. The Pro AI plan is specifically licensed for AI/LLM use cases.
+Brave's LLM Context endpoint is included in the Brave **Search** plan.
+
+> **Note**: Earlier releases used Brave's Summarizer API, which returned a pre-written summary with citations and required the now-discontinued Pro AI plan. Brave has deprecated that endpoint, so Mattermost now calls LLM Context instead and the agent writes the answer itself from the extracted content. Citations in agent responses are unaffected. No configuration change is required beyond ensuring your API key is on a current Brave plan.
 
 ##### Google Custom Search
 
@@ -258,18 +260,19 @@ To enable built-in web search:
 
 | Setting | Description | Required |
 |---------|-------------|----------|
-| **Brave API Key** | Your Brave Search API key (Pro AI plan) | Yes |
-| **Result Limit** | Maximum number of results to return (1-10) | No (default: 5) |
+| **Brave API Key** | Your Brave Search API key (Search plan) | Yes |
+| **Result Limit** | Maximum number of sources to extract content from (1-50) | No (default: 5) |
+| **Content Token Budget** | Approximate tokens of page content returned per search (1024-32768) | No (default: 4096) |
 | **API URL** | Override the default Brave endpoint if needed | No |
+
+**Content Token Budget** controls how much extracted page content each search adds to the agent's prompt. Agents may run several searches while answering a single message, and content that doesn't fit in the model's context window pushes earlier conversation out of it. Lower this value for models with small context windows; raise it for large-context models that benefit from more source material.
 
 To obtain a Brave Search API key:
 
 1. Visit [Brave Search API](https://brave.com/search/api/)
 2. Sign up for an account
-3. **Subscribe to the Pro AI plan** (required for LLM usage)
+3. Subscribe to the **Search** plan, which includes the LLM Context endpoint
 4. Generate an API key from your dashboard
-
-**Warning**: Ensure you subscribe to the Pro AI plan. Using other Brave Search plans for AI/LLM integrations violates their Terms of Service.
 
 ##### Google Custom Search configuration
 

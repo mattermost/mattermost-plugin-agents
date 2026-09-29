@@ -62,11 +62,10 @@ type WebSearchSearXNGConfig struct {
 }
 
 type WebSearchBraveConfig struct {
-	APIKey       string `json:"apiKey"`
-	APIURL       string `json:"apiURL"`
-	ResultLimit  int    `json:"resultLimit"`
-	PollTimeout  int    `json:"pollTimeout"`
-	PollInterval int    `json:"pollInterval"`
+	APIKey      string `json:"apiKey"`
+	APIURL      string `json:"apiURL"`
+	ResultLimit int    `json:"resultLimit"`
+	MaxTokens   int    `json:"maxTokens"`
 }
 
 func (c *Config) Clone() *Config {

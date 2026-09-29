@@ -21,6 +21,7 @@ export type WebSearchBraveConfig = {
     apiKey: string;
     resultLimit: number;
     apiURL: string;
+    maxTokens: number;
 };
 
 export type WebSearchSearXNGConfig = {
@@ -43,7 +44,13 @@ type Props = {
 };
 
 const DEFAULT_GOOGLE_CONFIG = {apiKey: '', searchEngineId: '', resultLimit: 5, apiURL: ''};
-const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: 5, apiURL: ''};
+
+// Keep in sync with defaultBraveMaxTokens in websearch/brave.go. The server
+// treats 0 as "use the default", so a config saved before this setting existed
+// must render as the default rather than as 0.
+const DEFAULT_BRAVE_MAX_TOKENS = 4096;
+const DEFAULT_BRAVE_RESULT_LIMIT = 5;
+const DEFAULT_BRAVE_CONFIG = {apiKey: '', resultLimit: DEFAULT_BRAVE_RESULT_LIMIT, apiURL: '', maxTokens: DEFAULT_BRAVE_MAX_TOKENS};
 const DEFAULT_SEARXNG_CONFIG = {baseURL: '', resultLimit: 5};
 
 const WebSearchPanel = ({value, onChange}: Props) => {
@@ -139,17 +146,29 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                             type='password'
                             value={brave.apiKey}
                             onChange={(e) => handleBraveUpdate({apiKey: e.target.value})}
-                            helptext={intl.formatMessage({defaultMessage: "Brave Search API Key. Ensure you subscribe to Brave's Pro AI plan when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension."})}
+                            helptext={intl.formatMessage({defaultMessage: "Brave Search API Key. Requires a subscription to Brave's Search plan, which includes the LLM Context endpoint used to ground agent responses."})}
                             disabled={!value.enabled}
                         />
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Brave Result Limit'})}
                             type='number'
-                            value={brave.resultLimit.toString()}
+                            value={(brave.resultLimit || DEFAULT_BRAVE_RESULT_LIMIT).toString()}
                             onChange={(e) => {
                                 const parsed = parseInt(e.target.value, 10);
-                                handleBraveUpdate({resultLimit: Number.isNaN(parsed) ? 5 : parsed});
+                                handleBraveUpdate({resultLimit: Number.isNaN(parsed) ? DEFAULT_BRAVE_RESULT_LIMIT : parsed});
                             }}
+                            helptext={intl.formatMessage({defaultMessage: 'Maximum number of sources Brave extracts page content from, between 1 and 50. Higher values give agents more to work with but increase response latency.'})}
+                            disabled={!value.enabled}
+                        />
+                        <TextItem
+                            label={intl.formatMessage({defaultMessage: 'Brave Content Token Budget'})}
+                            type='number'
+                            value={(brave.maxTokens || DEFAULT_BRAVE_MAX_TOKENS).toString()}
+                            onChange={(e) => {
+                                const parsed = parseInt(e.target.value, 10);
+                                handleBraveUpdate({maxTokens: Number.isNaN(parsed) ? DEFAULT_BRAVE_MAX_TOKENS : parsed});
+                            }}
+                            helptext={intl.formatMessage({defaultMessage: 'Approximate number of tokens of page content Brave returns per search, between 1024 and 32768. Agents may search several times per response, so lower this if your model has a small context window; content that does not fit pushes earlier conversation out of context.'})}
                             disabled={!value.enabled}
                         />
                         <TextItem

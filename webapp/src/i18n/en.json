@@ -111,6 +111,7 @@
   "96HHAr2s": "No prompts found",
   "9J9BcXHM": "Scale Account ID (x-selected-account-id header, required for ScaleGov)",
   "9JNqOef1": "Agent username",
+  "9KTkpLhY": "Maximum number of sources Brave extracts page content from, between 1 and 50. Higher values give agents more to work with but increase response latency.",
   "9TwvL11j": "Failed to delete agent.",
   "9ZitBrEU": "Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.",
   "9a9+wwWy": "Title",
@@ -412,6 +413,7 @@
   "c9vr6I5Z": "You do not have permission to perform this action.",
   "cAQb5tZd": "Use the new OpenAI Responses API with support for reasoning summaries and other advanced features. Disable for legacy Completions API compatibility.",
   "cKCUTjvH": "Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.",
+  "cOFQI2ek": "Approximate number of tokens of page content Brave returns per search, between 1024 and 32768. Agents may search several times per response, so lower this if your model has a small context window; content that does not fit pushes earlier conversation out of context.",
   "cPJlt2hv": "Tool Providers",
   "cSa5FcRB": "Loading conversation context...",
   "cZ+mfu9J": "false",
@@ -423,7 +425,6 @@
   "context.tooltip": "{used} / {limit} tokens ({pct}%)",
   "context.tooltip.no_limit": "{used} tokens used (provider does not publish a context limit)",
   "cw4VwY7h": "Maximum size of each chunk in characters.",
-  "d+EWTsxm": "Brave Search API Key. Ensure you subscribe to Brave's Pro AI plan when using this feature. Using Brave's regular Search API (non-AI tier) violates Brave's Terms of Service and may result in account suspension.",
   "dO9GO4dQ": "Vector Index",
   "dOQCL8n7": "Display name",
   "dSekOG4v": "Failed to load conversation data",
@@ -600,6 +601,7 @@
   "uRsAMN3K": "This agent’s configuration is incomplete. Edit the agent to fix it.",
   "uRyqrQ67": "Citation from {domain}",
   "uT7Jj8uz": "Create and manage AI agents from the <link>Agents page</link>. System administrators can still set the default bot below.",
+  "uaZeefjT": "Brave Content Token Budget",
   "uc/gx0wP": "Failed to load agents.",
   "ucFUQs6k": "Remove access policy?",
   "uhu5aGgC": "Public",
@@ -656,5 +658,6 @@
   "zA9Mcabp": "New Agent",
   "zLpYnDSB": "No custom prompts yet",
   "zPAZMuFi": "Denying access to the built-in Mattermost server removes nearly all in-product Mattermost tools for matching users. This has broader impact than denying a single remote MCP server.",
+  "zm0vthys": "Brave Search API Key. Requires a subscription to Brave's Search plan, which includes the LLM Context endpoint used to ground agent responses.",
   "zm2TJuFo": "Search prompts"
 }

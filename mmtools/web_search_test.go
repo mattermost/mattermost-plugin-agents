@@ -8,6 +8,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -741,3 +742,115 @@ func (m *mockLanguageModel) CountTokens(_ context.Context, _ llm.CompletionReque
 }
 func (m *mockLanguageModel) InputTokenLimit() int  { return 1000 }
 func (m *mockLanguageModel) OutputTokenLimit() int { return 1000 }
+
+// TestWebSearchToolOutputWithBrave drives the whole tool path — config,
+// provider selection, HTTP, parsing, prompt assembly — against a stub Brave
+// LLM Context endpoint, and asserts on the text the model actually receives.
+// Sovereign web search is license-gated, so the service is built at Enterprise
+// level; this is the path an admin exercises by asking an agent a question.
+func TestWebSearchToolOutputWithBrave(t *testing.T) {
+	const braveBody = `{
+		"grounding": {
+			"generic": [
+				{
+					"url": "https://mattermost.com/blog/release",
+					"title": "Mattermost Release Notes",
+					"snippets": ["Version 12 adds agent tool approvals.", "Upgrade notes for administrators."]
+				},
+				{
+					"url": "https://docs.mattermost.com/upgrade",
+					"title": "Upgrade Guide",
+					"snippets": ["Back up the database before upgrading."]
+				}
+			]
+		},
+		"sources": {
+			"https://mattermost.com/blog/release": {"title": "Mattermost Release Notes", "hostname": "mattermost.com"}
+		}
+	}`
+
+	var gotPath, gotTokens, gotURLs string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotTokens = r.URL.Query().Get("maximum_number_of_tokens")
+		gotURLs = r.URL.Query().Get("maximum_number_of_urls")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(braveBody))
+	}))
+	defer server.Close()
+
+	cfgGetter := func() *config.Config {
+		return &config.Config{
+			WebSearch: config.WebSearchConfig{
+				Enabled:  true,
+				Provider: "brave",
+				Brave: config.WebSearchBraveConfig{
+					APIKey:      "test-key",
+					APIURL:      server.URL,
+					ResultLimit: 3,
+					MaxTokens:   16384,
+				},
+			},
+		}
+	}
+
+	service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
+	tool := service.Tool()
+	require.NotNil(t, tool, "Brave with an API key should yield a usable tool")
+
+	llmCtx := &llm.Context{Parameters: map[string]any{}}
+	argsGetter := func(args any) error {
+		typed, ok := args.(*WebSearchToolArgs)
+		require.True(t, ok)
+		*typed = WebSearchToolArgs{Query: "mattermost 12 release"}
+		return nil
+	}
+
+	out, err := tool.Resolver(context.Background(), llmCtx, argsGetter)
+	require.NoError(t, err)
+
+	// The admin's configured limits must reach Brave, not the package defaults.
+	require.Equal(t, "/res/v1/llm/context", gotPath)
+	require.Equal(t, "16384", gotTokens)
+	require.Equal(t, "3", gotURLs)
+
+	// Extracted page content is the whole point of the endpoint: it has to
+	// reach the model, not just the titles and URLs.
+	require.Contains(t, out, "Version 12 adds agent tool approvals.")
+	require.Contains(t, out, "Back up the database before upgrading.")
+	require.Contains(t, out, "https://mattermost.com/blog/release")
+
+	// Brave no longer returns a provider-written summary, so the model must be
+	// told to cite sources itself rather than to preserve an existing summary.
+	require.NotContains(t, out, "Summary:")
+	require.Contains(t, out, "!!CITE1!!")
+
+	// Citation chips and source fetching both read these back off the context.
+	stored, ok := llmCtx.Parameters[WebSearchContextKey].([]WebSearchContextValue)
+	require.True(t, ok, "results must be persisted for citation rendering")
+	require.Len(t, stored, 1)
+	require.Len(t, stored[0].Results, 2)
+	require.Equal(t, 1, stored[0].Results[0].Index, "citation indices are 1-based")
+
+	allowed, ok := llmCtx.Parameters[WebSearchAllowedURLsKey].([]string)
+	require.True(t, ok, "searched URLs must be whitelisted for source fetching")
+	require.Contains(t, allowed, "https://docs.mattermost.com/upgrade")
+}
+
+// TestWebSearchToolUnlicensedWithBrave pins the gate that blocks this path on
+// an unlicensed server, which is why it cannot be exercised through the UI
+// without a license.
+func TestWebSearchToolUnlicensedWithBrave(t *testing.T) {
+	cfgGetter := func() *config.Config {
+		return &config.Config{
+			WebSearch: config.WebSearchConfig{
+				Enabled:  true,
+				Provider: "brave",
+				Brave:    config.WebSearchBraveConfig{APIKey: "test-key"},
+			},
+		}
+	}
+
+	service := NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(enterprise.LevelUnlicensed))
+	require.Nil(t, service.Tool(), "unlicensed servers must not expose the tool")
+}

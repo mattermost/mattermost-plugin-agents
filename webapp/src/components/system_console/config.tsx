@@ -159,6 +159,7 @@ const defaultConfig: Config = {
             apiKey: '',
             resultLimit: 5,
             apiURL: '',
+            maxTokens: 4096,
         },
         searxng: {
             baseURL: '',
