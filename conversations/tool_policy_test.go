@@ -118,9 +118,11 @@ func TestShouldAutoExecuteTool_ConfigPolicyChecker(t *testing.T) {
 		serverSlug     string
 		configuredName string
 		policy         string
+		unlicensed     bool
 		wantDM         bool
 		wantChannel    bool
 	}{
+		{name: "plugin tool auto_run_everywhere without policy license falls back to ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, unlicensed: true, wantDM: false, wantChannel: false},
 		{name: "plugin tool auto_run_everywhere", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
 		{name: "plugin tool auto_run_in_dm", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunInDM, wantDM: true, wantChannel: false},
 		{name: "plugin tool ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAsk, wantDM: false, wantChannel: false},
@@ -138,7 +140,8 @@ func TestShouldAutoExecuteTool_ConfigPolicyChecker(t *testing.T) {
 				cfg.Servers = []mcp.ServerConfig{{Name: "Remote", Enabled: true, BaseURL: remoteOrigin, ToolConfigs: toolConfigs}}
 			}
 
-			c := &Conversations{toolPolicyChecker: mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg })}
+			checker := mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg }, func() bool { return !tc.unlicensed })
+			c := &Conversations{toolPolicyChecker: checker}
 			runtimeName := llm.NamespaceMCPToolName(tc.serverSlug, tc.configuredName)
 			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
 			llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: tc.origin}})
