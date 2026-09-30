@@ -18,6 +18,7 @@ import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
+import {TestConnectionItem} from './test_connection_item';
 
 export type LLMService = {
     id: string
@@ -83,7 +84,7 @@ function scaleAIToDisplayName(intl: IntlShape): string {
     return intl.formatMessage({defaultMessage: 'Scale AI'});
 }
 
-function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
+export function serviceTypeToDisplayName(intl: IntlShape, serviceType: string): string {
     if (serviceType === 'scale') {
         return scaleAIToDisplayName(intl);
     }
@@ -513,6 +514,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                     {intl.formatMessage({defaultMessage: 'Prompt fallback'})}
                 </SelectionItemOption>
             </SelectionItem>
+            <TestConnectionItem service={props.service}/>
         </>
     );
 };

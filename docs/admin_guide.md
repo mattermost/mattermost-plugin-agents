@@ -78,6 +78,14 @@ Navigate to **System Console > Plugins > Agents** and select **Add a Service**.
 | **Use Responses API** | (OpenAI Compatible and Azure OpenAI only) Use OpenAI's Responses API for native provider tools, reasoning controls, and structured output on those endpoints. OpenAI (direct) and Cohere North always use the Responses API, so this control isn't shown for those service types. |
 | **Structured output** | How this service handles requests that ask for JSON matching a schema. Defaults to **Auto (recommended)**. See [Structured output](#structured-output). |
 
+#### Testing a service connection
+
+Each service has a **Test connection** button that sends a short message to the provider using the settings currently on screen, including changes you have not saved yet. A successful test confirms the credentials, endpoint, and default model all work together. A failed test shows the provider's own error, which is usually more specific than a generic failure.
+
+Saving also tests. When you save, Mattermost tests every service whose provider settings changed, and if one does not answer, the page stays open with the error listed above the services. **Your configuration is still saved** — the test reports on it rather than blocking it, so a provider outage never costs you your edits. Services you did not change are not retested, so unrelated edits save immediately. Use **Test connection** to check a service you have not modified.
+
+A service with no default model cannot be tested, because there is no model to send the request to.
+
 Fallback services are tried per request after the primary service fails, and the primary service is tried again on the next request. Fallback chains are supported, and each fallback uses its own default model, API endpoint, and settings. Invalid fallback chains, such as cycles or missing services, fail setup visibly.
 
 Fallback selects which configured service handles an LLM request. It doesn't change user permissions, channel scoping, or tool execution. One exception affects prompt construction: for requests that ask for structured output, the complete fallback chain determines up front whether the request uses native schema support or the prompt fallback (see [Structured output](#structured-output)). OpenAI-compatible services can be used as local or on-prem keyless fallbacks, including chat-only endpoints when the primary uses the Responses API.

@@ -5,7 +5,7 @@ import React from 'react';
 import {act, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
+import {getAIBots, getPluginConfig, savePluginConfig, testService} from '@/client';
 
 import Config from './config';
 
@@ -33,6 +33,7 @@ jest.mock('@/client', () => ({
     getPluginConfig: jest.fn(),
     getAIBots: jest.fn(),
     savePluginConfig: jest.fn(),
+    testService: jest.fn(),
 }));
 
 jest.mock('@/license', () => ({
@@ -128,6 +129,7 @@ describe('Config save flow', () => {
         jest.clearAllMocks();
         (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
         (getAIBots as jest.Mock).mockResolvedValue({bots: []});
+        (testService as jest.Mock).mockResolvedValue({ok: true});
     });
 
     it('adopts server-minted IDs from the save response so ID-gated UI appears without a reload', async () => {
@@ -159,6 +161,65 @@ describe('Config save flow', () => {
         // The normalized response replaces local state: minted IDs are live.
         await screen.findByText('service:My Service:serviceidaaaaaaaaaaaaaaaaa');
         expect(screen.getByText('mcp:Jira:mcpserveridbbbbbbbbbbbbbbb')).toBeTruthy();
+    });
+
+    it('tests a newly saved service and reports the provider failure without losing the save', async () => {
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        const savedConfig = {
+            ...loadedConfig,
+            services: [{id: 'serviceidaaaaaaaaaaaaaaaaa', name: 'My Service', type: 'openai'}],
+        };
+        (savePluginConfig as jest.Mock).mockResolvedValue(savedConfig);
+        (testService as jest.Mock).mockResolvedValue({ok: false, error: 'invalid api key'});
+
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        let result: {error?: {message?: string}} = {};
+        await act(async () => {
+            result = await save();
+        });
+
+        // An error is what holds the admin console page open on a failed test.
+        expect(result.error?.message).toBe('One or more services failed their connection test.');
+
+        // The configuration was still stored: the probe reports, it does not gate.
+        expect(savePluginConfig).toHaveBeenCalledTimes(1);
+        await screen.findByText('service:My Service:serviceidaaaaaaaaaaaaaaaaa');
+
+        const failures = screen.getByTestId('service-connection-failures');
+        expect(failures.textContent).toContain('invalid api key');
+    });
+
+    it('does not retest a service whose provider settings did not change', async () => {
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('service:My Service:unsaved');
+
+        const savedService = {
+            id: 'serviceidaaaaaaaaaaaaaaaaa',
+            name: 'My Service',
+            type: 'openai',
+            apiKey: 'key-1',
+            defaultModel: 'gpt-5.2',
+        };
+        (savePluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, services: [savedService]});
+
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        expect(testService).toHaveBeenCalledTimes(1);
+
+        // Saving again with only a rename must not cost another provider call.
+        (savePluginConfig as jest.Mock).mockResolvedValue({
+            ...loadedConfig,
+            services: [{...savedService, name: 'Renamed Service'}],
+        });
+        await act(async () => {
+            await save();
+        });
+
+        expect(testService).toHaveBeenCalledTimes(1);
     });
 
     it('reports a save error and keeps local state when the save is rejected', async () => {
