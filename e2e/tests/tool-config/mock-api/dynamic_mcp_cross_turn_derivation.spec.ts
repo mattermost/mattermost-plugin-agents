@@ -209,11 +209,15 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const firstBotPost = botPosts.last();
 
+        const acceptButton1 = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton1).toBeVisible({timeout: 45000});
+
         // The ask-policy business tool needs a decision, so its approval card
         // renders without expanding; the meta-tools that auto-ran before it
         // are folded away, with only the newest naming the collapsed row.
-        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        // Wait for Accept first so the header is no longer this same label.
         await expectToolActivityCurrent(firstBotPost, loadToolLabel);
+        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible();
         await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const firstRounds = await expandToolActivity(firstBotPost);
@@ -221,8 +225,6 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(firstRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
-        const acceptButton1 = rhs.getByRole('button', {name: /^accept$/i});
-        await expect(acceptButton1).toBeVisible({timeout: 30000});
         await acceptButton1.click();
 
         await expect(firstBotPost.getByText(finalMarker1)).toBeVisible({timeout: 45000});
