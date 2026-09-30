@@ -77,6 +77,17 @@ Obtain an [Anthropic API key](https://console.anthropic.com/settings/keys), then
 | **API Key** | Yes | Your Anthropic API key |
 | **Default Model** | Yes | The model to use by default (see [Anthropic's model documentation](https://docs.anthropic.com/claude/docs/models-overview)) |
 
+### Extended thinking
+
+Enable **Extended Thinking** on the agent (System Console > Agents > select agent > **Config** tab) and pick a **Thinking Effort** of low, medium, or high. The default is high. How the effort is applied depends on the model:
+
+| Model | What **Thinking Effort** does |
+|-------|-------------------------------|
+| Claude Opus 4.6+, Sonnet 4.6+, Fable / Mythos | Sent as the native effort level (`output_config.effort`) with adaptive thinking, so the model decides how much to think within that effort. |
+| Older models (for example, Haiku 4.5, Sonnet 4.5, Opus 4.5) | Mapped to a thinking token budget: high uses 1/4 of the output token limit (at most 8192), medium 1/8 (at most 4096), and low 1/16 (at most 2048), never below 1024. Thinking is skipped when the output token limit leaves no room for the 1024-token minimum. |
+
+Extended thinking is skipped on requests that send a native structured output schema, because Anthropic doesn't support both together.
+
 ## AWS Bedrock
 
 AWS Bedrock provides access to foundation models from Anthropic (Claude), Amazon (Nova, Titan), and other providers via a unified API. For full setup instructions — including IAM policy configuration and Anthropic-specific Claude requirements — see the [AWS Bedrock Setup Guide](aws_bedrock_setup.md).

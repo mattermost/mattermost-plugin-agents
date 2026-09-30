@@ -111,7 +111,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
-| **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
+| **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort. Gemini and Vertex AI also accept an optional thinking budget. |
 
 Structured output is not configured on the agent. How a request-time JSON schema is fulfilled (native provider structured output versus a prompt-based fallback) is controlled by the **Structured output** policy on the service, configured in **System Console > Plugins > Agents**; see [Structured output](../admin_guide.md#structured-output) in the Admin Guide. The deprecated per-agent `structuredOutputEnabled` API property and database column are still accepted for compatibility but are ignored at runtime.
 
