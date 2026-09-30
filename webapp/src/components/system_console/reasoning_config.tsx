@@ -9,46 +9,68 @@ import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectFie
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
-// Matches the server-side default: Anthropic resolves an unset effort to high,
-// the thinking depth used before effort was configurable.
-export const defaultReasoningEffort = (serviceType?: string): string => (serviceType === 'anthropic' ? 'high' : 'medium');
+// An empty Anthropic effort lets each model apply its own default.
+export const defaultReasoningEffort = (serviceType?: string): string => (serviceType === 'anthropic' ? '' : 'medium');
 
-// Anthropic has no "minimal" level; the server treats it as low.
+const anthropicEffortLevels = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
+const standardEffortLevels = ['minimal', 'low', 'medium', 'high'];
+
+// Anthropic has no "minimal" level and the server treats it as low; any other
+// unrecognized value runs at the model default.
 const anthropicEffortValue = (effort: string | undefined): string => {
     if (effort === 'minimal') {
         return 'low';
     }
-    return effort || defaultReasoningEffort('anthropic');
+    return effort && anthropicEffortLevels.includes(effort) ? effort : '';
+};
+
+// Mirrors the server's anthropicThinkingAlwaysOn: Opus/Sonnet 5.5+ and the
+// Fable/Mythos family reject turning thinking off.
+export const anthropicThinkingAlwaysOn = (model: string): boolean => {
+    const m = model.toLowerCase();
+    if (m.includes('fable') || m.includes('mythos')) {
+        return true;
+    }
+    const match = (/(opus|sonnet)-(\d{1,2})(?:[-.](\d{1,2}))?(?:\D|$)/).exec(m);
+    if (!match) {
+        return false;
+    }
+    const major = parseInt(match[2], 10);
+    const minor = match[3] ? parseInt(match[3], 10) : 0;
+    return major > 5 || (major === 5 && minor >= 5);
 };
 
 type EffortSelectProps = {
     value: string
-    includeMinimal: boolean
+    levels: string[]
     onChange: (effort: string) => void
 }
 
 const EffortSelect = (props: EffortSelectProps) => {
     const intl = useIntl();
+    const labels: Record<string, string> = {
+        '': intl.formatMessage({defaultMessage: 'Model default'}),
+        minimal: intl.formatMessage({defaultMessage: 'Minimal'}),
+        low: intl.formatMessage({defaultMessage: 'Low'}),
+        medium: intl.formatMessage({defaultMessage: 'Medium'}),
+        high: intl.formatMessage({defaultMessage: 'High'}),
+        xhigh: intl.formatMessage({defaultMessage: 'Extra high'}),
+        max: intl.formatMessage({defaultMessage: 'Max'}),
+    };
     return (
         <SelectField
             maxWidth='200px'
             value={props.value}
             onChange={(e) => props.onChange(e.target.value)}
         >
-            {props.includeMinimal && (
-                <option value='minimal'>
-                    {intl.formatMessage({defaultMessage: 'Minimal'})}
+            {props.levels.map((level) => (
+                <option
+                    key={level}
+                    value={level}
+                >
+                    {labels[level]}
                 </option>
-            )}
-            <option value='low'>
-                {intl.formatMessage({defaultMessage: 'Low'})}
-            </option>
-            <option value='medium'>
-                {intl.formatMessage({defaultMessage: 'Medium'})}
-            </option>
-            <option value='high'>
-                {intl.formatMessage({defaultMessage: 'High'})}
-            </option>
+            ))}
         </SelectField>
     );
 };
@@ -85,6 +107,8 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
     const reasoningEffort = props.bot.reasoningEffort || defaultReasoningEffort(props.service.type);
+    const effectiveModel = props.bot.model || props.service.defaultModel || '';
+    const thinkingAlwaysOn = isAnthropic && anthropicThinkingAlwaysOn(effectiveModel);
     const handleEffortChange = (effort: string) => props.onChange({...props.bot, reasoningEffort: effort});
 
     // For thinking budget, use the value from the bot config, or empty string if 0/undefined
@@ -115,6 +139,13 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                         onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
                 </FieldControlRow>
+                {!reasoningEnabled && thinkingAlwaysOn && (
+                    <HelpText>
+                        {intl.formatMessage({
+                            defaultMessage: 'This model always thinks and can\'t turn extended thinking off. While disabled, it runs at the lowest effort and its reasoning isn\'t shown.',
+                        })}
+                    </HelpText>
+                )}
 
                 {reasoningEnabled && (
                     <>
@@ -125,12 +156,12 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 </FieldLabel>
                                 <EffortSelect
                                     value={anthropicEffortValue(props.bot.reasoningEffort)}
-                                    includeMinimal={false}
+                                    levels={anthropicEffortLevels}
                                     onChange={handleEffortChange}
                                 />
                                 <HelpText>
                                     {intl.formatMessage({
-                                        defaultMessage: 'Controls how much the model thinks before responding. Higher effort allows deeper reasoning but increases response time and cost. Models with adaptive thinking use this effort level directly; older models get a thinking budget scaled to it.',
+                                        defaultMessage: 'Controls how much the model thinks before responding. Higher effort allows deeper reasoning but increases response time and cost. Model default uses the model\'s own default. Models with adaptive thinking use the effort directly (Extra high falls back to High where unsupported); older models get a thinking budget scaled to it.',
                                     })}
                                 </HelpText>
                             </ConfigField>
@@ -162,7 +193,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     </FieldLabel>
                                     <EffortSelect
                                         value={reasoningEffort}
-                                        includeMinimal={true}
+                                        levels={standardEffortLevels}
                                         onChange={handleEffortChange}
                                     />
                                     <HelpText>
@@ -181,7 +212,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 </FieldLabel>
                                 <EffortSelect
                                     value={reasoningEffort}
-                                    includeMinimal={true}
+                                    levels={standardEffortLevels}
                                     onChange={handleEffortChange}
                                 />
                                 <HelpText>

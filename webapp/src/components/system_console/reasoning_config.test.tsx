@@ -80,31 +80,50 @@ const optionValues = (select: HTMLSelectElement) => Array.from(select.options).m
 
 describe('ReasoningConfigItem Anthropic effort', () => {
     it.each([
-        {name: 'unset effort defaults to high', reasoningEffort: '', expected: 'high'},
+        {name: 'unset effort uses the model default', reasoningEffort: '', expected: ''},
         {name: 'stored effort is shown', reasoningEffort: 'medium', expected: 'medium'},
+        {name: 'stored max is shown', reasoningEffort: 'max', expected: 'max'},
         {name: 'minimal is shown as low', reasoningEffort: 'minimal', expected: 'low'},
+        {name: 'unknown effort is shown as the model default', reasoningEffort: 'none', expected: ''},
     ])('$name', ({reasoningEffort, expected}) => {
         renderItem({reasoningEffort});
 
         const select = screen.getByRole('combobox') as HTMLSelectElement;
         expect(select.value).toBe(expected);
-        expect(optionValues(select)).toEqual(['low', 'medium', 'high']);
+        expect(optionValues(select)).toEqual(['', 'low', 'medium', 'high', 'xhigh', 'max']);
         expect(screen.queryByRole('spinbutton')).toBeNull();
     });
 
     it('saves the selected effort', () => {
         const onChange = jest.fn();
-        renderItem({reasoningEffort: 'high'}, {}, onChange);
+        renderItem({reasoningEffort: ''}, {}, onChange);
 
-        fireEvent.change(screen.getByRole('combobox'), {target: {value: 'low'}});
+        fireEvent.change(screen.getByRole('combobox'), {target: {value: 'xhigh'}});
 
-        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: 'low'}));
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: 'xhigh'}));
+    });
+});
+
+describe('ReasoningConfigItem Anthropic always-on thinking note', () => {
+    const alwaysOnNote = /This model always thinks/;
+
+    it.each([
+        {name: 'Opus 5.5 disabled shows the note', model: 'claude-opus-5-5', reasoningEnabled: false, expected: true},
+        {name: 'Fable via service default shows the note', model: '', serviceDefaultModel: 'claude-fable-5-1', reasoningEnabled: false, expected: true},
+        {name: 'Sonnet 5 can be disabled', model: 'claude-sonnet-5', reasoningEnabled: false, expected: false},
+        {name: 'dated Opus 5 snapshot can be disabled', model: 'claude-opus-5-20260301', reasoningEnabled: false, expected: false},
+        {name: 'Haiku 4.5 can be disabled', model: 'claude-haiku-4-5-20251001', reasoningEnabled: false, expected: false},
+        {name: 'enabled thinking hides the note', model: 'claude-opus-5-5', reasoningEnabled: true, expected: false},
+    ])('$name', ({model, serviceDefaultModel, reasoningEnabled, expected}) => {
+        renderItem({model, reasoningEnabled}, serviceDefaultModel ? {defaultModel: serviceDefaultModel} : {});
+
+        expect(Boolean(screen.queryByText(alwaysOnNote))).toBe(expected);
     });
 });
 
 describe('defaultReasoningEffort', () => {
     it.each([
-        ['anthropic', 'high'],
+        ['anthropic', ''],
         ['gemini', 'medium'],
         ['openai', 'medium'],
         ['', 'medium'],

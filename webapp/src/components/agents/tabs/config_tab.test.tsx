@@ -273,9 +273,9 @@ describe('ConfigTab license gating', () => {
     });
 
     test.each([
-        {from: 'openai', to: 'anthropic', expected: 'high'},
+        {from: 'openai', to: 'anthropic', expected: ''},
         {from: 'anthropic', to: 'openai', expected: 'medium'},
-    ])('switching from $from to $to resets reasoning effort to $expected', async ({from, to, expected}) => {
+    ])('switching from $from to $to resets reasoning effort to "$expected"', async ({from, to, expected}) => {
         const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
         const serviceIDs: Record<string, string> = {openai: openaiService.id, anthropic: anthropicService.id};
         const onChange = jest.fn();

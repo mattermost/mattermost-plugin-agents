@@ -626,9 +626,9 @@ describe('AgentConfigView', () => {
     });
 
     test.each([
-        {serviceType: 'anthropic', expected: 'high'},
+        {serviceType: 'anthropic', expected: ''},
         {serviceType: 'openai', expected: 'medium'},
-    ])('defaults reasoning effort for a new $serviceType agent to $expected', async ({serviceType, expected}) => {
+    ])('defaults reasoning effort for a new $serviceType agent to "$expected"', async ({serviceType, expected}) => {
         mockCreateAgent.mockResolvedValue(savedAgent);
         render(
             <IntlProvider locale='en'>
@@ -649,7 +649,7 @@ describe('AgentConfigView', () => {
         expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
     });
 
-    test('keeps an unset Anthropic effort at the high default when saving an existing agent', async () => {
+    test('keeps an unset Anthropic effort at the model default when saving an existing agent', async () => {
         mockUpdateAgent.mockResolvedValue(savedAgent);
         render(
             <IntlProvider locale='en'>
@@ -667,7 +667,7 @@ describe('AgentConfigView', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
         await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
-        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({reasoningEffort: 'high'}));
+        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({reasoningEffort: ''}));
     });
 
     test('blocks saving when maxToolTurns exceeds the hard cap', () => {

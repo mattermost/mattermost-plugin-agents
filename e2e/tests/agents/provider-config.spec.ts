@@ -289,7 +289,7 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
 
         // Anthropic is configured by effort; the migrated budget has no field.
-        await expect(agentPage.getThinkingEffortSelect()).toHaveValue('high');
+        await expect(agentPage.getThinkingEffortSelect()).toHaveValue('');
         await expect(page.getByText('Thinking Budget (tokens)', {exact: true})).toHaveCount(0);
         await agentPage.getThinkingEffortSelect().selectOption('low');
 
