@@ -170,8 +170,8 @@ func TestSearchBarFlowEval(t *testing.T) {
 	}
 }
 
-// TestAskChannelSearchFlowEval covers /ask-channel: every search must stay in
-// the requested channel, and the answer must not pull in other channels.
+// TestAskChannelSearchFlowEval covers /ask-channel: the agent must only look
+// inside the requested channel, and the answer must not pull in other channels.
 func TestAskChannelSearchFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -184,15 +184,21 @@ func TestAskChannelSearchFlowEval(t *testing.T) {
 	evals.Run(t, "ask-channel stays in the channel", func(e *evals.EvalT) {
 		result := runSearchFlowEval(e, suite, data, "What has been proposed here?", data.designChannel)
 
-		calls := searchPostsCalls(result.toolCalls)
-		require.NotEmpty(e.T, calls, "the agent must search with search_posts")
-		for _, call := range calls {
+		var channelLookups int
+		for _, call := range result.toolCalls {
+			switch llm.BareMCPToolName(call.Name) {
+			case "search_posts", "read_channel":
+			default:
+				continue
+			}
+			channelLookups++
 			var args struct {
 				ChannelID string `json:"channel_id"`
 			}
 			require.NoError(e.T, json.Unmarshal(call.Arguments, &args))
-			assert.Equal(e.T, data.designChannel.Id, args.ChannelID, "search_posts call %s left the requested channel", string(call.Arguments))
+			assert.Equal(e.T, data.designChannel.Id, args.ChannelID, "%s call %s left the requested channel", call.Name, string(call.Arguments))
 		}
+		require.Positive(e.T, channelLookups, "the agent must search or read the requested channel")
 
 		for _, rubric := range []string{
 			"Mentions the Figma mockups for the dashboard redesign or the card-based layout for the analytics section",
