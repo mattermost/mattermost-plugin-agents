@@ -181,15 +181,15 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const initialBotPost = botPosts.last();
 
-        // The ask-policy business tool needs a decision, so its approval card
-        // renders in full without expanding the activity area.
-        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible({
-            timeout: 45000,
-        });
+        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
+        await expect(acceptButton).toBeVisible({timeout: 45000});
 
-        // The meta-tools auto-ran during the dynamic prelude, so they are
-        // folded away; only the newest of them names the collapsed row.
+        // The ask-policy business tool needs a decision, so its approval card
+        // renders in full without expanding the activity area. Wait for Accept
+        // first so the collapsed row has finished naming the last auto-run
+        // meta-tool; until then the header can still show this same label.
         await expectToolActivityCurrent(initialBotPost, loadToolLabel);
+        await expect(initialBotPost.getByText(embeddedGetChannelInfoLabel, {exact: true})).toBeVisible();
         await expect(initialBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
 
         const activityRounds = await expandToolActivity(initialBotPost);
@@ -201,8 +201,6 @@ test.describe('Dynamic MCP Tool Approval (Mocked LLM)', () => {
         await expect(initialBotPost.getByText(/did not return a result/i)).not.toBeVisible();
         await expect(initialBotPost.getByText(continuationMarker)).not.toBeVisible();
 
-        const acceptButton = rhs.getByRole('button', {name: /^accept$/i});
-        await expect(acceptButton).toBeVisible({timeout: 30000});
         await acceptButton.click();
 
         await expect(initialBotPost.getByText(continuationMarker)).toBeVisible({timeout: 45000});

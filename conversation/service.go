@@ -212,6 +212,12 @@ func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) 
 	return nil, nil
 }
 
+// GetTurnByPostID returns the turn anchored to postID, or nil when no turn is
+// anchored to it.
+func (s *Service) GetTurnByPostID(postID string) (*store.Turn, error) {
+	return s.store.GetTurnByPostID(postID)
+}
+
 // UpdateTurnContent updates the content JSON of a turn.
 func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
 	return s.store.UpdateTurnContent(turnID, content)
