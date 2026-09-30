@@ -404,10 +404,7 @@ func (p *Plugin) OnActivate() error {
 	searchService := search.New(
 		searchAvailability.QuerySearch,
 		mmClient,
-		prompts,
-		streamingService,
 		licenseChecker,
-		nil, // conversation service wired in a later step
 	)
 
 	// Reinitialize embedding search on config changes and license changes.
@@ -525,7 +522,6 @@ func (p *Plugin) OnActivate() error {
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
 	conversationsService.SetAutoReplySettings(autoreplyService)
-	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
 		pluginAPI,

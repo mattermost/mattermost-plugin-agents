@@ -12,6 +12,10 @@
     "translation": "Sorry, you no longer have access to the original thread."
   },
   {
+    "id": "agents.search_tools_unavailable",
+    "translation": "I can't search Mattermost because the Mattermost search tool isn't available to this agent. Ask your system admin to enable the embedded Mattermost MCP server and the search_posts tool for this agent."
+  },
+  {
     "id": "agents.stream_to_post_access_llm_error",
     "translation": "Sorry! An error occurred while accessing the LLM. See server logs for details."
   },
