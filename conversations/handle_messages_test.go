@@ -93,6 +93,24 @@ func TestHandleMessages(t *testing.T) {
 		require.ErrorIs(t, err, ErrNoResponse)
 	})
 
+	t.Run("webhooks with activate_ai pass the webhook guard", func(t *testing.T) {
+		mmClient := mocks.NewMockClient(t)
+		sentinel := errors.New("reached channel lookup")
+		mmClient.EXPECT().GetChannel("channelid").Return(nil, sentinel).Once()
+
+		post := &model.Post{
+			UserId:    "userid",
+			ChannelId: "channelid",
+		}
+		post.AddProp(FromWebhookProp, "true")
+		post.AddProp(ActivateAIProp, "true")
+
+		conv := &Conversations{mmClient: mmClient, bots: e.bots}
+		err := conv.handleMessages(ctx, post)
+		require.ErrorIs(t, err, sentinel)
+		require.NotErrorIs(t, err, ErrNoResponse)
+	})
+
 	// Cover the MM-67969 header-change case and one other system_* type.
 	systemPostTypes := []string{
 		model.PostTypeHeaderChange,
@@ -173,6 +191,8 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 	oauthAppPost := postWithProp(FromOAuthAppProp)
 	botActivateAIPost := &model.Post{UserId: "b1"}
 	botActivateAIPost.AddProp(ActivateAIProp, true)
+	webhookActivateAIPost := postWithProp(FromWebhookProp)
+	webhookActivateAIPost.AddProp(ActivateAIProp, "true")
 
 	tests := []struct {
 		name                 string
@@ -188,6 +208,8 @@ func TestComputeAllowToolsInChannel(t *testing.T) {
 		{"config enabled, bot user with activate_ai and policy checker", true, botActivateAIPost, botUser, true, true},
 		{"config enabled, bot user with activate_ai without policy checker", true, botActivateAIPost, botUser, false, false},
 		{"config enabled, from_webhook post", true, webhookPost, humanUser, false, false},
+		{"config enabled, from_webhook post with activate_ai and policy checker", true, webhookActivateAIPost, humanUser, true, true},
+		{"config enabled, from_webhook post with activate_ai without policy checker", true, webhookActivateAIPost, humanUser, false, false},
 		{"config enabled, from_plugin post", true, pluginPost, humanUser, false, false},
 		{"config enabled, from_bot post", true, botPropPost, humanUser, false, false},
 		{"config enabled, from_oauth_app post", true, oauthAppPost, humanUser, false, false},
