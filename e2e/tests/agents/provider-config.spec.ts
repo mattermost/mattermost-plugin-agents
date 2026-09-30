@@ -290,7 +290,7 @@ test.describe('Agent provider configuration', () => {
 
         // Anthropic is configured by effort; the migrated budget has no field.
         await expect(agentPage.getThinkingEffortSelect()).toHaveValue('high');
-        await expect(page.getByText('Thinking Budget', {exact: false})).toHaveCount(0);
+        await expect(page.getByText('Thinking Budget (tokens)', {exact: true})).toHaveCount(0);
         await agentPage.getThinkingEffortSelect().selectOption('low');
 
         await agentPage.getNativeToolCheckbox('Native Claude Tools').click();
