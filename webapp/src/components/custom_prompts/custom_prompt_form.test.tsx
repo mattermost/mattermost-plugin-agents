@@ -46,6 +46,7 @@ const prompt: CustomPrompt = {
     description: '',
     template: 'Do the thing',
     is_shared: false,
+    run_immediately: false,
     created_at: 0,
     updated_at: 0,
     deleted_at: 0,

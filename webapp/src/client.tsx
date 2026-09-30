@@ -15,7 +15,7 @@ import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
 
-import {CustomPrompt} from './types';
+import {CustomPrompt, CustomPromptInput} from './types';
 
 export const Client4 = new Client4Class();
 
@@ -1146,7 +1146,7 @@ export async function getCustomPrompts(): Promise<CustomPrompt[]> {
     });
 }
 
-export async function createCustomPrompt(prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<CustomPrompt> {
+export async function createCustomPrompt(prompt: CustomPromptInput): Promise<CustomPrompt> {
     const url = `${baseRoute()}/custom-prompts`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
@@ -1164,7 +1164,7 @@ export async function createCustomPrompt(prompt: {name: string; description: str
     });
 }
 
-export async function updateCustomPrompt(id: string, prompt: {name: string; description: string; template: string; is_shared: boolean}): Promise<void> {
+export async function updateCustomPrompt(id: string, prompt: CustomPromptInput): Promise<void> {
     const url = `${baseRoute()}/custom-prompts/${id}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'PUT',

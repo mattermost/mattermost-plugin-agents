@@ -260,10 +260,10 @@ func TestAuditCustomPrompts(t *testing.T) {
 		validateRecord func(t *testing.T, rec *model.AuditRecord, promptID string, responseBody []byte)
 	}{
 		{
-			name:  "create success records prompt id and sharing flag",
+			name:  "create success records prompt id, sharing flag, and run-immediately flag",
 			event: AuditEventCreateCustomPrompt,
 			buildRequest: func(t *testing.T) (*http.Request, string) {
-				body := `{"name":"` + plantedTitle + `","description":"d","template":"` + plantedTemplate + `","is_shared":true}`
+				body := `{"name":"` + plantedTitle + `","description":"d","template":"` + plantedTemplate + `","is_shared":true,"run_immediately":true}`
 				req := httptest.NewRequest(http.MethodPost, "/custom-prompts", strings.NewReader(body))
 				req.Header.Set("Mattermost-User-Id", testUserID)
 				return req, ""
@@ -273,6 +273,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
 				assert.Equal(t, testUserID, rec.Actor.UserId)
 				assert.Equal(t, true, rec.EventData.Parameters["is_shared"])
+				assert.Equal(t, true, rec.EventData.Parameters["run_immediately"])
 
 				// The recorded ID must be the created prompt's actual ID, not
 				// just any non-empty string.
@@ -303,11 +304,11 @@ func TestAuditCustomPrompts(t *testing.T) {
 			},
 		},
 		{
-			name:  "update success records prompt id and sharing flag",
+			name:  "update success records prompt id, sharing flag, and run-immediately flag",
 			event: AuditEventUpdateCustomPrompt,
 			buildRequest: func(t *testing.T) (*http.Request, string) {
 				prompt := createPlantedPrompt(t, testUserID)
-				body := `{"name":"Updated","description":"updated","template":"` + plantedTemplate + `","is_shared":true}`
+				body := `{"name":"Updated","description":"updated","template":"` + plantedTemplate + `","is_shared":true,"run_immediately":true}`
 				req := httptest.NewRequest(http.MethodPut, "/custom-prompts/"+prompt.ID, strings.NewReader(body))
 				req.Header.Set("Mattermost-User-Id", testUserID)
 				return req, prompt.ID
@@ -318,6 +319,7 @@ func TestAuditCustomPrompts(t *testing.T) {
 				assert.Equal(t, testUserID, rec.Actor.UserId)
 				assert.Equal(t, promptID, rec.EventData.Parameters["prompt_id"])
 				assert.Equal(t, true, rec.EventData.Parameters["is_shared"])
+				assert.Equal(t, true, rec.EventData.Parameters["run_immediately"])
 			},
 		},
 		{

@@ -38,7 +38,7 @@ async function setupTestPage(page) {
  */
 async function createPromptViaAPI(
     client: any,
-    data: { name: string; description: string; template: string; is_shared: boolean },
+    data: { name: string; description: string; template: string; is_shared: boolean; run_immediately?: boolean },
 ) {
     const baseUrl = mattermost.url();
     const response = await fetch(`${baseUrl}/plugins/mattermost-ai/custom-prompts`, {
@@ -434,6 +434,39 @@ test.describe('Custom Prompts in AI Actions Submenu', () => {
         await page.getByText('Formatting Bar Prompt').click();
 
         await expect(postTextbox).toHaveValue(/Inserted via formatting bar/, { timeout: 10000 });
+    });
+
+    test('a prompt marked "send without review" posts instead of filling the textbox', async ({ page }) => {
+        const prompt = await createPromptViaAPI(userClient, {
+            name: 'Immediate Prompt',
+            description: 'Sends on click',
+            template: 'Sent without review',
+            is_shared: true,
+            run_immediately: true,
+        });
+        createdPromptIds.push(prompt.id);
+
+        await setupTestPage(page);
+
+        const postTextbox = page.getByTestId('post_textbox');
+        await postTextbox.click();
+
+        const aiButton = page.locator('#aiActionsMenu');
+        if (!await aiButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+            test.skip(true, 'AI Actions menu not available (requires custom server build)');
+            return;
+        }
+
+        // The agent replies to the posted message, so the mock must be armed first.
+        await openAIMock.addCompletionMock(responseTest);
+
+        await aiButton.click();
+        await page.getByText('Custom prompts').hover();
+        await page.getByText('Immediate Prompt').click();
+
+        // The rendered text lands in the channel, not the composer.
+        await expect(page.getByText(/Sent without review/).first()).toBeVisible({ timeout: 30000 });
+        await expect(postTextbox).toHaveValue('');
     });
 
     test('"Manage prompts" in the submenu opens the management modal', async ({ page }) => {

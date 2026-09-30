@@ -95,6 +95,7 @@ func TestCreateAndGet(t *testing.T) {
 	require.Equal(t, "A test prompt", got.Description)
 	require.Equal(t, "Hello {{.BotName}}", got.Template)
 	require.True(t, got.IsShared)
+	require.False(t, got.RunImmediately)
 	require.Equal(t, created.CreatedAt, got.CreatedAt)
 	require.Equal(t, created.UpdatedAt, got.UpdatedAt)
 	require.Zero(t, got.DeletedAt)
@@ -468,4 +469,88 @@ func TestGetPinnedIDsExcludesDeletedPrompts(t *testing.T) {
 	pinnedIDs, err := store.GetPinnedIDs(userID)
 	require.NoError(t, err)
 	require.Empty(t, pinnedIDs, "GetPinnedIDs should exclude deleted prompts")
+}
+
+// RunImmediately is read back by three separate column lists (Get, ListForUser)
+// and written by two (Create, Update), so exercise each path.
+func TestRunImmediatelyPersists(t *testing.T) {
+	dbClient := testDB(t)
+	store := NewStore(dbClient)
+
+	creatorID := model.NewId()
+
+	tests := []struct {
+		name           string
+		runImmediately bool
+		toggleTo       bool
+	}{
+		{
+			name:           "opted out stays opted out, can be turned on",
+			runImmediately: false,
+			toggleTo:       true,
+		},
+		{
+			name:           "opted in stays opted in, can be turned off",
+			runImmediately: true,
+			toggleTo:       false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			created, err := store.Create(CustomPrompt{
+				CreatorID:      creatorID,
+				Name:           tc.name,
+				Template:       "Template",
+				RunImmediately: tc.runImmediately,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.runImmediately, created.RunImmediately)
+
+			got, err := store.Get(created.ID)
+			require.NoError(t, err)
+			require.Equal(t, tc.runImmediately, got.RunImmediately)
+
+			listed, err := store.ListForUser(creatorID, false)
+			require.NoError(t, err)
+			found := false
+			for _, p := range listed {
+				if p.ID == created.ID {
+					found = true
+					require.Equal(t, tc.runImmediately, p.RunImmediately)
+				}
+			}
+			require.True(t, found, "created prompt missing from list")
+
+			require.NoError(t, store.Update(CustomPrompt{
+				ID:             created.ID,
+				CreatorID:      creatorID,
+				Name:           tc.name,
+				Template:       "Template",
+				RunImmediately: tc.toggleTo,
+			}))
+
+			got, err = store.Get(created.ID)
+			require.NoError(t, err)
+			require.Equal(t, tc.toggleTo, got.RunImmediately)
+		})
+	}
+}
+
+// Prompts created before the flag existed must keep the review-then-send
+// behavior, which the zero value expresses.
+func TestRunImmediatelyDefaultsOff(t *testing.T) {
+	dbClient := testDB(t)
+	store := NewStore(dbClient)
+
+	created, err := store.Create(CustomPrompt{
+		CreatorID: model.NewId(),
+		Name:      "Unset",
+		Template:  "Template",
+	})
+	require.NoError(t, err)
+
+	got, err := store.Get(created.ID)
+	require.NoError(t, err)
+	require.False(t, got.RunImmediately)
 }

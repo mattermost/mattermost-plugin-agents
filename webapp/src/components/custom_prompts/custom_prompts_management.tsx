@@ -11,6 +11,7 @@ import {CloseIcon, PinOutlineIcon, PinIcon, PlusIcon, MagnifyIcon, ArrowLeftIcon
 import {getCustomPrompts, getPinnedPromptIds, getShowCustomPromptsModal} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
 import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
+import {CustomPromptInput} from '@/types';
 
 import ConfirmationDialog from '../confirmation_dialog';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
@@ -324,7 +325,7 @@ const CustomPromptsManagement = () => {
         }
     }, [pinnedIds, dispatch, intl]);
 
-    const handleCreate = useCallback(async (data: {name: string; description: string; template: string; is_shared: boolean}) => {
+    const handleCreate = useCallback(async (data: CustomPromptInput) => {
         try {
             await createCustomPrompt(data);
             dispatch(fetchCustomPrompts() as any);
@@ -335,7 +336,7 @@ const CustomPromptsManagement = () => {
         }
     }, [dispatch, intl]);
 
-    const handleUpdate = useCallback(async (id: string, data: {name: string; description: string; template: string; is_shared: boolean}) => {
+    const handleUpdate = useCallback(async (id: string, data: CustomPromptInput) => {
         try {
             await updateCustomPrompt(id, data);
             dispatch(fetchCustomPrompts() as any);
