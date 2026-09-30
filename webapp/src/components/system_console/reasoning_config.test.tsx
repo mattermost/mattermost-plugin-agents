@@ -2,10 +2,10 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import ReasoningConfigItem, {usesAdaptiveThinking} from './reasoning_config';
+import ReasoningConfigItem, {defaultReasoningEffort} from './reasoning_config';
 import {LLMBotConfig} from './bot';
 import {type LLMService} from './service';
 
@@ -63,118 +63,64 @@ const baseBot: LLMBotConfig = {
     reasoningEnabled: true,
 };
 
-function renderItem(bot: Partial<LLMBotConfig>, service: Partial<LLMService> = {}) {
+function renderItem(bot: Partial<LLMBotConfig>, service: Partial<LLMService> = {}, onChange = jest.fn()) {
     return render(
         <IntlProvider locale='en'>
             <ReasoningConfigItem
                 bot={{...baseBot, ...bot}}
                 service={{...baseService, ...service}}
                 maxTokens={4096}
-                onChange={jest.fn()}
+                onChange={onChange}
             />
         </IntlProvider>,
     );
 }
 
-const budgetTooLargeError = /Thinking budget cannot exceed max tokens/;
-const budgetTooSmallError = /Thinking budget must be at least 1024 tokens/;
-const adaptiveHelpText = /adaptive thinking/;
+const optionValues = (select: HTMLSelectElement) => Array.from(select.options).map((o) => o.value);
 
-describe('usesAdaptiveThinking model classification', () => {
-    const cases: Array<[string, boolean]> = [
+describe('ReasoningConfigItem Anthropic effort', () => {
+    it.each([
+        {name: 'unset effort defaults to high', reasoningEffort: '', expected: 'high'},
+        {name: 'stored effort is shown', reasoningEffort: 'medium', expected: 'medium'},
+        {name: 'minimal is shown as low', reasoningEffort: 'minimal', expected: 'low'},
+    ])('$name', ({reasoningEffort, expected}) => {
+        renderItem({reasoningEffort});
 
-        // Opus dropped budget-based thinking at 4.7.
-        ['claude-opus-4-6', false],
-        ['claude-opus-4-7', true],
-        ['claude-opus-4-8', true],
-        ['claude-opus-4-9', true],
-        ['claude-opus-5', true],
-        ['claude-opus-6', true],
-        ['claude-opus-4-5-20251101', false],
-        ['claude-opus-4-1-20250805', false],
+        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        expect(select.value).toBe(expected);
+        expect(optionValues(select)).toEqual(['low', 'medium', 'high']);
+        expect(screen.queryByRole('spinbutton')).toBeNull();
+    });
 
-        // Date suffix without a minor version is not a minor version.
-        ['claude-opus-4-20250514', false],
+    it('saves the selected effort', () => {
+        const onChange = jest.fn();
+        renderItem({reasoningEffort: 'high'}, {}, onChange);
 
-        // Sonnet dropped budget-based thinking at 5.
-        ['claude-sonnet-4-6', false],
-        ['claude-sonnet-4-5-20250929', false],
-        ['claude-sonnet-5', true],
-        ['claude-sonnet-5-1', true],
+        fireEvent.change(screen.getByRole('combobox'), {target: {value: 'low'}});
 
-        // Fable/Mythos are always adaptive-only.
-        ['claude-fable-5', true],
-        ['claude-mythos-5', true],
-
-        // Unknown families and legacy names stay budget-based.
-        ['claude-haiku-4-5-20251001', false],
-        ['claude-3-7-sonnet', false],
-        ['', false],
-    ];
-
-    it.each(cases)('%s -> %s', (model, expected) => {
-        expect(usesAdaptiveThinking(model)).toBe(expected);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: 'low'}));
     });
 });
 
-describe('ReasoningConfigItem thinking budget validation', () => {
-    const cases = [
-        {
-            name: 'budget-based model shows out-of-range error',
-            model: 'claude-sonnet-4-5-20250929',
-            thinkingBudget: 99999,
-            expectError: budgetTooLargeError,
-            expectAdaptiveHelp: false,
-        },
-        {
-            name: 'budget-based model shows too-small error',
-            model: 'claude-haiku-4-5-20251001',
-            thinkingBudget: 500,
-            expectError: budgetTooSmallError,
-            expectAdaptiveHelp: false,
-        },
-        {
-            name: 'adaptive model ignores oversized budget',
-            model: 'claude-opus-5',
-            thinkingBudget: 99999,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-        {
-            name: 'adaptive model ignores undersized budget',
-            model: 'claude-fable-5',
-            thinkingBudget: 500,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-        {
-            name: 'adaptive detection falls back to the service default model',
-            model: '',
-            serviceDefaultModel: 'claude-sonnet-5',
-            thinkingBudget: 99999,
-            expectError: null,
-            expectAdaptiveHelp: true,
-        },
-    ];
+describe('defaultReasoningEffort', () => {
+    it.each([
+        ['anthropic', 'high'],
+        ['gemini', 'medium'],
+        ['openai', 'medium'],
+        ['', 'medium'],
+    ])('%s -> %s', (serviceType, expected) => {
+        expect(defaultReasoningEffort(serviceType)).toBe(expected);
+    });
+});
 
-    it.each(cases)('$name', ({model, serviceDefaultModel, thinkingBudget, expectError, expectAdaptiveHelp}) => {
-        renderItem(
-            {model, thinkingBudget},
-            serviceDefaultModel ? {defaultModel: serviceDefaultModel} : {},
-        );
+describe('ReasoningConfigItem Gemini', () => {
+    it('keeps the optional thinking budget alongside effort', () => {
+        renderItem({reasoningEffort: 'low'}, {type: 'gemini', defaultModel: 'gemini-2.5-pro'});
 
-        if (expectError) {
-            expect(screen.getByText(expectError)).toBeTruthy();
-        } else {
-            expect(screen.queryByText(budgetTooLargeError)).toBeNull();
-            expect(screen.queryByText(budgetTooSmallError)).toBeNull();
-        }
-
-        if (expectAdaptiveHelp) {
-            expect(screen.getByText(adaptiveHelpText)).toBeTruthy();
-        } else {
-            expect(screen.queryByText(adaptiveHelpText)).toBeNull();
-        }
+        expect(screen.getByRole('spinbutton')).toBeTruthy();
+        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        expect(select.value).toBe('low');
+        expect(optionValues(select)).toEqual(['minimal', 'low', 'medium', 'high']);
     });
 });
 

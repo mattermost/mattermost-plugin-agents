@@ -19,6 +19,7 @@ import {
     codePointLength,
 } from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
+import {defaultReasoningEffort} from '@/components/system_console/reasoning_config';
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import {useIsLicensedFor} from '@/license';
@@ -162,7 +163,8 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
     };
 }
 
-function agentToDraft(agent: UserAgent): AgentDraft {
+function agentToDraft(agent: UserAgent, services: ServiceInfo[]): AgentDraft {
+    const serviceType = services.find((s) => s.id === agent.serviceID)?.type;
     return {
         displayName: agent.displayName,
         username: agent.name,
@@ -183,7 +185,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         disableTools: agent.disableTools ?? false,
         enabledNativeTools: agent.enabledNativeTools ?? [],
         reasoningEnabled: agent.reasoningEnabled ?? true,
-        reasoningEffort: agent.reasoningEffort || 'medium',
+        reasoningEffort: agent.reasoningEffort || defaultReasoningEffort(serviceType),
         thinkingBudget: agent.thinkingBudget ?? 0,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
     };
@@ -211,11 +213,12 @@ const AgentConfigView = (props: Props) => {
     const [activeTab, setActiveTab] = useState<Tab>('config');
     const initialDraft = useMemo(() => {
         if (agent) {
-            return agentToDraft(agent);
+            return agentToDraft(agent, services);
         }
         const draft = cloneDraft(emptyDraft);
         if (services.length > 0) {
             draft.serviceId = services[0].id;
+            draft.reasoningEffort = defaultReasoningEffort(services[0].type);
         }
 
         // Provider-native web search is on by default where it is available.
