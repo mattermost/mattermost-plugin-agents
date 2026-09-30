@@ -161,7 +161,7 @@ func TestHTTPFileContentService_GetContent(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(httpFileContentResponse{HasText: true})
 			},
 			validateReq: func(t *testing.T, r *http.Request) {
-				assert.Equal(t, "/api/v1/files/content", r.URL.Path)
+				assert.Equal(t, "/files/content", r.URL.Path)
 				assert.Equal(t, http.MethodPost, r.Method)
 				assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 			},

@@ -73,7 +73,7 @@ func (s *HTTPSemanticSearchService) Search(ctx context.Context, query string, op
 		Offset:    opts.Offset,
 	}
 
-	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/api/v1/search/raw", reqBody, "")
+	status, respBody, err := postPluginJSON(ctx, s.client, s.pluginURL+"/search/raw", reqBody, "")
 	if err != nil {
 		return nil, err
 	}
