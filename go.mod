@@ -14,7 +14,7 @@ require (
 	github.com/mattermost/mattermost/server/public v0.4.5-0.20260911134158-fa302bf9e623
 	github.com/mattermost/morph v1.1.0
 	github.com/mattermost/testcontainers-mattermost-go v0.1.0
-	github.com/maximhq/bifrost/core v1.7.6
+	github.com/maximhq/bifrost/core v1.7.15
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/pgvector/pgvector-go v0.4.1
