@@ -164,7 +164,11 @@ For more flexible channel analysis options, including **Ask Agents about this ch
 
 You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
-Open the Agents pane from the right sidebar and use natural language to search for content (such as "find discussions about the new product launch"). The AI will find semantically relevant results, even if they don't contain the exact keywords, and results respect your permissions so you'll only see content you have access to.
+Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several searches, combining semantic search (which finds related content even without the exact keywords) with keyword search, and read the surrounding threads before it answers. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
+
+To search only the channel you're viewing, use the `/ask-channel` slash command followed by your question.
+
+Searching requires the agent to have access to the built-in Mattermost tools. Contact your system admin if the agent replies that it can't search.
 
 This feature accelerates decision-making and improves information flows by making it easier to find relevant content across threads, channels, and teams.
 
