@@ -237,13 +237,13 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 	return result
 }
 
-// buildResponsesReasoning creates a ResponsesParametersReasoning configuration if reasoning is enabled.
+// buildResponsesReasoning creates the ResponsesParametersReasoning
+// configuration for the request, or nil when no reasoning block should be sent.
 func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.ResponsesParametersReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
-		return nil
-	}
-
 	if b.provider == schemas.OpenAI || b.provider == schemas.Azure {
+		if b.thinkingOff(cfg) {
+			return nil
+		}
 		// Enable reasoning summaries so the provider returns reasoning text in
 		// the stream; without this OpenAI omits reasoning_summary events.
 		return &schemas.ResponsesParametersReasoning{
@@ -254,15 +254,19 @@ func (b *LLM) buildResponsesReasoning(cfg llm.LanguageModelConfig) *schemas.Resp
 
 	// Bifrost will route a Responses-API request to chat completions for
 	// providers without native Responses support (e.g. Mistral). Those
-	// providers don't accept reasoning_effort, so providerReasoningBudget
-	// drops it for them too.
-	effort, maxTokens, ok := b.providerReasoningBudget(cfg)
+	// providers don't accept reasoning_effort, so providerReasoning drops it
+	// for them too.
+	params, ok := b.providerReasoning(cfg)
 	if !ok {
 		return nil
 	}
-	reasoning := &schemas.ResponsesParametersReasoning{Effort: effort, MaxTokens: maxTokens}
-	// Enable summary so Gemini/Vertex return reasoning text in the stream.
-	if b.provider == schemas.Gemini || b.provider == schemas.Vertex {
+	reasoning := &schemas.ResponsesParametersReasoning{Effort: params.effort, MaxTokens: params.maxTokens}
+	switch {
+	case params.hideThinking:
+		// Bifrost maps summary "none" to Anthropic's thinking.display "omitted".
+		reasoning.Summary = new("none")
+	case b.provider == schemas.Gemini || b.provider == schemas.Vertex:
+		// Enable summary so Gemini/Vertex return reasoning text in the stream.
 		reasoning.Summary = new("auto")
 	}
 	return reasoning

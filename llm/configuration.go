@@ -210,13 +210,15 @@ type BotConfig struct {
 	ReasoningEnabled bool `json:"reasoningEnabled"`
 
 	// ReasoningEffort determines the reasoning effort level.
-	// Valid values: "minimal", "low", "medium", "high".
-	// - OpenAI (with ResponsesAPI): sent as the reasoning effort. Default: "medium".
-	// - Gemini / Vertex AI: maps to Gemini's thinkingLevel on 3.0+, and to a
-	//   thinkingBudget estimate on 2.5. Default: "medium".
-	// - Anthropic: sent as output_config.effort on adaptive-thinking models and
-	//   mapped to a thinking budget on older models ("minimal" is treated as
-	//   "low"). Default: "high".
+	// - OpenAI (with ResponsesAPI): "minimal", "low", "medium", "high"; sent as
+	//   the reasoning effort. Default: "medium".
+	// - Gemini / Vertex AI: "minimal", "low", "medium", "high"; maps to Gemini's
+	//   thinkingLevel on 3.0+, and to a thinkingBudget estimate on 2.5.
+	//   Default: "medium".
+	// - Anthropic: "low", "medium", "high", "xhigh", "max"; sent as
+	//   output_config.effort on adaptive-thinking models (xhigh falls back to
+	//   high where unsupported) and mapped to a thinking budget on older models.
+	//   "minimal" is treated as "low". Empty uses the model's default.
 	ReasoningEffort string `json:"reasoningEffort"`
 
 	// ThinkingBudget determines the token budget for reasoning/thinking.

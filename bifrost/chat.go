@@ -169,16 +169,18 @@ func (b *LLM) streamChat(ctx context.Context, request llm.CompletionRequest, cfg
 	}
 }
 
-// buildChatReasoning creates a ChatReasoning configuration if reasoning is enabled.
+// buildChatReasoning creates the ChatReasoning configuration for the request,
+// or nil when no reasoning block should be sent.
 func (b *LLM) buildChatReasoning(cfg llm.LanguageModelConfig) *schemas.ChatReasoning {
-	if !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg) {
-		return nil
-	}
-	effort, maxTokens, ok := b.providerReasoningBudget(cfg)
+	params, ok := b.providerReasoning(cfg)
 	if !ok {
 		return nil
 	}
-	return &schemas.ChatReasoning{Effort: effort, MaxTokens: maxTokens}
+	reasoning := &schemas.ChatReasoning{Effort: params.effort, MaxTokens: params.maxTokens}
+	if params.hideThinking {
+		reasoning.Display = new("omitted")
+	}
+	return reasoning
 }
 
 // convertToBifrostRequest converts our CompletionRequest to Bifrost's format.
