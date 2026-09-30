@@ -192,7 +192,7 @@ func TestClientManagerServiceAccountAccessUsesInvokingUser(t *testing.T) {
 			BaseURL:               "https://must-not-connect.invalid",
 			ServiceAccountHeaders: map[string]string{"Authorization": "Bearer secret"},
 		}},
-	}, client.Log, client, nil, nil, nil, nil, checker)
+	}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, checker)
 	t.Cleanup(manager.Close)
 
 	tools, mcpErrors := manager.GetTools(context.Background(), ServiceAccountCatalogRequest("bot-user", "invoking-user"))
@@ -209,7 +209,7 @@ func TestClientManager_PluginServerRegistry_RegisterUnregisterList(t *testing.T)
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	cfgA := PluginServerConfig{PluginID: "a", Name: "A", Path: "/mcp", Enabled: true}
@@ -273,7 +273,7 @@ func TestClientManager_UpdatePluginServerAdminFields(t *testing.T) {
 			pluginTestAPI := &plugintest.API{}
 			setupClientManagerTestAPI(t, pluginTestAPI)
 			client := pluginapi.NewClient(pluginTestAPI, nil)
-			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 			t.Cleanup(m.Close)
 
 			registered := PluginServerConfig{
@@ -315,7 +315,7 @@ func TestClientManager_PluginRegistrationPersistence(t *testing.T) {
 	fixture := setupPluginRegistrationKV(t, pluginTestAPI, nil)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	first := PluginServerConfig{PluginID: "com.example.first", Name: "First", Path: "/mcp", Enabled: true}
@@ -373,7 +373,7 @@ func TestClientManager_HydratesLivePluginRegistrations(t *testing.T) {
 			ExposeExternal: false,
 			ToolConfigs:    []ToolConfig{adminToolConfig},
 		}},
-	}, client.Log, client, nil, nil, nil, nil, nil)
+	}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	got, ok := m.GetPluginServer(live.PluginID)
@@ -407,7 +407,7 @@ func TestClientManager_HydrationKeepsRegistrationsWhenServerConfigUnavailable(t 
 	pluginTestAPI.On("GetConfig").Return((*model.Config)(nil))
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	_, ok := m.GetPluginServer(first.PluginID)
@@ -422,7 +422,7 @@ func TestClientManager_GetPluginServer(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	cfg, ok := m.GetPluginServer("missing")
@@ -476,8 +476,8 @@ func TestClientManager_ConfigOnlyPluginServersAreNotRuntimeMembers(t *testing.T)
 		nil,
 		nil,
 		nil,
-		nil,
-	)
+		RemoteMCPAlwaysAllowed,
+		nil)
 	t.Cleanup(m.Close)
 
 	require.Empty(t, m.ListPluginServers(), "config-only rows must not appear in the live registry")
@@ -496,7 +496,7 @@ func TestClientManager_ReInitSyncsPluginServerAdminFields(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{
@@ -586,7 +586,7 @@ func TestClientManager_ReInitDoesNotInsertConfigOnlyEntries(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	require.Empty(t, m.ListPluginServers(), "precondition: empty registry")
@@ -618,7 +618,7 @@ func TestClientManager_ReInitPreservesUnpersistedRuntimeEntries(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	live := PluginServerConfig{
@@ -651,7 +651,7 @@ func TestClientManager_SyncPluginServersFromConfig_SkipsEmptyPluginID(t *testing
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{
@@ -684,7 +684,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -714,7 +714,7 @@ func TestClientManager_GetToolsForUser_PluginDisabled_ZeroTools(t *testing.T) {
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	cfg := PluginServerConfig{
@@ -765,7 +765,7 @@ func TestClientManager_GetToolsForUser_PluginEnabled_HTTPFailure(t *testing.T) {
 			setupClientManagerTestAPI(t, pluginTestAPI)
 			client := pluginapi.NewClient(pluginTestAPI, nil)
 
-			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed, nil)
 			t.Cleanup(m.Close)
 
 			m.RegisterPluginServer(PluginServerConfig{
@@ -814,7 +814,7 @@ func TestClientManager_GetToolsForUser_PluginConnectErrorsAreRequestScoped(t *te
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 	m.RegisterPluginServer(PluginServerConfig{
 		PluginID: "com.example.mcp",
@@ -861,7 +861,7 @@ func TestClientManager_GetToolsForUser_MultiplePluginServers(t *testing.T) {
 		},
 	}
 
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, mockAPI, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	m.RegisterPluginServer(PluginServerConfig{PluginID: "com.example.a", Name: "A", Path: "/mcp", Enabled: true})
@@ -886,7 +886,7 @@ func TestClientManager_PluginServerRegistry_RaceSafe(t *testing.T) {
 	pluginTestAPI := &plugintest.API{}
 	setupClientManagerTestAPI(t, pluginTestAPI)
 	client := pluginapi.NewClient(pluginTestAPI, nil)
-	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, nil)
+	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, nil, nil, RemoteMCPAlwaysAllowed, nil)
 	t.Cleanup(m.Close)
 
 	const writers = 8

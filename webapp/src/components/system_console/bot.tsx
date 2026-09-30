@@ -13,12 +13,14 @@ import {DangerPill} from '../pill';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import {LicenseChip} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -58,7 +60,6 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
-    structuredOutputEnabled?: boolean
 }
 
 // Component for configuring native tools (OpenAI / Anthropic / Google).
@@ -145,6 +146,7 @@ const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: Re
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
 
     const availableNativeTools = nativeToolOptions(provider, intl);
 
@@ -167,20 +169,25 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                 {titleMessage}
             </ItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                disabled={props.disabled}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <NativeToolField key={tool.id}>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && <LicenseChip capability='provider_web_search'/>}
+                            </FieldControlRow>
+                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                        </NativeToolField>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );
@@ -459,17 +466,6 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
-                                    {(selectedService.type === 'anthropic' || ['openai', 'openaicompatible', 'azure'].includes(selectedService.type)) && (
-                                        <BooleanItem
-                                            label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                            value={props.bot.structuredOutputEnabled ?? false}
-                                            onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
-                                            helpText={selectedService.type === 'anthropic' ?
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.'}) :
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                            }
-                                        />
-                                    )}
                                 </>
                             );
                         })()}

@@ -24,9 +24,11 @@ const groups = {
         'tests/tool-config/mock-api/tool-preview-cards.spec.ts',
         'tests/custom-prompts/custom-prompts.spec.ts',
         'tests/meeting-summary/summary-persistence.spec.ts',
+        'tests/channel-summarization/oversized_image.spec.ts',
         'tests/channel-analysis/backend-verification/real-api.spec.ts',
         'tests/system-console/live-service-full-flow.spec.ts',
         'tests/multiplayer-tool-calling/multiplayer-tool-calling.spec.ts',
+        'tests/tool-activity/activity-approval.spec.ts',
     ],
     'e2e-shard-2': [
         'tests/system-console/bot-validation.spec.ts',
@@ -46,6 +48,7 @@ const groups = {
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
+        'tests/tool-activity/collapsed-activity.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',
@@ -85,6 +88,7 @@ const groups = {
         'tests/edge-cases/system-message-no-trigger.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_approval.spec.ts',
         'tests/tool-config/mock-api/dynamic_mcp_cross_turn_derivation.spec.ts',
+        'tests/tool-config/mock-api/ask_user_question.spec.ts',
         'tests/tool-config/real-api/ask-policy.spec.ts',
         'tests/tool-config/real-api/auto-run-policy.spec.ts',
         'tests/tool-config/real-api/channel-auto-run.spec.ts',

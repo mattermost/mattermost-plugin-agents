@@ -12,10 +12,12 @@ import IconAI from '../assets/icon_ai';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
+import {LicenseChip} from './enterprise_chip';
 
 export type LLMService = {
     id: string
@@ -41,6 +43,26 @@ export type LLMService = {
     // Optional: mirrors the backend's omitempty — may be absent on services
     // saved before the fallback feature existed.
     fallbackServiceID?: string
+
+    // structuredOutputPolicy declares how this service handles JSON-schema
+    // structured output: '' (or 'auto') detect, 'native' force native schema
+    // support, 'prompt_fallback' always use prompt-based instructions.
+    // Optional: mirrors the backend's omitempty — absent means auto.
+    structuredOutputPolicy?: string
+}
+
+const StructuredOutputPolicyAuto = '';
+const StructuredOutputPolicyNative = 'native';
+const StructuredOutputPolicyPromptFallback = 'prompt_fallback';
+
+// The backend accepts both '' and 'auto' for detection, and may grow values this
+// build doesn't know. Anything unrecognized reads back as auto so the selector
+// always has a matching option.
+function normalizeStructuredOutputPolicy(policy: string | undefined): string {
+    if (policy === StructuredOutputPolicyNative || policy === StructuredOutputPolicyPromptFallback) {
+        return policy;
+    }
+    return StructuredOutputPolicyAuto;
 }
 
 const mapServiceTypeToDisplayName = new Map<string, string>([
@@ -85,6 +107,7 @@ type ServiceFieldsProps = {
 export const ServiceFields = (props: ServiceFieldsProps) => {
     const type = props.service.type;
     const intl = useIntl();
+    const fallbackLicensed = useIsLicensedFor('model_fallback');
     const isOpenAIType = type === 'openai' || type === 'openaicompatible' || type === 'azure' || type === 'cohere' || type === 'mistral' || type === 'scale' || type === 'north';
     const supportsResponsesAPIToggle = type === 'openaicompatible' || type === 'azure';
     const isCohere = type === 'cohere';
@@ -445,7 +468,16 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Fallback Service'})}
                 value={props.service.fallbackServiceID || ''}
-                onChange={(e) => props.onChange({...props.service, fallbackServiceID: e.target.value})}
+                disabled={!fallbackLicensed && !props.service.fallbackServiceID}
+                extra={!fallbackLicensed && (
+                    <LicenseChip capability='model_fallback'/>
+                )}
+                onChange={(e) => {
+                    if (!fallbackLicensed && e.target.value !== '') {
+                        return;
+                    }
+                    props.onChange({...props.service, fallbackServiceID: e.target.value});
+                }}
                 helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
             >
                 <SelectionItemOption value=''>
@@ -464,6 +496,22 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                             {s.name || serviceTypeToDisplayName(intl, s.type)}
                         </SelectionItemOption>
                     ))}
+            </SelectionItem>
+            <SelectionItem
+                label={intl.formatMessage({defaultMessage: 'Structured output'})}
+                value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
+                onChange={(e) => props.onChange({...props.service, structuredOutputPolicy: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
+            >
+                <SelectionItemOption value={StructuredOutputPolicyAuto}>
+                    {intl.formatMessage({defaultMessage: 'Auto (recommended)'})}
+                </SelectionItemOption>
+                <SelectionItemOption value={StructuredOutputPolicyNative}>
+                    {intl.formatMessage({defaultMessage: 'Native supported'})}
+                </SelectionItemOption>
+                <SelectionItemOption value={StructuredOutputPolicyPromptFallback}>
+                    {intl.formatMessage({defaultMessage: 'Prompt fallback'})}
+                </SelectionItemOption>
             </SelectionItem>
         </>
     );

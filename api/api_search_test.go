@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -25,6 +27,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func licensedSearchService(getSearch func() embeddings.EmbeddingSearch, client mmapi.Client) *search.Search {
+	return search.New(getSearch, client, nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), nil)
+}
 
 func TestHandleRunSearch(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
@@ -44,7 +50,7 @@ func TestHandleRunSearch(t *testing.T) {
 				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound)
 				mockClient.On("DM", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, mockClient)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -66,7 +72,7 @@ func TestHandleRunSearch(t *testing.T) {
 					}).
 					Return(nil)
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, mockClient)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -102,7 +108,7 @@ func TestHandleRunSearch(t *testing.T) {
 			name: "search fails - empty query",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "",
@@ -116,7 +122,7 @@ func TestHandleRunSearch(t *testing.T) {
 			name: "search fails - query exceeds max length",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4001),
@@ -185,7 +191,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -225,7 +231,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -243,7 +249,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -261,7 +267,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -275,7 +281,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			name: "search query fails - query exceeds max length",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4001),
@@ -290,7 +296,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4000),
@@ -308,7 +314,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -326,7 +332,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -412,7 +418,7 @@ func TestHandleSearchQueryMalformedJSON(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -506,7 +512,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 			if test.expectedStatus == http.StatusOK {
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -577,7 +583,7 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 			if test.expectedStatus == http.StatusOK {
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -647,7 +653,7 @@ func TestHandleRunSearchMissingUserHeader(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -715,7 +721,7 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -752,7 +758,7 @@ func TestSearchHandlersEnforceUsageRestrictions(t *testing.T) {
 			defer e.Cleanup(t)
 
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			e.setupTestBot(llm.BotConfig{
 				Name:            "restricted-bot",

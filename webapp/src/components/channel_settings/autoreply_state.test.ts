@@ -29,6 +29,11 @@ jest.mock('@/mm_webapp', () => ({
     useWebSocketClient: () => null,
 }));
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: () => null,
+    Tooltip: () => null,
+}), {virtual: true});
+
 // @/client is the real HTTP boundary; stub it so the websocket handler's
 // re-fetch is observable without network access.
 jest.mock('@/client', () => ({

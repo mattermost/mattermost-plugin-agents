@@ -13,6 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -99,6 +101,7 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
 	}
 
 	adminRouter := router.Group("/admin")
@@ -367,6 +370,48 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
 				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
+		{
+			name: "saves an explicit structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicyNative,
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, llm.StructuredOutputPolicyNative, store.cfg.Services[0].StructuredOutputPolicy)
+			},
+		},
+		{
+			name: "rejects an unrecognized structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicy("sometimes"),
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "an unusable policy must not be persisted")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount, "the in-memory config must not be updated")
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
 			},
 		},
 		{

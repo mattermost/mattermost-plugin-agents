@@ -40,6 +40,17 @@ jest.mock('./service', () => ({
     ),
 }));
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
+jest.mock('@/license', () => ({
+    useServiceLimit: jest.fn(() => null),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
 const persistedService: LLMService = {
     id: 'serviceidaaaaaaaaaaaaaaaaa',
     name: 'Persisted',
@@ -126,5 +137,33 @@ describe('Services', () => {
         fireEvent.click(screen.getByText('delete-Persisted'));
 
         expect(onChange).toHaveBeenCalledWith([{...dependent, fallbackServiceID: ''}]);
+    });
+});
+
+describe('Services license gating', () => {
+    const {useServiceLimit} = jest.requireMock('@/license') as {useServiceLimit: jest.Mock};
+
+    beforeEach(() => {
+        useServiceLimit.mockReturnValue(null);
+    });
+
+    it('disables Add when at the service cap and still lists existing services', () => {
+        useServiceLimit.mockReturnValue(1);
+        renderServices([persistedService]);
+
+        const add = screen.getByText('Add an AI Service').closest('button') as HTMLButtonElement;
+        expect(add.disabled).toBe(true);
+        expect(screen.getByText('service:Persisted:serviceidaaaaaaaaaaaaaaaaa')).toBeTruthy();
+        expect(screen.getByText('Enterprise')).toBeTruthy();
+    });
+
+    it('enables Add at Enterprise when uncapped', () => {
+        useServiceLimit.mockReturnValue(null);
+        const {onChange} = renderServices([persistedService]);
+
+        const add = screen.getByText('Add an AI Service').closest('button') as HTMLButtonElement;
+        expect(add.disabled).toBe(false);
+        fireEvent.click(add);
+        expect(onChange).toHaveBeenCalled();
     });
 });

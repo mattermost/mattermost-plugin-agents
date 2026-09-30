@@ -23,8 +23,19 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('../../client', () => ({
     fetchModels: jest.fn(),
+}));
+
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => (level: number) => ['Free', 'Professional', 'Enterprise', 'Enterprise Advanced'][level]),
+    requiredLevelFor: jest.fn((capability: string) => (capability === 'model_fallback' ? 3 : 2)),
 }));
 
 jest.mock('../access_control/console_policy_section', () => ({
@@ -371,6 +382,87 @@ describe('ServiceFields fallback selector', () => {
         fireEvent.change(fallbackSelect, {target: {value: other.id}});
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
     });
+
+    it('disables selecting a fallback below Enterprise Advanced while still allowing clearing one', async () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(false);
+
+        const empty = await renderFallback(current, [current, other]);
+        expect(empty.fallbackSelect.disabled).toBe(true);
+        expect(screen.getByText('Enterprise Advanced')).toBeTruthy();
+        empty.unmount();
+
+        const third: LLMService = {...baseService, id: 'svc-third', name: 'Tertiary Service'};
+        const configured = await renderFallback(
+            {...current, fallbackServiceID: other.id},
+            [current, other, third],
+        );
+        expect(configured.fallbackSelect.disabled).toBe(false);
+        fireEvent.change(configured.fallbackSelect, {target: {value: third.id}});
+        expect(configured.onChange).not.toHaveBeenCalled();
+        fireEvent.change(configured.fallbackSelect, {target: {value: ''}});
+        expect(configured.onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: ''}));
+
+        useIsLicensedFor.mockReturnValue(true);
+    });
+});
+
+describe('ServiceFields structured output policy selector', () => {
+    beforeEach(() => {
+        // A stable empty array keeps the model-fetch effect from looping.
+        fetchModels.mockResolvedValue([]);
+    });
+
+    async function renderPolicy(service: LLMService) {
+        const {onChange, ...result} = renderFields(service);
+        await waitFor(() => expect(fetchModels).toHaveBeenCalled());
+        const policySelect = screen.getByText('Auto (recommended)').closest('select') as HTMLSelectElement;
+        return {...result, onChange, policySelect};
+    }
+
+    it('offers auto, native and prompt fallback with help text explaining the fallback chain', async () => {
+        const {policySelect} = await renderPolicy(baseService);
+
+        expect(Array.from(policySelect.options).map((o) => o.value)).toEqual(['', 'native', 'prompt_fallback']);
+        expect(Array.from(policySelect.options).map((o) => o.textContent)).toEqual([
+            'Auto (recommended)',
+            'Native supported',
+            'Prompt fallback',
+        ]);
+        expect(screen.getByText(/combined across this service's fallback chain/)).not.toBeNull();
+    });
+
+    const storedValueCases: {description: string; service: LLMService; selected: string}[] = [
+        {description: 'a service saved before the policy field existed', service: baseService, selected: ''},
+        {description: 'an empty stored value', service: {...baseService, structuredOutputPolicy: ''}, selected: ''},
+        {description: 'an explicit auto value', service: {...baseService, structuredOutputPolicy: 'auto'}, selected: ''},
+        {description: 'a native value', service: {...baseService, structuredOutputPolicy: 'native'}, selected: 'native'},
+        {description: 'a prompt fallback value', service: {...baseService, structuredOutputPolicy: 'prompt_fallback'}, selected: 'prompt_fallback'},
+        {description: 'a value only a newer server knows about', service: {...baseService, structuredOutputPolicy: 'something_new'}, selected: ''},
+    ];
+
+    it.each(storedValueCases)('selects "$selected" for $description', async ({service, selected}) => {
+        const {policySelect} = await renderPolicy(service);
+
+        // Assert on the selected option: select.value reads as the empty string
+        // both when Auto is selected and when nothing is selected at all.
+        expect(policySelect.selectedIndex).not.toBe(-1);
+        expect(policySelect.options[policySelect.selectedIndex].value).toBe(selected);
+    });
+
+    const writeCases = [
+        {selected: 'native'},
+        {selected: 'prompt_fallback'},
+
+        // Auto is stored as the empty string so untouched services need no migration.
+        {selected: ''},
+    ];
+
+    it.each(writeCases)('writes "$selected" to the service when selected', async ({selected}) => {
+        const {policySelect, onChange} = await renderPolicy({...baseService, structuredOutputPolicy: 'native'});
+        fireEvent.change(policySelect, {target: {value: selected}});
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({structuredOutputPolicy: selected}));
+    });
 });
 
 describe('ServiceFields Cohere North', () => {
@@ -438,5 +530,11 @@ describe('ServiceFields Cohere North', () => {
         const typeSelect = screen.getByText('Anthropic').closest('select') as HTMLSelectElement;
         fireEvent.change(typeSelect, {target: {value: 'north'}});
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({type: 'north', useResponsesAPI: true}));
+    });
+
+    it('still offers the service-level structured output policy', () => {
+        renderFields(northService);
+        expect(screen.getByText('Structured output')).toBeTruthy();
+        expect(screen.getByText('Auto (recommended)')).toBeTruthy();
     });
 });

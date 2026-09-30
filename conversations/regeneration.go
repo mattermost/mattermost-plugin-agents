@@ -10,7 +10,9 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -71,6 +73,10 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		return errors.New("tagged no regen")
 	}
 
+	if err := c.checkRegenerateLicense(post); err != nil {
+		return err
+	}
+
 	user, err := c.mmClient.GetUser(userID)
 	if err != nil {
 		return fmt.Errorf("unable to get user to regen post: %w", err)
@@ -127,13 +133,17 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	case referenceRecordingFileIDProp != nil:
 		post.Message = ""
 		referencedRecordingFileID := referenceRecordingFileIDProp.(string)
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
 
-		fileInfo, getErr := c.mmClient.GetFileInfo(referencedRecordingFileID)
+		fileInfo, getErr := mm.GetFileInfo(referencedRecordingFileID)
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
 
-		reader, getErr := c.mmClient.GetFile(post.FileIds[0])
+		if len(post.FileIds) == 0 {
+			return errors.New("no transcription file on regen post")
+		}
+		reader, getErr := mm.GetFile(post.FileIds[0])
 		if getErr != nil {
 			return fmt.Errorf("could not get transcription file on regen: %w", getErr)
 		}
@@ -174,7 +184,8 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		if fileIDErr != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", fileIDErr)
 		}
-		transcriptionFileReader, fileErr := c.mmClient.GetFile(transcriptionFileID)
+		mm := mmapi.WithFilePolicy(c.mmClient, auth.SessionIDFromContext(ctx))
+		transcriptionFileReader, fileErr := mm.GetFile(transcriptionFileID)
 		if fileErr != nil {
 			return fmt.Errorf("unable to read calls file: %w", fileErr)
 		}
@@ -229,6 +240,24 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	return nil
 }
 
+// checkRegenerateLicense gates regenerating a post by the capability of the
+// operation that produced it. Thread summaries are available at Professional
+// and above, channel summaries at Professional and above, and transcription
+// summaries at Enterprise and above. Other conversation posts are not gated.
+func (c *Conversations) checkRegenerateLicense(post *model.Post) error {
+	if post.GetProp(ReferencedRecordingFileID) != nil || post.GetProp(ReferencedTranscriptPostID) != nil {
+		return c.licenseChecker.Check(enterprise.CapMeetings)
+	}
+	threadID, _ := post.GetProp(ThreadIDProp).(string)
+	if threadID != "" {
+		return c.licenseChecker.Check(enterprise.CapThreadSummarization)
+	}
+	if post.GetProp(AnalysisTypeProp) != nil {
+		return c.licenseChecker.Check(enterprise.CapChannelSummarization)
+	}
+	return nil
+}
+
 // regenerateViaConversation rebuilds the completion request from the conversation entity
 // and runs the ToolRunner to produce a new response stream.
 func (c *Conversations) regenerateViaConversation(
@@ -267,6 +296,7 @@ func (c *Conversations) regenerateViaConversation(
 	completionReq, buildErr := c.convService.BuildCompletionRequest(conv, llmContext, conversation.BuildOptions{
 		ExcludeAfterPostID:       post.Id,
 		AllowUnsharedToolContent: isDM,
+		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if buildErr != nil {
 		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)

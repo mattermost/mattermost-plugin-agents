@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -28,6 +29,23 @@ func normalizeAdminConfig(cfg config.Config) config.Config {
 	}
 
 	return cfg
+}
+
+// validateServiceStructuredOutputPolicies rejects a service whose
+// structured-output policy is not a value the runtime understands. Persisting a
+// typo would take every agent on that service offline (EnsureBots skips an
+// invalid service) and 404 every LLM Bridge call to it, while the admin UI
+// still renders the unrecognized value as "Auto".
+func validateServiceStructuredOutputPolicies(cfg config.Config) error {
+	for _, svc := range cfg.Services {
+		if llm.IsValidStructuredOutputPolicy(svc.StructuredOutputPolicy) {
+			continue
+		}
+		return fmt.Errorf("service %q has an unrecognized structuredOutputPolicy %q: accepted values are %q, %q, %q, or empty for the default",
+			svc.ID, svc.StructuredOutputPolicy,
+			llm.StructuredOutputPolicyAuto, llm.StructuredOutputPolicyNative, llm.StructuredOutputPolicyPromptFallback)
+	}
+	return nil
 }
 
 // mintEmptyAdminIDs assigns a stable ID to every service and MCP server
@@ -106,6 +124,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
+	if err := validateServiceStructuredOutputPolicies(cfg); err != nil {
+		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
 	// Read-previous → identity checks → mint empty IDs → save runs atomically
 	// under the config advisory lock. Duplicate IDs and embedded ID mismatch
 	// abort with 409. Empty list-item IDs represent creates and receive fresh
@@ -126,10 +149,16 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		}
 		next.MCP = reconciledMCP
 		normalized := mintEmptyAdminIDs(normalizeAdminConfig(next))
+		if err := config.ValidateLicenseTransition(prev, normalized, a.licenseChecker, vettedDefaultToolPolicy); err != nil {
+			return config.Config{}, err
+		}
 		changedKeys = audit.ChangedJSONKeys(prev, normalized)
 		return normalized, nil
 	})
 	switch {
+	case errors.Is(err, enterprise.ErrNotLicensed):
+		abortNotLicensed(c, err)
+		return
 	case errors.Is(err, config.ErrServiceIDConflict), errors.Is(err, config.ErrMCPServerIDConflict):
 		// Duplicate payload IDs, or an embedded server ID that does not match storage.
 		c.AbortWithError(http.StatusConflict, fmt.Errorf("configuration payload has duplicate service or MCP server IDs, or an embedded server ID that does not match the stored identity: %w", err))
@@ -159,4 +188,20 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, saved)
+}
+
+// vettedDefaultToolPolicy returns the vetted default policy the System Console
+// seeds for a tool on a server, so seeded defaults are not treated as an
+// admin-authored tool approval policy by the license gate.
+func vettedDefaultToolPolicy(serverBaseURL, toolName string) string {
+	baseURL := serverBaseURL
+	if baseURL == config.MCPEmbeddedServerOrigin {
+		baseURL = mcp.EmbeddedClientKey
+	}
+	for _, tc := range mcp.SeedVettedToolConfigs(baseURL) {
+		if tc.Name == toolName {
+			return tc.Policy
+		}
+	}
+	return ""
 }

@@ -12,6 +12,8 @@ import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '@/utils/tool_names';
+import {useIsLicensedFor} from '@/license';
+import {LicenseChip} from '@/components/system_console/enterprise_chip';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
 
@@ -140,6 +142,8 @@ const McpsTab = (props: Props) => {
         onReconcileEnabledTools,
     } = props;
     const intl = useIntl();
+    const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
 
     const [servers, setServers] = useState<UserMCPServerInfo[]>([]);
     const [loading, setLoading] = useState(true);
@@ -312,16 +316,25 @@ const McpsTab = (props: Props) => {
                     type='checkbox'
                     id='mcp-use-service-accounts'
                     checked={useServiceAccountAuth}
-                    onChange={(e) => onChange({useServiceAccountAuth: e.target.checked})}
+                    disabled={!serviceAccountLicensed && !useServiceAccountAuth}
+                    onChange={(e) => {
+                        if (e.target.checked && !serviceAccountLicensed) {
+                            return;
+                        }
+                        onChange({useServiceAccountAuth: e.target.checked});
+                    }}
                 />
                 <CheckboxLabel htmlFor='mcp-use-service-accounts'>
                     <CheckboxTitle>
                         <FormattedMessage defaultMessage='Use service accounts for authentication'/>
                     </CheckboxTitle>
                     <CheckboxHint>
-                        <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts. An Enterprise license is required for service account authentication to take effect."/>
+                        <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts."/>
                     </CheckboxHint>
                 </CheckboxLabel>
+                {!serviceAccountLicensed && (
+                    <LicenseChip capability='mcp_service_account'/>
+                )}
             </CheckboxRow>
             {useServiceAccountAuth && (
                 <WarningBanner>
@@ -442,7 +455,7 @@ const McpsTab = (props: Props) => {
                         {defaultMessage: 'Enable all tools for {serverName}'},
                         {serverName: server.name},
                     );
-                    const canConnect = status === 'none' && Boolean(server.authURL);
+                    const canConnect = remoteMcpLicensed && status === 'none' && Boolean(server.authURL);
                     const metaDetail = (() => {
                         if (wildcardOn && totalCount === 0) {
                             return intl.formatMessage({defaultMessage: 'All tools enabled'});
