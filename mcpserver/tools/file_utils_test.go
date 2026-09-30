@@ -208,3 +208,45 @@ func TestUploadInlineFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadFilesAndUrlsForLocal_FailureAbortsPost(t *testing.T) {
+	testCases := []struct {
+		name        string
+		attachments []string
+		accessMode  AccessMode
+		wantErr     bool
+	}{
+		{
+			name:        "no attachments is a no-op",
+			attachments: nil,
+			accessMode:  AccessModeLocal,
+			wantErr:     false,
+		},
+		{
+			name:        "attachments in remote mode return an error instead of posting silently",
+			attachments: []string{"anything.txt"},
+			accessMode:  AccessModeRemote,
+			wantErr:     true,
+		},
+		{
+			name:        "unreadable attachment returns an error instead of posting silently",
+			attachments: []string{"does-not-exist.txt"},
+			accessMode:  AccessModeLocal,
+			wantErr:     true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			fileIDs, message, err := uploadFilesAndUrlsForLocal(t.Context(), nil, "channelid", tc.attachments, tc.accessMode)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Empty(t, fileIDs)
+			} else {
+				require.NoError(t, err)
+				require.Empty(t, fileIDs)
+				require.Empty(t, message)
+			}
+		})
+	}
+}
