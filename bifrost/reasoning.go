@@ -6,6 +6,7 @@ package bifrost
 import (
 	"cmp"
 
+	"github.com/maximhq/bifrost/core/providers/anthropic"
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -18,21 +19,18 @@ func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
 }
 
 // providerReasoningBudget resolves the reasoning decision shared by the chat
-// and Responses paths: a clamped token budget for Anthropic, and an explicit
-// budget or effort fallback for Gemini/Vertex (Bifrost maps
-// reasoning.max_tokens to thinkingConfig.thinkingBudget and reasoning.effort
-// to thinkingConfig.thinkingLevel on 3.0+). ok=false means the reasoning block
+// and Responses paths. Anthropic gets a native effort on adaptive-thinking
+// models and an effort-derived token budget elsewhere; Gemini/Vertex get an
+// explicit budget or effort fallback (Bifrost maps reasoning.max_tokens to
+// thinkingConfig.thinkingBudget and reasoning.effort to
+// thinkingConfig.thinkingLevel on 3.0+). ok=false means the reasoning block
 // must be omitted; other providers reject reasoning parameters on these paths.
 // OpenAI/Azure reasoning is Responses-API-only and handled directly by
 // buildResponsesReasoning.
 func (b *LLM) providerReasoningBudget(cfg llm.LanguageModelConfig) (effort *string, maxTokens *int, ok bool) {
 	switch b.provider {
 	case schemas.Anthropic:
-		budget, budgetOK := b.anthropicThinkingBudget(cfg.MaxGeneratedTokens)
-		if !budgetOK {
-			return nil, nil, false
-		}
-		return nil, new(budget), true
+		return b.anthropicReasoning(cfg)
 	case schemas.Gemini, schemas.Vertex:
 		if b.thinkingBudget > 0 {
 			return nil, new(b.thinkingBudget), true
@@ -43,36 +41,59 @@ func (b *LLM) providerReasoningBudget(cfg llm.LanguageModelConfig) (effort *stri
 	}
 }
 
-// Anthropic budget-based extended thinking requires
-// minThinkingBudget <= budget < max_tokens.
-const (
-	minThinkingBudget        = 1024
-	defaultMaxThinkingBudget = 8192
-)
-
-// calculateThinkingBudget computes the thinking budget for Anthropic models.
-func (b *LLM) calculateThinkingBudget(maxGeneratedTokens int) int {
-	if b.thinkingBudget > 0 {
-		return max(b.thinkingBudget, minThinkingBudget)
+// anthropicReasoning sends effort alone to adaptive-thinking models: Bifrost's
+// chat converter prefers max_tokens when both are set and would drop the
+// effort. Budget-only models (and Opus 4.5, whose Bifrost effort mapping scales
+// the budget with max_tokens uncapped) get a budget from anthropicEffortBudgets.
+func (b *LLM) anthropicReasoning(cfg llm.LanguageModelConfig) (effort *string, maxTokens *int, ok bool) {
+	level := anthropicEffort(b.reasoningEffort)
+	if anthropic.SupportsAdaptiveThinking(cfg.Model) {
+		return new(level), nil, true
 	}
-	budget := maxGeneratedTokens / 4
-	return max(min(budget, defaultMaxThinkingBudget), minThinkingBudget)
+	budget, ok := anthropicThinkingBudget(level, cfg.MaxGeneratedTokens)
+	if !ok {
+		return nil, nil, false
+	}
+	return nil, new(budget), true
 }
 
-// anthropicThinkingBudget returns the thinking budget to send for an Anthropic
-// request, clamped into the provider's valid range (minThinkingBudget <=
-// budget < max_tokens). Clamping — rather than gating on the primary model's
-// capabilities — keeps the value valid for every Anthropic model that may see
-// it: models that only support adaptive thinking ignore the budget entirely,
-// while budget-based models (including any Anthropic fallback in the request's
-// fallback chain) reject an out-of-range value with a 400. Returns ok=false
-// when no valid budget exists, in which case thinking must be omitted.
-func (b *LLM) anthropicThinkingBudget(maxGeneratedTokens int) (int, bool) {
-	budget := b.calculateThinkingBudget(maxGeneratedTokens)
-	if budget >= maxGeneratedTokens {
-		budget = maxGeneratedTokens - 1
+// anthropicEffort normalizes the configured effort to a level every
+// effort-capable Anthropic model accepts. Unset and unrecognized values
+// resolve to high, the depth used before effort was configurable.
+func anthropicEffort(effort string) string {
+	switch effort {
+	case "minimal", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	default:
+		return "high"
 	}
-	if budget < minThinkingBudget {
+}
+
+// minThinkingBudget is Anthropic's floor for budget_tokens, which must also
+// stay strictly below max_tokens.
+const minThinkingBudget = 1024
+
+// anthropicEffortBudgets maps an effort level to a thinking budget of
+// max_tokens/divisor, capped at maxBudget. High matches the budget sent before
+// effort was configurable.
+var anthropicEffortBudgets = map[string]struct{ divisor, maxBudget int }{
+	"low":    {divisor: 16, maxBudget: 2048},
+	"medium": {divisor: 8, maxBudget: 4096},
+	"high":   {divisor: 4, maxBudget: 8192},
+}
+
+// anthropicThinkingBudget returns the budget for an effort level, raised to
+// minThinkingBudget. Returns ok=false when that leaves no room below
+// max_tokens, in which case thinking is omitted.
+func anthropicThinkingBudget(effort string, maxGeneratedTokens int) (int, bool) {
+	scale, found := anthropicEffortBudgets[effort]
+	if !found {
+		scale = anthropicEffortBudgets["high"]
+	}
+	budget := max(min(maxGeneratedTokens/scale.divisor, scale.maxBudget), minThinkingBudget)
+	if budget >= maxGeneratedTokens {
 		return 0, false
 	}
 	return budget, true

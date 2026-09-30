@@ -32,50 +32,29 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-func TestCalculateThinkingBudget(t *testing.T) {
+func TestAnthropicThinkingBudget(t *testing.T) {
 	tests := []struct {
 		name               string
-		thinkingBudget     int
+		effort             string
 		maxGeneratedTokens int
 		expected           int
+		expectOK           bool
 	}{
-		{
-			name:               "default with maxTokens 8192",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 8192,
-			expected:           2048,
-		},
-		{
-			name:               "default with maxTokens 32768 caps at 8192",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 32768,
-			expected:           8192,
-		},
-		{
-			name:               "default with maxTokens 2048 enforces min 1024",
-			thinkingBudget:     0,
-			maxGeneratedTokens: 2048,
-			expected:           1024,
-		},
-		{
-			name:               "custom budget 4096",
-			thinkingBudget:     4096,
-			maxGeneratedTokens: 8192,
-			expected:           4096,
-		},
-		{
-			name:               "custom budget below min enforces 1024",
-			thinkingBudget:     500,
-			maxGeneratedTokens: 8192,
-			expected:           1024,
-		},
+		{name: "high with maxTokens 8192", effort: "high", maxGeneratedTokens: 8192, expected: 2048, expectOK: true},
+		{name: "high caps at 8192", effort: "high", maxGeneratedTokens: 64000, expected: 8192, expectOK: true},
+		{name: "medium with maxTokens 16384", effort: "medium", maxGeneratedTokens: 16384, expected: 2048, expectOK: true},
+		{name: "medium caps at 4096", effort: "medium", maxGeneratedTokens: 64000, expected: 4096, expectOK: true},
+		{name: "low caps at 2048", effort: "low", maxGeneratedTokens: 64000, expected: 2048, expectOK: true},
+		{name: "low enforces the 1024 minimum", effort: "low", maxGeneratedTokens: 8192, expected: 1024, expectOK: true},
+		{name: "unknown effort uses high", effort: "max", maxGeneratedTokens: 8192, expected: 2048, expectOK: true},
+		{name: "minimum budget must stay below maxTokens", effort: "high", maxGeneratedTokens: 1024, expectOK: false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b := &LLM{thinkingBudget: tt.thinkingBudget}
-			result := b.calculateThinkingBudget(tt.maxGeneratedTokens)
-			assert.Equal(t, tt.expected, result)
+			budget, ok := anthropicThinkingBudget(tt.effort, tt.maxGeneratedTokens)
+			require.Equal(t, tt.expectOK, ok)
+			assert.Equal(t, tt.expected, budget)
 		})
 	}
 }
@@ -91,13 +70,65 @@ func TestBuildChatReasoning(t *testing.T) {
 		expectNil        bool
 		checkMaxTokens   *int
 		checkEffort      *string
+		expectNoMax      bool
 	}{
 		{
-			name:             "Anthropic uses MaxTokens",
+			name:             "Anthropic budget model defaults to the high budget",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192},
 			checkMaxTokens:   new(2048),
+		},
+		{
+			name:             "Anthropic budget model maps effort to a budget",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-5-20250929", MaxGeneratedTokens: 64000},
+			checkMaxTokens:   new(4096),
+		},
+		{
+			name:             "Anthropic budget model ignores the thinking budget field",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "low",
+			thinkingBudget:   6000,
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 64000},
+			checkMaxTokens:   new(2048),
+		},
+		{
+			name:             "Anthropic adaptive model sends effort without a budget",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-4-7-20260401", MaxGeneratedTokens: 8192},
+			checkEffort:      new("medium"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic adaptive model defaults to high effort",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-sonnet-4-6", MaxGeneratedTokens: 8192},
+			checkEffort:      new("high"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic adaptive model maps minimal to low",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			reasoningEffort:  "minimal",
+			cfg:              llm.LanguageModelConfig{Model: "claude-fable-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
+			expectNoMax:      true,
+		},
+		{
+			name:             "Anthropic adaptive model keeps thinking with a small max tokens",
+			provider:         schemas.Anthropic,
+			reasoningEnabled: true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5", MaxGeneratedTokens: 1000},
+			checkEffort:      new("high"),
+			expectNoMax:      true,
 		},
 		{
 			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
@@ -182,15 +213,7 @@ func TestBuildChatReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "budget >= maxTokens is clamped below max_tokens",
-			provider:         schemas.Anthropic,
-			reasoningEnabled: true,
-			thinkingBudget:   8192,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   new(8191),
-		},
-		{
-			name:             "no valid budget below the minimum returns nil",
+			name:             "Anthropic budget model with no valid budget returns nil",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
 			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 1024},
@@ -234,6 +257,9 @@ func TestBuildChatReasoning(t *testing.T) {
 			if tt.checkEffort != nil {
 				require.NotNil(t, result.Effort)
 				assert.Equal(t, *tt.checkEffort, *result.Effort)
+			}
+			if tt.expectNoMax {
+				assert.Nil(t, result.MaxTokens)
 			}
 		})
 	}
@@ -571,39 +597,73 @@ func encodeTestImage(t *testing.T, mimeType string, width, height int) []byte {
 	return data.Bytes()
 }
 
-// TestConvertToBifrostRequestOpus47Reasoning verifies that when our
-// convertToBifrostRequest is fed through bifrost's Anthropic provider for
-// Claude Opus 4.7, the resulting upstream request uses thinking.type:"adaptive".
-// Opus 4.7 dropped support for thinking.type:"enabled"; sending the legacy
-// shape produces an API error: `"thinking.type.enabled" is not supported for
-// this model. Use "thinking.type.adaptive" and "output_config.effort"`.
-func TestConvertToBifrostRequestOpus47Reasoning(t *testing.T) {
-	b := &LLM{
-		provider:         schemas.Anthropic,
-		reasoningEnabled: true,
+// TestAnthropicReasoningWireRequest feeds our requests through Bifrost's
+// Anthropic converters on both the chat and Responses paths. Adaptive models
+// must get thinking.type:"adaptive" with the configured output_config.effort
+// (Opus 4.7+ rejects thinking.type:"enabled"); budget-only models must get
+// thinking.type:"enabled" with the effort-derived budget and no effort, which
+// they reject with a 400.
+func TestAnthropicReasoningWireRequest(t *testing.T) {
+	tests := []struct {
+		name         string
+		model        string
+		effort       string
+		wantType     string
+		wantEffort   string
+		wantBudget   int
+		wantNoEffort bool
+	}{
+		{name: "Opus 4.7 adaptive with configured effort", model: "claude-opus-4-7-20260401", effort: "low", wantType: "adaptive", wantEffort: "low"},
+		{name: "Opus 4.7 adaptive defaults to high", model: "claude-opus-4-7-20260401", wantType: "adaptive", wantEffort: "high"},
+		{name: "Sonnet 4.6 uses adaptive instead of the deprecated budget", model: "claude-sonnet-4-6", effort: "medium", wantType: "adaptive", wantEffort: "medium"},
+		{name: "Haiku 4.5 gets an effort-derived budget", model: "claude-haiku-4-5-20251001", effort: "medium", wantType: "enabled", wantBudget: 1024, wantNoEffort: true},
+		{name: "Opus 4.5 gets the capped budget", model: "claude-opus-4-5-20251101", effort: "high", wantType: "enabled", wantBudget: 2048, wantNoEffort: true},
 	}
+
 	request := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{Role: llm.PostRoleUser, Message: "think"},
 		},
 	}
-	cfg := llm.LanguageModelConfig{
-		Model:              "claude-opus-4-7-20260401",
-		MaxGeneratedTokens: 8192,
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{
+				provider:         schemas.Anthropic,
+				reasoningEnabled: true,
+				reasoningEffort:  tt.effort,
+			}
+			cfg := llm.LanguageModelConfig{Model: tt.model, MaxGeneratedTokens: 8192}
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+
+			chatWire, err := anthropic.ToAnthropicChatRequest(ctx, b.convertToBifrostRequest(request, cfg))
+			require.NoError(t, err)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+			responsesWire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			for path, wire := range map[string]*anthropic.AnthropicMessageRequest{"chat": chatWire, "responses": responsesWire} {
+				require.NotNil(t, wire.Thinking, path)
+				assert.Equal(t, tt.wantType, wire.Thinking.Type, path)
+				if tt.wantBudget > 0 {
+					require.NotNil(t, wire.Thinking.BudgetTokens, path)
+					assert.Equal(t, tt.wantBudget, *wire.Thinking.BudgetTokens, path)
+				} else {
+					assert.Nil(t, wire.Thinking.BudgetTokens, path)
+				}
+				if tt.wantNoEffort {
+					assert.True(t, wire.OutputConfig == nil || wire.OutputConfig.Effort == nil, path)
+				} else {
+					require.NotNil(t, wire.OutputConfig, path)
+					require.NotNil(t, wire.OutputConfig.Effort, path)
+					assert.Equal(t, tt.wantEffort, *wire.OutputConfig.Effort, path)
+				}
+			}
+		})
 	}
-
-	bifrostReq := b.convertToBifrostRequest(request, cfg)
-
-	ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
-	defer cancel()
-	result, err := anthropic.ToAnthropicChatRequest(ctx, bifrostReq)
-	require.NoError(t, err)
-	require.NotNil(t, result.Thinking)
-
-	assert.Equal(t, "adaptive", result.Thinking.Type,
-		"Opus 4.7 must use thinking.type:adaptive; thinking.type:enabled is rejected by the API")
-	assert.Nil(t, result.Thinking.BudgetTokens,
-		"Opus 4.7 does not accept budget_tokens alongside adaptive thinking")
 }
 
 // TestPromptCaching verifies that automatic prompt caching (top-level
@@ -967,19 +1027,20 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			checkSummary:     new("auto"),
 		},
 		{
-			name:             "Anthropic uses MaxTokens, no summary",
+			name:             "Anthropic budget model uses MaxTokens, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192},
 			checkMaxTokens:   new(2048),
 		},
 		{
-			name:             "Anthropic budget >= maxTokens is clamped below max_tokens",
+			name:             "Anthropic adaptive model uses Effort, no summary",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
+			reasoningEffort:  "low",
 			thinkingBudget:   8192,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192},
-			checkMaxTokens:   new(8191),
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5", MaxGeneratedTokens: 8192},
+			checkEffort:      new("low"),
 		},
 		{
 			name:             "Anthropic with no valid budget below the minimum returns nil",

@@ -211,16 +211,17 @@ type BotConfig struct {
 
 	// ReasoningEffort determines the reasoning effort level.
 	// Valid values: "minimal", "low", "medium", "high".
-	// Applicable to OpenAI (with ResponsesAPI) and Gemini / Vertex AI (maps to
-	// Gemini's thinkingLevel on 3.0+, and to a thinkingBudget estimate on 2.5).
-	// Default: "medium".
+	// - OpenAI (with ResponsesAPI): sent as the reasoning effort. Default: "medium".
+	// - Gemini / Vertex AI: maps to Gemini's thinkingLevel on 3.0+, and to a
+	//   thinkingBudget estimate on 2.5. Default: "medium".
+	// - Anthropic: sent as output_config.effort on adaptive-thinking models and
+	//   mapped to a thinking budget on older models ("minimal" is treated as
+	//   "low"). Default: "high".
 	ReasoningEffort string `json:"reasoningEffort"`
 
 	// ThinkingBudget determines the token budget for reasoning/thinking.
-	// - Anthropic: must be at least 1024 and cannot exceed the OutputTokenLimit.
-	//   Default: 1/4 of OutputTokenLimit, capped at 8192.
-	// - Gemini / Vertex AI: maps to thinkingConfig.thinkingBudget. When set, it
-	//   takes priority over ReasoningEffort.
+	// Gemini / Vertex AI only: maps to thinkingConfig.thinkingBudget and, when
+	// set, takes priority over ReasoningEffort. Ignored for Anthropic.
 	ThinkingBudget int `json:"thinkingBudget"`
 
 	// StructuredOutputEnabled is deprecated and ignored at runtime. Structured
