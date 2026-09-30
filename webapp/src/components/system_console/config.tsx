@@ -164,6 +164,11 @@ const defaultConfig: Config = {
             baseURL: '',
             resultLimit: 5,
         },
+        serply: {
+            apiKey: '',
+            resultLimit: 5,
+            apiURL: '',
+        },
     },
 };
 
