@@ -13,7 +13,7 @@ Scoped instructions for the `mcpserver/` package. Root rules in `/AGENTS.md` sti
 ### Server types and the search service
 
 - **`InMemoryServer`** (embedded in the plugin) takes `searchService tools.SemanticSearchService` directly. The plugin passes `*search.Search`, which implements `SemanticSearchService`.
-- **HTTP / Stdio / PluginHandlers** (external servers) build their own `HTTPSemanticSearchService` internally; that service calls back to the plugin's `/api/v1/search/raw` endpoint.
+- **HTTP / Stdio / PluginHandlers** (external servers) build their own `HTTPSemanticSearchService` internally; that service calls back to the plugin's `/search/raw` endpoint.
 
 ### Type sharing
 
