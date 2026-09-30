@@ -101,6 +101,7 @@ type AgentStore interface {
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
+	HasAgentForBotUser(botUserID string) (bool, error)
 	CountActiveAgents() (int, error)
 	UpdateAgent(cfg *llm.BotConfig) error
 	DeleteAgent(id string) error
