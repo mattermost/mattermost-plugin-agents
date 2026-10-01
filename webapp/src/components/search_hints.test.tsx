@@ -18,10 +18,6 @@ jest.mock('react-intl', () => {
     };
 });
 
-jest.mock('react-redux', () => ({
-    useSelector: () => true,
-}));
-
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
 }));

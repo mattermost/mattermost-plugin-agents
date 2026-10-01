@@ -202,8 +202,13 @@ func (b *LLM) convertToResponsesTools(request llm.CompletionRequest, cfg llm.Lan
 		case llm.NativeToolWebFetch:
 			result = append(result, b.webToolResponsesTool(schemas.ResponsesToolTypeWebFetch))
 		case llm.NativeToolCodeInterpreter:
+			// OpenAI rejects code_interpreter without a container; "auto"
+			// provisions a fresh one per request. Anthropic ignores it.
 			result = append(result, schemas.ResponsesTool{
 				Type: schemas.ResponsesToolTypeCodeInterpreter,
+				ResponsesToolCodeInterpreter: &schemas.ResponsesToolCodeInterpreter{
+					Container: map[string]any{"type": "auto"},
+				},
 			})
 		}
 	}

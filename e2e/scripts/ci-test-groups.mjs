@@ -36,7 +36,7 @@ const groups = {
         'tests/system-console/initial-state-navigation.spec.ts',
         'tests/advanced-error-scenarios/network-errors.spec.ts',
         'tests/smart-reactions/basic-reactions.spec.ts',
-        'tests/semantic-search/search-sources.spec.ts',
+        'tests/semantic-search/search-conversation.spec.ts',
         'tests/bot-configuration/reasoning-config.spec.ts',
         'tests/action-item-extraction/error-handling.spec.ts',
         'tests/multiple-bot-conversations/bot-switching.spec.ts',

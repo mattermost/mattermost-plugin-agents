@@ -461,9 +461,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	searchRouter := botRequiredRouter.Group("/search")
 	searchRouter.Use(a.capabilityRequired(enterprise.CapSemanticSearch))
-	// Only returns search results
-	searchRouter.POST("", a.handleSearchQuery)
-	// Initiates a search and responds to the user in a DM with the selected bot
+	// Starts a search conversation with the selected bot in the user's DM
 	searchRouter.POST("/run", a.handleRunSearch)
 
 	router.ServeHTTP(w, r)

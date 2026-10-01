@@ -870,6 +870,48 @@ func TestWebSearchAllowedCallersStrippedForOpenAI(t *testing.T) {
 		"the web_search tool itself must still reach OpenAI")
 }
 
+// TestCodeInterpreterSendsContainerForOpenAI pins the container OpenAI
+// requires on code_interpreter tools; without it every request with the tool
+// enabled fails with "Missing required parameter: 'tools[N].container'".
+func TestCodeInterpreterSendsContainerForOpenAI(t *testing.T) {
+	b := &LLM{
+		provider:           schemas.OpenAI,
+		enabledNativeTools: []string{llm.NativeToolWebSearch, llm.NativeToolCodeInterpreter},
+		useResponsesAPI:    true,
+	}
+	cfg := llm.LanguageModelConfig{Model: "gpt-5.2", MaxGeneratedTokens: 1000}
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "hello"}},
+	}
+
+	respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+	require.NoError(t, err)
+
+	wireReq := &openai.OpenAIResponsesRequest{
+		Model: cfg.Model,
+		Input: openai.OpenAIResponsesRequestInput{
+			OpenAIResponsesRequestInputArray: respReq.Input,
+		},
+		ResponsesParameters: *respReq.Params,
+	}
+	body, err := json.Marshal(wireReq)
+	require.NoError(t, err)
+
+	var wire struct {
+		Tools []map[string]any `json:"tools"`
+	}
+	require.NoError(t, json.Unmarshal(body, &wire))
+
+	var codeInterpreter map[string]any
+	for _, tool := range wire.Tools {
+		if tool["type"] == "code_interpreter" {
+			codeInterpreter = tool
+		}
+	}
+	require.NotNil(t, codeInterpreter, "code_interpreter must reach OpenAI (body: %s)", body)
+	assert.Equal(t, map[string]any{"type": "auto"}, codeInterpreter["container"])
+}
+
 // TestAnthropicOnlyWebFetchDroppedForOpenAI pins the bifrost behavior that
 // makes heterogeneous fallback chains safe without per-fallback filtering in
 // the plugin: a request built for an Anthropic primary with web_fetch enabled

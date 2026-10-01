@@ -305,6 +305,8 @@ To obtain Google Custom Search credentials:
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search is available at Enterprise and above (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
 
+Embedding search is optional for Agents search from the search bar and `/ask-channel`: without it, agents search with keyword search; with it, they also get semantic results.
+
 Configure chunking options based on your needs:
 
 | Setting | Recommended Value | Description |

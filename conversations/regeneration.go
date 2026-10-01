@@ -283,8 +283,10 @@ func (c *Conversations) regenerateViaConversation(
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
+		append([]llm.ContextOption{
+			c.contextBuilder.WithLLMContextInteractive(),
+			c.contextBuilder.WithLLMContextResponseFiles(),
+		}, c.conversationToolOptions(bot, conv)...)...,
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
