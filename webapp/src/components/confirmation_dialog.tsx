@@ -6,9 +6,9 @@ import {CSSTransition} from 'react-transition-group';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
-import {MODAL_SHEET_CLASS, MODAL_TRANSITION_MS, modalTransitionPhases} from '@/components/animated_modal_shell';
+import {Button} from '@mattermost/compass-ui/components/button';
 
-import {PrimaryButton, TertiaryButton, DestructiveButton} from './assets/buttons';
+import {MODAL_SHEET_CLASS, MODAL_TRANSITION_MS, modalTransitionPhases} from '@/components/animated_modal_shell';
 
 interface ConfirmationDialogProps {
     title: React.ReactNode;
@@ -55,7 +55,6 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 }) => {
     const transitionRef = useRef<HTMLDivElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
-    const confirmButtonRef = useRef<HTMLButtonElement>(null);
     const pendingRef = useRef(confirmPending);
     const onCancelRef = useRef(onCancel);
     pendingRef.current = confirmPending;
@@ -71,7 +70,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         }
         const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         const focusId = window.requestAnimationFrame(() => {
-            confirmButtonRef.current?.focus();
+            dialogRef.current?.querySelector<HTMLButtonElement>('[data-confirm-button]')?.focus();
         });
         return () => {
             window.cancelAnimationFrame(focusId);
@@ -164,29 +163,22 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                     {message}
                 </DialogBody>
                 <DialogFooter>
-                    <TertiaryButton
+                    <Button
+                        emphasis='tertiary'
                         disabled={cancelDisabled}
                         onClick={onCancel}
                     >
                         {cancelButtonText}
-                    </TertiaryButton>
-                    {isDestructive ? (
-                        <DestructiveButton
-                            ref={managedAccessibility ? confirmButtonRef : null}
-                            disabled={confirmDisabled}
-                            onClick={onConfirm}
-                        >
-                            {confirmButtonText}
-                        </DestructiveButton>
-                    ) : (
-                        <PrimaryButton
-                            ref={managedAccessibility ? confirmButtonRef : null}
-                            disabled={confirmDisabled}
-                            onClick={onConfirm}
-                        >
-                            {confirmButtonText}
-                        </PrimaryButton>
-                    )}
+                    </Button>
+                    <Button
+                        data-confirm-button={true}
+                        emphasis='primary'
+                        destructive={isDestructive}
+                        disabled={confirmDisabled}
+                        onClick={onConfirm}
+                    >
+                        {confirmButtonText}
+                    </Button>
                 </DialogFooter>
             </DialogContent>
         </DialogWrapper>
