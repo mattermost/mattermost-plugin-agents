@@ -174,7 +174,7 @@ Native tool activity (searches performed, pages fetched, code runs) is shown on 
 - Files created in Anthropic's code execution sandbox can be shared by the agent: it copies the ones worth sharing into the sandbox's output directory, and those are attached to its reply automatically. Files it writes elsewhere in the sandbox stay there. The server's file-attachment settings, size limits, the per-post attachment cap, and the requesting user's upload permission all apply. OpenAI code-interpreter files are not yet retrievable, so this applies to Anthropic agents only.
 - Native tool activity is replayed to the model in later requests as a labeled summary (what ran, its output, and how many files were captured for attachment), not as the provider's original result blocks. Long commands and output are truncated, and the sandbox container is not reused, so the model sees a record of the work rather than a resumable session.
 
-For Anthropic services, extended thinking and native structured output can't be used on the same request. Requests that send a JSON schema natively turn extended thinking off for that request (models that always think run at low effort instead); all other requests keep using it. Requests served through the prompt fallback don't send a native schema, so they keep extended thinking.
+For Anthropic services, extended thinking and native structured output work together: requests that send a JSON schema keep the agent's extended thinking settings.
 
 If you need an OpenAI-style endpoint without the Responses API path, use an **OpenAI Compatible** service and turn **Use Responses API** off for that service instead of using the **OpenAI** service type.
 

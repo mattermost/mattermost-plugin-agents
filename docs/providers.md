@@ -86,7 +86,7 @@ Enable **Extended Thinking** on the agent (System Console > Agents > select agen
 | Claude Opus 4.6+, Sonnet 4.6+, Fable / Mythos | Sent as the native effort level (`output_config.effort`) with adaptive thinking, so the model decides how much to think within that effort. Extra high isn't available on Opus 4.6, Sonnet 4.6, or Mythos Preview; those models run at High instead. |
 | Older models (for example, Haiku 4.5, Sonnet 4.5, Opus 4.5) | Mapped to a thinking token budget as a share of the output token limit: Low 1/16 (at most 2048), Medium 1/8 (at most 4096), High and Model default 1/4 (at most 8192), Extra high 1/3 (at most 16384), and Max 1/2 (at most 32768), never below 1024. Thinking is skipped when the output token limit leaves no room for the 1024-token minimum. |
 
-Some newer models think even when no thinking is requested, and some can't turn thinking off at all. When extended thinking is disabled on the agent, or a request runs without it (such as conversation title generation, or a request with a native structured output schema, which Anthropic doesn't support together with thinking), the agent turns thinking off as far as the model allows:
+Some newer models think even when no thinking is requested, and some can't turn thinking off at all. When extended thinking is disabled on the agent, or a request runs without it (such as conversation title generation), the agent turns thinking off as far as the model allows:
 
 | Model | With extended thinking off |
 |-------|----------------------------|
