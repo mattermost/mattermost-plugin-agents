@@ -14,15 +14,9 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// thinkingBlockedBySchema reports whether extended thinking must be turned off
-// for this request: Anthropic rejects thinking combined with structured output.
-func (b *LLM) thinkingBlockedBySchema(cfg llm.LanguageModelConfig) bool {
-	return b.provider == schemas.Anthropic && cfg.JSONOutputFormat != nil
-}
-
 // thinkingOff reports whether this request should run without reasoning.
 func (b *LLM) thinkingOff(cfg llm.LanguageModelConfig) bool {
-	return !b.reasoningEnabled || cfg.ReasoningDisabled || b.thinkingBlockedBySchema(cfg)
+	return !b.reasoningEnabled || cfg.ReasoningDisabled
 }
 
 // reasoningParams is the provider-neutral reasoning block shared by the chat

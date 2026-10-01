@@ -252,14 +252,13 @@ func TestBuildChatReasoning(t *testing.T) {
 			checkDisplay:     new("omitted"),
 		},
 		{
-			name:             "Anthropic JSON schema uses low effort where thinking cannot be disabled",
+			name:             "Anthropic JSON schema keeps the configured effort",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			reasoningEffort:  "high",
+			reasoningEffort:  "xhigh",
 			cfg:              llm.LanguageModelConfig{Model: "claude-fable-5-1", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			checkEffort:      new("low"),
+			checkEffort:      new("xhigh"),
 			expectNoMax:      true,
-			checkDisplay:     new("omitted"),
 		},
 		{
 			name:             "OpenAI on chat path returns nil (Responses API handles reasoning)",
@@ -351,11 +350,11 @@ func TestBuildChatReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "Anthropic with JSON schema returns nil",
+			name:             "Anthropic budget model with JSON schema keeps reasoning",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectNil:        true,
+			cfg:              llm.LanguageModelConfig{Model: "claude-haiku-4-5-20251001", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkMaxTokens:   new(2048),
 		},
 		{
 			name:             "Gemini with JSON schema keeps reasoning",
@@ -417,7 +416,6 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 		name              string
 		provider          schemas.ModelProvider
 		posts             []llm.Post
-		cfg               llm.LanguageModelConfig
 		expectedLen       int
 		expectedReasoning string
 		expectedSignature string
@@ -453,29 +451,13 @@ func TestConvertMessagesReasoningDetails(t *testing.T) {
 			expectedReasoning: "thinking",
 			expectedSignature: "sig123",
 		},
-		{
-			name:        "skips signed reasoning for Anthropic when request has JSON schema",
-			provider:    schemas.Anthropic,
-			posts:       signedAnthropicPosts,
-			cfg:         llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectedLen: 1,
-		},
-		{
-			name:              "keeps reasoning for non-Anthropic when request has JSON schema",
-			provider:          schemas.OpenAI,
-			posts:             signedAnthropicPosts,
-			cfg:               llm.LanguageModelConfig{JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectedLen:       1,
-			expectedReasoning: "thinking",
-			expectedSignature: "sig123",
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
 
-			messages := b.convertMessages(tt.posts, tt.cfg)
+			messages := b.convertMessages(tt.posts)
 
 			require.Len(t, messages, tt.expectedLen)
 			if tt.expectedReasoning == "" {
@@ -695,7 +677,7 @@ func TestConvertMessagesAppliesProviderImageLimit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts, llm.LanguageModelConfig{})
+			messages := (&LLM{provider: tt.provider}).convertMessages(tt.posts)
 			require.Len(t, messages, 1)
 			require.NotNil(t, messages[0].Content)
 			blocks := messages[0].Content.ContentBlocks
@@ -823,6 +805,74 @@ func TestAnthropicReasoningWireRequest(t *testing.T) {
 					assert.Equal(t, tt.wantEffort, *wire.OutputConfig.Effort, path)
 				}
 			}
+		})
+	}
+}
+
+// TestAnthropicSchemaKeepsThinkingWireRequest verifies that a structured
+// output request reaches Anthropic with both the schema and the configured
+// thinking: the effort and output_config.format share output_config, so
+// neither may overwrite the other.
+func TestAnthropicSchemaKeepsThinkingWireRequest(t *testing.T) {
+	tests := []struct {
+		name       string
+		model      string
+		effort     string
+		wantType   string
+		wantEffort string
+		wantBudget int
+	}{
+		{name: "adaptive model keeps effort", model: "claude-opus-4-7", effort: "low", wantType: "adaptive", wantEffort: "low"},
+		{name: "budget model keeps the thinking budget", model: "claude-haiku-4-5-20251001", effort: "high", wantType: "enabled", wantBudget: 2048},
+	}
+
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{
+			{Role: llm.PostRoleUser, Message: "think"},
+			{Role: llm.PostRoleBot, Message: "earlier answer", Reasoning: "earlier thinking", ReasoningSignature: "sig123"},
+			{Role: llm.PostRoleUser, Message: "answer as JSON"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &LLM{provider: schemas.Anthropic, reasoningEnabled: true, reasoningEffort: tt.effort}
+			cfg := llm.LanguageModelConfig{
+				Model:              tt.model,
+				MaxGeneratedTokens: 8192,
+				JSONOutputFormat:   llm.NewJSONSchemaFromStruct[testStructuredOutput](),
+			}
+
+			ctx, cancel := schemas.NewBifrostContextWithCancel(context.Background())
+			defer cancel()
+
+			chatWire, err := anthropic.ToAnthropicChatRequest(ctx, b.convertToBifrostRequest(request, cfg))
+			require.NoError(t, err)
+			respReq, err := b.convertToBifrostResponsesRequest(request, cfg)
+			require.NoError(t, err)
+			responsesWire, err := anthropic.ToAnthropicResponsesRequest(ctx, respReq)
+			require.NoError(t, err)
+
+			for path, wire := range map[string]*anthropic.AnthropicMessageRequest{"chat": chatWire, "responses": responsesWire} {
+				require.NotNil(t, wire.OutputConfig, path)
+				assert.NotEmpty(t, wire.OutputConfig.Format, path)
+				require.NotNil(t, wire.Thinking, path)
+				assert.Equal(t, tt.wantType, wire.Thinking.Type, path)
+				if tt.wantBudget > 0 {
+					require.NotNil(t, wire.Thinking.BudgetTokens, path)
+					assert.Equal(t, tt.wantBudget, *wire.Thinking.BudgetTokens, path)
+				}
+				if tt.wantEffort != "" {
+					require.NotNil(t, wire.OutputConfig.Effort, path)
+					assert.Equal(t, tt.wantEffort, *wire.OutputConfig.Effort, path)
+				}
+			}
+
+			replayed := false
+			for _, msg := range b.convertMessages(request.Posts) {
+				replayed = replayed || (msg.ChatAssistantMessage != nil && len(msg.ReasoningDetails) > 0)
+			}
+			assert.True(t, replayed, "signed thinking from earlier turns must be replayed on schema requests")
 		})
 	}
 }
@@ -1279,11 +1329,12 @@ func TestBuildResponsesReasoning(t *testing.T) {
 			expectNil:        true,
 		},
 		{
-			name:             "Anthropic with JSON schema returns nil",
+			name:             "Anthropic with JSON schema keeps reasoning",
 			provider:         schemas.Anthropic,
 			reasoningEnabled: true,
-			cfg:              llm.LanguageModelConfig{MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
-			expectNil:        true,
+			reasoningEffort:  "medium",
+			cfg:              llm.LanguageModelConfig{Model: "claude-opus-5-5", MaxGeneratedTokens: 8192, JSONOutputFormat: &jsonschema.Schema{Type: "object"}},
+			checkEffort:      new("medium"),
 		},
 		{
 			name:             "OpenAI with JSON schema keeps reasoning",
@@ -1546,7 +1597,7 @@ func TestConvertMessagesReasoning(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b := &LLM{provider: tt.provider}
-			messages := b.convertMessages(tt.posts, llm.LanguageModelConfig{})
+			messages := b.convertMessages(tt.posts)
 			require.True(t, len(messages) > tt.checkMessageIndex)
 
 			msg := messages[tt.checkMessageIndex]
@@ -1590,7 +1641,7 @@ func TestConvertMessagesEmptyToolResult(t *testing.T) {
 			Result:    "",
 		}},
 	}}
-	messages := b.convertMessages(posts, llm.LanguageModelConfig{})
+	messages := b.convertMessages(posts)
 	var toolMsg *schemas.ChatMessage
 	for i := range messages {
 		if messages[i].Role == schemas.ChatMessageRoleTool {
