@@ -9,6 +9,11 @@ import {FormattedMessage, IntlShape, createIntl} from 'react-intl';
 import {GlobalState} from '@mattermost/types/store';
 import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 
+// Compass design tokens. Hosts older than the compass-ui rollout don't load
+// them, so the plugin brings its own. Never import the standalone variant: it
+// overrides the user's theme colors.
+import '@mattermost/compass-ui/styles';
+
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';
 
