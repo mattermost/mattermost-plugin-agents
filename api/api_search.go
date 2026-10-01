@@ -44,11 +44,6 @@ func (a *API) handleRunSearch(c *gin.Context) {
 		return
 	}
 
-	if !a.searchService.Enabled() {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
-		return
-	}
-
 	var req SearchRequest
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid request: %w", err))

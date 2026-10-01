@@ -162,9 +162,9 @@ For more flexible channel analysis options, including **Ask Agents about this ch
 
 ## Search with AI
 
-You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
-Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several searches, combining semantic search (which finds related content even without the exact keywords) with keyword search, and read the surrounding threads before it answers. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
+Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several keyword searches and read the surrounding threads before it answers. If your system admin has set up embedding search, the agent also uses semantic search, which finds related content even without the exact keywords. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
 
 To ask about the channel you're viewing, use the `/ask-channel` slash command followed by your question. The agent starts by searching that channel and, if the answer isn't there, can search other content you have access to.
 

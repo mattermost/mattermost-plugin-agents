@@ -256,7 +256,6 @@ describe('fetchAndStoreBots', () => {
         await expect(fetchAndStoreBots(dispatch)).resolves.toBe(bots);
 
         expect(dispatch).toHaveBeenCalledWith({type: BotsHandler, bots});
-        expect(dispatch).toHaveBeenCalledWith({type: 'SET_SEARCH_ENABLED', searchEnabled: true});
         expect(dispatch).toHaveBeenCalledWith({type: 'SET_ALLOW_UNSAFE_LINKS', allowUnsafeLinks: true});
     });
 

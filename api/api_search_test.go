@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -64,23 +65,10 @@ func TestHandleRunSearch(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		searchService  func(t *testing.T) *search.Search
 		setup          func(t *testing.T, e *TestEnvironment)
 		requestBody    SearchRequest
 		expectedStatus int
 	}{
-		{
-			name:           "search not configured",
-			searchService:  func(*testing.T) *search.Search { return search.New(nil, nil, nil) },
-			requestBody:    SearchRequest{Query: "test query"},
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "no search service",
-			searchService:  func(*testing.T) *search.Search { return nil },
-			requestBody:    SearchRequest{Query: "test query"},
-			expectedStatus: http.StatusBadRequest,
-		},
 		{
 			name:           "empty query",
 			requestBody:    SearchRequest{Query: "   "},
@@ -140,11 +128,7 @@ func TestHandleRunSearch(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 
-			if test.searchService != nil {
-				e.api.searchService = test.searchService(t)
-			} else {
-				e.api.searchService = enabledSearchService(t)
-			}
+			e.api.searchService = enabledSearchService(t)
 			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
 			if test.setup != nil {
 				test.setup(t, e)
@@ -154,6 +138,64 @@ func TestHandleRunSearch(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Equal(t, test.expectedStatus, postSearchRun(e, bodyBytes, "test-bot").StatusCode)
+		})
+	}
+}
+
+// The search conversation uses keyword search through search_posts, so it
+// must start even when embedding search is not configured.
+func TestHandleRunSearchWithoutEmbeddingSearch(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name          string
+		searchService *search.Search
+	}{
+		{name: "embedding search not configured", searchService: search.New(nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise))},
+		{name: "no search service", searchService: nil},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.api.searchService = test.searchService
+			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil)
+
+			const dmChannelID = "searchdmchannel00000000000"
+			client := mmapimocks.NewMockClient(t)
+			client.On("DM", testUserID, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				post := args.Get(2).(*model.Post)
+				post.Id = model.NewId()
+				post.ChannelId = dmChannelID
+			}).Return(nil)
+			client.On("GetChannel", dmChannelID).Return(&model.Channel{Id: dmChannelID, Type: model.ChannelTypeDirect}, nil)
+			// Stop the background answer at its first step; this test only
+			// covers whether the search starts.
+			client.On("CreatePost", mock.Anything).Return(errors.New("stop"))
+			backgroundDone := make(chan struct{})
+			client.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+				Run(func(mock.Arguments) { close(backgroundDone) }).Return()
+			e.useSearchConversations(client)
+
+			bodyBytes, err := json.Marshal(SearchRequest{Query: "test query"})
+			require.NoError(t, err)
+
+			resp := postSearchRun(e, bodyBytes, "test-bot")
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			var body map[string]string
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+			require.Equal(t, dmChannelID, body["channelid"])
+			require.NotEmpty(t, body["postid"])
+
+			select {
+			case <-backgroundDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("background search never ran")
+			}
 		})
 	}
 }
