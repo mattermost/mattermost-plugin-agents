@@ -177,7 +177,7 @@ describe('MCPToolConfigRow license gating', () => {
         expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
 
-        fireEvent.click(screen.getAllByRole('checkbox')[0]);
+        fireEvent.click(screen.getAllByRole('switch')[0]);
         expect(onToolConfigChange).toHaveBeenCalledWith(expect.objectContaining({enabled: false}));
     });
 });

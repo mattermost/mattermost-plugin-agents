@@ -126,8 +126,8 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        // ToggleSwitch renders as a native checkbox: index 0 is server-level, index 1 is the per-tool toggle.
-        const switches = screen.getAllByRole('checkbox');
+        // ToggleSwitch renders as role="switch": index 0 is server-level, index 1 is the per-tool toggle.
+        const switches = screen.getAllByRole('switch');
         expect(switches.length).toBeGreaterThanOrEqual(2);
         fireEvent.click(switches[1]);
 
