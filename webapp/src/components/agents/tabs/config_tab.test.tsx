@@ -271,4 +271,29 @@ describe('ConfigTab license gating', () => {
 
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabledNativeTools: expected}));
     });
+
+    test.each([
+        {from: 'openai', to: 'anthropic', expected: ''},
+        {from: 'anthropic', to: 'openai', expected: 'medium'},
+    ])('switching from $from to $to resets reasoning effort to "$expected"', async ({from, to, expected}) => {
+        const anthropicService: ServiceInfo = {...openaiService, id: 'svc_anthropic', name: 'Anthropic Mock', type: 'anthropic'};
+        const serviceIDs: Record<string, string> = {openai: openaiService.id, anthropic: anthropicService.id};
+        const onChange = jest.fn();
+        const renderTab = (serviceId: string) => (
+            <IntlProvider locale='en'>
+                <ConfigTab
+                    draft={makeDraft({serviceId, reasoningEffort: 'low'})}
+                    onChange={onChange}
+                    onAvatarChange={jest.fn()}
+                    services={[openaiService, anthropicService]}
+                />
+            </IntlProvider>
+        );
+
+        const {rerender} = render(renderTab(serviceIDs[from]));
+        await screen.findByText('AI Service');
+        rerender(renderTab(serviceIDs[to]));
+
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
+    });
 });

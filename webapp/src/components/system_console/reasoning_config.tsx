@@ -9,34 +9,70 @@ import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectFie
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
-const maxReasoningBudget = 8192;
-const minReasoningBudget = 1024;
+// An empty Anthropic effort lets each model apply its own default.
+export const defaultReasoningEffort = (serviceType?: string): string => (serviceType === 'anthropic' ? '' : 'medium');
 
-// Anthropic models where budget-based extended thinking was removed and the
-// thinking budget is ignored (adaptive thinking is the only thinking-on mode).
-// Classified by family and version threshold rather than an enumerated model
-// list, so future versions classify correctly without maintenance: Opus
-// dropped the budget at 4.7 and Sonnet at 5, and every Fable/Mythos model is
-// adaptive-only. Unrecognized models are treated as budget-based, which keeps
-// the budget validation visible.
-export const usesAdaptiveThinking = (model: string): boolean => {
+const anthropicEffortLevels = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
+const standardEffortLevels = ['minimal', 'low', 'medium', 'high'];
+
+// Anthropic has no "minimal" level and the server treats it as low; any other
+// unrecognized value runs at the model default.
+const anthropicEffortValue = (effort: string | undefined): string => {
+    if (effort === 'minimal') {
+        return 'low';
+    }
+    return effort && anthropicEffortLevels.includes(effort) ? effort : '';
+};
+
+// Mirrors the server's anthropicThinkingAlwaysOn: Opus/Sonnet 5.5+ and the
+// Fable/Mythos family reject turning thinking off.
+export const anthropicThinkingAlwaysOn = (model: string): boolean => {
     const m = model.toLowerCase();
     if (m.includes('fable') || m.includes('mythos')) {
         return true;
     }
-    const match = (/claude-(opus|sonnet)-(\d+)(?:[.-](\d+))?/).exec(m);
+    const match = (/(opus|sonnet)-(\d{1,2})(?:[-.](\d{1,2}))?(?:\D|$)/).exec(m);
     if (!match) {
         return false;
     }
     const major = parseInt(match[2], 10);
+    const minor = match[3] ? parseInt(match[3], 10) : 0;
+    return major > 5 || (major === 5 && minor >= 5);
+};
 
-    // A long trailing number is a date suffix (e.g. claude-opus-4-20250514),
-    // not a minor version.
-    const minor = match[3] && match[3].length <= 2 ? parseInt(match[3], 10) : 0;
-    if (match[1] === 'opus') {
-        return major > 4 || (major === 4 && minor >= 7);
-    }
-    return major >= 5;
+type EffortSelectProps = {
+    value: string
+    levels: string[]
+    onChange: (effort: string) => void
+}
+
+const EffortSelect = (props: EffortSelectProps) => {
+    const intl = useIntl();
+    const labels: Record<string, string> = {
+        '': intl.formatMessage({defaultMessage: 'Model default'}),
+        minimal: intl.formatMessage({defaultMessage: 'Minimal'}),
+        low: intl.formatMessage({defaultMessage: 'Low'}),
+        medium: intl.formatMessage({defaultMessage: 'Medium'}),
+        high: intl.formatMessage({defaultMessage: 'High'}),
+        xhigh: intl.formatMessage({defaultMessage: 'Extra high'}),
+        max: intl.formatMessage({defaultMessage: 'Max'}),
+    };
+    return (
+        <SelectField
+            maxWidth='200px'
+            value={props.value}
+            onChange={(e) => props.onChange(e.target.value)}
+        >
+            {props.levels.map((level) => (
+                <option
+                    key={level}
+                    value={level}
+                >
+                    {labels[level]}
+                </option>
+            ))}
+        </SelectField>
+    );
 };
 
 type ReasoningConfigItemProps = {
@@ -55,7 +91,7 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     // Determine if this service supports reasoning.
     //   - OpenAI direct and Cohere North always use the Responses API.
-    //   - Anthropic uses extended thinking with a token budget.
+    //   - Anthropic uses extended thinking controlled by an effort level.
     //   - Gemini / Vertex AI map reasoning to Google's thinkingConfig via Bifrost,
     //     accepting both a thinking budget and an effort level.
     const isAnthropic = props.service.type === 'anthropic';
@@ -70,12 +106,10 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     }
 
     const reasoningEnabled = props.bot.reasoningEnabled ?? true; // Default to enabled
-    const reasoningEffort = props.bot.reasoningEffort || 'medium';
-
-    // The agent's effective model decides whether the thinking budget applies:
-    // adaptive-thinking Anthropic models ignore it entirely.
+    const reasoningEffort = props.bot.reasoningEffort || defaultReasoningEffort(props.service.type);
     const effectiveModel = props.bot.model || props.service.defaultModel || '';
-    const adaptiveThinking = isAnthropic && usesAdaptiveThinking(effectiveModel);
+    const thinkingAlwaysOn = isAnthropic && anthropicThinkingAlwaysOn(effectiveModel);
+    const handleEffortChange = (effort: string) => props.onChange({...props.bot, reasoningEffort: effort});
 
     // For thinking budget, use the value from the bot config, or empty string if 0/undefined
     const thinkingBudgetValue = (props.bot.thinkingBudget && props.bot.thinkingBudget > 0) ? props.bot.thinkingBudget.toString() : '';
@@ -83,18 +117,6 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     const handleThinkingBudgetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const value = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
         props.onChange({...props.bot, thinkingBudget: value});
-    };
-
-    // Calculate default for help text
-    const getDefaultThinkingBudget = () => {
-        let defaultBudget = Math.floor(props.maxTokens / 4);
-        if (defaultBudget > maxReasoningBudget) {
-            defaultBudget = maxReasoningBudget;
-        }
-        if (defaultBudget < minReasoningBudget) {
-            defaultBudget = minReasoningBudget;
-        }
-        return defaultBudget;
     };
 
     const headerLabel = isAnthropic ?
@@ -117,44 +139,31 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                         onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
                 </FieldControlRow>
+                {!reasoningEnabled && thinkingAlwaysOn && (
+                    <HelpText>
+                        {intl.formatMessage({
+                            defaultMessage: 'This model always thinks and can\'t turn extended thinking off. While disabled, it runs at the lowest effort and its reasoning isn\'t shown.',
+                        })}
+                    </HelpText>
+                )}
 
                 {reasoningEnabled && (
                     <>
                         {isAnthropic && (
                             <ConfigField>
                                 <FieldLabel>
-                                    {intl.formatMessage({defaultMessage: 'Thinking Budget (tokens)'})}
+                                    {intl.formatMessage({defaultMessage: 'Thinking Effort'})}
                                 </FieldLabel>
-                                <FieldInput
-                                    type='number'
-                                    min='1024'
-                                    max={props.maxTokens}
-                                    value={thinkingBudgetValue}
-                                    onChange={handleThinkingBudgetChange}
-                                    placeholder={getDefaultThinkingBudget().toString()}
+                                <EffortSelect
+                                    value={anthropicEffortValue(props.bot.reasoningEffort)}
+                                    levels={anthropicEffortLevels}
+                                    onChange={handleEffortChange}
                                 />
                                 <HelpText>
-                                    {adaptiveThinking ? intl.formatMessage({
-                                        defaultMessage: 'This model uses adaptive thinking and decides how much to reason on its own. The token budget is ignored.',
-                                    }) : intl.formatMessage({
-                                        defaultMessage: 'Token budget for extended thinking. Higher values allow deeper reasoning but increase response time and cost. Must be between 1024 and {maxTokens}. Leave blank to use default ({defaultBudget}).',
-                                    }, {
-                                        maxTokens: props.maxTokens,
-                                        defaultBudget: getDefaultThinkingBudget(),
+                                    {intl.formatMessage({
+                                        defaultMessage: 'Controls how much the model thinks before responding. Higher effort allows deeper reasoning but increases response time and cost. Model default uses the model\'s own default. Models with adaptive thinking use the effort directly (Extra high falls back to High where unsupported); older models get a thinking budget scaled to it.',
                                     })}
                                 </HelpText>
-                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > 0 && props.bot.thinkingBudget < 1024 && (
-                                    <ErrorText>
-                                        {intl.formatMessage({defaultMessage: 'Thinking budget must be at least 1024 tokens.'})}
-                                    </ErrorText>
-                                )}
-                                {!adaptiveThinking && typeof props.bot.thinkingBudget === 'number' && props.bot.thinkingBudget > props.maxTokens && (
-                                    <ErrorText>
-                                        {intl.formatMessage({
-                                            defaultMessage: 'Thinking budget cannot exceed max tokens ({maxTokens}).',
-                                        }, {maxTokens: props.maxTokens})}
-                                    </ErrorText>
-                                )}
                             </ConfigField>
                         )}
 
@@ -182,24 +191,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <FieldLabel>
                                         {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                     </FieldLabel>
-                                    <SelectField
-                                        maxWidth='200px'
+                                    <EffortSelect
                                         value={reasoningEffort}
-                                        onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                    >
-                                        <option value='minimal'>
-                                            {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                        </option>
-                                        <option value='low'>
-                                            {intl.formatMessage({defaultMessage: 'Low'})}
-                                        </option>
-                                        <option value='medium'>
-                                            {intl.formatMessage({defaultMessage: 'Medium'})}
-                                        </option>
-                                        <option value='high'>
-                                            {intl.formatMessage({defaultMessage: 'High'})}
-                                        </option>
-                                    </SelectField>
+                                        levels={standardEffortLevels}
+                                        onChange={handleEffortChange}
+                                    />
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
@@ -214,24 +210,11 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <FieldLabel>
                                     {intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
                                 </FieldLabel>
-                                <SelectField
-                                    maxWidth='200px'
+                                <EffortSelect
                                     value={reasoningEffort}
-                                    onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                >
-                                    <option value='minimal'>
-                                        {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                    </option>
-                                    <option value='low'>
-                                        {intl.formatMessage({defaultMessage: 'Low'})}
-                                    </option>
-                                    <option value='medium'>
-                                        {intl.formatMessage({defaultMessage: 'Medium'})}
-                                    </option>
-                                    <option value='high'>
-                                        {intl.formatMessage({defaultMessage: 'High'})}
-                                    </option>
-                                </SelectField>
+                                    levels={standardEffortLevels}
+                                    onChange={handleEffortChange}
+                                />
                                 <HelpText>
                                     {intl.formatMessage({
                                         defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',
@@ -294,13 +277,6 @@ const FieldInput = styled.input`
         outline: none;
         box-shadow: none;
     }
-`;
-
-const ErrorText = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: var(--dnd-indicator, #D24B4E);
 `;
 
 export default ReasoningConfigItem;

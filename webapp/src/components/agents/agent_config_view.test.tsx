@@ -625,6 +625,51 @@ describe('AgentConfigView', () => {
         }));
     });
 
+    test.each([
+        {serviceType: 'anthropic', expected: ''},
+        {serviceType: 'openai', expected: 'medium'},
+    ])('defaults reasoning effort for a new $serviceType agent to "$expected"', async ({serviceType, expected}) => {
+        mockCreateAgent.mockResolvedValue(savedAgent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='create'
+                    services={[{...services[0], type: serviceType}]}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(mockCreateAgent).toHaveBeenCalledWith(expect.objectContaining({reasoningEffort: expected}));
+    });
+
+    test('keeps an unset Anthropic effort at the model default when saving an existing agent', async () => {
+        mockUpdateAgent.mockResolvedValue(savedAgent);
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={{...savedAgent, reasoningEffort: ''}}
+                    services={[{...services[0], type: 'anthropic'}]}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Renamed Agent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent).toHaveBeenCalledWith('agent_1', expect.objectContaining({reasoningEffort: ''}));
+    });
+
     test('blocks saving when maxToolTurns exceeds the hard cap', () => {
         render(
             <IntlProvider locale='en'>

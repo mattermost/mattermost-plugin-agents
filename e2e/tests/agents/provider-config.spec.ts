@@ -287,15 +287,11 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getNativeToolsSection('Native Claude Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).toBeChecked();
         await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('2048');
 
-        await agentPage.getThinkingBudgetInput().fill('512');
-        await page.keyboard.press('Tab');
-        await expect(page.getByText('Thinking budget must be at least 1024 tokens.')).toBeVisible({timeout: 10000});
-
-        await agentPage.getThinkingBudgetInput().fill('4096');
-        await page.keyboard.press('Tab');
-        await expect(page.getByText('Thinking budget must be at least 1024 tokens.')).not.toBeVisible();
+        // Anthropic is configured by effort; the migrated budget has no field.
+        await expect(agentPage.getThinkingEffortSelect()).toHaveValue('');
+        await expect(page.getByText('Thinking Budget (tokens)', {exact: true})).toHaveCount(0);
+        await agentPage.getThinkingEffortSelect().selectOption('low');
 
         await agentPage.getNativeToolCheckbox('Native Claude Tools').click();
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
@@ -316,6 +312,6 @@ test.describe('Agent provider configuration', () => {
         await expect(agentPage.getNativeToolsSection('Native Claude Tools')).toBeVisible({timeout: 10000});
         await expect(agentPage.getNativeToolCheckbox('Native Claude Tools')).not.toBeChecked();
         await expect(agentPage.getReasoningEnableCheckbox('Extended Thinking')).toBeChecked();
-        await expect(agentPage.getThinkingBudgetInput()).toHaveValue('4096');
+        await expect(agentPage.getThinkingEffortSelect()).toHaveValue('low');
     });
 });

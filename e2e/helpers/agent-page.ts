@@ -166,8 +166,8 @@ export class AgentPageHelper {
         return this.getExactLabel('Reasoning Effort').locator('xpath=ancestor::div[1]//select[1]');
     }
 
-    getThinkingBudgetInput(): Locator {
-        return this.getExactLabel('Thinking Budget (tokens)').locator('xpath=following-sibling::input[1]');
+    getThinkingEffortSelect(): Locator {
+        return this.getExactLabel('Thinking Effort').locator('xpath=ancestor::div[1]//select[1]');
     }
 
     getAdvancedConfigurationToggle(): Locator {
