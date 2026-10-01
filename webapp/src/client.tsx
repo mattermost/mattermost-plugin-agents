@@ -456,8 +456,8 @@ export async function getBotProfilePictureUrl(username: string) {
 }
 
 // doRunSearch starts a search conversation with the agent. teamId is the
-// user's current team (used for citation links); channelId, when set, limits
-// the search to that channel.
+// user's current team (used for citation links); channelId, when set, is the
+// channel the agent searches first.
 export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
     const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({

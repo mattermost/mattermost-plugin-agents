@@ -175,7 +175,7 @@ func TestHandleSearchRunsToolLoopInAgentDM(t *testing.T) {
 }
 
 func TestHandleSearchSystemPrompt(t *testing.T) {
-	const scopeChannelID = "scopechannel00000000000000"
+	const startChannelID = "startchannel00000000000000"
 
 	tests := []struct {
 		name        string
@@ -184,19 +184,19 @@ func TestHandleSearchSystemPrompt(t *testing.T) {
 		notContains []string
 	}{
 		{
-			name:        "unscoped search without a team cites through the redirect route",
+			name:        "search bar query without a team cites through the redirect route",
 			request:     conversations.SearchRequest{Query: "launch"},
 			contains:    []string{"/_redirect/pl/<post_id>"},
-			notContains: []string{scopeChannelID},
+			notContains: []string{startChannelID},
 		},
 		{
-			name: "scoped search limits search_posts to the channel and cites with the team name",
+			name: "ask-channel points the agent at the channel and cites with the team name",
 			request: conversations.SearchRequest{
 				Query:   "launch",
 				Team:    &model.Team{Id: "teamid", Name: "eng"},
-				Channel: &model.Channel{Id: scopeChannelID, DisplayName: "Launch Planning"},
+				Channel: &model.Channel{Id: startChannelID, DisplayName: "Launch Planning"},
 			},
-			contains:    []string{"/eng/pl/<post_id>", scopeChannelID, "Launch Planning"},
+			contains:    []string{"/eng/pl/<post_id>", startChannelID, "Launch Planning"},
 			notContains: []string{"/_redirect/pl/"},
 		},
 	}

@@ -166,7 +166,7 @@ You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/sear
 
 Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several searches, combining semantic search (which finds related content even without the exact keywords) with keyword search, and read the surrounding threads before it answers. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
 
-To search only the channel you're viewing, use the `/ask-channel` slash command followed by your question.
+To ask about the channel you're viewing, use the `/ask-channel` slash command followed by your question. The agent starts by searching that channel and, if the answer isn't there, can search other content you have access to.
 
 Searching requires the agent to have access to the built-in Mattermost tools. Contact your system admin if the agent replies that it can't search.
 

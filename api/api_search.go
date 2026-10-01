@@ -25,7 +25,7 @@ type SearchRequest struct {
 	Query string `json:"query"`
 	// TeamID is the user's current team, used for citation links.
 	TeamID string `json:"teamId"`
-	// ChannelID limits the search to one channel.
+	// ChannelID is the channel the agent searches first.
 	ChannelID string `json:"channelId"`
 }
 

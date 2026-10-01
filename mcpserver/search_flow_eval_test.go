@@ -170,8 +170,29 @@ func TestSearchBarFlowEval(t *testing.T) {
 	}
 }
 
-// TestAskChannelSearchFlowEval covers /ask-channel: the agent must only look
-// inside the requested channel, and the answer must not pull in other channels.
+// lookupChannelIDs returns the channel_id of each search_posts or read_channel
+// call in order; an empty ID means the lookup was not limited to a channel.
+func lookupChannelIDs(t *testing.T, calls []llm.ToolCall) []string {
+	t.Helper()
+	var ids []string
+	for _, call := range calls {
+		switch llm.BareMCPToolName(call.Name) {
+		case "search_posts", "read_channel":
+		default:
+			continue
+		}
+		var args struct {
+			ChannelID string `json:"channel_id"`
+		}
+		require.NoError(t, json.Unmarshal(call.Arguments, &args))
+		ids = append(ids, args.ChannelID)
+	}
+	return ids
+}
+
+// TestAskChannelSearchFlowEval covers /ask-channel: the channel tells the
+// agent where to start, not where to stop. It must look in that channel first
+// and only go elsewhere when the answer isn't there.
 func TestAskChannelSearchFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -180,31 +201,51 @@ func TestAskChannelSearchFlowEval(t *testing.T) {
 	suite.CreateMCPServer(false)
 
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+	knownPostIDs := seededPostIDs(t, suite, data)
 
-	evals.Run(t, "ask-channel stays in the channel", func(e *evals.EvalT) {
-		result := runSearchFlowEval(e, suite, data, "What has been proposed here?", data.designChannel)
+	tests := []struct {
+		name            string
+		query           string
+		wantBroadSearch bool
+		rubrics         []string
+	}{
+		{
+			name:  "answers from the channel when the answer is there",
+			query: "What has been proposed here?",
+			rubrics: []string{
+				"Mentions the Figma mockups for the dashboard redesign or the card-based layout for the analytics section",
+				"Does not mention a database migration, MySQL, or PostgreSQL",
+			},
+		},
+		{
+			name:            "searches beyond the channel when the answer is elsewhere",
+			query:           "What's the rollback plan for the database migration?",
+			wantBroadSearch: true,
+			rubrics: []string{
+				"Says the MySQL instance stays running in read-only mode during the cutover",
+			},
+		},
+	}
 
-		var channelLookups int
-		for _, call := range result.toolCalls {
-			switch llm.BareMCPToolName(call.Name) {
-			case "search_posts", "read_channel":
-			default:
-				continue
+	for _, tt := range tests {
+		evals.Run(t, "ask-channel "+tt.name, func(e *evals.EvalT) {
+			result := runSearchFlowEval(e, suite, data, tt.query, data.designChannel)
+
+			channelIDs := lookupChannelIDs(e.T, result.toolCalls)
+			require.NotEmpty(e.T, channelIDs, "the agent must search or read Mattermost")
+			assert.Equal(e.T, data.designChannel.Id, channelIDs[0], "the first lookup must start in the requested channel (lookups: %v)", channelIDs)
+
+			leftChannel := slices.ContainsFunc(channelIDs, func(id string) bool { return id != data.designChannel.Id })
+			if tt.wantBroadSearch {
+				assert.True(e.T, leftChannel, "the agent must search beyond the requested channel when the answer is elsewhere (lookups: %v)", channelIDs)
 			}
-			channelLookups++
-			var args struct {
-				ChannelID string `json:"channel_id"`
-			}
-			require.NoError(e.T, json.Unmarshal(call.Arguments, &args))
-			assert.Equal(e.T, data.designChannel.Id, args.ChannelID, "%s call %s left the requested channel", call.Name, string(call.Arguments))
-		}
-		require.Positive(e.T, channelLookups, "the agent must search or read the requested channel")
 
-		for _, rubric := range []string{
-			"Mentions the Figma mockups for the dashboard redesign or the card-based layout for the analytics section",
-			"Does not mention a database migration, MySQL, or PostgreSQL",
-		} {
-			evals.LLMRubricT(e, rubric, result.response)
-		}
-	})
+			for _, id := range result.citedIDs {
+				assert.True(e.T, knownPostIDs[id], "citation references post %s, which does not exist", id)
+			}
+			for _, rubric := range tt.rubrics {
+				evals.LLMRubricT(e, rubric, result.response)
+			}
+		})
+	}
 }

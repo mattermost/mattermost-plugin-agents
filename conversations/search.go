@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	searchScopeChannelIDParam   = "SearchChannelID"
-	searchScopeChannelNameParam = "SearchChannelName"
+	searchStartChannelIDParam   = "SearchChannelID"
+	searchStartChannelNameParam = "SearchChannelName"
 )
 
 // searchMCPTools are the embedded Mattermost tools a search conversation
@@ -36,14 +36,15 @@ var searchMCPTools = []llm.EnabledMCPTool{
 var ErrSearchToolsUnavailable = errors.New("the search_posts tool from the embedded Mattermost MCP server is not available to this agent")
 
 // FormatSearchSystemPrompt renders the system prompt for a search
-// conversation. scope, when set, limits the search to a single channel.
-func FormatSearchSystemPrompt(p *llm.Prompts, llmContext *llm.Context, scope *model.Channel) (string, error) {
+// conversation. startChannel, when set, is the channel the agent should
+// search first; the agent may still search beyond it.
+func FormatSearchSystemPrompt(p *llm.Prompts, llmContext *llm.Context, startChannel *model.Channel) (string, error) {
 	if llmContext.Parameters == nil {
 		llmContext.Parameters = make(map[string]any)
 	}
-	if scope != nil {
-		llmContext.Parameters[searchScopeChannelIDParam] = scope.Id
-		llmContext.Parameters[searchScopeChannelNameParam] = scope.DisplayName
+	if startChannel != nil {
+		llmContext.Parameters[searchStartChannelIDParam] = startChannel.Id
+		llmContext.Parameters[searchStartChannelNameParam] = startChannel.DisplayName
 	}
 	return p.Format(prompts.PromptSearchSystem, llmContext)
 }
@@ -54,7 +55,9 @@ type SearchRequest struct {
 	Query string
 	// Team, when set, is used to build citation permalinks.
 	Team *model.Team
-	// Channel, when set, limits the search to that channel.
+	// Channel, when set, is where the agent starts searching. It is a hint
+	// about what the user means, not a boundary: the agent can search more
+	// broadly when the answer isn't there.
 	Channel *model.Channel
 }
 

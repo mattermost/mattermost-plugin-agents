@@ -72,11 +72,11 @@ test.describe('Search bar conversation', () => {
         await expect(rhs.getByText(query)).toBeVisible();
     });
 
-    test('/ask-channel limits the search to the current channel', async ({ page }) => {
+    test('/ask-channel points the agent at the current channel', async ({ page }) => {
         const { mmPage, aiPlugin } = await setupTestPage(page);
         const townSquareID = await getTownSquareChannelID();
 
-        // Served only when the system prompt names the channel to search.
+        // Served only when the system prompt names the channel to start in.
         const answer = 'Town Square only answer.';
         await openAIMock.addMocks([
             buildChatCompletionMockRule(buildTextResponse(answer), { bodyContains: `channel ID ${townSquareID}` }),
