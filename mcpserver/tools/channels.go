@@ -154,6 +154,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if err != nil {
 		return "", fmt.Errorf("error fetching channel: %w", err)
 	}
+	mcpContext.recordSourceChannels(channel)
 
 	// Determine team display name; DMs/Groups have no team
 	channelDisplayName := channel.DisplayName
@@ -346,6 +347,7 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 		if err != nil {
 			// Check if it's a 404 (not found) - return success with message
 			if resp != nil && resp.StatusCode == http.StatusNotFound {
+				mcpContext.recordSourceChannels()
 				return fmt.Sprintf("No channel found with ID '%s'. The channel may have been deleted or you may not have access to it.", args.ChannelID), nil
 			}
 			// Real error (network, auth, etc.)
@@ -399,11 +401,16 @@ func (p *MattermostToolProvider) toolGetChannelInfo(mcpContext *MCPToolContext, 
 			fmt.Fprintf(&notFoundMsg, "%d. Call get_user_channels to list all channels you have access to\n", stepNum)
 			notFoundMsg.WriteString("\nOnly ask the user for help after trying all alternatives above.")
 
+			mcpContext.recordSourceChannels()
 			return notFoundMsg.String(), nil
 		}
 	default:
 		return "", fmt.Errorf("insufficient parameters for channel lookup")
 	}
+
+	// Every channel returned is a source, including ones the destination
+	// audience cannot read.
+	mcpContext.recordSourceChannels(channels...)
 
 	// If multiple channels found, return all with disambiguation guidance
 	if len(channels) > 1 {
@@ -547,6 +554,8 @@ func (p *MattermostToolProvider) toolGetChannelMembers(mcpContext *MCPToolContex
 	if err != nil {
 		return "", fmt.Errorf("error fetching channel members: %w", err)
 	}
+
+	recordChannelByID(mcpContext, args.ChannelID)
 
 	if len(members) == 0 {
 		return "no members found in this channel", nil
@@ -790,6 +799,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	start := args.Page * args.PerPage
 	end := start + args.PerPage
 	if start >= len(channels) {
+		mcpContext.recordSourceChannels()
 		return fmt.Sprintf("No channels found (page %d, %d total channels).", args.Page, totalCount), nil
 	}
 	if end > len(channels) {
@@ -797,6 +807,7 @@ func (p *MattermostToolProvider) toolGetUserChannels(mcpContext *MCPToolContext,
 	}
 	hasMore := end < totalCount
 	channels = channels[start:end]
+	mcpContext.recordSourceChannels(channels...)
 
 	// Build a map of team IDs to team info for display.
 	type TeamInfo struct {

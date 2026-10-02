@@ -178,10 +178,61 @@ func toolUseBlocks(
 	return blocks
 }
 
+func heldAnswerBlock(tt toolrunner.ToolTurn) *ContentBlock {
+	if tt.HeldAnswer == "" && len(tt.HeldSources) == 0 && len(tt.HeldAnnotations) == 0 {
+		return nil
+	}
+	return &ContentBlock{
+		Type:           BlockTypeText,
+		Text:           tt.HeldAnswer,
+		RequesterOnly:  true,
+		Citations:      citationsFromAnnotations(tt.HeldAnnotations),
+		SourceChannels: sourceChannelsFromHeld(tt.HeldSources),
+	}
+}
+
+func citationsFromAnnotations(annotations []llm.Annotation) []Citation {
+	if len(annotations) == 0 {
+		return nil
+	}
+	out := make([]Citation, 0, len(annotations))
+	for _, ann := range annotations {
+		out = append(out, Citation{
+			Type:        string(ann.Type),
+			URL:         ann.URL,
+			Title:       ann.Title,
+			StartIndex:  ann.StartIndex,
+			EndIndex:    ann.EndIndex,
+			ChannelID:   ann.ChannelID,
+			ChannelName: ann.ChannelName,
+			Private:     ann.Private,
+		})
+	}
+	return out
+}
+
+func sourceChannelsFromHeld(sources []toolrunner.HeldSource) []SourceChannel {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]SourceChannel, 0, len(sources))
+	for _, src := range sources {
+		out = append(out, SourceChannel{
+			ID:          src.ID,
+			Name:        src.Name,
+			DisplayName: src.DisplayName,
+			Type:        src.Type,
+			TeamID:      src.TeamID,
+			Private:     src.Private,
+		})
+	}
+	return out
+}
+
 // toolResultBlocks builds tool_result-side content blocks from ToolRunner output.
-// Auto-executed tool rounds are terminal: there is no share/keep-private step,
-// so stamp DecidedAt at creation time to reflect that no further approval UI
-// is needed. DMs inherit the same treatment (shared=true, decided).
+// A round that can be posted now is terminal: stamp DecidedAt so no share
+// step remains. A round that cannot be posted leaves DecidedAt nil so the
+// requester gets one share decision before any channel answer.
 func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlock {
 	now := model.GetMillis()
 	blocks := make([]ContentBlock, len(results))
@@ -190,14 +241,19 @@ func toolResultBlocks(results []toolrunner.ToolResult, shared bool) []ContentBlo
 		if tr.IsError {
 			status = StatusError
 		}
-		blocks[i] = ContentBlock{
+		block := ContentBlock{
 			Type:      BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
 			Shared:    new(shared),
-			DecidedAt: new(now),
 		}
+		if shared {
+			block.DecidedAt = new(now)
+		} else {
+			block.AudienceReview = true
+		}
+		blocks[i] = block
 	}
 	return blocks
 }

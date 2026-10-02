@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -389,4 +390,104 @@ func TestStateChangingToolsMiddleware(t *testing.T) {
 		require.True(t, ok)
 		assert.ElementsMatch(t, []string{"read_post", "create_post"}, toolNames(listResult.Tools))
 	})
+}
+
+func TestRecordSourceChannels(t *testing.T) {
+	t.Run("nil receiver is a no-op", func(t *testing.T) {
+		var ctx *MCPToolContext
+		assert.NotPanics(t, func() {
+			ctx.recordSourceChannels(&model.Channel{Id: "ch-1"})
+		})
+	})
+
+	cases := []struct {
+		name    string
+		calls   [][]*model.Channel
+		wantIDs []string
+		wantSet bool
+	}{
+		{
+			name:    "empty call marks provenance with no sources",
+			calls:   [][]*model.Channel{{}},
+			wantIDs: nil,
+			wantSet: true,
+		},
+		{
+			name: "ignores nil entries",
+			calls: [][]*model.Channel{{
+				nil,
+				&model.Channel{Id: "ch-1", Type: model.ChannelTypeOpen, TeamId: "team-a"},
+				nil,
+			}},
+			wantIDs: []string{"ch-1"},
+			wantSet: true,
+		},
+		{
+			name: "deduplicates by non-empty id and keeps the first entry",
+			calls: [][]*model.Channel{{
+				&model.Channel{Id: "ch-1", Type: model.ChannelTypeOpen, TeamId: "team-a"},
+				&model.Channel{Id: "ch-1", Type: model.ChannelTypePrivate, TeamId: "team-b"},
+				&model.Channel{Id: "ch-2", Type: model.ChannelTypePrivate, TeamId: "team-a"},
+			}},
+			wantIDs: []string{"ch-1", "ch-2"},
+			wantSet: true,
+		},
+		{
+			name: "empty ids are kept and not used as a dedup key",
+			calls: [][]*model.Channel{{
+				&model.Channel{Id: "", Type: model.ChannelTypePrivate},
+				&model.Channel{Id: "", Type: model.ChannelTypeOpen},
+			}},
+			wantIDs: []string{"", ""},
+			wantSet: true,
+		},
+		{
+			name: "accumulates across calls and skips a later duplicate id",
+			calls: [][]*model.Channel{
+				{&model.Channel{Id: "ch-1", Type: model.ChannelTypeOpen, TeamId: "team-a"}},
+				{&model.Channel{Id: "ch-1", Type: model.ChannelTypePrivate, TeamId: "team-b"}, &model.Channel{Id: "ch-2"}},
+			},
+			wantIDs: []string{"ch-1", "ch-2"},
+			wantSet: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := &MCPToolContext{}
+			for _, call := range tc.calls {
+				ctx.recordSourceChannels(call...)
+			}
+			assert.Equal(t, tc.wantSet, ctx.sourceChannelsSet)
+			require.Len(t, ctx.sourceChannels, len(tc.wantIDs))
+			for i, id := range tc.wantIDs {
+				assert.Equal(t, id, ctx.sourceChannels[i].Id)
+			}
+			if len(tc.wantIDs) >= 1 && tc.wantIDs[0] == "ch-1" {
+				assert.Equal(t, model.ChannelTypeOpen, ctx.sourceChannels[0].Type)
+				assert.Equal(t, "team-a", ctx.sourceChannels[0].TeamId)
+			}
+		})
+	}
+}
+
+func TestSourceChannelsMeta(t *testing.T) {
+	got := sourceChannelsMeta([]*model.Channel{
+		nil,
+		{Id: "ch-1", Type: model.ChannelTypeOpen, TeamId: "team-a"},
+		{Id: "ch-2", Type: model.ChannelTypePrivate, TeamId: "team-b"},
+	})
+	raw, ok := got[sourceChannelsMetaKey].([]any)
+	require.True(t, ok)
+	require.Len(t, raw, 2)
+	first, ok := raw[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "ch-1", first["id"])
+	assert.Equal(t, string(model.ChannelTypeOpen), first["type"])
+	assert.Equal(t, "team-a", first["team_id"])
+
+	empty := sourceChannelsMeta(nil)
+	raw, ok = empty[sourceChannelsMetaKey].([]any)
+	require.True(t, ok)
+	assert.Empty(t, raw)
 }

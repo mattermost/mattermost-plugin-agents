@@ -60,6 +60,10 @@ export interface ToolCall {
     // share/keep-private decision (decided_at set server-side). Derived from
     // the conversation API; absent on live websocket payloads.
     decided?: boolean;
+
+    // True when this executed result is waiting on one answer-level share
+    // decision because a source is not covered by the channel audience.
+    audience_review?: boolean;
 }
 
 // ToolApprovalStage mirrors the server-computed approval state for a post.

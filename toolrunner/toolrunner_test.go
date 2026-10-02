@@ -1236,3 +1236,42 @@ func TestToolRunner_OptsPassedThrough(t *testing.T) {
 	assert.Len(t, capturedOpts[0], 1) // WithReasoningDisabled
 	assert.Len(t, capturedOpts[1], 1)
 }
+
+func TestToolRunner_HoldChannelAnswerDoesNotStreamFollowUp(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Let me check..."},
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "read_channel", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "SECRET-ANSWER from a private channel"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+	store := newTestToolStore(testToolDef{name: "read_channel", result: "secret body"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts: []llm.Post{{Role: llm.PostRoleUser, Message: "What was decided?"}},
+		Context: &llm.Context{
+			Tools: store,
+			HoldChannelAnswer: func(calls []llm.ToolCall) bool {
+				return len(calls) > 0
+			},
+		},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+	text, readErr := result.Stream.ReadAll()
+	require.NoError(t, readErr)
+	assert.Equal(t, "Let me check...", text)
+	assert.NotContains(t, text, "SECRET-ANSWER")
+	require.Len(t, result.ToolTurns, 1)
+	assert.Equal(t, "SECRET-ANSWER from a private channel", result.ToolTurns[0].HeldAnswer)
+	assert.Equal(t, 2, inner.callCount)
+}

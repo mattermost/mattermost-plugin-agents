@@ -216,14 +216,14 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			semanticResults, semanticErr = p.executeSemanticSearch(ctx, client, args, userID)
+			semanticResults, semanticErr = p.executeSemanticSearch(ctx, client, args, userID, mcpContext)
 		}()
 	}
 
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		keywordResults, keywordErr = p.executeKeywordSearch(ctx, client, args)
+		keywordResults, keywordErr = p.executeKeywordSearch(ctx, client, args, mcpContext)
 	}()
 
 	wg.Wait()
@@ -242,11 +242,15 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 		return "", fmt.Errorf("keyword search failed: %v", keywordErr)
 	}
 
+	if mcpContext != nil && !mcpContext.sourceChannelsSet {
+		mcpContext.recordSourceChannels()
+	}
+
 	return p.formatCombinedResults(args.Query, semanticResults, keywordResults, semanticEnabled, args.ChannelID)
 }
 
 // executeSemanticSearch runs the semantic search and returns enriched results.
-func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, userID string, mcpContext *MCPToolContext) ([]searchPostResult, error) {
 	opts := search.Options{
 		Limit:     args.SemanticLimit,
 		Offset:    args.SemanticOffset,
@@ -267,12 +271,17 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 		}
 
 		channel, _, chErr := client.GetChannel(ctx, r.ChannelID)
-		if chErr == nil && channel.TeamId != "" {
-			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
-			if teamErr == nil {
-				channelTeamCache[r.ChannelID] = team.DisplayName
-				continue
+		if chErr == nil && channel != nil {
+			mcpContext.recordSourceChannels(channel)
+			if channel.TeamId != "" {
+				team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
+				if teamErr == nil {
+					channelTeamCache[r.ChannelID] = team.DisplayName
+					continue
+				}
 			}
+		} else {
+			mcpContext.recordSourceChannels(&model.Channel{Id: r.ChannelID})
 		}
 
 		channelTeamCache[r.ChannelID] = ""
@@ -300,7 +309,7 @@ func (p *MattermostToolProvider) executeSemanticSearch(ctx context.Context, clie
 }
 
 // executeKeywordSearch runs the Mattermost keyword search and returns enriched results.
-func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs) ([]searchPostResult, error) {
+func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, client *model.Client4, args CombinedSearchArgs, mcpContext *MCPToolContext) ([]searchPostResult, error) {
 	searchTerm := args.Query
 	teamID := args.TeamID
 
@@ -389,6 +398,14 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 				p.logger.Warn("failed to get user for post", "user_id", post.UserId, "error", userErr)
 				userCache[post.UserId] = nil
 			}
+		}
+	}
+
+	for id, channel := range channelCache {
+		if channel != nil {
+			mcpContext.recordSourceChannels(channel)
+		} else {
+			mcpContext.recordSourceChannels(&model.Channel{Id: id})
 		}
 	}
 

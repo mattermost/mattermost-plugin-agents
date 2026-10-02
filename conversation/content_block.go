@@ -70,12 +70,25 @@ type ContentBlock struct {
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
 	// in a channel, or implicitly at creation time (DMs, rejected tools,
-	// auto_run_everywhere results). A nil value means the result still
-	// needs a user decision; any non-nil value means the decision is final
-	// and no further approval UI should appear. This distinguishes the
+	// answers that can be posted immediately). A nil value means the result
+	// still needs a user decision; any non-nil value means the decision is
+	// final and no further approval UI should appear. This distinguishes the
 	// "undecided" and "decided to keep private" states, which both present
 	// Shared=false but require opposite UI behavior.
 	DecidedAt *int64 `json:"decided_at,omitempty"`
+
+	// AudienceReview marks an executed result whose channel answer is held
+	// until one share decision. The webapp uses it for a single decision
+	// instead of one button per result.
+	AudienceReview bool `json:"audience_review,omitempty"`
+
+	// RequesterOnly text is the draft shown to the asking user before that
+	// decision. FilterForNonRequester drops the block.
+	RequesterOnly bool `json:"requester_only,omitempty"`
+
+	// SourceChannels names channels the draft drew from. Never sent to
+	// non-requesters.
+	SourceChannels []SourceChannel `json:"source_channels,omitempty"`
 
 	// ToolResult fields
 	ToolUseID string `json:"tool_use_id,omitempty"`
@@ -94,13 +107,26 @@ type ContentBlock struct {
 	ServerTool *llm.ServerToolUse `json:"server_tool,omitempty"`
 }
 
+// SourceChannel is a channel a tool result or draft drew from.
+type SourceChannel struct {
+	ID          string `json:"id,omitempty"`
+	Name        string `json:"name,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Type        string `json:"type,omitempty"`
+	TeamID      string `json:"team_id,omitempty"`
+	Private     bool   `json:"private,omitempty"`
+}
+
 // Citation represents an inline citation in a text block.
 type Citation struct {
-	Type       string `json:"type"`
-	URL        string `json:"url,omitempty"`
-	Title      string `json:"title,omitempty"`
-	StartIndex int    `json:"start_index"`
-	EndIndex   int    `json:"end_index"`
+	Type        string `json:"type"`
+	URL         string `json:"url,omitempty"`
+	Title       string `json:"title,omitempty"`
+	StartIndex  int    `json:"start_index"`
+	EndIndex    int    `json:"end_index"`
+	ChannelID   string `json:"channel_id,omitempty"`
+	ChannelName string `json:"channel_name,omitempty"`
+	Private     bool   `json:"private,omitempty"`
 }
 
 // WebSearchContext holds web search metadata for annotations blocks.
@@ -113,30 +139,55 @@ type WebSearchContext struct {
 // FilterForNonRequester returns a new slice of content blocks with private
 // tool data redacted. Tool use blocks with shared != true have Input and
 // MCPBareName cleared; tool result blocks with shared != true have Content
-// cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
-// visible, mirroring redactToolCalls on the live path so both paths render
-// identically. The original slice is never mutated; nil in, nil out.
+// cleared. Requester-only drafts, channel names, and channel-source markers
+// are removed entirely — including after a share decision. Tool identity
+// (Name, Title, Description, ServerOrigin) stays visible, mirroring
+// redactToolCalls on the live path so both paths render identically. The
+// original slice is never mutated; nil in, nil out.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
 	}
-	result := make([]ContentBlock, len(blocks))
-	for i, block := range blocks {
-		result[i] = block
+	result := make([]ContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if block.RequesterOnly {
+			continue
+		}
+		filtered := block
+		filtered.SourceChannels = nil
+		filtered.Citations = citationsWithoutChannelSources(block.Citations)
 
 		switch block.Type {
 		case BlockTypeToolUse:
 			if block.Shared == nil || !*block.Shared {
-				result[i].Input = nil
-				result[i].MCPBareName = ""
+				filtered.Input = nil
+				filtered.MCPBareName = ""
 			}
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {
-				result[i].Content = ""
+				filtered.Content = ""
 			}
 		}
+		result = append(result, filtered)
 	}
 	return result
+}
+
+func citationsWithoutChannelSources(citations []Citation) []Citation {
+	if len(citations) == 0 {
+		return citations
+	}
+	out := make([]Citation, 0, len(citations))
+	for _, citation := range citations {
+		if citation.Type == string(llm.AnnotationTypeChannel) || citation.ChannelID != "" || citation.ChannelName != "" {
+			continue
+		}
+		out = append(out, citation)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // SanitizeForDisplay returns a new slice of content blocks with LLM-generated

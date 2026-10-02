@@ -500,9 +500,14 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				// Stream has closed cleanly. The "empty" fallback message only
 				// applies when the LLM truly produced nothing; a stream that
 				// stopped after emitting tool_use blocks (e.g. awaiting user
-				// approval) or attached files is a valid response.
+				// approval) or attached files is a valid response. A held
+				// channel answer is also intentionally empty.
 				hasToolCalls := acc != nil && len(acc.toolCalls) > 0
-				if strings.TrimSpace(post.Message) == "" && !hasToolCalls && len(post.FileIds) == 0 {
+				omitEmpty := false
+				if end, ok := event.Value.(llm.StreamEnd); ok {
+					omitEmpty = end.OmitEmptyFallback
+				}
+				if strings.TrimSpace(post.Message) == "" && !hasToolCalls && len(post.FileIds) == 0 && !omitEmpty {
 					p.mmClient.LogError("LLM closed stream with no result")
 					T := i18n.LocalizerFunc(p.i18n, userLocale)
 					emptyText := T("agents.stream_to_post_llm_not_return", "Sorry! The LLM did not return a result.")

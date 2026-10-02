@@ -602,6 +602,9 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 		tt.AssistantToolCalls,
 		shared,
 	)
+	if held := heldAnswerBlock(tt); held != nil {
+		assistantBlocks = append(assistantBlocks, *held)
+	}
 	assistantContent, err := marshalBlocks(assistantBlocks)
 	if err != nil {
 		return fmt.Errorf("failed to marshal assistant tool blocks: %w", err)
@@ -622,6 +625,12 @@ func (s *Service) writeToolRound(conversationID string, tt toolrunner.ToolTurn, 
 	}
 
 	resultBlockList := toolResultBlocks(tt.ToolResults, shared)
+	if !shared {
+		sources := sourceChannelsFromHeld(tt.HeldSources)
+		for i := range resultBlockList {
+			resultBlockList[i].SourceChannels = sources
+		}
+	}
 	resultContent, err := marshalBlocks(resultBlockList)
 	if err != nil {
 		return fmt.Errorf("failed to marshal tool result blocks: %w", err)

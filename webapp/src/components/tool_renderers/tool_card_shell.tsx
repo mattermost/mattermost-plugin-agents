@@ -349,6 +349,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
     const isResultApprovalStage = approvalStage === 'result';
+    const keepPrivateDefault = isResultApprovalStage && Boolean(tool.audience_review);
     const showDecisionButtons = Boolean(onApprove && onReject) &&
         (isResultApprovalStage ||
             (approvalStage === 'call' && isPending && !tool.would_auto_execute));
@@ -412,7 +413,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                         >
                             <span>
                                 <ResultDecisionButton
-                                    $variant='primary'
+                                    $variant={keepPrivateDefault ? 'secondary' : 'primary'}
                                     onClick={onApprove}
                                     disabled={isProcessing}
                                 >
@@ -425,7 +426,7 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                             </span>
                         </OverlayTrigger>
                         <ResultDecisionButton
-                            $variant='secondary'
+                            $variant={keepPrivateDefault ? 'primary' : 'secondary'}
                             onClick={onReject}
                             disabled={isProcessing}
                         >

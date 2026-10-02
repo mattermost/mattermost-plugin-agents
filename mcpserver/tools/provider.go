@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -30,6 +31,103 @@ type MCPToolContext struct {
 	// UserID is the Mattermost user ID of the user the Client is authenticated as.
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
+
+	sourceMu          sync.Mutex
+	sourceChannels    []*model.Channel
+	sourceChannelsSet bool
+}
+
+// sourceChannelsMetaKey is the MCP CallToolResult.Meta key listing the
+// Mattermost channels a tool result drew from.
+const sourceChannelsMetaKey = "source_channels"
+
+// recordSourceChannels notes the Mattermost channels a tool result drew from.
+// An empty call still marks provenance as determined (no channel sources).
+func (c *MCPToolContext) recordSourceChannels(channels ...*model.Channel) {
+	if c == nil {
+		return
+	}
+	c.sourceMu.Lock()
+	defer c.sourceMu.Unlock()
+	c.sourceChannelsSet = true
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		already := false
+		for _, existing := range c.sourceChannels {
+			if existing != nil && existing.Id != "" && existing.Id == ch.Id {
+				already = true
+				break
+			}
+		}
+		if !already {
+			c.sourceChannels = append(c.sourceChannels, ch)
+		}
+	}
+}
+
+// recordChannelByID records the channel a read looked at. A failed lookup
+// still records the id so provenance is determined but not treated as readable.
+func recordChannelByID(mcpContext *MCPToolContext, channelID string) {
+	if mcpContext == nil {
+		return
+	}
+	if channelID == "" || mcpContext.Client == nil {
+		mcpContext.recordSourceChannels(&model.Channel{Id: channelID})
+		return
+	}
+	channel, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, channelID)
+	if err != nil || channel == nil {
+		mcpContext.recordSourceChannels(&model.Channel{Id: channelID})
+		return
+	}
+	mcpContext.recordSourceChannels(channel)
+}
+
+// recordFileChannels records the channels that own the given files.
+func recordFileChannels(mcpContext *MCPToolContext, infos []*model.FileInfo) {
+	if mcpContext == nil {
+		return
+	}
+	if len(infos) == 0 {
+		mcpContext.recordSourceChannels()
+		return
+	}
+	var channels []*model.Channel
+	for _, info := range infos {
+		if info == nil || info.ChannelId == "" {
+			continue
+		}
+		if mcpContext.Client == nil {
+			channels = append(channels, &model.Channel{Id: info.ChannelId})
+			continue
+		}
+		channel, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, info.ChannelId)
+		if err != nil || channel == nil {
+			channels = append(channels, &model.Channel{Id: info.ChannelId})
+			continue
+		}
+		channels = append(channels, channel)
+	}
+	mcpContext.recordSourceChannels(channels...)
+}
+
+func sourceChannelsMeta(channels []*model.Channel) mcp.Meta {
+	encoded := make([]any, 0, len(channels))
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		encoded = append(encoded, map[string]any{
+			"id":           ch.Id,
+			"type":         string(ch.Type),
+			"team_id":      ch.TeamId,
+			"name":         ch.Name,
+			"display_name": ch.DisplayName,
+		})
+	}
+	return mcp.Meta{sourceChannelsMetaKey: encoded}
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -345,6 +443,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 				&mcp.TextContent{Text: result},
 			},
 			IsError: false,
+		}
+		if mcpContext.sourceChannelsSet {
+			callToolResult.Meta = sourceChannelsMeta(mcpContext.sourceChannels)
 		}
 		return callToolResult, nil
 	}

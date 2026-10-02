@@ -634,6 +634,13 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return nil
 	}
 
+	// A held draft was already produced for the requester. Sharing posts that
+	// text with channel names and markers removed, instead of asking the model
+	// for a new channel-visible paraphrase.
+	if len(acceptedToolIDs) > 0 && c.publishHeldChannelAnswer(post, turns, decoded, clickedPostToolUseIDs) {
+		return nil
+	}
+
 	user, err := c.mmClient.GetUser(userID)
 	if err != nil {
 		return fmt.Errorf("unable to get user: %w", err)
@@ -699,6 +706,9 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
+	if !isDM {
+		c.holdUncoveredChannelAnswer(llmContext)
+	}
 	runResult, err := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,

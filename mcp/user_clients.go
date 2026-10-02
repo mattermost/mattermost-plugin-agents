@@ -813,13 +813,14 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 
 		metadata := c.prepareToolCallMetadata(client, llmContext)
 
-		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
+		result, meta, err := client.callToolWithMeta(ctx, toolName, args, metadata)
 		if err != nil {
 			c.rememberOAuthNeededForToolCall(client, err)
 			return result, err
 		}
 
 		c.clearOAuthNeededForServer(client)
+		applySourceChannelsMeta(llmContext, toolName, meta)
 		return result, nil
 	}
 }

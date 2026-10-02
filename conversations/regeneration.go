@@ -315,6 +315,9 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
+	if !isDM {
+		c.holdUncoveredChannelAnswer(llmContext)
+	}
 	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,

@@ -68,6 +68,9 @@ func BlocksToPost(
 	for _, block := range blocks {
 		switch block.Type {
 		case BlockTypeText:
+			if block.RequesterOnly {
+				continue
+			}
 			textParts = append(textParts, block.Text)
 			if block.Text != "" {
 				post.AssistantSegments = append(post.AssistantSegments, llm.TurnSegment{

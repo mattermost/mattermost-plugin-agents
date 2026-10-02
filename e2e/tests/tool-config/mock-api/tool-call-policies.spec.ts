@@ -105,18 +105,22 @@ async function setEmbeddedToolPolicies(toolConfigs: EmbeddedToolConfig[]) {
     await helper.updatePluginConfig(pluginConfig);
 }
 
-async function getTownSquareChannelID(): Promise<string> {
+async function getChannelIDByName(name: string): Promise<string> {
     const adminClient = await mattermost.getAdminClient();
     const teams = await adminClient.getMyTeams();
     const defaultTeam = teams[0];
     const channels = await adminClient.getMyChannels(defaultTeam.id);
-    const townSquare = channels.find((channel) => channel.name === 'town-square');
+    const channel = channels.find((c) => c.name === name);
 
-    if (!townSquare) {
-        throw new Error('town-square channel not found');
+    if (!channel) {
+        throw new Error(`${name} channel not found`);
     }
 
-    return townSquare.id;
+    return channel.id;
+}
+
+async function getTownSquareChannelID(): Promise<string> {
+    return getChannelIDByName('town-square');
 }
 
 async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
@@ -660,6 +664,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         test.setTimeout(120000);
 
         const townSquareChannelID = await getTownSquareChannelID();
+        const offTopicChannelID = await getChannelIDByName('off-topic');
         const mmPage = new MattermostPage(page);
 
         await mmPage.login(mattermost.url(), adminUsername, adminPassword);
@@ -778,7 +783,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: buildToolCallResponse(
                         'call_channel_everywhere',
                         embeddedReadChannelTool,
-                        `{"channel_id":"${townSquareChannelID}","limit":5}`,
+                        `{"channel_id":"${offTopicChannelID}","limit":5}`,
                     ),
                 },
             },

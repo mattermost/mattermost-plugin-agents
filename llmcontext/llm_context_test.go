@@ -6,6 +6,7 @@ package llmcontext
 import (
 	stdcontext "context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"testing"
 
@@ -600,4 +601,43 @@ func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
 	assert.Empty(t, filtered)
 
 	assert.Empty(t, filterToolAuthErrorsForAllowlist(nil, allowlist))
+}
+
+func TestWithLLMContextChannelDestinationGuestCount(t *testing.T) {
+	openChannel := &model.Channel{Id: "chan", Type: model.ChannelTypeOpen, TeamId: "team-a"}
+	dmChannel := &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}
+
+	cases := []struct {
+		name     string
+		channel  *model.Channel
+		guests   int64
+		guestErr error
+		want     bool
+		called   bool
+	}{
+		{name: "zero guests", channel: openChannel, guests: 0, want: true, called: true},
+		{name: "guests present", channel: openChannel, guests: 2, want: false, called: true},
+		{name: "lookup error", channel: openChannel, guestErr: errors.New("stats unavailable"), want: false, called: true},
+		{name: "direct message skips lookup", channel: dmChannel, want: false, called: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockAPI := &plugintest.API{}
+			mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+			mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+			mockAPI.On("GetTeam", "team-a").Return(&model.Team{Id: "team-a"}, (*model.AppError)(nil)).Maybe()
+			mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			b := NewLLMContextBuilder(pluginapi.NewClient(mockAPI, nil), &emptyToolProvider{}, nil, &contextTestConfigProvider{})
+			called := false
+			b.SetDestinationGuestCount(func(string) (int64, error) {
+				called = true
+				return tc.guests, tc.guestErr
+			})
+			ctx := llm.NewContext(b.WithLLMContextChannel(tc.channel))
+			assert.Equal(t, tc.want, ctx.DestinationHasNoGuests)
+			assert.Equal(t, tc.called, called)
+		})
+	}
 }
