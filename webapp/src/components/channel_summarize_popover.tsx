@@ -16,7 +16,6 @@ import {LLMBot} from '@/bots';
 
 import {BotDropdown, BotSelectorContainer} from './bot_selector';
 import IconAI from './assets/icon_ai';
-import {GrayPill} from './pill';
 import {SummarizeDateRangeModal} from './summarize_date_range_modal';
 
 const PopoverContainer = styled(PopoverMenu)`
@@ -50,10 +49,14 @@ const SelectMessage = styled.div`
     text-transform: uppercase;
 `;
 
-const BotPill = styled(GrayPill)`
+const BotPill = styled.div`
+    display: flex;
+    align-items: center;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.08);
     font-size: 11px;
+    line-height: 16px;
     padding: 2px 6px;
-    gap: 0;
     color: var(--center-channel-color);
     font-weight: 600;
     max-width: 128px;
