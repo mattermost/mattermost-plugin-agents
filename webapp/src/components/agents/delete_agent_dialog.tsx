@@ -17,7 +17,7 @@ type Props = {
 const DeleteAgentDialog = (props: Props) => {
     // Keep the name visible while the exit animation runs after the parent clears it.
     const lastNameRef = useRef('');
-    if (props.agentName) {
+    if (props.agentName !== undefined) {
         lastNameRef.current = props.agentName;
     }
 
