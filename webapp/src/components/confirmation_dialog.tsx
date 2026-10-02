@@ -55,6 +55,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
 }) => {
     const transitionRef = useRef<HTMLDivElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
+    const confirmButtonRef = useRef<HTMLButtonElement>(null);
     const pendingRef = useRef(confirmPending);
     const onCancelRef = useRef(onCancel);
     pendingRef.current = confirmPending;
@@ -70,7 +71,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         }
         const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         const focusId = window.requestAnimationFrame(() => {
-            dialogRef.current?.querySelector<HTMLButtonElement>('[data-confirm-button]')?.focus();
+            confirmButtonRef.current?.focus();
         });
         return () => {
             window.cancelAnimationFrame(focusId);
@@ -171,7 +172,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                         {cancelButtonText}
                     </Button>
                     <Button
-                        data-confirm-button={true}
+                        ref={confirmButtonRef}
                         emphasis='primary'
                         destructive={isDestructive}
                         disabled={confirmDisabled}
