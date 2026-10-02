@@ -587,15 +587,6 @@ func (m *mockAgentStore) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig
 	return result, nil
 }
 
-func (m *mockAgentStore) HasAgentForBotUser(botUserID string) (bool, error) {
-	for _, cfg := range m.agents {
-		if cfg.BotUserID == botUserID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (m *mockAgentStore) CountActiveAgents() (int, error) {
 	if m.countErr != nil {
 		return 0, m.countErr

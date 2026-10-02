@@ -46,27 +46,7 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 		},
 	}
 
-	// Agent creation first checks for a reclaimable bot with the requested username.
-	mockGetUserByUsername(e.mockAPI, nil)
-
 	return e
-}
-
-// mockGetUserByUsername replaces any GetUserByUsername expectation: it returns
-// user, or a not-found error when user is nil.
-func mockGetUserByUsername(mockAPI *plugintest.API, user *model.User) {
-	filtered := make([]*mock.Call, 0, len(mockAPI.ExpectedCalls))
-	for _, call := range mockAPI.ExpectedCalls {
-		if call.Method != "GetUserByUsername" {
-			filtered = append(filtered, call)
-		}
-	}
-	mockAPI.ExpectedCalls = filtered
-	if user == nil {
-		mockAPI.On("GetUserByUsername", mock.Anything).Return(nil, model.NewAppError("GetUserByUsername", "app.user.get_by_username.app_error", nil, "", http.StatusNotFound)).Maybe()
-		return
-	}
-	mockAPI.On("GetUserByUsername", user.Username).Return(user, nil).Maybe()
 }
 
 // mockConfigStore is a minimal ConfigStore for agent tests.
@@ -511,80 +491,54 @@ func TestCreateAgentWithoutPermission(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 }
 
-func TestCreateAgentBotAccountSelection(t *testing.T) {
-	const orphanID = "orphanbotuserid"
-	botUser := &model.User{Id: orphanID, Username: "my-agent", IsBot: true}
-	orphanBot := func(mod func(*model.Bot)) *model.Bot {
-		b := &model.Bot{UserId: orphanID, Username: "my-agent", OwnerId: agentBotOwnerID, DeleteAt: 1}
-		if mod != nil {
-			mod(b)
-		}
-		return b
-	}
+func TestCreateAgentUsernameConflict(t *testing.T) {
+	notFound := model.NewAppError("GetUser", "app.user.missing_account.const", nil, "", http.StatusNotFound)
 	usernameTaken := model.NewAppError("CreateBot", "app.user.save.username_exists.app_error", nil, "", http.StatusBadRequest)
 	emailTaken := model.NewAppError("CreateBot", "app.user.save.email_exists.app_error", nil, "", http.StatusBadRequest)
 
 	tests := []struct {
 		name          string
-		user          *model.User
-		bot           *model.Bot
-		legacyBots    []llm.BotConfig
-		priorAgent    *llm.BotConfig
 		createBotErr  *model.AppError
-		wantStatus    int
-		wantReclaimed bool
+		usernameOwner *model.User
+		emailOwner    *model.User
+		wantContains  []string
 	}{
 		{
-			name:          "deactivated legacy bot with no agent is reclaimed",
-			user:          botUser,
-			bot:           orphanBot(nil),
-			wantStatus:    http.StatusCreated,
-			wantReclaimed: true,
+			name:          "deactivated bot holds the username",
+			createBotErr:  usernameTaken,
+			usernameOwner: &model.User{Id: "oldbotid", Username: "my-agent", IsBot: true, DeleteAt: 1},
+			wantContains:  []string{"deactivated bot account", "system admin can permanently delete", "mmctl user delete my-agent"},
 		},
 		{
-			name:       "username not in use creates a new bot",
-			wantStatus: http.StatusCreated,
+			// Postgres reports the email violation first when the Users indexes were
+			// recreated alphabetically (e.g. by pg_dump/restore).
+			name:          "deactivated bot holds the username, reported as an email conflict",
+			createBotErr:  emailTaken,
+			usernameOwner: &model.User{Id: "oldbotid", Username: "my-agent", IsBot: true, DeleteAt: 1},
+			wantContains:  []string{"deactivated bot account", "mmctl user delete my-agent"},
 		},
 		{
-			name:         "bot of a deleted agent is not reclaimed",
-			user:         botUser,
-			bot:          orphanBot(nil),
-			priorAgent:   &llm.BotConfig{ID: "deletedagentid", BotUserID: orphanID, Name: "my-agent", DeleteAt: 1},
-			createBotErr: usernameTaken,
-			wantStatus:   http.StatusConflict,
-		},
-		{
-			name:         "active bot is not reclaimed",
-			user:         botUser,
-			bot:          orphanBot(func(b *model.Bot) { b.DeleteAt = 0 }),
-			createBotErr: usernameTaken,
-			wantStatus:   http.StatusConflict,
-		},
-		{
-			name:         "bot owned by someone else is not reclaimed",
-			user:         botUser,
-			bot:          orphanBot(func(b *model.Bot) { b.OwnerId = "someuserid" }),
-			createBotErr: usernameTaken,
-			wantStatus:   http.StatusConflict,
-		},
-		{
-			name:         "bot still defined in legacy config is not reclaimed",
-			user:         botUser,
-			bot:          orphanBot(nil),
-			legacyBots:   []llm.BotConfig{{Name: "my-agent"}},
-			createBotErr: usernameTaken,
-			wantStatus:   http.StatusConflict,
-		},
-		{
-			name:         "regular user with the username",
-			user:         &model.User{Id: "humanuserid", Username: "my-agent"},
-			createBotErr: usernameTaken,
-			wantStatus:   http.StatusConflict,
-		},
-		{
-			name:         "email reserved for the username is taken",
+			name:         "renamed deactivated bot holds the derived email",
 			createBotErr: emailTaken,
-			wantStatus:   http.StatusConflict,
+			emailOwner:   &model.User{Id: "renamedbotid", Username: "my-agent-old", IsBot: true, DeleteAt: 1},
+			wantContains: []string{"@my-agent-old", "my-agent@localhost", "mmctl user delete my-agent-old"},
+		},
+		{
+			name:          "active account holds the username",
+			createBotErr:  usernameTaken,
+			usernameOwner: &model.User{Id: "personid", Username: "my-agent"},
+			wantContains:  []string{`username "my-agent" is already taken`},
+		},
+		{
+			name:         "active account holds the derived email",
+			createBotErr: emailTaken,
+			emailOwner:   &model.User{Id: "personid", Username: "someone"},
+			wantContains: []string{"@someone", "my-agent@localhost", "change that account's email"},
+		},
+		{
+			name:         "blocking account cannot be found",
+			createBotErr: emailTaken,
+			wantContains: []string{`username "my-agent" is already taken`},
 		},
 	}
 
@@ -596,66 +550,66 @@ func TestCreateAgentBotAccountSelection(t *testing.T) {
 			mockLicensed(e.mockAPI)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-			e.api.configStore.(*mockConfigStore).cfg.Bots = tt.legacyBots
-			if tt.priorAgent != nil {
-				e.agentStore.agents[tt.priorAgent.ID] = tt.priorAgent
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(nil, tt.createBotErr)
+			if tt.usernameOwner != nil {
+				e.mockAPI.On("GetUserByUsername", "my-agent").Return(tt.usernameOwner, nil).Maybe()
+			} else {
+				e.mockAPI.On("GetUserByUsername", "my-agent").Return(nil, notFound).Maybe()
 			}
-			mockGetUserByUsername(e.mockAPI, tt.user)
-			if tt.bot != nil {
-				e.mockAPI.On("GetBot", orphanID, true).Return(tt.bot, nil)
-			}
-			switch {
-			case tt.wantReclaimed:
-				e.mockAPI.On("PatchBot", orphanID, mock.MatchedBy(func(p *model.BotPatch) bool {
-					return p.DisplayName != nil && *p.DisplayName == "My Agent"
-				})).Return(tt.bot, nil)
-				reactivated := *tt.bot
-				reactivated.DeleteAt = 0
-				e.mockAPI.On("UpdateBotActive", orphanID, true).Return(&reactivated, nil)
-			case tt.createBotErr != nil:
-				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(nil, tt.createBotErr)
-			default:
-				e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "newbotuserid", Username: "my-agent"}, nil)
+			if tt.emailOwner != nil {
+				e.mockAPI.On("GetUserByEmail", "my-agent@localhost").Return(tt.emailOwner, nil).Maybe()
+			} else {
+				e.mockAPI.On("GetUserByEmail", "my-agent@localhost").Return(nil, notFound).Maybe()
 			}
 
 			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
-			require.Equal(t, tt.wantStatus, recorder.Code, recorder.Body.String())
-			if tt.wantStatus != http.StatusCreated {
-				return
+			require.Equal(t, http.StatusConflict, recorder.Code)
+			msg := decodeAgentError(t, recorder)
+			for _, want := range tt.wantContains {
+				assert.Contains(t, msg, want)
 			}
-
-			var agent llm.BotConfig
-			require.NoError(t, json.NewDecoder(recorder.Body).Decode(&agent))
-			if tt.wantReclaimed {
-				assert.Equal(t, orphanID, agent.BotUserID)
-				e.mockAPI.AssertNotCalled(t, "CreateBot", mock.Anything)
-			} else {
-				assert.Equal(t, "newbotuserid", agent.BotUserID)
-				e.mockAPI.AssertNotCalled(t, "UpdateBotActive", mock.Anything, mock.Anything)
-			}
+			assert.Empty(t, e.agentStore.agents)
 		})
 	}
 }
 
-func TestCreateAgentDeactivatesReclaimedBotWhenPersistFails(t *testing.T) {
-	const orphanID = "orphanbotuserid"
-	e := setupAgentTestEnvironment(t)
-	defer e.Cleanup(t)
+func TestCreateAgentRemovesBotWhenPersistFails(t *testing.T) {
+	tests := []struct {
+		name           string
+		deleteErr      *model.AppError
+		wantDeactivate bool
+	}{
+		{name: "bot is permanently deleted"},
+		{
+			name:           "bot is deactivated when it cannot be deleted",
+			deleteErr:      model.NewAppError("PermanentDeleteBot", "app.bot.permanent_delete.internal_error", nil, "", http.StatusInternalServerError),
+			wantDeactivate: true,
+		},
+	}
 
-	mockLicensed(e.mockAPI)
-	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
-	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
-	mockGetUserByUsername(e.mockAPI, &model.User{Id: orphanID, Username: "my-agent", IsBot: true})
-	orphan := &model.Bot{UserId: orphanID, Username: "my-agent", OwnerId: agentBotOwnerID, DeleteAt: 1}
-	e.mockAPI.On("GetBot", orphanID, true).Return(orphan, nil)
-	e.mockAPI.On("PatchBot", orphanID, mock.Anything).Return(orphan, nil)
-	e.mockAPI.On("UpdateBotActive", orphanID, true).Return(&model.Bot{UserId: orphanID, Username: "my-agent", OwnerId: agentBotOwnerID}, nil)
-	e.mockAPI.On("UpdateBotActive", orphanID, false).Return(orphan, nil)
-	e.agentStore.createErr = errors.New("database unavailable")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
 
-	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
-	require.Equal(t, http.StatusInternalServerError, recorder.Code)
-	e.mockAPI.AssertCalled(t, "UpdateBotActive", orphanID, false)
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "newbotid", Username: "my-agent"}, nil)
+			e.mockAPI.On("PermanentDeleteBot", "newbotid").Return(tt.deleteErr)
+			e.mockAPI.On("UpdateBotActive", "newbotid", false).Return(&model.Bot{UserId: "newbotid"}, nil).Maybe()
+			e.agentStore.createErr = errors.New("database unavailable")
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
+			require.Equal(t, http.StatusInternalServerError, recorder.Code)
+			e.mockAPI.AssertCalled(t, "PermanentDeleteBot", "newbotid")
+			if tt.wantDeactivate {
+				e.mockAPI.AssertCalled(t, "UpdateBotActive", "newbotid", false)
+			} else {
+				e.mockAPI.AssertNotCalled(t, "UpdateBotActive", "newbotid", false)
+			}
+		})
+	}
 }
 
 func TestCreateAgentFreeTierAllowsFirstAgent(t *testing.T) {

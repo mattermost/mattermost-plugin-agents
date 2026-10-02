@@ -232,20 +232,6 @@ func (s *Store) ListAgents() ([]*llm.BotConfig, error) {
 	return agents, nil
 }
 
-// HasAgentForBotUser reports whether any agent, including soft-deleted ones,
-// has been linked to the given bot user.
-func (s *Store) HasAgentForBotUser(botUserID string) (bool, error) {
-	var exists bool
-	err := s.db.Get(&exists,
-		`SELECT EXISTS (SELECT 1 FROM Agents_UserAgents WHERE BotUserID = $1)`,
-		botUserID,
-	)
-	if err != nil {
-		return false, fmt.Errorf("failed to check agents for bot user %q: %w", botUserID, err)
-	}
-	return exists, nil
-}
-
 // CountActiveAgents returns the number of non-deleted agents.
 func (s *Store) CountActiveAgents() (int, error) {
 	var count int

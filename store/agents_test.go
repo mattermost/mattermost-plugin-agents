@@ -288,34 +288,6 @@ func TestAgentSoftDelete(t *testing.T) {
 	assert.NotZero(t, deleteAt)
 }
 
-func TestAgentHasAgentForBotUser(t *testing.T) {
-	s := setupTestStore(t)
-	require.NoError(t, s.RunMigrations())
-
-	active := testAgent("creator-1", "active-agent", "Active")
-	require.NoError(t, s.CreateAgent(active))
-	deleted := testAgent("creator-1", "deleted-agent", "Deleted")
-	require.NoError(t, s.CreateAgent(deleted))
-	require.NoError(t, s.DeleteAgent(deleted.ID))
-
-	tests := []struct {
-		name      string
-		botUserID string
-		want      bool
-	}{
-		{name: "active agent", botUserID: active.BotUserID, want: true},
-		{name: "soft-deleted agent", botUserID: deleted.BotUserID, want: true},
-		{name: "never linked", botUserID: "bot-user-id-unknown", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := s.HasAgentForBotUser(tt.botUserID)
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestAgentDeleteNonexistent(t *testing.T) {
 	s := setupTestStore(t)
 	err := s.RunMigrations()

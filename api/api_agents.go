@@ -414,20 +414,16 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
-	mmBot, reused, err := a.reclaimOrCreateAgentBot(req)
-	if err != nil {
+	mmBot := &model.Bot{
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+		Description: "User-created AI agent",
+	}
+	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
 		var appErr *model.AppError
-		if errors.As(err, &appErr) {
-			switch appErr.Id {
-			case "app.user.save.username_exists.app_error":
-				abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
-				return
-			case "app.user.save.email_exists.app_error":
-				// Bot emails are derived from the username, so this is a username conflict
-				// with an account whose username no longer matches its email.
-				abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken: another account uses the email reserved for it", req.Username))
-				return
-			}
+		if errors.As(err, &appErr) && (appErr.Id == "app.user.save.username_exists.app_error" || appErr.Id == "app.user.save.email_exists.app_error") {
+			abortAgentRequest(c, http.StatusConflict, a.agentUsernameConflictError(req.Username))
+			return
 		}
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
 		return
@@ -436,12 +432,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
-		// A concurrent request may have linked the same reclaimed bot; leave it active for that agent.
-		if !reused || !a.botHasActiveAgent(mmBot.UserId) {
-			if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
-				a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
-			}
-		}
+		a.discardUnusedBot(mmBot.UserId)
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
 	}
@@ -449,125 +440,50 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	// Both IDs exist only after the bot account and agent config are persisted.
 	audit.AddParam(auditRec(c), audit.KeyAgentID, agent.ID)
 	audit.AddParam(auditRec(c), "bot_user_id", mmBot.UserId)
-	audit.AddParam(auditRec(c), "bot_reclaimed", reused)
 
 	_ = a.refreshBotsAndNotify()
 	c.JSON(http.StatusCreated, agent)
 }
 
-// agentBotOwnerID is the owner Mattermost assigns to bots this plugin creates.
-const agentBotOwnerID = "mattermost-ai"
-
-const agentBotDescription = "User-created AI agent"
-
-// reclaimOrCreateAgentBot returns the bot account for a new agent: a reclaimed
-// orphaned bot (reported via reused) or a newly created one.
-func (a *API) reclaimOrCreateAgentBot(req CreateAgentRequest) (*model.Bot, bool, error) {
-	orphan, err := a.findReclaimableBot(req.Username)
+// agentUsernameConflictError explains which existing account blocks username for a
+// new agent's bot. Bot emails are derived from the username, so the blocking account
+// may hold either the username or that derived email (e.g. a bot renamed through the
+// user API keeps its old email).
+func (a *API) agentUsernameConflictError(username string) error {
+	email := model.UserFromBot(&model.Bot{Username: username}).Email
+	holder, err := a.pluginAPI.User.GetByUsername(username)
 	if err != nil {
-		return nil, false, err
+		holder, err = a.pluginAPI.User.GetByEmail(email)
 	}
-	if orphan != nil {
-		bot, reactivateErr := a.reactivateBot(orphan.UserId, req.DisplayName)
-		if reactivateErr != nil {
-			return nil, false, reactivateErr
-		}
-		return bot, true, nil
+	if err != nil {
+		return fmt.Errorf("username %q is already taken", username)
 	}
 
-	bot := &model.Bot{
-		Username:    req.Username,
-		DisplayName: req.DisplayName,
-		Description: agentBotDescription,
+	if holder.IsBot && holder.DeleteAt != 0 {
+		blocker := "a deactivated bot account uses the username"
+		if holder.Username != username {
+			blocker = fmt.Sprintf("the deactivated bot account @%s uses the email %s reserved for it", holder.Username, email)
+		}
+		return fmt.Errorf("username %q is unavailable because %s. A system admin can permanently delete that bot account and its history (for example with \"mmctl user delete %s\") to make the username available", username, blocker, holder.Username)
 	}
-	if err := a.pluginAPI.Bot.Create(bot); err != nil {
-		return nil, false, err
+	if holder.Username == username {
+		return fmt.Errorf("username %q is already taken", username)
 	}
-	return bot, false, nil
+	return fmt.Errorf("username %q is unavailable because the account @%s uses the email %s reserved for it. A system admin can change that account's email, or permanently delete it if it is an unused bot account", username, holder.Username, email)
 }
 
-// findReclaimableBot returns the deactivated bot named username if this plugin
-// owns it and no agent or legacy config bot has ever claimed it, or nil otherwise.
-// Legacy config bots removed before the agents migration were only deactivated,
-// so without reclaiming them their usernames could never be used for an agent.
-func (a *API) findReclaimableBot(username string) (*model.Bot, error) {
-	user, err := a.pluginAPI.User.GetByUsername(username)
-	if errors.Is(err, pluginapi.ErrNotFound) {
-		return nil, nil
+// discardUnusedBot removes a bot created for an agent that failed to persist. The
+// bot has no history yet, so it is deleted rather than deactivated: a deactivated
+// bot would keep blocking the username on retry.
+func (a *API) discardUnusedBot(botUserID string) {
+	deleteErr := a.pluginAPI.Bot.DeletePermanently(botUserID)
+	if deleteErr == nil {
+		return
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to look up username %q: %w", username, err)
+	a.pluginAPI.Log.Error("Failed to delete bot after agent persist failure", "bot_user_id", botUserID, "error", deleteErr.Error())
+	if _, err := a.pluginAPI.Bot.UpdateActive(botUserID, false); err != nil {
+		a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", botUserID, "error", err.Error())
 	}
-	if !user.IsBot {
-		return nil, nil
-	}
-
-	bot, err := a.pluginAPI.Bot.Get(user.Id, true)
-	if errors.Is(err, pluginapi.ErrNotFound) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get bot %q: %w", user.Id, err)
-	}
-	if bot.OwnerId != agentBotOwnerID || bot.DeleteAt == 0 {
-		return nil, nil
-	}
-
-	// Bots of deleted agents stay tied to their history; only never-claimed bots are reclaimed.
-	linked, err := a.agentStore.HasAgentForBotUser(bot.UserId)
-	if err != nil {
-		return nil, err
-	}
-	if linked {
-		return nil, nil
-	}
-
-	cfg, err := a.configStore.GetConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to read config: %w", err)
-	}
-	if cfg != nil {
-		for _, legacyBot := range cfg.Bots {
-			if legacyBot.Name == username {
-				return nil, nil
-			}
-		}
-	}
-
-	return bot, nil
-}
-
-// reactivateBot refreshes a reclaimed bot's profile and reactivates it.
-func (a *API) reactivateBot(botUserID, displayName string) (*model.Bot, error) {
-	description := agentBotDescription
-	if _, err := a.pluginAPI.Bot.Patch(botUserID, &model.BotPatch{
-		DisplayName: &displayName,
-		Description: &description,
-	}); err != nil {
-		return nil, fmt.Errorf("failed to update reclaimed bot: %w", err)
-	}
-	bot, err := a.pluginAPI.Bot.UpdateActive(botUserID, true)
-	if err != nil {
-		return nil, fmt.Errorf("failed to reactivate reclaimed bot: %w", err)
-	}
-	return bot, nil
-}
-
-// botHasActiveAgent reports whether a non-deleted agent uses the bot. It returns
-// true when that cannot be determined, so callers err on leaving the bot active
-// (EnsureBots deactivates bots with no agent).
-func (a *API) botHasActiveAgent(botUserID string) bool {
-	agents, err := a.agentStore.ListAgents()
-	if err != nil {
-		a.pluginAPI.Log.Warn("Failed to list agents while checking bot usage", "bot_user_id", botUserID, "error", err.Error())
-		return true
-	}
-	for _, agent := range agents {
-		if agent.BotUserID == botUserID {
-			return true
-		}
-	}
-	return false
 }
 
 // agentListItem is an agent as listed on GET /agents, with the reason it is
