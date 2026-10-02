@@ -209,8 +209,7 @@ const RowContainer = styled.div<{$clickable: boolean}>`
     gap: var(--spacing-xs);
     height: 60px;
     padding: 0 var(--spacing-l);
-    border-radius: var(--radius-s);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg, #fff);
     cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
     outline: none;
@@ -223,7 +222,7 @@ const RowContainer = styled.div<{$clickable: boolean}>`
         $clickable &&
         `
         &:focus-visible {
-            box-shadow: 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+            box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
         }
     `}
 `;

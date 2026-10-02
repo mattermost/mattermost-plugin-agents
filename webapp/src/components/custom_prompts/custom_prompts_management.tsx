@@ -76,14 +76,17 @@ const SearchContainer = styled.div`
 const PromptList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 0 32px 16px;
+    margin: 0 32px 16px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const PromptRowContainer = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
+    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg);
+
+    &:hover {
+        background: rgba(var(--center-channel-color-rgb), 0.04);
+    }
 `;
 
 const PromptRowHeader = styled.div`
@@ -91,16 +94,12 @@ const PromptRowHeader = styled.div`
     align-items: center;
     gap: var(--spacing-xs);
     padding-right: var(--spacing-l);
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.04);
-    }
 `;
 
 const PromptRowMain = styled.div`
     flex: 1;
     min-width: 0;
-    padding: var(--spacing-m) 0 var(--spacing-m) var(--spacing-l);
+    padding: var(--spacing-l) 0 var(--spacing-l) var(--spacing-l);
     cursor: pointer;
 
     &:focus-visible {
@@ -134,7 +133,6 @@ const PromptDescription = styled.div`
 `;
 
 const PinButton = styled(IconButton)`
-    margin-right: 8px;
     flex-shrink: 0;
 `;
 
@@ -438,6 +436,7 @@ const CustomPromptsManagement = () => {
                 onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
                 onCancel={() => setDeleteConfirmId(null)}
                 isDestructive={true}
+                managedAccessibility={true}
                 zIndex={3000}
             />
         </>

@@ -488,7 +488,7 @@ const SearchContainer = styled.div`
 const AgentListContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-m);
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const AgentsEmptyState = styled(EmptyState)`
