@@ -179,7 +179,7 @@ type DropdownMenuItemProps = {
 };
 
 export const DropdownMenuItem = (props: DropdownMenuItemProps) => {
-    const leading = props.leading ?? (props.icon ? <Icon glyph={props.icon}/> : undefined);
+    const leading = props.leading ?? (props.icon && <Icon glyph={props.icon}/>);
     return (
         <MenuItem
             label={props.label}
