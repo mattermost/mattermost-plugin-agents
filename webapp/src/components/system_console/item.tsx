@@ -393,12 +393,16 @@ type BooleanItemProps = {
 
 export const BooleanItem = (props: BooleanItemProps) => {
     const name = useId();
+    const labelId = useId();
     return (
         <FormRow>
-            <CompactItemLabel>{props.label}</CompactItemLabel>
+            <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
             <TextFieldContainer>
                 <CompactFieldControlRow>
-                    <BooleanRadioGroup>
+                    <BooleanRadioGroup
+                        role='radiogroup'
+                        aria-labelledby={labelId}
+                    >
                         <InlineRadio
                             name={name}
                             value='true'
