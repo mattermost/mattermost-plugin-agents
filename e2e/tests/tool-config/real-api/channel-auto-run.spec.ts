@@ -19,17 +19,21 @@ const dmOnlyContinuationText = 'Aimock channel dm-only follow-up after share.';
 const everywhereUserMessage = 'aimock channel everywhere read channel';
 const everywhereContinuationText = 'Aimock channel everywhere auto-run completed.';
 
-async function getTownSquareChannelID(mattermost: MattermostContainer): Promise<string> {
+async function getChannelIDByName(mattermost: MattermostContainer, name: string): Promise<string> {
     const userClient = await mattermost.getClient(username, password);
     const teams = await userClient.getMyTeams();
     const channels = await userClient.getMyChannels(teams[0].id);
-    const townSquare = channels.find((channel) => channel.name === 'town-square');
+    const channel = channels.find((c) => c.name === name);
 
-    if (!townSquare) {
-        throw new Error('town-square channel not found');
+    if (!channel) {
+        throw new Error(`${name} channel not found`);
     }
 
-    return townSquare.id;
+    return channel.id;
+}
+
+async function getTownSquareChannelID(mattermost: MattermostContainer): Promise<string> {
+    return getChannelIDByName(mattermost, 'town-square');
 }
 
 async function waitForSentPost(page: Page, message: string, timeout = 30000): Promise<Locator> {
@@ -75,6 +79,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
     let mattermost: MattermostContainer;
     let aimock: AIMockContainer;
     let townSquareChannelID: string;
+    let offTopicChannelID: string;
 
     test.beforeAll(async () => {
         test.setTimeout(180000);
@@ -83,6 +88,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
         ]);
         await setupRegularTestUser(mattermost);
         townSquareChannelID = await getTownSquareChannelID(mattermost);
+        offTopicChannelID = await getChannelIDByName(mattermost, 'off-topic');
         aimock = await RunAIMockSidecar(mattermost.network, {
             fixtures: mergeFixtureFiles(
                 buildToolCallAndTextResponse({
@@ -97,7 +103,7 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
                     userMessage: everywhereUserMessage,
                     toolCallId: 'call_aimock_channel_everywhere_read_channel',
                     toolName: embeddedReadChannelTool,
-                    toolArguments: { channel_id: townSquareChannelID, limit: 5 },
+                    toolArguments: { channel_id: offTopicChannelID, limit: 5 },
                     finalContent: everywhereContinuationText,
                 }),
             ),

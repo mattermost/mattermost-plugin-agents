@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"unicode/utf16"
 
@@ -151,9 +152,9 @@ func utf16Len(s string) int {
 }
 
 // publishHeldChannelAnswer copies a requester-only draft onto the channel post
-// with private channel names and markers removed. It returns false when there
-// is no draft to publish.
-func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store.Turn, decoded [][]conversation.ContentBlock) bool {
+// with private channel names and markers removed. Only drafts from the clicked
+// tool round are published. It returns false when there is no draft to publish.
+func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store.Turn, decoded [][]conversation.ContentBlock, clickedToolUseIDs map[string]struct{}) bool {
 	if post == nil {
 		return false
 	}
@@ -162,6 +163,9 @@ func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store
 	for i := range turns {
 		if i >= len(decoded) {
 			break
+		}
+		if !turnMatchesClickedTools(decoded[i], clickedToolUseIDs) {
+			continue
 		}
 		changed := false
 		for j := range decoded[i] {
@@ -201,6 +205,25 @@ func (c *Conversations) publishHeldChannelAnswer(post *model.Post, turns []store
 	return true
 }
 
+func turnMatchesClickedTools(blocks []conversation.ContentBlock, clickedToolUseIDs map[string]struct{}) bool {
+	if len(clickedToolUseIDs) == 0 {
+		return false
+	}
+	for _, b := range blocks {
+		switch b.Type {
+		case conversation.BlockTypeToolUse:
+			if _, ok := clickedToolUseIDs[b.ID]; ok {
+				return true
+			}
+		case conversation.BlockTypeToolResult:
+			if _, ok := clickedToolUseIDs[b.ToolUseID]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func sanitizePublishedAnswer(text string, sources []conversation.SourceChannel) string {
 	for _, src := range sources {
 		if !src.Private {
@@ -210,8 +233,13 @@ func sanitizePublishedAnswer(text string, sources []conversation.SourceChannel) 
 			if token == "" {
 				continue
 			}
-			text = strings.ReplaceAll(text, "~"+token, "")
-			text = strings.ReplaceAll(text, token, "")
+			escaped := regexp.QuoteMeta(token)
+			if re, err := regexp.Compile(`~` + escaped + `\b`); err == nil {
+				text = re.ReplaceAllString(text, "")
+			}
+			if re, err := regexp.Compile(`\b` + escaped + `\b`); err == nil {
+				text = re.ReplaceAllString(text, "")
+			}
 		}
 	}
 	lines := strings.Split(text, "\n")

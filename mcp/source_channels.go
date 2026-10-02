@@ -27,14 +27,15 @@ func applySourceChannelsMeta(llmContext *llm.Context, toolName string, meta sdkm
 	}
 	existing, _ := llmContext.Parameters[sourceChannelsParam].([]*model.Channel)
 	llmContext.Parameters[sourceChannelsParam] = mergeSourceChannels(existing, channels)
-	if toolName == "" {
+	bareName := llm.BareMCPToolName(toolName)
+	if bareName == "" {
 		return
 	}
 	reported, _ := llmContext.Parameters[reportedSourceToolsParam].(map[string]bool)
 	if reported == nil {
 		reported = map[string]bool{}
 	}
-	reported[toolName] = true
+	reported[bareName] = true
 	llmContext.Parameters[reportedSourceToolsParam] = reported
 }
 

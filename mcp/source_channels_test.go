@@ -139,6 +139,27 @@ func TestSourceChannelsFromMetaJSONRoundTrip(t *testing.T) {
 	assert.Equal(t, model.ChannelTypePrivate, got[1].Type)
 }
 
+func TestSourceChannelsFromCallToolResultJSONRoundTrip(t *testing.T) {
+	result := &sdkmcp.CallToolResult{
+		Content: []sdkmcp.Content{&sdkmcp.TextContent{Text: "ok"}},
+		Meta: sdkmcp.Meta{sourceChannelsParam: []any{
+			map[string]any{"id": "ch-1", "type": string(model.ChannelTypeOpen), "team_id": "team-a"},
+		}},
+	}
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+
+	var decoded sdkmcp.CallToolResult
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+
+	got, ok := sourceChannelsFromMeta(decoded.Meta)
+	require.True(t, ok)
+	require.Len(t, got, 1)
+	assert.Equal(t, "ch-1", got[0].Id)
+	assert.Equal(t, model.ChannelTypeOpen, got[0].Type)
+	assert.Equal(t, "team-a", got[0].TeamId)
+}
+
 func TestChannelFromMetaMapOptionalFields(t *testing.T) {
 	ch, ok := channelFromMetaMap(map[string]any{"id": "ch-only"})
 	require.True(t, ok)
@@ -250,6 +271,20 @@ func TestApplySourceChannelsMeta(t *testing.T) {
 		assert.Equal(t, "ch-1", got[0].Id)
 		assert.Equal(t, model.ChannelTypeOpen, got[0].Type)
 		assert.Equal(t, "team-a", got[0].TeamId)
+		reported, ok := ctx.Parameters[reportedSourceToolsParam].(map[string]bool)
+		require.True(t, ok)
+		assert.True(t, reported["read_channel"])
+	})
+
+	t.Run("namespaced tool name records the bare name", func(t *testing.T) {
+		ctx := &llm.Context{}
+		applySourceChannelsMeta(ctx, "mattermost__read_channel", sdkmcp.Meta{sourceChannelsParam: []any{
+			map[string]any{"id": "ch-1", "type": string(model.ChannelTypeOpen), "team_id": "team-a"},
+		}})
+		reported, ok := ctx.Parameters[reportedSourceToolsParam].(map[string]bool)
+		require.True(t, ok)
+		assert.True(t, reported["read_channel"])
+		assert.False(t, reported["mattermost__read_channel"])
 	})
 
 	t.Run("merges later tool results and skips a subsequent parse failure", func(t *testing.T) {

@@ -508,9 +508,12 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 	contextBuilder.SetDestinationGuestCount(func(channelID string) (int64, error) {
-		stats, err := pluginAPI.Channel.GetChannelStats(channelID)
-		if err != nil || stats == nil {
-			return 0, err
+		stats, statsErr := pluginAPI.Channel.GetChannelStats(channelID)
+		if statsErr != nil {
+			return 0, statsErr
+		}
+		if stats == nil {
+			return 0, fmt.Errorf("missing channel stats")
 		}
 		return stats.GuestCount, nil
 	})
