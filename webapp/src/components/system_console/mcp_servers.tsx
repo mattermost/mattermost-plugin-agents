@@ -8,7 +8,14 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
-import {TertiaryButton} from '../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
 import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import manifest from '@/manifest';
@@ -129,18 +136,23 @@ const HeaderMapEditor = ({
                             disabled={disableEdit}
                             onChange={(e) => updateHeader(key, key, e.target.value)}
                         />
-                        <RemoveHeaderButton
+                        <IconButton
+                            icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
                             aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                            size='small'
+                            destructive={true}
                             onClick={() => removeHeader(key)}
-                        >
-                            <TrashCanOutlineIcon size={14}/>
-                        </RemoveHeaderButton>
+                        />
                     </HeaderRow>
                 ))}
             </HeadersList>
             {!disableAdd && (
-                <AddHeaderButton onClick={addHeader}>
-                    <PlusIcon size={14}/>
+                <AddHeaderButton
+                    emphasis='link'
+                    size='small'
+                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                    onClick={addHeader}
+                >
                     <FormattedMessage defaultMessage='Add Header'/>
                 </AddHeaderButton>
             )}
@@ -280,10 +292,15 @@ const MCPServer = ({
                         {config.name || unnamedServerLabel}
                     </ServerTitle>
                 )}
-                <DeleteButton onClick={onDelete}>
-                    <TrashCanOutlineIcon size={16}/>
+                <Button
+                    emphasis='tertiary'
+                    destructive={true}
+                    size='small'
+                    leadingIcon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                    onClick={onDelete}
+                >
                     <FormattedMessage defaultMessage='Delete Server'/>
-                </DeleteButton>
+                </Button>
             </ServerHeader>
 
             <BooleanItem
@@ -359,9 +376,10 @@ const MCPServer = ({
                         </OAuthSectionTitle>
                     </OAuthSectionHeaderLeft>
                     {!isOAuthExpanded && config.clientID && (
-                        <OAuthConfiguredBadge>
-                            <FormattedMessage defaultMessage='Configured'/>
-                        </OAuthConfiguredBadge>
+                        <Tag
+                            type='success'
+                            label={<FormattedMessage defaultMessage='Configured'/>}
+                        />
                     )}
                 </OAuthSectionHeader>
                 {isOAuthExpanded && (
@@ -552,20 +570,14 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     return (
         <div>
-            <TabsContainer>
-                <TabButton
-                    $active={activeTab === 'config'}
-                    onClick={() => setActiveTab('config')}
-                >
-                    <FormattedMessage defaultMessage='Configuration'/>
-                </TabButton>
-                <TabButton
-                    $active={activeTab === 'tools'}
-                    onClick={() => setActiveTab('tools')}
-                >
-                    <FormattedMessage defaultMessage='Tools'/>
-                </TabButton>
-            </TabsContainer>
+            <MCPTabs
+                tabs={[
+                    {key: 'config', label: <FormattedMessage defaultMessage='Configuration'/>},
+                    {key: 'tools', label: <FormattedMessage defaultMessage='Tools'/>},
+                ]}
+                activeKey={activeTab}
+                onChange={(key) => setActiveTab(key === 'tools' ? 'tools' : 'config')}
+            />
 
             <TabContent>
                 {activeTab === 'config' && (
@@ -633,9 +645,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         />
                         <ServersList>
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
-                                <EmptyState>
-                                    <FormattedMessage defaultMessage='No remote MCP servers configured. Add a server to connect to external MCP tools.'/>
-                                </EmptyState>
+                                <EmptyState
+                                    title={<FormattedMessage defaultMessage='No remote MCP servers configured'/>}
+                                    description={<FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>}
+                                />
                             ) : (
                                 normalizedServers.map((serverConfig, index) => (
                                     <MCPServer
@@ -650,13 +663,14 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         </ServersList>
 
                         <AddServerContainer>
-                            <TertiaryButton
+                            <Button
+                                emphasis='tertiary'
                                 onClick={addServer}
                                 disabled={!remoteMcpLicensed}
+                                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                             >
-                                <PlusServerIcon/>
                                 <FormattedMessage defaultMessage='Add Remote MCP Server'/>
-                            </TertiaryButton>
+                            </Button>
                             {!remoteMcpLicensed && (
                                 <LicenseChip capability='remote_mcp'/>
                             )}
@@ -726,24 +740,6 @@ const ServerTitle = styled.div`
     }
 `;
 
-const DeleteButton = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 12px;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    color: var(--error-text);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-
-    &:hover {
-        background: rgba(var(--error-text-color-rgb), 0.08);
-    }
-`;
-
 const HeadersSection = styled.div`
     display: flex;
     flex-direction: column;
@@ -791,15 +787,6 @@ const OAuthSectionTitle = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
-const OAuthConfiguredBadge = styled.div`
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--online-indicator);
-    padding: 2px 8px;
-    background-color: rgba(var(--online-indicator-rgb), 0.08);
-    border-radius: 10px;
-`;
-
 const OAuthSectionContent = styled.div`
     display: flex;
     flex-direction: column;
@@ -826,54 +813,13 @@ const HeaderRow = styled.div`
     align-items: center;
 `;
 
-const HeaderInput = styled.input`
+const HeaderInput = styled(TextInput)`
     flex: 1;
-    padding: 8px 12px;
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    background: var(--center-channel-bg);
-    font-size: 14px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-    }
+    min-width: 0;
 `;
 
-const RemoveHeaderButton = styled.button`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    color: var(--error-text);
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--error-text-color-rgb), 0.08);
-    }
-`;
-
-const AddHeaderButton = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    color: var(--button-bg);
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
+const AddHeaderButton = styled(Button)`
     align-self: flex-start;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.08);
-    }
 `;
 
 const AddServerContainer = styled.div`
@@ -885,34 +831,10 @@ const AddServerContainer = styled.div`
     margin-top: 8px;
 `;
 
-const PlusServerIcon = styled(PlusIcon)`
-    width: 18px;
-    height: 18px;
-    margin-right: 8px;
-`;
-
-const EmptyState = styled.div`
-    padding: 24px;
-    text-align: center;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
-`;
-
-const ServerNameInput = styled.input`
+const ServerNameInput = styled(TextInput)`
     flex: 1;
-    padding: 8px 12px;
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    background: var(--center-channel-bg);
-    font-size: 14px;
     min-width: 200px;
     max-width: 300px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-    }
 `;
 
 const ServerNameEditContainer = styled.div`
@@ -922,30 +844,8 @@ const ServerNameEditContainer = styled.div`
     max-width: 300px;
 `;
 
-const TabsContainer = styled.div`
-    display: flex;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+const MCPTabs = styled(Tabs)`
     margin-bottom: 24px;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 12px 16px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    color: ${(props) => (props.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(props) => (props.$active ? 'var(--button-bg)' : 'transparent')};
-    transition: color 0.2s ease, border-color 0.2s ease;
-
-    &:hover {
-        color: ${(props) => (props.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    }
-
-    &:first-child {
-        padding-left: 0;
-    }
 `;
 
 const TabContent = styled.div`

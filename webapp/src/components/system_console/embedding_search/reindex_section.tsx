@@ -2,10 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {FormattedMessage} from 'react-intl';
-import styled, {keyframes} from 'styled-components';
+import {FormattedMessage, useIntl} from 'react-intl';
+import styled from 'styled-components';
 
-import {PrimaryButton, SecondaryButton, TertiaryButton} from '../../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ProgressBar} from '@mattermost/compass-ui/components/progress-bar';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tag, type TagType} from '@mattermost/compass-ui/components/tag';
 
 import {HelpText, ItemLabel} from '../item';
 
@@ -34,36 +37,8 @@ const ErrorHelpText = styled(HelpText)`
     color: var(--error-text);
 `;
 
-const ProgressContainer = styled.div`
+const JobProgressBar = styled(ProgressBar)`
     margin-top: 8px;
-    width: 100%;
-    background-color: rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    height: 8px;
-    overflow: hidden;
-`;
-
-const ProgressBar = styled.div<{$progress: number}>`
-    height: 100%;
-    width: ${(props) => props.$progress}%;
-    background-color: var(--button-bg);
-    transition: width 0.3s ease-in-out;
-`;
-
-const indeterminateSlide = keyframes`
-    0% {
-        transform: translateX(-100%);
-    }
-    100% {
-        transform: translateX(250%);
-    }
-`;
-
-const IndeterminateProgressBar = styled.div`
-    height: 100%;
-    width: 40%;
-    background-color: var(--button-bg);
-    animation: ${indeterminateSlide} 1.5s ease-in-out infinite;
 `;
 
 const ProgressText = styled(HelpText)`
@@ -77,41 +52,8 @@ const ButtonGroup = styled.div`
     gap: 8px;
 `;
 
-const WarningBanner = styled.div`
-    background-color: rgba(var(--away-indicator-rgb), 0.1);
-    border: 1px solid var(--away-indicator);
-    border-radius: 4px;
-    padding: 12px 16px;
+const Banner = styled(SectionNotice)`
     margin-bottom: 16px;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-`;
-
-const WarningIcon = styled.span`
-    color: var(--away-indicator);
-    font-size: 16px;
-`;
-
-const WarningText = styled.div`
-    color: var(--center-channel-color);
-    font-size: 14px;
-`;
-
-const NoteBanner = styled.div`
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-`;
-
-const NoteText = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.88);
-    font-size: 14px;
 `;
 
 const HealthCheckCard = styled.div`
@@ -140,40 +82,19 @@ const HealthCheckValue = styled.span`
     font-weight: 500;
 `;
 
-const StatusBadge = styled.span<{$status: string}>`
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    background-color: ${(props) => {
-        switch (props.$status) {
-        case 'healthy':
-            return 'rgba(var(--online-indicator-rgb), 0.16)';
-        case 'mismatch':
-            return 'rgba(var(--away-indicator-rgb), 0.16)';
-        case 'needs_reindex':
-        case 'error':
-            return 'rgba(var(--error-text-color-rgb), 0.16)';
-        default:
-            return 'rgba(var(--center-channel-color-rgb), 0.08)';
-        }
-    }};
-    color: ${(props) => {
-        switch (props.$status) {
-        case 'healthy':
-            return 'var(--online-indicator)';
-        case 'mismatch':
-            return 'var(--away-indicator)';
-        case 'needs_reindex':
-        case 'error':
-            return 'var(--error-text)';
-        default:
-            return 'var(--center-channel-color)';
-        }
-    }};
-`;
+const healthStatusTagType = (status: string): TagType => {
+    switch (status) {
+    case 'healthy':
+        return 'success';
+    case 'mismatch':
+        return 'warning';
+    case 'needs_reindex':
+    case 'error':
+        return 'danger';
+    default:
+        return 'default';
+    }
+};
 
 const SectionDivider = styled.div`
     margin-top: 24px;
@@ -202,23 +123,6 @@ const JobInfoLabel = styled.span`
 
 const JobInfoValue = styled.span`
     color: var(--center-channel-color);
-`;
-
-const StaleBanner = styled.div`
-    background-color: rgba(var(--error-text-color-rgb), 0.1);
-    border: 1px solid var(--error-text);
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-`;
-
-const StaleText = styled.div`
-    color: var(--center-channel-color);
-    font-size: 14px;
-    flex: 1;
 `;
 
 const StaleActions = styled.div`
@@ -280,6 +184,8 @@ export const ReindexSection = ({
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
+    const intl = useIntl();
+
     // cancel_requested is non-terminal: the worker is still running until it
     // observes the request and writes canceled.
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
@@ -329,91 +235,91 @@ export const ReindexSection = ({
         <ButtonContainer>
             {/* Stale Job Warning */}
             {isJobStale && isReindexing && (
-                <StaleBanner>
-                    <WarningIcon>{'⚠️'}</WarningIcon>
-                    <StaleText>
-                        <strong><FormattedMessage defaultMessage='Job May Be Stale'/></strong>
-                        <br/>
-                        <FormattedMessage
-                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
-                            values={{nodeId: jobStatus?.node_id || 'unknown'}}
-                        />
-                        <StaleActions>
-                            {!isRebuildJob && hasProgress && (
-                                <SecondaryButton onClick={onResumeClick}>
-                                    <FormattedMessage defaultMessage='Resume from checkpoint'/>
-                                </SecondaryButton>
-                            )}
-                            {isRebuildJob && (
-                                <SecondaryButton
-                                    onClick={onRebuildVectorIndexClick}
-                                    disabled={embeddingIdentityMismatch}
+                <Banner
+                    type='danger'
+                    title={<FormattedMessage defaultMessage='Job May Be Stale'/>}
+                    description={(
+                        <>
+                            <FormattedMessage
+                                defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
+                                values={{nodeId: jobStatus?.node_id || 'unknown'}}
+                            />
+                            <StaleActions>
+                                {!isRebuildJob && hasProgress && (
+                                    <Button
+                                        emphasis='secondary'
+                                        size='small'
+                                        onClick={onResumeClick}
+                                    >
+                                        <FormattedMessage defaultMessage='Resume from checkpoint'/>
+                                    </Button>
+                                )}
+                                {isRebuildJob && (
+                                    <Button
+                                        emphasis='secondary'
+                                        size='small'
+                                        onClick={onRebuildVectorIndexClick}
+                                        disabled={embeddingIdentityMismatch}
+                                    >
+                                        <FormattedMessage defaultMessage='Rebuild vector index'/>
+                                    </Button>
+                                )}
+                                <Button
+                                    emphasis='secondary'
+                                    size='small'
+                                    onClick={onReindexClick}
                                 >
-                                    <FormattedMessage defaultMessage='Rebuild vector index'/>
-                                </SecondaryButton>
-                            )}
-                            <SecondaryButton onClick={onReindexClick}>
-                                <FormattedMessage defaultMessage='Reindex from scratch'/>
-                            </SecondaryButton>
-                        </StaleActions>
-                    </StaleText>
-                </StaleBanner>
+                                    <FormattedMessage defaultMessage='Reindex from scratch'/>
+                                </Button>
+                            </StaleActions>
+                        </>
+                    )}
+                />
             )}
 
             {/* Model Compatibility Warning - show when form values differ from stored index values */}
             {hasLocalModelMismatch && (
-                <WarningBanner>
-                    <WarningIcon>{'⚠️'}</WarningIcon>
-                    <WarningText>
-                        <strong><FormattedMessage defaultMessage='Embedding Model Changed'/></strong>
-                        <br/>
+                <Banner
+                    type='warning'
+                    title={<FormattedMessage defaultMessage='Embedding Model Changed'/>}
+                    description={(
                         <FormattedMessage
                             defaultMessage='The embedding model configuration has changed ({reason}). Search functionality is disabled until you run a full reindex.'
                             values={{reason: localMismatchReason}}
                         />
-                    </WarningText>
-                </WarningBanner>
+                    )}
+                />
             )}
 
             {hasLocalHNSWMismatch && !hasLocalModelMismatch && (
-                <WarningBanner>
-                    <WarningIcon>{'⚠️'}</WarningIcon>
-                    <WarningText>
-                        <strong><FormattedMessage defaultMessage='HNSW M Changed'/></strong>
-                        <br/>
-                        <FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>
-                    </WarningText>
-                </WarningBanner>
+                <Banner
+                    type='warning'
+                    title={<FormattedMessage defaultMessage='HNSW M Changed'/>}
+                    description={<FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>}
+                />
             )}
 
             {hasUnsavedRetentionWiden && !hasLocalModelMismatch && (
-                <WarningBanner>
-                    <WarningIcon>{'⚠️'}</WarningIcon>
-                    <WarningText>
-                        <strong><FormattedMessage defaultMessage='Index retention increased'/></strong>
-                        <br/>
-                        <FormattedMessage defaultMessage='Save the configuration before running Catch Up. Catch Up uses the saved retention window, not this unsaved value.'/>
-                    </WarningText>
-                </WarningBanner>
+                <Banner
+                    type='warning'
+                    title={<FormattedMessage defaultMessage='Index retention increased'/>}
+                    description={<FormattedMessage defaultMessage='Save the configuration before running Catch Up. Catch Up uses the saved retention window, not this unsaved value.'/>}
+                />
             )}
 
             {hasLocalRetentionWiden && !hasUnsavedRetentionWiden && !hasLocalModelMismatch && (
-                <WarningBanner>
-                    <WarningIcon>{'⚠️'}</WarningIcon>
-                    <WarningText>
-                        <strong><FormattedMessage defaultMessage='Index retention increased'/></strong>
-                        <br/>
-                        <FormattedMessage defaultMessage='The index now looks further back. Run Catch Up to embed older posts that are not already in the index. Search stays available — do not Full Reindex unless you also changed the embedding model or vector precision.'/>
-                    </WarningText>
-                </WarningBanner>
+                <Banner
+                    type='warning'
+                    title={<FormattedMessage defaultMessage='Index retention increased'/>}
+                    description={<FormattedMessage defaultMessage='The index now looks further back. Run Catch Up to embed older posts that are not already in the index. Search stays available — do not Full Reindex unless you also changed the embedding model or vector precision.'/>}
+                />
             )}
 
             {hasLocalRetentionTighten && !hasLocalModelMismatch && !hasLocalRetentionWiden && (
-                <NoteBanner>
-                    <NoteText>
-                        <FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.'/>
-                    </NoteText>
-                </NoteBanner>
+                <Banner
+                    type='info'
+                    title={<FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.'/>}
+                />
             )}
 
             {/* Reindex Section */}
@@ -426,7 +332,8 @@ export const ReindexSection = ({
                     {isReindexing && (
                         <>
                             <ButtonGroup>
-                                <SecondaryButton
+                                <Button
+                                    emphasis='secondary'
                                     onClick={onCancelJob}
                                     disabled={jobStatus?.status === 'cancel_requested'}
                                 >
@@ -435,7 +342,7 @@ export const ReindexSection = ({
                                     ) : (
                                         <FormattedMessage defaultMessage='Cancel Reindexing'/>
                                     )}
-                                </SecondaryButton>
+                                </Button>
                             </ButtonGroup>
 
                             {jobStatus && (
@@ -456,15 +363,12 @@ export const ReindexSection = ({
                                             />
                                         </ProgressText>
                                     )}
-                                    <ProgressContainer>
-                                        {jobStatus.phase === 'building_index' ? (
-                                            <IndeterminateProgressBar/>
-                                        ) : (
-                                            <ProgressBar
-                                                $progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
-                                            />
-                                        )}
-                                    </ProgressContainer>
+                                    <JobProgressBar
+                                        size='small'
+                                        indeterminate={jobStatus.phase === 'building_index'}
+                                        value={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
+                                        aria-label={intl.formatMessage({defaultMessage: 'Reindex progress'})}
+                                    />
                                     <JobInfoCard>
                                         {jobStatus.node_id && (
                                             <JobInfoRow>
@@ -492,12 +396,18 @@ export const ReindexSection = ({
                     {!isReindexing && canResume && jobStatus && (
                         <>
                             <ButtonGroup>
-                                <PrimaryButton onClick={onResumeClick}>
+                                <Button
+                                    emphasis='primary'
+                                    onClick={onResumeClick}
+                                >
                                     <FormattedMessage defaultMessage='Resume Reindex'/>
-                                </PrimaryButton>
-                                <SecondaryButton onClick={onReindexClick}>
+                                </Button>
+                                <Button
+                                    emphasis='secondary'
+                                    onClick={onReindexClick}
+                                >
                                     <FormattedMessage defaultMessage='Start Over'/>
-                                </SecondaryButton>
+                                </Button>
                             </ButtonGroup>
                             <ProgressText>
                                 <FormattedMessage
@@ -515,23 +425,28 @@ export const ReindexSection = ({
                     {/* Show default buttons when no job is running and resume is not available */}
                     {!isReindexing && !canResume && (
                         <ButtonGroup>
-                            <PrimaryButton onClick={onReindexClick}>
+                            <Button
+                                emphasis='primary'
+                                onClick={onReindexClick}
+                            >
                                 <FormattedMessage defaultMessage='Full Reindex'/>
-                            </PrimaryButton>
+                            </Button>
                             {showCatchUp && (
-                                <TertiaryButton
+                                <Button
+                                    emphasis='tertiary'
                                     onClick={onCatchUpClick}
                                     disabled={embeddingIdentityMismatch}
                                 >
                                     <FormattedMessage defaultMessage='Catch Up'/>
-                                </TertiaryButton>
+                                </Button>
                             )}
-                            <TertiaryButton
+                            <Button
+                                emphasis='tertiary'
                                 onClick={onRebuildVectorIndexClick}
                                 disabled={embeddingIdentityMismatch}
                             >
                                 <FormattedMessage defaultMessage='Rebuild vector index'/>
-                            </TertiaryButton>
+                            </Button>
                         </ButtonGroup>
                     )}
 
@@ -560,16 +475,17 @@ export const ReindexSection = ({
                         <FormattedMessage defaultMessage='Index Health'/>
                     </ItemLabel>
                     <div>
-                        <TertiaryButton
+                        <Button
+                            emphasis='tertiary'
                             onClick={onHealthCheck}
-                            disabled={healthCheckLoading}
+                            loading={healthCheckLoading}
                         >
                             {healthCheckLoading ? (
                                 <FormattedMessage defaultMessage='Refreshing...'/>
                             ) : (
                                 <FormattedMessage defaultMessage='Refresh'/>
                             )}
-                        </TertiaryButton>
+                        </Button>
 
                         {healthCheckResult && (
                             <HealthCheckCard>
@@ -577,9 +493,11 @@ export const ReindexSection = ({
                                     <HealthCheckLabel>
                                         <FormattedMessage defaultMessage='Status'/>
                                     </HealthCheckLabel>
-                                    <StatusBadge $status={healthCheckResult.status}>
-                                        {getStatusLabel(healthCheckResult.status)}
-                                    </StatusBadge>
+                                    <Tag
+                                        type={healthStatusTagType(healthCheckResult.status)}
+                                        casing='all-caps'
+                                        label={getStatusLabel(healthCheckResult.status)}
+                                    />
                                 </HealthCheckRow>
                                 <HealthCheckRow>
                                     <HealthCheckLabel>

@@ -6,9 +6,11 @@ import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+
 import {useServiceLimit} from '@/license';
 
-import {TertiaryButton} from '../assets/buttons';
 import ConfirmationDialog from '../confirmation_dialog';
 
 import Service, {LLMService} from './service';
@@ -114,13 +116,14 @@ const Services = (props: Props) => {
                 ))}
             </ServicesList>
             <AddServiceRow>
-                <TertiaryButton
+                <Button
+                    emphasis='tertiary'
                     onClick={addNewService}
                     disabled={addDisabled}
+                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                 >
-                    <PlusAIServiceIcon/>
                     <FormattedMessage defaultMessage='Add an AI Service'/>
-                </TertiaryButton>
+                </Button>
                 {addDisabled && (
                     <EnterpriseChip
                         title={serviceChip.title}
@@ -143,12 +146,6 @@ const Services = (props: Props) => {
         </>
     );
 };
-
-const PlusAIServiceIcon = styled(PlusIcon)`
-	width: 18px;
-	height: 18px;
-	margin-right: 8px;
-`;
 
 const AddServiceRow = styled.div`
 	display: flex;

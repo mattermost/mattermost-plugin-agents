@@ -6,6 +6,8 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
@@ -47,17 +49,6 @@ type Props = {
     unRegisterSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
 }
 
-const MessageContainer = styled.div`
-	display: flex;
-	align-items: center;
-	flex-direction: row;
-	gap: 5px;
-	padding: 10px 12px;
-	background: white;
-	border-radius: 4px;
-	border: 1px solid rgba(63, 67, 80, 0.08);
-`;
-
 const ConfigContainer = styled.div`
 	display: flex;
 	flex-direction: column;
@@ -82,27 +73,6 @@ const LoadingContainer = styled.div`
     justify-content: center;
     align-items: center;
     padding: 40px;
-`;
-
-const ErrorContainer = styled.div`
-    display: flex;
-    align-items: center;
-    padding: 10px 12px;
-    background: #FFF0F0;
-    border-radius: 4px;
-    border: 1px solid rgba(210, 75, 78, 0.3);
-    color: #D24B4E;
-`;
-
-const RuntimeBotsErrorBanner = styled.div`
-    grid-column: 1 / -1;
-    padding: 10px 12px;
-    margin-bottom: 4px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
-    color: rgba(var(--center-channel-color-rgb), 0.88);
-    font-size: 14px;
 `;
 
 const defaultConfig: Config = {
@@ -174,8 +144,9 @@ const defaultConfig: Config = {
 };
 
 const BetaMessage = () => (
-    <MessageContainer>
-        <span>
+    <SectionNotice
+        type='info'
+        title={(
             <FormattedMessage
                 defaultMessage='To report a bug or to provide feedback, <link>create a new issue in the plugin repository</link>.'
                 values={{
@@ -190,8 +161,8 @@ const BetaMessage = () => (
                     ),
                 }}
             />
-        </span>
-    </MessageContainer>
+        )}
+    />
 );
 
 const Config = (props: Props) => {
@@ -274,7 +245,10 @@ const Config = (props: Props) => {
         return (
             <ConfigContainer>
                 <LoadingContainer>
-                    <FormattedMessage defaultMessage='Loading configuration...'/>
+                    <Spinner
+                        size='32'
+                        aria-label={intl.formatMessage({defaultMessage: 'Loading configuration...'})}
+                    />
                 </LoadingContainer>
             </ConfigContainer>
         );
@@ -283,7 +257,10 @@ const Config = (props: Props) => {
     if (loadError) {
         return (
             <ConfigContainer>
-                <ErrorContainer>{loadError}</ErrorContainer>
+                <SectionNotice
+                    type='danger'
+                    title={loadError}
+                />
             </ConfigContainer>
         );
     }
@@ -334,7 +311,10 @@ const Config = (props: Props) => {
             >
                 <ItemList>
                     {runtimeBotsError && (
-                        <RuntimeBotsErrorBanner>{runtimeBotsError}</RuntimeBotsErrorBanner>
+                        <SectionNotice
+                            type='warning'
+                            title={runtimeBotsError}
+                        />
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}

@@ -7,10 +7,11 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, AlertOutlineIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
-import IconAI from '../assets/icon_ai';
-import {DangerPill} from '../pill';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {ButtonIcon} from '../assets/buttons';
+import IconAI from '../assets/icon_ai';
 
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
@@ -302,28 +303,33 @@ const Bot = (props: Props) => {
                 </Title>
                 <Spacer/>
                 {missingService && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Service Selected'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Service Selected'/>}
+                    />
                 )}
                 {missingUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Username'/>}
+                    />
                 )}
                 {invalidUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='Invalid Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='Invalid Username'/>}
+                    />
                 )}
-                <ButtonIcon
+                <IconButton
+                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                    aria-label={intl.formatMessage({defaultMessage: 'Delete bot'})}
+                    size='small'
+                    destructive={true}
                     onClick={props.onDelete}
-                >
-                    <TrashIcon/>
-                </ButtonIcon>
+                />
                 {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
             </HeaderContainer>
             {open && (
@@ -503,12 +509,6 @@ const NameText = styled.div`
 
 const Spacer = styled.div`
 	flex-grow: 1;
-`;
-
-const TrashIcon = styled(TrashCanOutlineIcon)`
-	width: 16px;
-	height: 16px;
-	color: #D24B4E;
 `;
 
 const BotContainer = styled.div`

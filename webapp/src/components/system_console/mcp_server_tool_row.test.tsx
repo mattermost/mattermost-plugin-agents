@@ -41,6 +41,8 @@ jest.mock('react-bootstrap', () => ({
 /* eslint-disable import/first */
 import {IntlProvider} from 'react-intl';
 
+import {chooseOption, getSelect, selectedLabel} from '../../../tests/compass_select';
+
 import MCPServerToolRow from './mcp_server_tool_row';
 import {MCPServerConfig, MCPServerInfo} from './mcp_types';
 /* eslint-enable import/first */
@@ -101,18 +103,17 @@ describe('MCPServerToolRow — plugin row policy dropdown re-enable', () => {
 
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        const select = screen.getByRole('combobox') as HTMLSelectElement;
+        const select = getSelect('Approval policy for echo') as HTMLButtonElement;
 
         expect(select.disabled).toBe(false);
-        expect(select.value).toBe('ask');
+        expect(selectedLabel(select)).toBe('Ask Every Time');
     });
 
     test('plugin row policy change calls onServerConfigChange with merged tool_configs', () => {
         const {onServerConfigChange} = renderRow(makePluginServer(), makePluginServerConfig());
         fireEvent.click(screen.getByText('Demo Plugin'));
 
-        const select = screen.getByRole('combobox');
-        fireEvent.change(select, {target: {value: 'auto_run_everywhere'}});
+        chooseOption(getSelect('Approval policy for echo'), 'Auto Run (Everywhere)');
 
         expect(onServerConfigChange).toHaveBeenCalledTimes(1);
         const [updated] = onServerConfigChange.mock.calls[0];

@@ -6,7 +6,8 @@ import styled from 'styled-components';
 import {PlusIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton} from '../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
 import {useIsLicensedFor} from '@/license';
 
@@ -91,13 +92,14 @@ const Bots = (props: Props) => {
                 ))}
             </BotsList>
             <EnterpriseChipContainer>
-                <TertiaryButton
+                <Button
+                    emphasis='tertiary'
                     onClick={addNewBot}
                     disabled={licenceAddDisabled}
+                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                 >
-                    <PlusAIServiceIcon/>
                     <FormattedMessage defaultMessage='Add an AI Bot'/>
-                </TertiaryButton>
+                </Button>
                 {licenceAddDisabled && (
                     <EnterpriseChip
                         text={intl.formatMessage({defaultMessage: 'Use multiple AI bots on qualifying Mattermost plans'})}
@@ -114,12 +116,6 @@ const EnterpriseChipContainer = styled.div`
 	flex-direction: row;
 	align-items: center;
 	gap: 8px;
-`;
-
-const PlusAIServiceIcon = styled(PlusIcon)`
-	width: 18px;
-	height: 18px;
-	margin-right: 8px;
 `;
 
 const BotsList = styled.div`

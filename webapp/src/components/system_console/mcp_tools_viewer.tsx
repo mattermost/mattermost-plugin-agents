@@ -3,10 +3,15 @@
 
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {RefreshIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
+import {RefreshIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {TertiaryButton, SecondaryButton} from '../assets/buttons';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {getMCPTools, clearMCPToolsCache, getVettedToolSeed, updatePluginServer} from '../../client';
 import {useMCPConnectionEvents} from '../../hooks/use_mcp_connection_events';
 import {pluginIDFromServerOrigin} from '../../utils/tool_names';
@@ -280,51 +285,53 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
                     )}
                 </HeaderInfo>
                 <ButtonGroup>
-                    <SecondaryButton
+                    <Button
+                        emphasis='secondary'
                         onClick={handleClearCache}
-                        disabled={clearing || loading}
+                        loading={clearing}
+                        disabled={loading}
                     >
                         <FormattedMessage defaultMessage='Clear Cache'/>
-                    </SecondaryButton>
-                    <RefreshButton
+                    </Button>
+                    <Button
+                        emphasis='tertiary'
                         onClick={() => fetchTools({showLoading: true})}
-                        disabled={loading || clearing}
+                        loading={loading}
+                        disabled={clearing}
+                        leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
                     >
-                        <RefreshIcon
-                            size={16}
-                        />
                         <FormattedMessage defaultMessage='Refresh Tools'/>
-                    </RefreshButton>
+                    </Button>
                 </ButtonGroup>
             </Header>
 
             <Content>
                 {clearSuccess && (
-                    <SuccessState>
-                        <FormattedMessage defaultMessage='Cache cleared successfully'/>
-                    </SuccessState>
+                    <SectionNotice
+                        type='success'
+                        title={<FormattedMessage defaultMessage='Cache cleared successfully'/>}
+                    />
                 )}
 
                 {loading && !toolsData && (
                     <LoadingState>
-                        <FormattedMessage defaultMessage='Loading tools...'/>
+                        <Spinner
+                            size='24'
+                            aria-label={intl.formatMessage({defaultMessage: 'Loading tools...'})}
+                        />
                     </LoadingState>
                 )}
 
                 {error && (
-                    <ErrorState>
-                        <ExclamationThickIcon size={24}/>
-                        <div>
-                            <FormattedMessage defaultMessage='Failed to load MCP tools'/>
-                            <div>{error}</div>
-                        </div>
-                    </ErrorState>
+                    <SectionNotice
+                        type='danger'
+                        title={<FormattedMessage defaultMessage='Failed to load MCP tools'/>}
+                        description={error}
+                    />
                 )}
 
                 {toolsData && toolsData.servers.length === 0 && (
-                    <EmptyState>
-                        <FormattedMessage defaultMessage='No MCP servers configured'/>
-                    </EmptyState>
+                    <EmptyState title={<FormattedMessage defaultMessage='No MCP servers configured'/>}/>
                 )}
 
                 {toolsData && toolsData.servers.length > 0 && (
@@ -391,35 +398,10 @@ const ButtonGroup = styled.div`
     align-items: center;
 `;
 
-const RefreshButton = styled(TertiaryButton)`
-    white-space: nowrap;
-
-    @keyframes spin {
-        from {
-            transform: rotate(0deg);
-        }
-        to {
-            transform: rotate(360deg);
-        }
-    }
-`;
-
 const Content = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
-`;
-
-const SuccessState = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 12px 16px;
-    color: var(--online-indicator);
-    background-color: rgba(var(--online-indicator-rgb), 0.08);
-    border: 1px solid rgba(var(--online-indicator-rgb), 0.16);
-    border-radius: 4px;
-    font-weight: 600;
 `;
 
 const LoadingState = styled.div`
@@ -427,30 +409,6 @@ const LoadingState = styled.div`
     align-items: center;
     justify-content: center;
     padding: 32px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
-`;
-
-const ErrorState = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 16px;
-    color: var(--error-text);
-    background-color: rgba(var(--error-text-color-rgb), 0.08);
-    border: 1px solid rgba(var(--error-text-color-rgb), 0.16);
-    border-radius: 4px;
-`;
-
-const EmptyState = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    background-color: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
 `;
 
 const ServersList = styled.div`

@@ -159,7 +159,7 @@ describe('MCPToolConfigRow license gating', () => {
             />,
         );
 
-        expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(false);
+        expect((screen.getByRole('combobox') as HTMLButtonElement).disabled).toBe(false);
     });
 
     test('policy selector is disabled below Enterprise while the enabled toggle stays usable', () => {
@@ -174,7 +174,7 @@ describe('MCPToolConfigRow license gating', () => {
             />,
         );
 
-        expect((screen.getByRole('combobox') as HTMLSelectElement).disabled).toBe(true);
+        expect((screen.getByRole('combobox') as HTMLButtonElement).disabled).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
 
         fireEvent.click(screen.getAllByRole('switch')[0]);

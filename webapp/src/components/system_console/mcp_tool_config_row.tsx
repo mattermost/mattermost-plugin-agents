@@ -3,15 +3,22 @@
 
 import React, {useId, useState} from 'react';
 import styled from 'styled-components';
-import {ChevronDownIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 import {useIntl} from 'react-intl';
+
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {useIsLicensedFor} from '@/license';
 
 import {ToggleSwitch} from '../toggle_switch';
 
 import {LicenseChip} from './enterprise_chip';
+import {SelectField} from './item';
 import {MCPToolConfig, MCPToolInfo} from './mcp_types';
+
+type ToolPolicy = MCPToolConfig['policy'];
 
 type MCPToolConfigRowProps = {
     tool: MCPToolInfo;
@@ -27,10 +34,10 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
     const [schemaExpanded, setSchemaExpanded] = useState(false);
     const overrideInputId = useId();
 
-    const handlePolicyChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const handlePolicyChange = (policy: string) => {
         onToolConfigChange({
             ...toolConfig,
-            policy: e.target.value as 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask',
+            policy: policy as ToolPolicy,
         });
     };
 
@@ -74,21 +81,22 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                 </ToolRowLeft>
                 <ToolRowRight>
                     <PolicySelectWrapper>
-                        <PolicySelect
-                            value={toolConfig.policy}
-                            onChange={handlePolicyChange}
-                            disabled={serverDisabled || !approvalPoliciesLicensed}
-                        >
-                            <option value='auto_run_in_dm'>
-                                {intl.formatMessage({defaultMessage: 'Auto Run (DM)'})}
-                            </option>
-                            <option value='auto_run_everywhere'>
-                                {intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})}
-                            </option>
-                            <option value='ask'>
-                                {intl.formatMessage({defaultMessage: 'Ask Every Time'})}
-                            </option>
-                        </PolicySelect>
+                        <PolicySelectContainer>
+                            <SelectField
+                                value={toolConfig.policy}
+                                onChange={handlePolicyChange}
+                                disabled={serverDisabled || !approvalPoliciesLicensed}
+                                ariaLabel={intl.formatMessage(
+                                    {defaultMessage: 'Approval policy for {toolName}'},
+                                    {toolName: displayName ?? tool.name},
+                                )}
+                                options={[
+                                    {value: 'auto_run_in_dm', label: intl.formatMessage({defaultMessage: 'Auto Run (DM)'})},
+                                    {value: 'auto_run_everywhere', label: intl.formatMessage({defaultMessage: 'Auto Run (Everywhere)'})},
+                                    {value: 'ask', label: intl.formatMessage({defaultMessage: 'Ask Every Time'})},
+                                ]}
+                            />
+                        </PolicySelectContainer>
                         {!approvalPoliciesLicensed && (
                             <LicenseChip capability='tool_approval_policies'/>
                         )}
@@ -101,16 +109,13 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                             size='small'
                         />
                     </ToggleWrapper>
-                    <ExpandChevron
-                        type='button'
+                    <IconButton
+                        icon={<Icon glyph={schemaExpanded ? <ChevronDownIcon/> : <ChevronRightIcon/>}/>}
+                        size='small'
                         onClick={() => setSchemaExpanded(!schemaExpanded)}
                         aria-label={intl.formatMessage({defaultMessage: 'Show tool details'})}
                         aria-expanded={schemaExpanded}
-                    >
-                        <StyledChevron $expanded={schemaExpanded}>
-                            <ChevronDownIcon size={16}/>
-                        </StyledChevron>
-                    </ExpandChevron>
+                    />
                 </ToolRowRight>
             </ToolRowMain>
             {schemaExpanded && (
@@ -119,8 +124,9 @@ const MCPToolConfigRow = ({tool, toolConfig, onToolConfigChange, serverDisabled,
                         <OverrideLabel htmlFor={overrideInputId}>
                             {intl.formatMessage({defaultMessage: 'Retrieval description override'})}
                         </OverrideLabel>
-                        <OverrideInput
+                        <TextInput
                             id={overrideInputId}
+                            size='small'
                             value={toolConfig.retrieval_description_override || ''}
                             onChange={handleRetrievalDescriptionOverrideChange}
                             onBlur={handleRetrievalDescriptionOverrideBlur}
@@ -198,62 +204,14 @@ const PolicySelectWrapper = styled.div`
     min-width: 192px;
 `;
 
-const PolicySelect = styled.select`
-    appearance: none;
-    padding: 4px 20px 4px 4px;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.11px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    cursor: pointer;
-    line-height: 16px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(63,67,80,0.64)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 6px center;
-
-    &:focus {
-        outline: none;
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
+const PolicySelectContainer = styled.div`
+    width: 200px;
+    flex-shrink: 0;
 `;
 
 const ToggleWrapper = styled.div`
     display: flex;
     align-items: center;
-`;
-
-const ExpandChevron = styled.button`
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    padding: 8px;
-    border-radius: 4px;
-    overflow: hidden;
-    border: none;
-    background: transparent;
-
-    &:focus-visible {
-        outline: 2px solid var(--button-bg);
-        outline-offset: 2px;
-    }
-`;
-
-const StyledChevron = styled.div<{$expanded: boolean}>`
-    display: flex;
-    align-items: center;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    transform: ${(props) => (props.$expanded ? 'rotate(0deg)' : 'rotate(-90deg)')};
-    transition: transform 0.2s;
 `;
 
 const ExpandedContainer = styled.div`
@@ -275,24 +233,6 @@ const OverrideLabel = styled.label`
     font-size: 12px;
     font-weight: 600;
     color: rgba(var(--center-channel-color-rgb), 0.8);
-`;
-
-const OverrideInput = styled.input`
-    padding: 8px 10px;
-    border-radius: 4px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 13px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-    }
-
-    &:disabled {
-        cursor: not-allowed;
-    }
 `;
 
 const OverrideHelp = styled.div`

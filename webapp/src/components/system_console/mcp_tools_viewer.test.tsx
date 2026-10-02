@@ -51,6 +51,8 @@ import {IntlProvider} from 'react-intl';
 
 import {clearMCPToolsCache, getMCPTools, getVettedToolSeed, updatePluginServer} from '../../client';
 
+import {chooseOption} from '../../../tests/compass_select';
+
 import MCPToolsViewer from './mcp_tools_viewer';
 import {MCPConfig, MCPToolsResponse} from './mcp_types';
 /* eslint-enable import/first, import/order */
@@ -128,7 +130,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         const selects = screen.getAllByRole('combobox');
         expect(selects.length).toBeGreaterThanOrEqual(1);
         for (const sel of selects) {
-            expect((sel as HTMLSelectElement).disabled).toBe(false);
+            expect((sel as HTMLButtonElement).disabled).toBe(false);
         }
     });
 
@@ -138,7 +140,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         fireEvent.click(screen.getByText('Demo Plugin'));
 
         const selects = screen.getAllByRole('combobox');
-        fireEvent.change(selects[0], {target: {value: 'auto_run_in_dm'}});
+        chooseOption(selects[0], 'Auto Run (DM)');
 
         await waitFor(() => {
             expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);

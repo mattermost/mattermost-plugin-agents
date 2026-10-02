@@ -7,9 +7,10 @@ import {useIntl, type IntlShape} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
-import IconAI from '../assets/icon_ai';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {ButtonIcon} from '../assets/buttons';
+import IconAI from '../assets/icon_ai';
 
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
@@ -533,14 +534,16 @@ const Service = (props: Props) => {
                     )}
                 </Title>
                 <Spacer/>
-                <ButtonIcon
+                <IconButton
+                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                    aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
+                    size='small'
+                    destructive={true}
                     onClick={(e) => {
                         e.stopPropagation();
                         props.onDelete();
                     }}
-                >
-                    <TrashIcon/>
-                </ButtonIcon>
+                />
                 {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
             </HeaderContainer>
             {open && (
@@ -592,12 +595,6 @@ const ServiceTypeText = styled.div`
 
 const Spacer = styled.div`
 	flex-grow: 1;
-`;
-
-const TrashIcon = styled(TrashCanOutlineIcon)`
-	width: 16px;
-	height: 16px;
-	color: #D24B4E;
 `;
 
 const VerticalDivider = styled.div`

@@ -6,9 +6,11 @@ import styled from 'styled-components';
 import {ChevronDownIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {useIsLicensedFor} from '@/license';
 
-import {PrimaryButton} from '../assets/buttons';
 import {ToggleSwitch} from '../toggle_switch';
 import {pluginIDFromServerOrigin, stripPluginPrefix} from '../../utils/tool_names';
 
@@ -82,9 +84,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
                         <ServerName>{server.name}</ServerName>
                         <ServerMeta>
                             {server.serverType === 'plugin' && (
-                                <PluginBadge>
-                                    <FormattedMessage defaultMessage='Plugin'/>
-                                </PluginBadge>
+                                <Tag label={<FormattedMessage defaultMessage='Plugin'/>}/>
                             )}
                             {server.error && (
                                 <ErrorIndicator>
@@ -137,34 +137,20 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
             {expanded && (
                 <ToolsContainer>
                     {server.error && (
-                        <ErrorMessage>
-                            <ExclamationThickIcon size={20}/>
-                            <div>
-                                <ErrorTitle>
-                                    <FormattedMessage defaultMessage='Connection Error'/>
-                                </ErrorTitle>
-                                <ErrorDescription>{server.error}</ErrorDescription>
-                            </div>
-                        </ErrorMessage>
+                        <RowNotice
+                            type='danger'
+                            title={<FormattedMessage defaultMessage='Connection Error'/>}
+                            description={server.error}
+                        />
                     )}
                     {!server.error && server.needsOAuth && server.oauthURL && (
-                        <OAuthMessage>
-                            <div>
-                                <OAuthTitle>
-                                    <FormattedMessage defaultMessage='OAuth Required'/>
-                                </OAuthTitle>
-                                <OAuthDescription>
-                                    <FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>
-                                </OAuthDescription>
-                            </div>
-                            {remoteMcpLicensed && (
-                                <OAuthButton
-                                    onClick={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
-                                >
-                                    <FormattedMessage defaultMessage='Connect Account'/>
-                                </OAuthButton>
-                            )}
-                        </OAuthMessage>
+                        <RowNotice
+                            type='info'
+                            title={<FormattedMessage defaultMessage='OAuth Required'/>}
+                            description={<FormattedMessage defaultMessage="You must authenticate to fetch this server's tool list and configure per-tool approval policies. This only connects your account — each user must authenticate separately."/>}
+                            primaryButtonLabel={remoteMcpLicensed ? <FormattedMessage defaultMessage='Connect Account'/> : null}
+                            onPrimaryAction={() => window.open(server.oauthURL, '_blank', 'noopener,noreferrer')}
+                        />
                     )}
                     {!server.error && !server.needsOAuth && server.tools.length === 0 && (
                         <EmptyTools>
@@ -264,6 +250,7 @@ const ServerName = styled.div`
 const ServerMeta = styled.div`
     display: flex;
     align-items: center;
+    gap: 8px;
 `;
 
 const ToolCount = styled.span`
@@ -324,65 +311,8 @@ const OAuthIndicator = styled.div`
     color: var(--button-bg);
 `;
 
-const PluginBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    padding: 2px 8px;
-    margin-right: 8px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--center-channel-bg);
-    background-color: rgba(var(--center-channel-color-rgb), 0.56);
-    border-radius: 10px;
-`;
-
-const ErrorMessage = styled.div`
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 16px;
-    color: var(--error-text);
-    background-color: rgba(var(--error-text-color-rgb), 0.04);
-    border-radius: 4px;
+const RowNotice = styled(SectionNotice)`
     margin: 0 16px;
-`;
-
-const ErrorTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-`;
-
-const ErrorDescription = styled.div`
-    font-size: 12px;
-    opacity: 0.8;
-`;
-
-const OAuthMessage = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 16px;
-    color: var(--center-channel-color);
-    background-color: rgba(var(--button-bg-rgb), 0.04);
-    border: 1px solid rgba(var(--button-bg-rgb), 0.16);
-    border-radius: 4px;
-    margin: 0 16px;
-`;
-
-const OAuthTitle = styled.div`
-    font-weight: 600;
-    margin-bottom: 4px;
-    color: var(--button-bg);
-`;
-
-const OAuthDescription = styled.div`
-    font-size: 12px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-`;
-
-const OAuthButton = styled(PrimaryButton)`
-    flex-shrink: 0;
 `;
 
 const EmptyTools = styled.div`
