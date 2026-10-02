@@ -453,7 +453,7 @@ const AgentConfigView = (props: Props) => {
                         tabIndex={activeTab === 'mcps' ? 0 : -1}
                         $active={activeTab === 'mcps'}
                         disabled={mcpsTabDisabled}
-                        title={mcpsTabDisabled ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : undefined}
+                        {...(mcpsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'})} : {})}
                         onClick={() => setActiveTab('mcps')}
                     >
                         <FormattedMessage defaultMessage='MCPs'/>
