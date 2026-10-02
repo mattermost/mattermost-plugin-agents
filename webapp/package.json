@@ -69,7 +69,7 @@
     "@floating-ui/react-dom-interactions": "0.13.3",
     "@mattermost/client": "11.9.0",
     "@mattermost/compass-icons": "0.1.63",
-    "@mattermost/compass-ui": "0.1.0-alpha.12",
+    "@mattermost/compass-ui": "0.1.0-alpha.13",
     "@mattermost/eslint-plugin": "1.1.0-0",
     "@tippyjs/react": "4.2.6",
     "core-js": "3.50.0",
