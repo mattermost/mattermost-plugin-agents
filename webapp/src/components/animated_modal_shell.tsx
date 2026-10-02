@@ -82,6 +82,18 @@ const ShellRoot = styled.div<{$zIndex: number}>`
     }
 `;
 
+// Ignores hidden dialogs and ones mid exit animation (bootstrap drops `in`/`show` first).
+const isDialogOpen = (el: HTMLElement) => {
+    if (el.closest('[aria-hidden="true"]') || el.getClientRects().length === 0) {
+        return false;
+    }
+    if (getComputedStyle(el).visibility === 'hidden') {
+        return false;
+    }
+    const modal = el.closest('.modal.fade');
+    return !modal || modal.classList.contains('in') || modal.classList.contains('show');
+};
+
 const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 type ShellProps = {
@@ -125,8 +137,8 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
                 return;
             }
             const root = nodeRef.current;
-            const hasOtherDialog = Array.from(document.querySelectorAll('[role="dialog"]')).
-                some((el) => !root?.contains(el));
+            const hasOtherDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).
+                some((el) => !root?.contains(el) && isDialogOpen(el));
             if (hasOtherDialog) {
                 return;
             }
