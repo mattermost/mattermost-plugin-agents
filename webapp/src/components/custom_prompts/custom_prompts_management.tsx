@@ -269,7 +269,7 @@ const CustomPromptsManagement = () => {
                     onClick={handleModalClick}
                 >
                     <PromptsModal
-                        size='large'
+                        size='medium'
                         title={title}
                         onClose={handleClose}
                         closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
