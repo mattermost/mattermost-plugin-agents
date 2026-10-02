@@ -16,7 +16,7 @@ import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 
 export type LLMService = {
@@ -290,8 +290,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Service type'})}
                 value={props.service.type}
-                onChange={(e) => {
-                    const nextType = e.target.value;
+                onChange={(nextType) => {
                     props.onChange({
                         ...props.service,
                         type: nextType,
@@ -299,20 +298,21 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         useResponsesAPI: (nextType === 'openai' || nextType === 'north') ? true : props.service.useResponsesAPI,
                     });
                 }}
-            >
-                <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
-                <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
-                <SelectionItemOption value='gemini'>{'Google Gemini'}</SelectionItemOption>
-                <SelectionItemOption value='vertex'>{'Google Vertex AI'}</SelectionItemOption>
-                <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
-                <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
-                <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
-                <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
-                <SelectionItemOption value='north'>{'Cohere North'}</SelectionItemOption>
-                <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
-                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
-                <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
-            </SelectionItem>
+                options={[
+                    {value: 'openai', label: 'OpenAI'},
+                    {value: 'anthropic', label: 'Anthropic'},
+                    {value: 'gemini', label: 'Google Gemini'},
+                    {value: 'vertex', label: 'Google Vertex AI'},
+                    {value: 'bedrock', label: 'AWS Bedrock'},
+                    {value: 'openaicompatible', label: 'OpenAI Compatible'},
+                    {value: 'azure', label: 'Azure'},
+                    {value: 'cohere', label: 'Cohere'},
+                    {value: 'north', label: 'Cohere North'},
+                    {value: 'mistral', label: 'Mistral'},
+                    {value: 'scale', label: scaleAIToDisplayName(intl)},
+                    {value: 'asage', label: 'asksage (Experimental)'},
+                ]}
+            />
             {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'north') && (
                 <TextItem
                     label={apiURLLabel}
@@ -472,47 +472,34 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 extra={!fallbackLicensed && (
                     <LicenseChip capability='model_fallback'/>
                 )}
-                onChange={(e) => {
-                    if (!fallbackLicensed && e.target.value !== '') {
+                onChange={(fallbackServiceID) => {
+                    if (!fallbackLicensed && fallbackServiceID !== '') {
                         return;
                     }
-                    props.onChange({...props.service, fallbackServiceID: e.target.value});
+                    props.onChange({...props.service, fallbackServiceID});
                 }}
                 helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
-            >
-                <SelectionItemOption value=''>
-                    {intl.formatMessage({defaultMessage: 'No fallback'})}
-                </SelectionItemOption>
-                {(props.services ?? []).
+                options={[
+                    {value: '', label: intl.formatMessage({defaultMessage: 'No fallback'})},
+                    ...(props.services ?? []).
 
-                    // ID-less entries were added this session and aren't
-                    // addressable as fallbacks until the config is saved.
-                    filter((s) => s.id && s.id !== props.service.id).
-                    map((s) => (
-                        <SelectionItemOption
-                            key={s.id}
-                            value={s.id}
-                        >
-                            {s.name || serviceTypeToDisplayName(intl, s.type)}
-                        </SelectionItemOption>
-                    ))}
-            </SelectionItem>
+                        // ID-less entries were added this session and aren't
+                        // addressable as fallbacks until the config is saved.
+                        filter((s) => s.id && s.id !== props.service.id).
+                        map((s) => ({value: s.id, label: s.name || serviceTypeToDisplayName(intl, s.type)})),
+                ]}
+            />
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Structured output'})}
                 value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
-                onChange={(e) => props.onChange({...props.service, structuredOutputPolicy: e.target.value})}
+                onChange={(structuredOutputPolicy) => props.onChange({...props.service, structuredOutputPolicy})}
                 helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
-            >
-                <SelectionItemOption value={StructuredOutputPolicyAuto}>
-                    {intl.formatMessage({defaultMessage: 'Auto (recommended)'})}
-                </SelectionItemOption>
-                <SelectionItemOption value={StructuredOutputPolicyNative}>
-                    {intl.formatMessage({defaultMessage: 'Native supported'})}
-                </SelectionItemOption>
-                <SelectionItemOption value={StructuredOutputPolicyPromptFallback}>
-                    {intl.formatMessage({defaultMessage: 'Prompt fallback'})}
-                </SelectionItemOption>
-            </SelectionItem>
+                options={[
+                    {value: StructuredOutputPolicyAuto, label: intl.formatMessage({defaultMessage: 'Auto (recommended)'})},
+                    {value: StructuredOutputPolicyNative, label: intl.formatMessage({defaultMessage: 'Native supported'})},
+                    {value: StructuredOutputPolicyPromptFallback, label: intl.formatMessage({defaultMessage: 'Prompt fallback'})},
+                ]}
+            />
         </>
     );
 };

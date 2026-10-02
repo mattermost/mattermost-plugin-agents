@@ -7,7 +7,7 @@ import {FormattedMessage, useIntl} from 'react-intl';
 import {useIsLicensedFor} from '@/license';
 
 import Panel from '../panel';
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from '../item';
+import {BooleanItem, ItemList, SelectionItem, TextItem} from '../item';
 import {LicenseChip} from '../enterprise_chip';
 
 export type WebSearchGoogleConfig = {
@@ -91,13 +91,14 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'Provider'})}
                     value={value.provider}
-                    onChange={(e) => handleUpdate({provider: e.target.value})}
+                    onChange={(provider) => handleUpdate({provider})}
                     disabled={!value.enabled}
-                >
-                    <SelectionItemOption value='google'>{'Google Custom Search'}</SelectionItemOption>
-                    <SelectionItemOption value='brave'>{'Brave Search'}</SelectionItemOption>
-                    <SelectionItemOption value='searxng'>{intl.formatMessage({defaultMessage: 'SearXNG (self-hosted)'})}</SelectionItemOption>
-                </SelectionItem>
+                    options={[
+                        {value: 'google', label: 'Google Custom Search'},
+                        {value: 'brave', label: 'Brave Search'},
+                        {value: 'searxng', label: intl.formatMessage({defaultMessage: 'SearXNG (self-hosted)'})},
+                    ]}
+                />
                 {value.provider === 'google' && (
                     <>
                         <TextItem

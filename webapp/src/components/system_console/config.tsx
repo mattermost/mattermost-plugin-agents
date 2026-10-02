@@ -13,7 +13,7 @@ import {Pill} from '../pill';
 import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, TextItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
@@ -333,19 +333,11 @@ const Config = (props: Props) => {
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
                         value={value.defaultBotName}
-                        onChange={(e) => {
-                            updateConfig({defaultBotName: e.target.value});
+                        onChange={(defaultBotName) => {
+                            updateConfig({defaultBotName});
                         }}
-                    >
-                        {runtimeBots.map((bot) => (
-                            <SelectionItemOption
-                                key={bot.username}
-                                value={bot.username}
-                            >
-                                {bot.displayName}
-                            </SelectionItemOption>
-                        ))}
-                    </SelectionItem>
+                        options={runtimeBots.map((bot) => ({value: bot.username, label: bot.displayName}))}
+                    />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}
                         value={value.allowedUpstreamHostnames}
@@ -395,13 +387,14 @@ const Config = (props: Props) => {
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Trace Output'})}
                         value={value.telemetryOutput || 'off'}
-                        onChange={(e) => updateConfig({telemetryOutput: e.target.value as 'off' | 'logs' | 'otlp'})}
+                        onChange={(telemetryOutput) => updateConfig({telemetryOutput: telemetryOutput as 'off' | 'logs' | 'otlp'})}
                         helptext={intl.formatMessage({defaultMessage: 'Where to send distributed traces of LLM requests, tool execution, and search operations. "Server Logs" writes spans to the Mattermost server log and requires no extra infrastructure. "OTLP Endpoint" exports spans to a collector such as Grafana Tempo or Jaeger.'})}
-                    >
-                        <SelectionItemOption value='off'>{intl.formatMessage({defaultMessage: 'Off'})}</SelectionItemOption>
-                        <SelectionItemOption value='logs'>{intl.formatMessage({defaultMessage: 'Server Logs'})}</SelectionItemOption>
-                        <SelectionItemOption value='otlp'>{intl.formatMessage({defaultMessage: 'OTLP Endpoint'})}</SelectionItemOption>
-                    </SelectionItem>
+                        options={[
+                            {value: 'off', label: intl.formatMessage({defaultMessage: 'Off'})},
+                            {value: 'logs', label: intl.formatMessage({defaultMessage: 'Server Logs'})},
+                            {value: 'otlp', label: intl.formatMessage({defaultMessage: 'OTLP Endpoint'})},
+                        ]}
+                    />
                     {value.telemetryOutput === 'otlp' && (
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}

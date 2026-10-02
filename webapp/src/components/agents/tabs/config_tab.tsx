@@ -25,7 +25,6 @@ import {
     ItemList,
     TextItem,
     SelectionItem,
-    SelectionItemOption,
     TextFieldContainer,
 } from '@/components/system_console/item';
 import AvatarItem from '@/components/system_console/avatar';
@@ -295,7 +294,7 @@ const ConfigTab = (props: Props) => {
                 <SelectionItem
                     label={intl.formatMessage({defaultMessage: 'AI Service'})}
                     value={draft.serviceId}
-                    onChange={(e) => onChange({serviceId: e.target.value})}
+                    onChange={(serviceId) => onChange({serviceId})}
                     error={errors.serviceId}
                     helptext={
                         serviceLimit !== null && services.length > 1 ?
@@ -308,28 +307,20 @@ const ConfigTab = (props: Props) => {
                                     'Select an AI service to load model suggestions and configure vision, tools, native provider tools, and reasoning.',
                             })
                     }
-                >
-                    <SelectionItemOption value=''>
-                        {intl.formatMessage({defaultMessage: 'Select a service'})}
-                    </SelectionItemOption>
-                    {draft.serviceId && !services.find((s) => s.id === draft.serviceId) && (
-                        <SelectionItemOption
-                            value={draft.serviceId}
-                            disabled={true}
-                        >
-                            {intl.formatMessage({defaultMessage: 'Unknown service (deleted)'})}
-                        </SelectionItemOption>
-                    )}
-                    {services.map((svc, index) => (
-                        <SelectionItemOption
-                            key={svc.id}
-                            value={svc.id}
-                            disabled={serviceLimit !== null && index >= serviceLimit}
-                        >
-                            {svc.name || svc.type}
-                        </SelectionItemOption>
-                    ))}
-                </SelectionItem>
+                    options={[
+                        {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},
+                        ...(draft.serviceId && !services.find((s) => s.id === draft.serviceId) ? [{
+                            value: draft.serviceId,
+                            label: intl.formatMessage({defaultMessage: 'Unknown service (deleted)'}),
+                            disabled: true,
+                        }] : []),
+                        ...services.map((svc, index) => ({
+                            value: svc.id,
+                            label: svc.name || svc.type,
+                            disabled: serviceLimit !== null && index >= serviceLimit,
+                        })),
+                    ]}
+                />
 
                 {supportsModelFetching && availableModels.length > 0 ? (
                     <ComboboxItem

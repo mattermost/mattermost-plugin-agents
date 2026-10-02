@@ -4,7 +4,7 @@
 import React from 'react';
 import {useIntl} from 'react-intl';
 
-import {SelectionItem, SelectionItemOption} from '../item';
+import {SelectionItem} from '../item';
 import {IntItem} from '../number_items';
 
 import {ChunkingOptions, EmbeddingSearchConfig} from './types';
@@ -29,19 +29,20 @@ export const ChunkingOptionsConfig = ({value, onChange}: ChunkingOptionsProps) =
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Chunking Strategy'})}
                 value={value.chunkingOptions?.chunkingStrategy || defaultChunkingOptions.chunkingStrategy}
-                onChange={(e) => onChange({
+                onChange={(chunkingStrategy) => onChange({
                     ...value,
                     chunkingOptions: {
                         ...(value.chunkingOptions || defaultChunkingOptions),
-                        chunkingStrategy: e.target.value,
+                        chunkingStrategy,
                     } as ChunkingOptions,
                 })}
                 helptext={intl.formatMessage({defaultMessage: 'The strategy to use for splitting text into chunks.'})}
-            >
-                <SelectionItemOption value='sentences'>{'Sentences'}</SelectionItemOption>
-                <SelectionItemOption value='paragraphs'>{'Paragraphs'}</SelectionItemOption>
-                <SelectionItemOption value='fixed'>{'Fixed Size'}</SelectionItemOption>
-            </SelectionItem>
+                options={[
+                    {value: 'sentences', label: 'Sentences'},
+                    {value: 'paragraphs', label: 'Paragraphs'},
+                    {value: 'fixed', label: 'Fixed Size'},
+                ]}
+            />
 
             <IntItem
                 label={intl.formatMessage({defaultMessage: 'Chunk Size'})}

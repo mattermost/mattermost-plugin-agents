@@ -15,7 +15,7 @@ import {ButtonIcon} from '../assets/buttons';
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
 
-import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
+import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -349,20 +349,12 @@ const Bot = (props: Props) => {
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'AI Service'})}
                             value={props.bot.serviceID}
-                            onChange={(e) => props.onChange({...props.bot, serviceID: e.target.value})}
-                        >
-                            <SelectionItemOption value=''>
-                                {intl.formatMessage({defaultMessage: 'Select a service'})}
-                            </SelectionItemOption>
-                            {props.services.map((service) => (
-                                <SelectionItemOption
-                                    key={service.id}
-                                    value={service.id}
-                                >
-                                    {service.name || service.type}
-                                </SelectionItemOption>
-                            ))}
-                        </SelectionItem>
+                            onChange={(serviceID) => props.onChange({...props.bot, serviceID})}
+                            options={[
+                                {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},
+                                ...props.services.map((service) => ({value: service.id, label: service.name || service.type})),
+                            ]}
+                        />
                         {supportsModelFetching && availableModels.length > 0 ? (
                             <ComboboxItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}

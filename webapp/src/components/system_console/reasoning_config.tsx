@@ -53,6 +53,13 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
         return null;
     }
 
+    const reasoningEffortOptions = [
+        {value: 'minimal', label: intl.formatMessage({defaultMessage: 'Minimal'})},
+        {value: 'low', label: intl.formatMessage({defaultMessage: 'Low'})},
+        {value: 'medium', label: intl.formatMessage({defaultMessage: 'Medium'})},
+        {value: 'high', label: intl.formatMessage({defaultMessage: 'High'})},
+    ];
+
     // Determine if this service supports reasoning.
     //   - OpenAI direct and Cohere North always use the Responses API.
     //   - Anthropic uses extended thinking with a token budget.
@@ -185,21 +192,10 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <SelectField
                                         maxWidth='200px'
                                         value={reasoningEffort}
-                                        onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                    >
-                                        <option value='minimal'>
-                                            {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                        </option>
-                                        <option value='low'>
-                                            {intl.formatMessage({defaultMessage: 'Low'})}
-                                        </option>
-                                        <option value='medium'>
-                                            {intl.formatMessage({defaultMessage: 'Medium'})}
-                                        </option>
-                                        <option value='high'>
-                                            {intl.formatMessage({defaultMessage: 'High'})}
-                                        </option>
-                                    </SelectField>
+                                        options={reasoningEffortOptions}
+                                        ariaLabel={intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                        onChange={(effort) => props.onChange({...props.bot, reasoningEffort: effort})}
+                                    />
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
@@ -217,21 +213,10 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <SelectField
                                     maxWidth='200px'
                                     value={reasoningEffort}
-                                    onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                >
-                                    <option value='minimal'>
-                                        {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                    </option>
-                                    <option value='low'>
-                                        {intl.formatMessage({defaultMessage: 'Low'})}
-                                    </option>
-                                    <option value='medium'>
-                                        {intl.formatMessage({defaultMessage: 'Medium'})}
-                                    </option>
-                                    <option value='high'>
-                                        {intl.formatMessage({defaultMessage: 'High'})}
-                                    </option>
-                                </SelectField>
+                                    options={reasoningEffortOptions}
+                                    ariaLabel={intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                    onChange={(effort) => props.onChange({...props.bot, reasoningEffort: effort})}
+                                />
                                 <HelpText>
                                     {intl.formatMessage({
                                         defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',

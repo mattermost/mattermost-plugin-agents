@@ -3,7 +3,7 @@
 
 // jsdom has no scrollIntoView; compass-ui Select and Combobox call it when highlighting options.
 if (!Element.prototype.scrollIntoView) {
-    Element.prototype.scrollIntoView = () => {};
+    Element.prototype.scrollIntoView = jest.fn();
 }
 
 export {};

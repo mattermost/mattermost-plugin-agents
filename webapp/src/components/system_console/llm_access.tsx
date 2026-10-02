@@ -1,9 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useId} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
+
+import {Radio} from '@mattermost/compass-ui/components/radio';
 
 import {SelectUser, SelectChannel} from '../select';
 
@@ -13,15 +15,13 @@ import {ChannelAccessLevel, UserAccessLevel} from './bot';
 
 import {LicenseChip} from './enterprise_chip';
 
-import {FormRow, HelpText, ItemLabel, StyledRadio} from './item';
+import {FormRow, HelpText, ItemLabel} from './item';
 
 const AllowTypes = styled.div`
 	margin-bottom: 24px;
-	display: grid;
-	grid-template-columns: auto 1fr;
-	grid-row-gap: 8px;
-	grid-column-gap: 8px;
-	grid-align-items: center;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 `;
 
 const MainContainer = styled.div`
@@ -52,46 +52,51 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
     const abacLicensed = useIsLicensedFor('attribute_based_access');
     const showAttributeBased = Boolean(props.showAttributeBased && (abacLicensed || props.level === UserAccessLevel.AttributeBased));
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
+    const name = useId();
 
     return (
         <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
                 <AllowTypes>
-                    <StyledRadio
-                        type='radio'
+                    <Radio
+                        name={name}
                         value={UserAccessLevel.All}
                         checked={props.level === UserAccessLevel.All}
                         disabled={props.disabled}
                         onChange={() => props.onChangeLevel(UserAccessLevel.All)}
-                    />
-                    <FormattedMessage defaultMessage='Allow for all users'/>
-                    <StyledRadio
-                        type='radio'
+                    >
+                        <FormattedMessage defaultMessage='Allow for all users'/>
+                    </Radio>
+                    <Radio
+                        name={name}
                         value={UserAccessLevel.Allow}
                         checked={props.level === UserAccessLevel.Allow}
                         disabled={restrictDisabled && props.level !== UserAccessLevel.Allow}
                         onChange={() => props.onChangeLevel(UserAccessLevel.Allow)}
-                    />
-                    <FormattedMessage defaultMessage='Allow for selected users'/>
-                    <StyledRadio
-                        type='radio'
+                    >
+                        <FormattedMessage defaultMessage='Allow for selected users'/>
+                    </Radio>
+                    <Radio
+                        name={name}
                         value={UserAccessLevel.Block}
                         checked={props.level === UserAccessLevel.Block}
                         disabled={restrictDisabled && props.level !== UserAccessLevel.Block}
                         onChange={() => props.onChangeLevel(UserAccessLevel.Block)}
-                    />
-                    <FormattedMessage defaultMessage='Block selected users'/>
+                    >
+                        <FormattedMessage defaultMessage='Block selected users'/>
+                    </Radio>
                     {showAttributeBased && (
                         <>
-                            <StyledRadio
-                                type='radio'
+                            <Radio
+                                name={name}
                                 value={UserAccessLevel.AttributeBased}
                                 checked={props.level === UserAccessLevel.AttributeBased}
                                 disabled={props.disabled || (!abacLicensed && props.level !== UserAccessLevel.AttributeBased)}
                                 onChange={() => props.onChangeLevel(UserAccessLevel.AttributeBased)}
-                            />
-                            <FormattedMessage defaultMessage='Attribute-based (access policy)'/>
+                            >
+                                <FormattedMessage defaultMessage='Attribute-based (access policy)'/>
+                            </Radio>
                         </>
                     )}
                 </AllowTypes>
@@ -136,44 +141,49 @@ type ChannelAccessLevelProps = {
 export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
     const accessLicensed = useIsLicensedFor('agent_access_controls');
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
+    const name = useId();
 
     return (
         <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <MainContainer>
                 <AllowTypes>
-                    <StyledRadio
-                        type='radio'
+                    <Radio
+                        name={name}
                         value={ChannelAccessLevel.All}
                         checked={props.level === ChannelAccessLevel.All}
                         disabled={props.disabled}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.All)}
-                    />
-                    <FormattedMessage defaultMessage='Allow for all channels'/>
-                    <StyledRadio
-                        type='radio'
+                    >
+                        <FormattedMessage defaultMessage='Allow for all channels'/>
+                    </Radio>
+                    <Radio
+                        name={name}
                         value={ChannelAccessLevel.Allow}
                         checked={props.level === ChannelAccessLevel.Allow}
                         disabled={restrictDisabled && props.level !== ChannelAccessLevel.Allow}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.Allow)}
-                    />
-                    <FormattedMessage defaultMessage='Allow for selected channels'/>
-                    <StyledRadio
-                        type='radio'
+                    >
+                        <FormattedMessage defaultMessage='Allow for selected channels'/>
+                    </Radio>
+                    <Radio
+                        name={name}
                         value={ChannelAccessLevel.Block}
                         checked={props.level === ChannelAccessLevel.Block}
                         disabled={restrictDisabled && props.level !== ChannelAccessLevel.Block}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.Block)}
-                    />
-                    <FormattedMessage defaultMessage='Block selected channels'/>
-                    <StyledRadio
-                        type='radio'
+                    >
+                        <FormattedMessage defaultMessage='Block selected channels'/>
+                    </Radio>
+                    <Radio
+                        name={name}
                         value={ChannelAccessLevel.None}
                         checked={props.level === ChannelAccessLevel.None}
                         disabled={restrictDisabled && props.level !== ChannelAccessLevel.None}
                         onChange={() => props.onChangeLevel(ChannelAccessLevel.None)}
-                    />
-                    <FormattedMessage defaultMessage='Block all channels'/>
+                    >
+                        <FormattedMessage defaultMessage='Block all channels'/>
+                    </Radio>
                 </AllowTypes>
                 {!accessLicensed && (
                     <LicenseChip capability='agent_access_controls'/>
