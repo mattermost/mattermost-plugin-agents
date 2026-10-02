@@ -24,6 +24,7 @@ import manifest from '@/manifest';
 import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
+import {UnderlineTab, UnderlineTabs} from '../underline_tabs';
 
 import {CopyableTextItem} from './copyable_text_item';
 import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
@@ -587,7 +588,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                 showDivider={false}
             />
             <TabsContainer role='tablist'>
-                <TabButton
+                <UnderlineTab
                     type='button'
                     role='tab'
                     id='mcp-config-tab'
@@ -598,8 +599,8 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                     onClick={() => setActiveTab('config')}
                 >
                     <FormattedMessage defaultMessage='Configuration'/>
-                </TabButton>
-                <TabButton
+                </UnderlineTab>
+                <UnderlineTab
                     type='button'
                     role='tab'
                     id='mcp-tools-tab'
@@ -610,7 +611,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                     onClick={() => setActiveTab('tools')}
                 >
                     <FormattedMessage defaultMessage='Tools'/>
-                </TabButton>
+                </UnderlineTab>
             </TabsContainer>
 
             <MCPPanelBody>
@@ -757,13 +758,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const RemoteServersSection = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 16px;
+	gap: var(--spacing-l);
 `;
 
 const RemoteServersEmptyState = styled(EmptyState)`
@@ -785,10 +786,10 @@ const SectionDivider = styled(Divider)`
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 16px;
+    border-radius: var(--radius-s);
+    padding: var(--spacing-l);
     background-color: var(--center-channel-bg);
 `;
 
@@ -824,7 +825,7 @@ const ServerTitle = styled.div`
     cursor: pointer;
     padding: 0;
     margin: 0;
-    border-radius: 4px;
+    border-radius: var(--radius-s);
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.08);
@@ -839,7 +840,7 @@ const OAuthSection = styled.div`
     display: flex;
     flex-direction: column;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     overflow: hidden;
 `;
 
@@ -859,7 +860,7 @@ const OAuthSectionHeader = styled.div`
 const OAuthSectionHeaderLeft = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
@@ -872,26 +873,26 @@ const OAuthSectionTitle = styled.div`
 const OAuthSectionContent = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding: 12px;
+    gap: var(--spacing-m);
+    padding: var(--spacing-m);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const SectionHelpText = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    margin-bottom: 4px;
+    margin-bottom: var(--spacing-xxxs);
 `;
 
 const HeadersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const HeaderRow = styled.div`
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-xs);
     align-items: center;
 `;
 
@@ -908,7 +909,7 @@ const AddServerContainer = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 12px;
+    gap: var(--spacing-m);
 `;
 
 const ServerNameInput = styled(TextInput)`
@@ -937,36 +938,12 @@ const MCPPanel = styled.section`
 	overflow: hidden;
 
 	[class*='admin-panel-header__main'] {
-		padding-bottom: calc(var(--spacing-xxl) - 16px);
+		padding-bottom: calc(var(--spacing-xxl) - var(--spacing-l));
 	}
 `;
 
-const TabsContainer = styled.div`
-	display: flex;
-	flex-shrink: 0;
+const TabsContainer = styled(UnderlineTabs)`
 	padding: 0 var(--spacing-xxl);
-	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 12px 16px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    color: ${(props) => (props.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(props) => (props.$active ? 'var(--button-bg)' : 'transparent')};
-    margin-bottom: -1px;
-    transition: color 0.2s ease, border-color 0.2s ease;
-
-    &:hover {
-        color: ${(props) => (props.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    }
-
-    &:first-child {
-        padding-left: 0;
-    }
 `;
 
 const MCPPanelBody = styled.div`
@@ -979,7 +956,7 @@ const MCPPanelBody = styled.div`
 const ConfigTabPanel = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: var(--spacing-m);
 `;
 
 export default MCPServers;

@@ -287,7 +287,7 @@ const AgentsList = () => {
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
-                        <EmptyState
+                        <AgentsEmptyState
                             title={
                                 <FormattedMessage
                                     defaultMessage='No agents match "{query}"'
@@ -298,7 +298,7 @@ const AgentsList = () => {
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
-                        <EmptyState
+                        <AgentsEmptyState
                             title={activeTab === 'yours' ? (
                                 <FormattedMessage defaultMessage="You haven't created any agents yet."/>
                             ) : (
@@ -348,7 +348,7 @@ const AgentsList = () => {
 // --- Styled Components ---
 
 const CONTENT_MAX_WIDTH = '960px';
-const CONTENT_HORIZONTAL_PADDING = '32px';
+const CONTENT_HORIZONTAL_PADDING = 'var(--spacing-xxxl)';
 
 const ContentColumn = styled.div<{$fillHeight?: boolean}>`
     width: 100%;
@@ -395,11 +395,11 @@ const listScrollbarStyles = `
     scrollbar-color: transparent transparent;
 
     &::-webkit-scrollbar {
-        width: 8px;
+        width: var(--spacing-xs);
     }
 
     &::-webkit-scrollbar-thumb {
-        border-radius: 4px;
+        border-radius: var(--radius-s);
         background-color: transparent;
     }
 
@@ -426,7 +426,7 @@ const ListContent = styled.div`
     width: 100%;
     max-width: ${CONTENT_MAX_WIDTH};
     margin: 0 auto;
-    padding: 0 ${CONTENT_HORIZONTAL_PADDING} 8px;
+    padding: 0 ${CONTENT_HORIZONTAL_PADDING} var(--spacing-xs);
 `;
 
 const Header = styled.div`
@@ -434,34 +434,34 @@ const Header = styled.div`
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    padding: 48px 0 24px;
+    padding: var(--spacing-xxxxxl) 0 var(--spacing-xxl);
     flex-shrink: 0;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const TitleRow = styled.div`
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     min-width: 0;
     flex: 1;
 `;
 
 const Title = styled.h1`
-    font-family: 'Metropolis', sans-serif;
-    font-size: 22px;
-    font-weight: 600;
-    line-height: 28px;
+    font-family: var(--font-family-heading, 'Metropolis', sans-serif);
+    font-size: var(--font-size-500);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-500);
     color: var(--center-channel-color);
     margin: 0;
 `;
 
 const Subtitle = styled.p`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     margin: 0;
 `;
@@ -476,40 +476,44 @@ const CreateButton = styled(Button)`
 `;
 
 const TabBar = styled(Tabs)`
-    margin-bottom: 16px;
+    margin-bottom: var(--spacing-l);
     flex-shrink: 0;
 `;
 
 const SearchContainer = styled.div`
-    padding: 0 0 16px 0;
+    padding: 0 0 var(--spacing-l) 0;
     flex-shrink: 0;
 `;
 
 const AgentListContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--spacing-m);
+`;
+
+const AgentsEmptyState = styled(EmptyState)`
+	padding-top: var(--spacing-xxl);
 `;
 
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 8px;
-    padding: 40px;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xxxxl);
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
 const Notice = styled(SectionNotice)`
-    margin-bottom: 8px;
+    margin-bottom: var(--spacing-xs);
 `;
 
 const Footer = styled.div`
-    padding: 24px 0;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    padding: var(--spacing-xxl) 0;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     flex-shrink: 0;
 `;

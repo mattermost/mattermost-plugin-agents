@@ -25,13 +25,13 @@ const FIELD_HEIGHT = '40px';
 export const ItemList = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 24px;
+	gap: var(--spacing-xxl);
 `;
 
 export const FormRow = styled.div`
 	display: grid;
 	grid-template-columns: minmax(auto, 275px) 1fr;
-	grid-column-gap: 16px;
+	grid-column-gap: var(--spacing-l);
 	align-items: start;
 `;
 
@@ -40,7 +40,7 @@ export const FieldControlRow = styled.div`
 	flex-direction: row;
 	align-items: center;
 	min-height: ${FIELD_HEIGHT};
-	gap: 8px;
+	gap: var(--spacing-xs);
 	width: 100%;
 
 	> div {
@@ -276,9 +276,9 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
 };
 
 export const ItemLabel = styled.label<{$multiline?: boolean}>`
-	font-size: 14px;
-	font-weight: 600;
-	line-height: 20px;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
+	line-height: var(--line-height-100);
 	margin: 0;
 	padding: 0;
 	box-sizing: border-box;
@@ -298,7 +298,7 @@ export const ItemLabelRow = styled.div<{$multiline?: boolean}>`
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	gap: 8px;
+	gap: var(--spacing-xs);
 	min-width: 0;
 	height: ${FIELD_HEIGHT};
 	flex-shrink: 0;
@@ -332,21 +332,21 @@ export const ItemLabelWithTag = (props: ItemLabelWithTagProps) => {
 
 const ItemLabelText = styled.label`
 	margin: 0;
-	font-size: 14px;
-	font-weight: 600;
-	line-height: 20px;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
+	line-height: var(--line-height-100);
 `;
 
 export const TextFieldContainer = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 export const HelpText = styled.div`
-	font-size: 12px;
-	font-weight: 400;
-	line-height: 16px;
+	font-size: var(--font-size-75);
+	font-weight: var(--font-weight-regular);
+	line-height: var(--line-height-75);
 	color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
@@ -395,9 +395,9 @@ export const BooleanItem = (props: BooleanItemProps) => {
     const name = useId();
     return (
         <FormRow>
-            <BooleanItemLabel>{props.label}</BooleanItemLabel>
+            <CompactItemLabel>{props.label}</CompactItemLabel>
             <TextFieldContainer>
-                <BooleanFieldControlRow>
+                <CompactFieldControlRow>
                     <BooleanRadioGroup>
                         <InlineRadio
                             name={name}
@@ -419,7 +419,7 @@ export const BooleanItem = (props: BooleanItemProps) => {
                         </InlineRadio>
                     </BooleanRadioGroup>
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
-                </BooleanFieldControlRow>
+                </CompactFieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>
                 }
@@ -428,24 +428,25 @@ export const BooleanItem = (props: BooleanItemProps) => {
     );
 };
 
-// Match radio row height instead of the taller text-field label box.
-const BooleanItemLabel = styled(ItemLabel)`
+// Match checkbox/radio control height instead of the taller text-field label box.
+export const CompactItemLabel = styled(ItemLabel)`
 	min-height: 0;
 	align-items: flex-start;
 	line-height: var(--line-height-100, 20px);
 `;
 
-// compass-ui Radio fills its row; True/False sit side by side.
-const BooleanFieldControlRow = styled(FieldControlRow)`
+// Drop the 40px text-input min-height so help text sits under short controls.
+export const CompactFieldControlRow = styled(FieldControlRow)`
 	min-height: 0;
 	align-items: flex-start;
 `;
 
+// compass-ui Radio fills its row; True/False sit side by side.
 const BooleanRadioGroup = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 16px;
+	gap: var(--spacing-xl);
 
 	&& {
 		width: auto;
@@ -455,9 +456,5 @@ const BooleanRadioGroup = styled.div`
 const InlineRadio = styled(Radio)`
 	&& {
 		width: auto;
-
-		/* Admin console Bootstrap forms.less styles all <label>s; Compass Radio is a label. */
-		font-weight: 400;
-		margin-bottom: 0;
 	}
 `;

@@ -186,7 +186,7 @@ const MCPServerToolRow = ({server, serverConfig, onServerConfigChange}: MCPServe
 // Styled components
 const ServerRowContainer = styled.div`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     background-color: var(--center-channel-bg);
     overflow: hidden;
 `;
@@ -194,8 +194,8 @@ const ServerRowContainer = styled.div`
 const ServerRowHeader = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding-right: 16px;
+    gap: var(--spacing-xs);
+    padding-right: var(--spacing-l);
 `;
 
 const ServerRowExpandButton = styled.button`
@@ -203,9 +203,9 @@ const ServerRowExpandButton = styled.button`
     align-items: center;
     flex: 1;
     min-width: 0;
-    padding: 12px 8px 12px 16px;
+    padding: var(--spacing-m) var(--spacing-xs) var(--spacing-m) var(--spacing-l);
     cursor: pointer;
-    gap: 8px;
+    gap: var(--spacing-xs);
     border: none;
     background: none;
     text-align: left;
@@ -218,16 +218,16 @@ const ServerRowExpandButton = styled.button`
 `;
 
 const ServerAvatar = styled.div`
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
+    width: var(--spacing-xxxxl);
+    height: var(--spacing-xxxxl);
+    border-radius: var(--radius-full);
     background: rgba(var(--center-channel-color-rgb), 0.08);
     display: flex;
     align-items: center;
     justify-content: center;
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     flex-shrink: 0;
 `;
 
@@ -240,24 +240,24 @@ const ServerInfo = styled.div`
 `;
 
 const ServerName = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-weight: 600;
-    font-size: 14px;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const ServerMeta = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ToolCount = styled.span`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
 `;
 
@@ -272,7 +272,7 @@ const ExpandChevron = styled.div`
     align-items: center;
     justify-content: center;
     margin-left: auto;
-    padding: 8px;
+    padding: var(--spacing-xs);
     flex-shrink: 0;
 `;
 
@@ -289,35 +289,35 @@ const ToolsContainer = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 12px 0;
+    gap: var(--spacing-l);
+    padding: var(--spacing-m) 0;
 `;
 
 const ErrorIndicator = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    gap: var(--spacing-xxxs);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
     color: var(--error-text);
 `;
 
 const OAuthIndicator = styled.div`
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    font-weight: 600;
+    gap: var(--spacing-xxxs);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
     color: var(--button-bg);
 `;
 
 const RowNotice = styled(SectionNotice)`
-    margin: 0 16px;
+    margin: 0 var(--spacing-l);
 `;
 
 const EmptyTools = styled.div`
     text-align: center;
-    padding: 16px;
+    padding: var(--spacing-l);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 

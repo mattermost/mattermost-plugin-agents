@@ -13,6 +13,7 @@ import {CodeTagsIcon} from '@mattermost/compass-icons/components';
 // them, so the plugin brings its own. Never import the standalone variant: it
 // overrides the user's theme colors.
 import '@mattermost/compass-ui/styles';
+import '@/styles/compass_label_overrides.css';
 
 //@ts-ignore it exists
 import aiIcon from '../../assets/bot_icon.png';

@@ -24,45 +24,45 @@ const ButtonContainer = styled.div`
 const ActionContainer = styled.div`
     display: grid;
     grid-template-columns: minmax(auto, 275px) 1fr;
-    grid-column-gap: 16px;
+    grid-column-gap: var(--spacing-l);
 `;
 
 const SuccessHelpText = styled(HelpText)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
     color: var(--online-indicator);
 `;
 
 const ErrorHelpText = styled(HelpText)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
     color: var(--error-text);
 `;
 
 const JobProgressBar = styled(ProgressBar)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
 `;
 
 const ProgressText = styled(HelpText)`
-    margin-top: 8px;
-    margin-bottom: 12px;
-    font-size: 12px;
+    margin-top: var(--spacing-xs);
+    margin-bottom: var(--spacing-m);
+    font-size: var(--font-size-75);
 `;
 
 const ButtonGroup = styled.div`
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const Banner = styled(SectionNotice)`
-    margin-bottom: 16px;
+    margin-bottom: var(--spacing-l);
 `;
 
 const HealthCheckCard = styled.div`
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-top: 12px;
-    margin-bottom: 12px;
+    border-radius: var(--radius-s);
+    padding: var(--spacing-m) var(--spacing-l);
+    margin-top: var(--spacing-m);
+    margin-bottom: var(--spacing-m);
 `;
 
 const HealthCheckRow = styled.div`
@@ -97,18 +97,18 @@ const healthStatusTagType = (status: string): TagType => {
 };
 
 const SectionDivider = styled.div`
-    margin-top: 24px;
-    padding-top: 24px;
+    margin-top: var(--spacing-xxl);
+    padding-top: var(--spacing-xxl);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const JobInfoCard = styled.div`
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 8px 12px;
-    margin-top: 8px;
-    font-size: 12px;
+    border-radius: var(--radius-s);
+    padding: var(--spacing-xs) var(--spacing-m);
+    margin-top: var(--spacing-xs);
+    font-size: var(--font-size-75);
 `;
 
 const JobInfoRow = styled.div`

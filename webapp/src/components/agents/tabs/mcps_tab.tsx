@@ -590,14 +590,14 @@ const McpsTab = (props: Props) => {
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const ServiceAccountSection = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding-bottom: 16px;
+    gap: var(--spacing-m);
+    padding-bottom: var(--spacing-l);
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -614,25 +614,25 @@ const CheckboxText = styled.span`
 `;
 
 const CheckboxTitle = styled.span`
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const CheckboxHint = styled.span`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
 const ServerList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ServerBlock = styled.div<{$unavailable?: boolean}>`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     overflow: hidden;
     opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
 `;
@@ -640,8 +640,8 @@ const ServerBlock = styled.div<{$unavailable?: boolean}>`
 const ServerTopRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px 12px 16px;
+    gap: var(--spacing-m);
+    padding: var(--spacing-m) var(--spacing-l);
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
@@ -651,7 +651,7 @@ const ServerTopRow = styled.div`
 const ServerHeaderButton = styled.button`
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--spacing-m);
     flex: 1;
     min-width: 0;
     cursor: pointer;
@@ -666,7 +666,7 @@ const ServerHeaderButton = styled.button`
     &:focus-visible {
         outline: 2px solid var(--button-bg);
         outline-offset: 2px;
-        border-radius: 4px;
+        border-radius: var(--radius-s);
     }
 `;
 
@@ -685,16 +685,16 @@ const ServerInfo = styled.div`
 `;
 
 const ServerName = styled.div`
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const ServerMeta = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
@@ -703,8 +703,8 @@ const ToolList = styled.div`
 `;
 
 const EmptyToolsNotice = styled.div`
-    padding: 12px 16px;
-    font-size: 12px;
+    padding: var(--spacing-m) var(--spacing-l);
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
@@ -742,7 +742,7 @@ const ToolName = styled.div`
 `;
 
 const ToolDescription = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
     white-space: nowrap;
     overflow: hidden;
@@ -753,8 +753,8 @@ const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
     align-items: center;
-    gap: 8px;
-    padding: 40px;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xxxxl);
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 

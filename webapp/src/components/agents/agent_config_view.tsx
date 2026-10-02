@@ -10,7 +10,6 @@ import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Tabs} from '@mattermost/compass-ui/components/tabs';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {
@@ -26,6 +25,7 @@ import {
 } from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 import {useIsLicensedFor} from '@/license';
 import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
@@ -419,20 +419,46 @@ const AgentConfigView = (props: Props) => {
                     </HeaderLeading>
                 </ViewHeader>
 
-                <ViewTabs
-                    tabs={[
-                        {key: 'config', label: <FormattedMessage defaultMessage='Configuration'/>},
-                        {key: 'access', label: <FormattedMessage defaultMessage='Access'/>},
-                        {
-                            key: 'mcps',
-                            label: <FormattedMessage defaultMessage='MCPs'/>,
-                            disabled: mcpsTabDisabled,
-                            ...(mcpsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'})} : {}),
-                        },
-                    ]}
-                    activeKey={activeTab}
-                    onChange={(key) => setActiveTab(key as Tab)}
-                />
+                <ConfigTabs role='tablist'>
+                    <UnderlineTab
+                        type='button'
+                        role='tab'
+                        id='agent-config-tab'
+                        aria-controls='agent-config-panel'
+                        aria-selected={activeTab === 'config'}
+                        tabIndex={activeTab === 'config' ? 0 : -1}
+                        $active={activeTab === 'config'}
+                        onClick={() => setActiveTab('config')}
+                    >
+                        <FormattedMessage defaultMessage='Configuration'/>
+                    </UnderlineTab>
+                    <UnderlineTab
+                        type='button'
+                        role='tab'
+                        id='agent-access-tab'
+                        aria-controls='agent-access-panel'
+                        aria-selected={activeTab === 'access'}
+                        tabIndex={activeTab === 'access' ? 0 : -1}
+                        $active={activeTab === 'access'}
+                        onClick={() => setActiveTab('access')}
+                    >
+                        <FormattedMessage defaultMessage='Access'/>
+                    </UnderlineTab>
+                    <UnderlineTab
+                        type='button'
+                        role='tab'
+                        id='agent-mcps-tab'
+                        aria-controls='agent-mcps-panel'
+                        aria-selected={activeTab === 'mcps'}
+                        tabIndex={activeTab === 'mcps' ? 0 : -1}
+                        $active={activeTab === 'mcps'}
+                        disabled={mcpsTabDisabled}
+                        title={mcpsTabDisabled ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : undefined}
+                        onClick={() => setActiveTab('mcps')}
+                    >
+                        <FormattedMessage defaultMessage='MCPs'/>
+                    </UnderlineTab>
+                </ConfigTabs>
 
                 <ViewBody>
                     {errors.general && (
@@ -451,38 +477,56 @@ const AgentConfigView = (props: Props) => {
                     )}
 
                     {activeTab === 'config' && (
-                        <ConfigTab
-                            draft={draft}
-                            onChange={updateDraft}
-                            onAvatarChange={setAvatarFile}
-                            botUserId={agent?.botUserID}
-                            services={services}
-                            errors={errors}
-                            usernameLocked={mode === 'edit'}
-                        />
+                        <div
+                            role='tabpanel'
+                            id='agent-config-panel'
+                            aria-labelledby='agent-config-tab'
+                        >
+                            <ConfigTab
+                                draft={draft}
+                                onChange={updateDraft}
+                                onAvatarChange={setAvatarFile}
+                                botUserId={agent?.botUserID}
+                                services={services}
+                                errors={errors}
+                                usernameLocked={mode === 'edit'}
+                            />
+                        </div>
                     )}
                     {activeTab === 'access' && (
-                        <AccessTab
-                            draft={draft}
-                            baselineUserAccessLevel={baselineDraft.userAccessLevel}
-                            onChange={updateDraft}
-                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
-                            agentId={agent?.id}
-                            abacSupported={abacSupported}
-                            isSystemAdmin={canEditServiceAccountAuth}
-                        />
+                        <div
+                            role='tabpanel'
+                            id='agent-access-panel'
+                            aria-labelledby='agent-access-tab'
+                        >
+                            <AccessTab
+                                draft={draft}
+                                baselineUserAccessLevel={baselineDraft.userAccessLevel}
+                                onChange={updateDraft}
+                                serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                                agentId={agent?.id}
+                                abacSupported={abacSupported}
+                                isSystemAdmin={canEditServiceAccountAuth}
+                            />
+                        </div>
                     )}
                     {activeTab === 'mcps' && (
-                        <McpsTab
-                            agentId={agent?.id}
-                            enabledTools={draft.enabledTools}
-                            autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
-                            useServiceAccountAuth={draft.useServiceAccountAuth}
-                            serviceAccountFieldsLocked={serviceAccountFieldsLocked}
-                            canEditServiceAccountAuth={canEditServiceAccountAuth}
-                            onChange={(updates) => updateDraft(updates)}
-                            onReconcileEnabledTools={reconcileEnabledTools}
-                        />
+                        <div
+                            role='tabpanel'
+                            id='agent-mcps-panel'
+                            aria-labelledby='agent-mcps-tab'
+                        >
+                            <McpsTab
+                                agentId={agent?.id}
+                                enabledTools={draft.enabledTools}
+                                autoEnableNewMCPTools={draft.autoEnableNewMCPTools}
+                                useServiceAccountAuth={draft.useServiceAccountAuth}
+                                serviceAccountFieldsLocked={serviceAccountFieldsLocked}
+                                canEditServiceAccountAuth={canEditServiceAccountAuth}
+                                onChange={(updates) => updateDraft(updates)}
+                                onReconcileEnabledTools={reconcileEnabledTools}
+                            />
+                        </div>
                     )}
                 </ViewBody>
 
@@ -537,22 +581,26 @@ const ViewHeader = styled.div`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 48px 0 16px 0;
+    padding: var(--spacing-xxxxxl) 0 var(--spacing-l) 0;
     flex-shrink: 0;
+`;
+
+const ConfigTabs = styled(UnderlineTabs)`
+    padding: 0 var(--spacing-l);
 `;
 
 const HeaderLeading = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     min-width: 0;
 `;
 
 const ViewTitle = styled.h1`
-    font-family: 'Metropolis', sans-serif;
-    font-weight: 600;
-    font-size: 22px;
-    line-height: 28px;
+    font-family: var(--font-family-heading, 'Metropolis', sans-serif);
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-500);
+    line-height: var(--line-height-500);
     color: var(--center-channel-color);
     margin: 0;
     white-space: nowrap;
@@ -561,30 +609,26 @@ const ViewTitle = styled.h1`
 `;
 
 const BackButton = styled(IconButton)`
-    margin-left: -8px;
-`;
-
-const ViewTabs = styled(Tabs)`
-    flex-shrink: 0;
+    margin-left: calc(-1 * var(--spacing-xs));
 `;
 
 const ViewBody = styled.div`
-    padding: 32px 16px;
+    padding: var(--spacing-xxxl) var(--spacing-l);
     flex: 1;
     min-height: 0;
     overflow-y: auto;
 `;
 
 const Notice = styled(SectionNotice)`
-    margin-bottom: 16px;
+    margin-bottom: var(--spacing-l);
 `;
 
 const ViewFooter = styled.div`
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    padding: 16px 0;
-    gap: 8px;
+    padding: var(--spacing-l) 0;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
     background: var(--center-channel-bg);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);

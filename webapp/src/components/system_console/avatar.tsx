@@ -144,7 +144,7 @@ const AvatarSelectorContainer = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 16px;
+	gap: var(--spacing-l);
 `;
 
 export default AvatarItem;

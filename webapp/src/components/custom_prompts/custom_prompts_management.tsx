@@ -15,14 +15,13 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Modal} from '@mattermost/compass-ui/components/modal';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
-import {Tabs} from '@mattermost/compass-ui/components/tabs';
-
 import {getCustomPrompts, getPinnedPromptIds, getShowCustomPromptsModal} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
 import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPromptPin} from '@/client';
 
 import ConfirmationDialog from '../confirmation_dialog';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 
 import CustomPromptForm from './custom_prompt_form';
 
@@ -52,8 +51,8 @@ const ModalBody = styled.div<{$stickyFormFooter?: boolean}>`
     overflow-y: ${({$stickyFormFooter}) => ($stickyFormFooter ? 'hidden' : 'auto')};
 `;
 
-const TabBar = styled(Tabs)`
-    padding: 0 32px;
+const TabBar = styled(UnderlineTabs)`
+    padding: 0 var(--spacing-xxxl);
 `;
 
 const ToolbarRow = styled.div`
@@ -84,23 +83,23 @@ const PromptRowContainer = styled.div`
 const PromptRowHeader = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-m) var(--spacing-l);
+    cursor: pointer;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
+    }
+
+    &:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px var(--button-bg);
     }
 `;
 
 const PromptRowMain = styled.div`
     flex: 1;
     min-width: 0;
-    cursor: pointer;
-
-    &:focus-visible {
-        outline: none;
-        box-shadow: inset 0 0 0 2px var(--button-bg);
-    }
 `;
 
 const PromptInfo = styled.div`
@@ -316,14 +315,26 @@ const CustomPromptsManagement = () => {
                                 </ModalBody>
                             ) : (
                                 <>
-                                    <TabBar
-                                        tabs={[
-                                            {key: 'all', label: <FormattedMessage defaultMessage='All Prompts'/>},
-                                            {key: 'yours', label: <FormattedMessage defaultMessage='Your Prompts'/>},
-                                        ]}
-                                        activeKey={activeTab}
-                                        onChange={(key) => setActiveTab(key as 'all' | 'yours')}
-                                    />
+                                    <TabBar role='tablist'>
+                                        <UnderlineTab
+                                            type='button'
+                                            role='tab'
+                                            $active={activeTab === 'all'}
+                                            aria-selected={activeTab === 'all'}
+                                            onClick={() => setActiveTab('all')}
+                                        >
+                                            <FormattedMessage defaultMessage='All Prompts'/>
+                                        </UnderlineTab>
+                                        <UnderlineTab
+                                            type='button'
+                                            role='tab'
+                                            $active={activeTab === 'yours'}
+                                            aria-selected={activeTab === 'yours'}
+                                            onClick={() => setActiveTab('yours')}
+                                        >
+                                            <FormattedMessage defaultMessage='Your Prompts'/>
+                                        </UnderlineTab>
+                                    </TabBar>
                                     <ToolbarRow>
                                         <SearchContainer>
                                             <SearchInput
@@ -363,22 +374,22 @@ const CustomPromptsManagement = () => {
 
                                                 return (
                                                     <PromptRowContainer key={prompt.id}>
-                                                        <PromptRowHeader>
-                                                            <PromptRowMain
-                                                                role='button'
-                                                                tabIndex={0}
-                                                                aria-label={intl.formatMessage(
-                                                                    {defaultMessage: 'Open prompt {name}'},
-                                                                    {name: prompt.name},
-                                                                )}
-                                                                onClick={openPrompt}
-                                                                onKeyDown={(e) => {
-                                                                    if (e.key === 'Enter' || e.key === ' ') {
-                                                                        e.preventDefault();
-                                                                        openPrompt();
-                                                                    }
-                                                                }}
-                                                            >
+                                                        <PromptRowHeader
+                                                            role='button'
+                                                            tabIndex={0}
+                                                            aria-label={intl.formatMessage(
+                                                                {defaultMessage: 'Open prompt {name}'},
+                                                                {name: prompt.name},
+                                                            )}
+                                                            onClick={openPrompt}
+                                                            onKeyDown={(e) => {
+                                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                                    e.preventDefault();
+                                                                    openPrompt();
+                                                                }
+                                                            }}
+                                                        >
+                                                            <PromptRowMain>
                                                                 <PromptInfo>
                                                                     <PromptName>{prompt.name}</PromptName>
                                                                     {prompt.description && (
@@ -388,7 +399,8 @@ const CustomPromptsManagement = () => {
                                                             </PromptRowMain>
                                                             <PinButton
                                                                 size='small'
-                                                                toggled={isPinned}
+                                                                active={isPinned}
+                                                                aria-pressed={isPinned}
                                                                 icon={<Icon glyph={isPinned ? <PinIcon/> : <PinOutlineIcon/>}/>}
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();

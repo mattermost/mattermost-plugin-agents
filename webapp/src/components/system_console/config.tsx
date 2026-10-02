@@ -60,27 +60,27 @@ type Props = {
 const ConfigContainer = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 20px;
+	gap: var(--spacing-xl);
 `;
 
 const PanelFooterText = styled.div`
-	margin-top: 20px;
+	margin-top: var(--spacing-xl);
 	color: rgba(var(--center-channel-color-rgb), 0.72);
-	font-size: 14px;
+	font-size: var(--font-size-100);
 `;
 
 const Horizontal = styled.div`
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 40px;
+    padding: var(--spacing-xxxxl);
 `;
 
 const defaultConfig: Config = {

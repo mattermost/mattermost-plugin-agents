@@ -5,7 +5,7 @@ import React from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
-import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectField} from './item';
+import {CompactItemLabel, HelpText, FormRow, CompactFieldControlRow, InlineCheckbox, SelectField} from './item';
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
@@ -110,20 +110,20 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>
+            <CompactItemLabel>
                 <Horizontal>
                     {headerLabel}
                 </Horizontal>
-            </ItemLabel>
+            </CompactItemLabel>
             <ReasoningContainer>
-                <FieldControlRow>
+                <CompactFieldControlRow>
                     <InlineCheckbox
                         testId='reasoning-enable'
                         label={intl.formatMessage({defaultMessage: 'Enable'})}
                         checked={reasoningEnabled}
                         onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
-                </FieldControlRow>
+                </CompactFieldControlRow>
 
                 {reasoningEnabled && (
                     <>
@@ -235,19 +235,19 @@ const Horizontal = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ReasoningContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-m);
 `;
 
 const ConfigField = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const FieldLabel = styled.label`

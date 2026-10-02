@@ -34,7 +34,7 @@ const NoServicesPage = (props: Props) => {
 };
 
 const Card = styled.div`
-	padding: 32px 32px 56px;
+	padding: var(--spacing-xxxl) var(--spacing-xxxl) 56px;
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
 	border-radius: var(--radius-s);
 	background: var(--center-channel-bg);

@@ -107,7 +107,7 @@ const BuiltInSection = styled.div``;
 const BuiltInSectionHeader = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const BuiltInSectionTitle = styled.div`
@@ -119,24 +119,24 @@ const BuiltInSectionTitle = styled.div`
 `;
 
 const BuiltInSectionDescription = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    margin-top: 16px;
+    gap: var(--spacing-l);
+    margin-top: var(--spacing-l);
 `;
 
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
-    padding: 12px;
+    border-radius: var(--radius-s);
+    padding: var(--spacing-m);
     background-color: var(--center-channel-bg);
 `;
 
@@ -153,24 +153,24 @@ const ServerHeader = styled.div`
 const ReadOnlyTitleRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex-wrap: wrap;
 `;
 
 const ReadOnlyServerTitle = styled.div`
-    font-weight: 600;
-    font-size: 14px;
-    line-height: 20px;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const ReadOnlySubtitle = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
 const ReadOnlyHelpText = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     line-height: 1.5;
 `;

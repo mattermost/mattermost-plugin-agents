@@ -18,9 +18,9 @@ import {
     BooleanItem,
     ComboboxItem,
     FormRow,
-    FieldControlRow,
+    CompactFieldControlRow,
+    CompactItemLabel,
     InlineCheckbox,
-    ItemLabel,
     HelpText,
     ItemList,
     TextItem,
@@ -378,11 +378,11 @@ const ConfigTab = (props: Props) => {
                     <AdvancedContent>
                         <ItemList>
                             <FormRow>
-                                <ItemLabel>
+                                <CompactItemLabel>
                                     {intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
-                                </ItemLabel>
+                                </CompactItemLabel>
                                 <TextFieldContainer>
-                                    <FieldControlRow>
+                                    <CompactFieldControlRow>
                                         <InlineCheckbox
                                             testId='mcp-dynamic-tool-loading'
                                             inputAriaLabel={intl.formatMessage({defaultMessage: 'Dynamic tool loading'})}
@@ -390,7 +390,7 @@ const ConfigTab = (props: Props) => {
                                             checked={draft.mcpDynamicToolLoading}
                                             onChange={(checked) => onChange({mcpDynamicToolLoading: checked})}
                                         />
-                                    </FieldControlRow>
+                                    </CompactFieldControlRow>
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage:
@@ -469,7 +469,7 @@ const ConfigTab = (props: Props) => {
 const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: var(--spacing-xxl);
 `;
 
 const CharacterCounter = styled.div<{$hasError: boolean}>`
@@ -479,16 +479,16 @@ const CharacterCounter = styled.div<{$hasError: boolean}>`
 
 const AdvancedSection = styled.div`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     overflow: hidden;
 `;
 
 const AdvancedHeader = styled.button`
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     width: 100%;
-    padding: 12px 16px;
+    padding: var(--spacing-m) var(--spacing-l);
     border: none;
     background: rgba(var(--center-channel-color-rgb), 0.04);
     cursor: pointer;
@@ -508,22 +508,22 @@ const ChevronContainer = styled.span`
 `;
 
 const AdvancedHeaderText = styled.span`
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
 `;
 
 const AdvancedHeaderHint = styled.span`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-left: auto;
 `;
 
 const AdvancedContent = styled.div`
-    padding: 24px 16px;
+    padding: var(--spacing-xxl) var(--spacing-l);
 `;
 
 export default ConfigTab;

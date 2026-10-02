@@ -151,15 +151,15 @@ const AddServiceRow = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const ServicesList = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: var(--spacing-m);
 
-	padding-bottom: 24px;
+	padding-bottom: var(--spacing-xxl);
 `;
 
 export default Services;

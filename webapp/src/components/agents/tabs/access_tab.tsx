@@ -88,13 +88,8 @@ const AccessTab = (props: Props) => {
                     channelIDs={draft.channelIds}
                     onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
                     disabled={serviceAccountFieldsLocked}
+                    helpText={<FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>}
                 />
-                <FormRow>
-                    <span aria-hidden={true}/>
-                    <HelpTextInSecondColumn>
-                        <FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>
-                    </HelpTextInSecondColumn>
-                </FormRow>
             </ItemList>
 
             {/* User Access Section */}
@@ -109,13 +104,8 @@ const AccessTab = (props: Props) => {
                     disabled={serviceAccountFieldsLocked}
                     showAttributeBased={(abacSupported && abacLicensed) || attributeBasedSelected}
                     attributeBasedDescription={attributeBasedContent}
+                    helpText={<FormattedMessage defaultMessage='Control which users can interact with this agent.'/>}
                 />
-                <FormRow>
-                    <span aria-hidden={true}/>
-                    <HelpTextInSecondColumn>
-                        <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
-                    </HelpTextInSecondColumn>
-                </FormRow>
             </ItemList>
 
             {switchingAwayFromAttributeBased && (
@@ -162,45 +152,42 @@ const AccessTab = (props: Props) => {
 const SectionsContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 32px;
-`;
-
-const HelpTextInSecondColumn = styled.div`
-    margin-top: -16px;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
+    gap: var(--spacing-xxxl);
 `;
 
 const AdminsColumn = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const HelpTextInline = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
 const PolicyNote = styled(SectionNotice)`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
 `;
 
 const SwitchAwayWarning = styled(SectionNotice)`
     width: 90%;
-    margin-top: 12px;
+    margin-top: var(--spacing-m);
 `;
 
 const PolicyEditorWrapper = styled.fieldset`
-    margin-top: 12px;
+    margin-top: var(--spacing-m);
     padding: 0;
     border: 0;
     min-inline-size: 0;
     width: 90%;
+
+    /* PolicyEditor returns null when hidden/empty; don't keep a flex gap slot. */
+    &:empty {
+        display: none;
+    }
 `;
 
 export default AccessTab;

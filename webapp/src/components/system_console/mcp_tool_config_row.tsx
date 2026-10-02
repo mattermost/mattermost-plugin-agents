@@ -158,8 +158,8 @@ const ToolRowContainer = styled.div<{$disabled?: boolean}>`
 const ToolRowMain = styled.div`
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 0 16px 0 24px;
+    gap: var(--spacing-m);
+    padding: 0 var(--spacing-l) 0 var(--spacing-xxl);
 `;
 
 const ToolRowLeft = styled.div`
@@ -172,7 +172,7 @@ const ToolRowLeft = styled.div`
 const ToolRowRight = styled.div`
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--spacing-l);
     flex-shrink: 0;
 `;
 
@@ -185,10 +185,10 @@ const ToolName = styled.div`
 `;
 
 const ToolDescription = styled.div`
-    font-size: 12px;
-    font-weight: 400;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
     color: rgba(var(--center-channel-color-rgb), 0.75);
-    line-height: 16px;
+    line-height: var(--line-height-75);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -199,7 +199,7 @@ const PolicySelectWrapper = styled.div`
     flex-direction: row;
     align-items: center;
     justify-content: flex-end;
-    gap: 8px;
+    gap: var(--spacing-xs);
     width: auto;
     min-width: 192px;
 `;
@@ -217,21 +217,21 @@ const ToggleWrapper = styled.div`
 const ExpandedContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-top: 8px;
-    margin-left: 24px;
-    margin-right: 16px;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-xs);
+    margin-left: var(--spacing-xxl);
+    margin-right: var(--spacing-l);
 `;
 
 const OverrideField = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const OverrideLabel = styled.label`
-    font-size: 12px;
-    font-weight: 600;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-semibold);
     color: rgba(var(--center-channel-color-rgb), 0.8);
 `;
 
@@ -242,9 +242,9 @@ const OverrideHelp = styled.div`
 `;
 
 const SchemaContainer = styled.div`
-    padding: 8px;
+    padding: var(--spacing-xs);
     background: rgba(var(--center-channel-color-rgb), 0.04);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
     font-size: 11px;
     color: rgba(var(--center-channel-color-rgb), 0.72);

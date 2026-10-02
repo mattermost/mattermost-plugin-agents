@@ -15,20 +15,22 @@ import {ChannelAccessLevel, UserAccessLevel} from './bot';
 
 import {LicenseChip} from './enterprise_chip';
 
-import {FormRow, HelpText, ItemLabel} from './item';
+import {CompactItemLabel, FormRow, HelpText, ItemLabel} from './item';
 
 const AllowTypes = styled.div`
-	margin-bottom: 24px;
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const MainContainer = styled.div`
+	display: flex;
+	flex-direction: column;
+	gap: var(--spacing-l);
 `;
 
 const SelectWrapper = styled.div`
-    margin-top: 8px;
+    margin-top: var(--spacing-xs);
     width: 90%;
 `;
 
@@ -40,6 +42,7 @@ type UserAccessLevelProps = {
     teamIDs: string[];
     onChangeIDs: (userIds: string[], teamIds: string[]) => void;
     disabled?: boolean;
+    helpText?: React.ReactNode;
 
     // Renders the attribute-based radio (agents with ABAC support only;
     // config bots never pass this — they are not policy-addressable).
@@ -56,7 +59,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>{props.label}</ItemLabel>
+            <CompactItemLabel>{props.label}</CompactItemLabel>
             <MainContainer>
                 <AllowTypes>
                     <Radio
@@ -100,6 +103,7 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
                         </>
                     )}
                 </AllowTypes>
+                {props.helpText && <HelpText>{props.helpText}</HelpText>}
                 {!accessLicensed && (
                     <LicenseChip capability='agent_access_controls'/>
                 )}
@@ -136,6 +140,7 @@ type ChannelAccessLevelProps = {
     channelIDs: string[];
     onChangeChannelIDs: (channelIDs: string[]) => void;
     disabled?: boolean;
+    helpText?: React.ReactNode;
 };
 
 export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
@@ -145,7 +150,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>{props.label}</ItemLabel>
+            <CompactItemLabel>{props.label}</CompactItemLabel>
             <MainContainer>
                 <AllowTypes>
                     <Radio
@@ -185,6 +190,7 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
                         <FormattedMessage defaultMessage='Block all channels'/>
                     </Radio>
                 </AllowTypes>
+                {props.helpText && <HelpText>{props.helpText}</HelpText>}
                 {!accessLicensed && (
                     <LicenseChip capability='agent_access_controls'/>
                 )}

@@ -25,12 +25,12 @@ import {retentionWindowTightened, retentionWindowWidened} from './retention_wind
 const IndexStorageGroup = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: var(--spacing-xxl);
 `;
 
 const IndexStorageTitle = styled.div`
-    font-weight: 600;
-    font-size: 14px;
+    font-weight: var(--font-weight-semibold);
+    font-size: var(--font-size-100);
     color: var(--center-channel-color);
 `;
 

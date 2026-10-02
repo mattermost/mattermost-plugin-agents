@@ -16,7 +16,7 @@ import IconAI from '../assets/icon_ai';
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
 
-import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
+import {BooleanItem, FormRow, CompactFieldControlRow, CompactItemLabel, InlineCheckbox, ItemList, SelectionItem, TextItem, HelpText, ComboboxItem, TextFieldContainer} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -166,16 +166,16 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>
+            <CompactItemLabel>
                 {titleMessage}
-            </ItemLabel>
+            </CompactItemLabel>
             <NativeToolsColumn>
                 {availableNativeTools.map((tool) => {
                     const checked = (props.enabledTools || []).includes(tool.id);
                     const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
                     return (
-                        <NativeToolField key={tool.id}>
-                            <FieldControlRow>
+                        <TextFieldContainer key={tool.id}>
+                            <CompactFieldControlRow>
                                 <InlineCheckbox
                                     testId={`native-tool-${tool.id}`}
                                     label={tool.label}
@@ -184,9 +184,9 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                                     onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
                                 />
                                 {webSearchGated && <LicenseChip capability='provider_web_search'/>}
-                            </FieldControlRow>
-                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                        </NativeToolField>
+                            </CompactFieldControlRow>
+                            <HelpText>{tool.helpText}</HelpText>
+                        </TextFieldContainer>
                     );
                 })}
             </NativeToolsColumn>
@@ -505,7 +505,7 @@ const Bot = (props: Props) => {
 };
 
 const ItemListContainer = styled.div`
-	padding: 24px 20px;
+	padding: var(--spacing-xxl) var(--spacing-xl);
 	padding-right: 76px;
 `;
 
@@ -513,12 +513,12 @@ const Title = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const NameText = styled.div`
-	font-size: 14px;
-	font-weight: 600;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
 `;
 
 const Spacer = styled.div`
@@ -529,11 +529,11 @@ const BotContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 
-	border-radius: 4px;
+	border-radius: var(--radius-s);
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 
 	&:hover {
-		box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--elevation-1);
 	}
 `;
 
@@ -547,8 +547,8 @@ const HeaderContainer = styled.div`
 	flex-direction: row;
 	justify-content: space-between;
 	align-items: center;
-	gap: 16px;
-	padding: 12px 16px 12px 20px;
+	gap: var(--spacing-l);
+	padding: var(--spacing-m) var(--spacing-l) var(--spacing-m) var(--spacing-xl);
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 	cursor: pointer;
 `;
@@ -557,23 +557,13 @@ const HeaderActions = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 4px;
+	gap: var(--spacing-xxxs);
 `;
 
 const NativeToolsColumn = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-`;
-
-const NativeToolField = styled.div`
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-`;
-
-const NativeToolHelpText = styled(HelpText)`
-	padding-left: 0;
+	gap: var(--spacing-xl);
 `;
 
 export default Bot;

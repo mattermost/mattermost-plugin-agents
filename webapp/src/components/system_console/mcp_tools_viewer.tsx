@@ -357,35 +357,35 @@ const MCPToolsViewer = ({mcpConfig, onConfigChange, initialToolsData}: MCPToolsV
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const Header = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const HeaderInfo = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const Title = styled.h3`
     margin: 0;
-    font-size: 18px;
-    font-weight: 600;
+    font-size: var(--font-size-300);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const Summary = styled.div`
-    font-size: 14px;
+    font-size: var(--font-size-100);
     color: rgba(var(--center-channel-color-rgb), 0.64);
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const ErrorCount = styled.span`
@@ -394,27 +394,27 @@ const ErrorCount = styled.span`
 
 const ButtonGroup = styled.div`
     display: flex;
-    gap: 8px;
+    gap: var(--spacing-xs);
     align-items: center;
 `;
 
 const Content = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const LoadingState = styled.div`
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 32px;
+    padding: var(--spacing-xxxl);
 `;
 
 const ServersList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--spacing-m);
 `;
 
 export default MCPToolsViewer;

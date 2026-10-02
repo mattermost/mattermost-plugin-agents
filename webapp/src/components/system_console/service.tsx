@@ -582,7 +582,7 @@ const Service = (props: Props) => {
 };
 
 const ItemListContainer = styled.div`
-	padding: 24px 20px;
+	padding: var(--spacing-xxl) var(--spacing-xl);
 	padding-right: 76px;
 `;
 
@@ -590,17 +590,17 @@ const Title = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const NameText = styled.div`
-	font-size: 14px;
-	font-weight: 600;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
 `;
 
 const ServiceTypeText = styled.div`
-	font-size: 14px;
-	font-weight: 400;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-regular);
 	color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
@@ -611,18 +611,18 @@ const Spacer = styled.div`
 const VerticalDivider = styled.div`
 	width: 1px;
 	border-left: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-	height: 24px;
+	height: var(--spacing-xxl);
 `;
 
 const ServiceContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 
-	border-radius: 4px;
+	border-radius: var(--radius-s);
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 
 	&:hover {
-		box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--elevation-1);
 	}
 `;
 
@@ -636,8 +636,8 @@ const HeaderContainer = styled.div`
 	flex-direction: row;
 	justify-content: space-between;
 	align-items: center;
-	gap: 16px;
-	padding: 12px 16px 12px 20px;
+	gap: var(--spacing-l);
+	padding: var(--spacing-m) var(--spacing-l) var(--spacing-m) var(--spacing-xl);
 	cursor: pointer;
 `;
 
@@ -645,7 +645,7 @@ const HeaderActions = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 4px;
+	gap: var(--spacing-xxxs);
 `;
 
 export default Service;

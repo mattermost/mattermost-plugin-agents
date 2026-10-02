@@ -206,10 +206,10 @@ const RowContainer = styled.div<{$clickable: boolean}>`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     height: 60px;
-    padding: 0 16px;
-    border-radius: 4px;
+    padding: 0 var(--spacing-l);
+    border-radius: var(--radius-s);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
     background: var(--center-channel-bg, #fff);
     cursor: ${({$clickable}) => ($clickable ? 'pointer' : 'default')};
@@ -232,7 +232,7 @@ const RowMain = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex: 1;
     min-width: 0;
 `;
@@ -245,16 +245,16 @@ const NameColumn = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex: 1;
     min-width: 0;
 `;
 
 const DisplayName = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
     white-space: nowrap;
     overflow: hidden;
@@ -262,10 +262,10 @@ const DisplayName = styled.div`
 `;
 
 const Username = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-100);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     white-space: nowrap;
     overflow: hidden;
@@ -275,7 +275,7 @@ const Username = styled.div`
 const BadgesColumn = styled.div`
     display: flex;
     flex-direction: row;
-    gap: 8px;
+    gap: var(--spacing-xs);
     align-items: center;
     flex-shrink: 0;
 `;

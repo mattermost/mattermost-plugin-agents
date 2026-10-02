@@ -74,7 +74,7 @@ const FieldGroup = styled.div`
 const RadioGroup = styled.div`
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: var(--spacing-xl);
 `;
 
 const InlineRadio = styled(Radio)`
