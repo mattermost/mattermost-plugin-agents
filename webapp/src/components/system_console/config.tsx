@@ -33,6 +33,14 @@ type RuntimeBotOption = {
     displayName: string;
 };
 
+// The server answers with the first bot when the configured default is empty or unknown.
+export const effectiveDefaultBotName = (configured: string, bots: RuntimeBotOption[]) => {
+    if (bots.some((bot) => bot.username === configured)) {
+        return configured;
+    }
+    return bots[0]?.username ?? '';
+};
+
 type Props = {
     id: string
     label: string
@@ -318,7 +326,7 @@ const Config = (props: Props) => {
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
-                        value={value.defaultBotName}
+                        value={effectiveDefaultBotName(value.defaultBotName, runtimeBots)}
                         onChange={(defaultBotName) => {
                             updateConfig({defaultBotName});
                         }}

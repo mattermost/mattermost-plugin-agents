@@ -7,7 +7,7 @@ import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
-import Config from './config';
+import Config, {effectiveDefaultBotName} from './config';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -233,5 +233,21 @@ describe('Config license gating', () => {
 
         expect(trueRadioFor('Enable Token Usage Logging').disabled).toBe(false);
         expect(trueRadioFor('Allow native web search in channels').disabled).toBe(false);
+    });
+});
+
+describe('effectiveDefaultBotName', () => {
+    const bots = [
+        {username: 'first', displayName: 'First'},
+        {username: 'second', displayName: 'Second'},
+    ];
+
+    it.each([
+        {name: 'a configured bot', configured: 'second', bots, expected: 'second'},
+        {name: 'an empty default', configured: '', bots, expected: 'first'},
+        {name: 'a removed bot', configured: 'gone', bots, expected: 'first'},
+        {name: 'no bots', configured: '', bots: [], expected: ''},
+    ])('resolves $name the way the server does', ({configured, bots: available, expected}) => {
+        expect(effectiveDefaultBotName(configured, available)).toBe(expected);
     });
 });
