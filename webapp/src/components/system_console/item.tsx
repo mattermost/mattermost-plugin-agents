@@ -374,16 +374,15 @@ export type InlineCheckboxProps = {
 
 export const InlineCheckbox = (props: InlineCheckboxProps) => {
     return (
-        <span data-testid={props.testId}>
-            <Checkbox
-                checked={props.checked}
-                disabled={props.disabled}
-                aria-label={props.inputAriaLabel}
-                onChange={(e) => props.onChange(e.target.checked)}
-            >
-                {props.label}
-            </Checkbox>
-        </span>
+        <Checkbox
+            data-testid={props.testId}
+            checked={props.checked}
+            disabled={props.disabled}
+            aria-label={props.inputAriaLabel}
+            onChange={(e) => props.onChange(e.target.checked)}
+        >
+            {props.label}
+        </Checkbox>
     );
 };
 

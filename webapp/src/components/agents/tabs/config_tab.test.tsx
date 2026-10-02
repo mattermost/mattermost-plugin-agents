@@ -137,7 +137,7 @@ describe('ConfigTab', () => {
 
         expect((screen.getByLabelText('Dynamic tool loading') as HTMLInputElement).disabled).toBe(false);
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
     });
 
@@ -228,7 +228,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
     });
 
@@ -249,7 +249,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
     });
