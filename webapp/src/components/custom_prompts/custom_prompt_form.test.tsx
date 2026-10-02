@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {CustomPrompt} from '@/types';
@@ -93,5 +93,47 @@ describe('CustomPromptForm shared prompts license gating', () => {
         expect(privateRadio.disabled).toBe(false);
         fireEvent.click(privateRadio);
         expect(privateRadio.checked).toBe(true);
+    });
+});
+
+describe('CustomPromptForm validation', () => {
+    test('blocks saving and reports both required fields when empty', () => {
+        const onSave = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <CustomPromptForm
+                    onSave={onSave}
+                    onDiscard={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(onSave).not.toHaveBeenCalled();
+        expect(screen.getByText('Action title is required')).not.toBeNull();
+        expect(screen.getByText('System prompt is required')).not.toBeNull();
+
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: 'Title'}});
+        expect(screen.queryByText('Action title is required')).toBeNull();
+    });
+
+    test('saves trimmed values', async () => {
+        const onSave = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <CustomPromptForm
+                    onSave={onSave}
+                    onDiscard={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        fireEvent.change(screen.getByPlaceholderText('Enter a title for your prompt'), {target: {value: ' Title '}});
+        fireEvent.change(screen.getByPlaceholderText('Enter the system prompt template'), {target: {value: ' Body '}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(onSave).toHaveBeenCalledWith({name: 'Title', description: '', template: 'Body', is_shared: false});
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false));
     });
 });

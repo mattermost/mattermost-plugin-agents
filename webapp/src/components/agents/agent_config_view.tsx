@@ -6,6 +6,12 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
+
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {
     UserAgent,
@@ -19,7 +25,6 @@ import {
     codePointLength,
 } from '@/types/agents';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
 import {useIsLicensedFor} from '@/license';
 import {useABACSupport} from '@/utils/access_control';
@@ -404,50 +409,45 @@ const AgentConfigView = (props: Props) => {
                 <ViewHeader>
                     <HeaderLeading>
                         <BackButton
-                            type='button'
+                            icon={<Icon glyph={<ArrowLeftIcon/>}/>}
+                            size='medium'
                             onClick={requestBack}
                             disabled={saving}
                             aria-label={intl.formatMessage({defaultMessage: 'Back to agents'})}
-                        >
-                            <ArrowLeftIcon size={20}/>
-                        </BackButton>
+                        />
                         <ViewTitle>{title}</ViewTitle>
                     </HeaderLeading>
                 </ViewHeader>
 
-                <TabsContainer>
-                    <TabButton
-                        $active={activeTab === 'config'}
-                        onClick={() => setActiveTab('config')}
-                    >
-                        <FormattedMessage defaultMessage='Configuration'/>
-                    </TabButton>
-                    <TabButton
-                        $active={activeTab === 'access'}
-                        onClick={() => setActiveTab('access')}
-                    >
-                        <FormattedMessage defaultMessage='Access'/>
-                    </TabButton>
-                    <TabButton
-                        $active={activeTab === 'mcps'}
-                        disabled={mcpsTabDisabled}
-                        title={mcpsTabDisabled ? intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'}) : ''}
-                        onClick={() => {
-                            if (!mcpsTabDisabled) {
-                                setActiveTab('mcps');
-                            }
-                        }}
-                    >
-                        <FormattedMessage defaultMessage='MCPs'/>
-                    </TabButton>
-                </TabsContainer>
+                <ViewTabs
+                    tabs={[
+                        {key: 'config', label: <FormattedMessage defaultMessage='Configuration'/>},
+                        {key: 'access', label: <FormattedMessage defaultMessage='Access'/>},
+                        {
+                            key: 'mcps',
+                            label: <FormattedMessage defaultMessage='MCPs'/>,
+                            disabled: mcpsTabDisabled,
+                            ...(mcpsTabDisabled ? {title: intl.formatMessage({defaultMessage: 'Enable Tools to configure MCP integrations'})} : {}),
+                        },
+                    ]}
+                    activeKey={activeTab}
+                    onChange={(key) => setActiveTab(key as Tab)}
+                />
 
                 <ViewBody>
-                    {errors.general && <ErrorBanner>{errors.general}</ErrorBanner>}
+                    {errors.general && (
+                        <Notice
+                            type='danger'
+                            title={errors.general}
+                        />
+                    )}
                     {serviceAccountFieldsLocked && (
-                        <WarningBanner>
-                            <FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>
-                        </WarningBanner>
+                        <div role='status'>
+                            <Notice
+                                type='warning'
+                                title={<FormattedMessage defaultMessage='This agent uses service account authentication. Access and MCP tool grants require a system administrator while that setting is enabled. Other settings can still be saved, or turn the setting off on the MCPs tab.'/>}
+                            />
+                        </div>
                     )}
 
                     {activeTab === 'config' && (
@@ -487,20 +487,21 @@ const AgentConfigView = (props: Props) => {
                 </ViewBody>
 
                 <ViewFooter>
-                    <CancelButton
-                        type='button'
+                    <Button
+                        emphasis='tertiary'
                         onClick={requestBack}
                         disabled={saving}
                     >
                         <FormattedMessage defaultMessage='Cancel'/>
-                    </CancelButton>
-                    <SaveButton
+                    </Button>
+                    <Button
+                        emphasis='primary'
                         onClick={handleSave}
-                        disabled={saving}
+                        loading={saving}
                     >
                         {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
                         }
-                    </SaveButton>
+                    </Button>
                 </ViewFooter>
             </ViewContainer>
             <ConfirmationDialog
@@ -559,57 +560,12 @@ const ViewTitle = styled.h1`
     text-overflow: ellipsis;
 `;
 
-const BackButton = styled.button`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 8px;
+const BackButton = styled(IconButton)`
     margin-left: -8px;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    &:hover:not(:disabled) {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: var(--center-channel-color);
-    }
-
-    &:disabled {
-        cursor: not-allowed;
-        opacity: 0.4;
-    }
 `;
 
-const TabsContainer = styled.div`
-    display: flex;
-    box-sizing: border-box;
-    width: 100%;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+const ViewTabs = styled(Tabs)`
     flex-shrink: 0;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 12px 16px;
-    border: none;
-    background: none;
-    cursor: pointer;
-    font-size: 14px;
-    font-weight: 600;
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(p) => (p.$active ? 'var(--button-bg)' : 'transparent')};
-    transition: color 0.2s ease, border-color 0.2s ease;
-    margin-bottom: -1px;
-
-    &:hover:not(:disabled) {
-        color: ${(p) => (p.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    }
-
-    &:disabled {
-        opacity: 0.4;
-        cursor: not-allowed;
-    }
 `;
 
 const ViewBody = styled.div`
@@ -619,24 +575,8 @@ const ViewBody = styled.div`
     overflow-y: auto;
 `;
 
-const ErrorBanner = styled.div`
-    padding: 10px 12px;
+const Notice = styled(SectionNotice)`
     margin-bottom: 16px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 14px;
-`;
-
-const WarningBanner = styled.div.attrs({role: 'status'})`
-    padding: 8px 12px;
-    margin-bottom: 16px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.3);
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 13px;
 `;
 
 const ViewFooter = styled.div`
@@ -648,14 +588,6 @@ const ViewFooter = styled.div`
     flex-shrink: 0;
     background: var(--center-channel-bg);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-`;
-
-const CancelButton = styled(TertiaryButton)`
-    height: 40px;
-`;
-
-const SaveButton = styled(PrimaryButton)`
-    height: 40px;
 `;
 
 export default AgentConfigView;

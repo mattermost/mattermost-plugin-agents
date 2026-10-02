@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 import {AgentInactiveReason, ServiceInfo, UserAgent} from '@/types/agents';
 
@@ -147,5 +147,49 @@ describe('AgentRow inactive badge', () => {
         );
 
         expect(screen.queryByText('Read only')).toBeNull();
+    });
+});
+
+describe('AgentRow actions menu', () => {
+    test.each([
+        {action: 'Edit', expectEdit: 1, expectDelete: 0},
+        {action: 'Delete', expectEdit: 0, expectDelete: 1},
+    ])('$action runs only its own callback', ({action, expectEdit, expectDelete}) => {
+        const onEdit = jest.fn();
+        const onDelete = jest.fn();
+        render(
+            <AgentRow
+                agent={makeAgent()}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={true}
+                onEdit={onEdit}
+                onDelete={onDelete}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Agent actions'}));
+        fireEvent.click(screen.getByRole('button', {name: action}));
+
+        expect(onEdit).toHaveBeenCalledTimes(expectEdit);
+        expect(onDelete).toHaveBeenCalledTimes(expectDelete);
+    });
+
+    test('Enter on the actions button opens the menu without editing the agent', () => {
+        const onEdit = jest.fn();
+        render(
+            <AgentRow
+                agent={makeAgent()}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={true}
+                onEdit={onEdit}
+                onDelete={noop}
+            />,
+        );
+
+        fireEvent.keyDown(screen.getByRole('button', {name: 'Agent actions'}), {key: 'Enter'});
+
+        expect(onEdit).not.toHaveBeenCalled();
     });
 });

@@ -6,6 +6,8 @@ import ReactDOM from 'react-dom';
 import Tippy from '@tippyjs/react';
 import styled, {createGlobalStyle} from 'styled-components';
 
+import {TourPoint, TourPointPointerPosition} from '@mattermost/compass-ui/components/tour-point';
+
 import PulsatingDot from './pulsating_dot';
 import {useTourManager, useMeasurePunchouts, useShowTutorialStep} from './hooks';
 
@@ -13,42 +15,11 @@ const rootPortal = document.getElementById('root-portal');
 
 const TippyStyles = createGlobalStyle`
     .tour-tip-tippy {
+        background: transparent;
+        box-shadow: none;
+
         .tippy-content {
             padding: 0;
-        }
-
-        .tippy-arrow {
-            width: 12px;
-            height: 24px;
-
-            &::before {
-                content: '';
-                position: absolute;
-                border-style: solid;
-                border-color: transparent;
-            }
-        }
-
-        &[data-placement^='left'] > .tippy-arrow {
-            right: -6px;
-
-            &::before {
-                right: 0;
-                border-width: 12px 0 12px 12px;
-                border-left-color: #1C58D9;
-                transform-origin: center left;
-            }
-        }
-
-        &[data-placement^='right'] > .tippy-arrow {
-            left: -6px;
-
-            &::before {
-                left: 0;
-                border-width: 12px 12px 12px 0;
-                border-right-color: #1C58D9;
-                transform-origin: center right;
-            }
         }
     }
 `;
@@ -74,74 +45,30 @@ const DotContainer = styled.div<{$placement: Placement; $translateX: number; $tr
     transform: translate(${(props) => props.$translateX}px, ${(props) => props.$translateY}px);
 `;
 
-const TourTipContent = styled.div`
-    padding: 0;
-`;
-
-const TourTipHeader = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    padding: 22px 24px 12px 24px;
-`;
-
-const TourTipTitle = styled.h4`
-    margin: 0;
-    padding-right: 24px;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    color: white;
-`;
-
-const TourTipCloseButton = styled.button`
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(255, 255, 255, 0.56);
-    border-radius: 4px;
-
-    &:hover {
-        color: white;
-        background: rgba(255, 255, 255, 0.08);
+// TourPoint draws its pointer at a fixed spot on the card edge, so it only
+// lines up with the dot when the placement is centered on that axis.
+const pointerPositionFor = (placement: Placement): TourPointPointerPosition => {
+    const [side, alignment] = placement.split('-');
+    switch (side) {
+    case 'left':
+        return 'right-center';
+    case 'right':
+        return 'left-center';
+    case 'top':
+        if (alignment === 'start') {
+            return 'bottom-left';
+        }
+        return alignment === 'end' ? 'bottom-right' : 'bottom-center';
+    default:
+        if (alignment === 'start') {
+            return 'top-left';
+        }
+        return alignment === 'end' ? 'top-right' : 'top-center';
     }
-
-    i {
-        font-size: 18px;
-    }
-`;
-
-const TourTipBody = styled.div`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 400;
-    line-height: 20px;
-    color: white;
-    padding: 0 24px 24px 24px;
-`;
-
-const TourTipContainer = styled.div`
-    background: #1C58D9;
-    border-radius: 4px;
-    overflow: visible;
-    position: relative;
-    box-shadow: 0px 12px 32px rgba(0, 0, 0, 0.12);
-
-    .tippy-arrow {
-        color: #1C58D9;
-    }
-`;
+};
 
 type Props = {
-    title: React.ReactNode;
+    title: string;
     screen: React.ReactNode;
     step: number;
     tutorialCategory: string;
@@ -172,20 +99,14 @@ const TutorialTourTip: React.FC<Props> = ({
     );
 
     const content = (
-        <TourTipContainer>
-            <TourTipContent>
-                <TourTipHeader>
-                    <TourTipTitle>{title}</TourTipTitle>
-                    <TourTipCloseButton
-                        data-testid='agents-tour-close'
-                        onClick={handleDismiss}
-                    >
-                        <i className='icon icon-close'/>
-                    </TourTipCloseButton>
-                </TourTipHeader>
-                <TourTipBody>{screen}</TourTipBody>
-            </TourTipContent>
-        </TourTipContainer>
+        <TourPoint
+            title={title}
+            pointerPosition={pointerPositionFor(placement)}
+            showPulsingDot={false}
+            onClose={handleDismiss}
+        >
+            {screen}
+        </TourPoint>
     );
 
     useEffect(() => {
@@ -246,7 +167,7 @@ const TutorialTourTip: React.FC<Props> = ({
                     }}
                     offset={offset}
                     placement={placement}
-                    arrow={true}
+                    arrow={false}
                     className='tour-tip-tippy'
                 />
             )}

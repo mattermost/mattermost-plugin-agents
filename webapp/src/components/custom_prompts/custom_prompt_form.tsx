@@ -5,6 +5,12 @@ import React, {useState, useRef, useCallback} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Radio} from '@mattermost/compass-ui/components/radio';
+import {TextArea} from '@mattermost/compass-ui/components/text-area';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
 import {useIsLicensedFor} from '@/license';
 
 import {CustomPrompt} from '@/types';
@@ -65,80 +71,20 @@ const FieldGroup = styled.div`
     position: relative;
 `;
 
-const FieldLabel = styled.label`
-    position: absolute;
-    top: -8px;
-    left: 12px;
-    background-color: var(--center-channel-bg);
-    padding: 0 4px;
-    font-size: 10px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    z-index: 1;
-`;
-
-const TextInput = styled.input`
-    width: 100%;
-    padding: 10px 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-`;
-
-const TextArea = styled.textarea`
-    width: 100%;
-    padding: 10px 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-    resize: vertical;
-    min-height: 60px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-`;
-
-const SystemPromptTextArea = styled(TextArea)`
-    min-height: 120px;
-`;
-
 const RadioGroup = styled.div`
     display: flex;
     align-items: center;
     gap: 16px;
 `;
 
-const RadioLabel = styled.label`
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--center-channel-color);
-    cursor: pointer;
-`;
-
-const RadioInput = styled.input`
-    cursor: pointer;
+const InlineRadio = styled(Radio)`
+    && {
+        width: auto;
+    }
 `;
 
 const PrivateNote = styled.span`
+    margin-left: 6px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
     font-size: 12px;
 `;
@@ -164,90 +110,8 @@ const SystemPromptLabel = styled.label`
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
-const ContextVariablesButton = styled.button`
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: var(--center-channel-color);
-    border: none;
-    border-radius: 4px;
-    padding: 4px 10px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.16);
-    }
-`;
-
-const SaveButton = styled.button`
-    background: var(--button-bg);
-    color: var(--button-color);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const DiscardButton = styled.button`
-    background: none;
-    color: var(--button-bg);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.08);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const DeleteButton = styled.button`
-    background: none;
-    color: var(--error-text);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
+const DeleteButton = styled(Button)`
     margin-right: auto;
-
-    &:hover {
-        background: rgba(var(--error-text-color-rgb), 0.08);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-`;
-
-const ValidationError = styled.div`
-    color: var(--error-text);
-    font-size: 12px;
-    line-height: 16px;
-    margin-top: 2px;
 `;
 
 const ReadOnlyText = styled.div`
@@ -373,27 +237,28 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
         <>
             {onDelete && (
                 <DeleteButton
-                    type='button'
+                    emphasis='tertiary'
+                    destructive={true}
                     onClick={onDelete}
                     disabled={isSaving}
                 >
                     <FormattedMessage defaultMessage='Delete'/>
                 </DeleteButton>
             )}
-            <DiscardButton
-                type='button'
+            <Button
+                emphasis='tertiary'
                 onClick={onDiscard}
                 disabled={isSaving}
             >
                 <FormattedMessage defaultMessage='Discard'/>
-            </DiscardButton>
-            <SaveButton
-                type='button'
+            </Button>
+            <Button
+                emphasis='primary'
                 onClick={handleSave}
-                disabled={isSaving}
+                loading={isSaving}
             >
                 <FormattedMessage defaultMessage='Save'/>
-            </SaveButton>
+            </Button>
         </>
     );
 
@@ -406,39 +271,34 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                     </VisibilityLabel>
                     <RadioGroup>
                         {canShare && (
-                            <RadioLabel>
-                                <RadioInput
-                                    type='radio'
-                                    name={`visibility-${prompt?.id ?? 'new'}`}
-                                    checked={isShared}
-                                    disabled={!sharedPromptsLicensed}
-                                    onChange={() => setIsShared(true)}
-                                />
-                                <FormattedMessage defaultMessage='Public'/>
-                            </RadioLabel>
-                        )}
-                        <RadioLabel>
-                            <RadioInput
-                                type='radio'
+                            <InlineRadio
                                 name={`visibility-${prompt?.id ?? 'new'}`}
-                                checked={!isShared}
-                                onChange={() => setIsShared(false)}
-                            />
+                                checked={isShared}
+                                disabled={!sharedPromptsLicensed}
+                                onChange={() => setIsShared(true)}
+                            >
+                                <FormattedMessage defaultMessage='Public'/>
+                            </InlineRadio>
+                        )}
+                        <InlineRadio
+                            name={`visibility-${prompt?.id ?? 'new'}`}
+                            checked={!isShared}
+                            onChange={() => setIsShared(false)}
+                        >
                             <FormattedMessage defaultMessage='Private'/>
                             <PrivateNote>
                                 <FormattedMessage defaultMessage='(only you)'/>
                             </PrivateNote>
-                        </RadioLabel>
+                        </InlineRadio>
                     </RadioGroup>
                 </FieldGroup>
                 <FieldGroup>
-                    <FieldLabel htmlFor={`prompt-name-${prompt?.id ?? 'new'}`}>
-                        <FormattedMessage defaultMessage='Action Title'/>
-                    </FieldLabel>
                     <TextInput
                         id={`prompt-name-${prompt?.id ?? 'new'}`}
+                        label={<FormattedMessage defaultMessage='Action Title'/>}
                         value={name}
                         maxLength={64}
+                        invalid={errors.name}
                         onChange={(e) => {
                             setName(e.target.value);
                             if (errors.name) {
@@ -448,17 +308,14 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                         placeholder={intl.formatMessage({defaultMessage: 'Enter a title for your prompt'})}
                     />
                     {errors.name && (
-                        <ValidationError>
-                            <FormattedMessage defaultMessage='Action title is required'/>
-                        </ValidationError>
+                        <ErrorMessage message={<FormattedMessage defaultMessage='Action title is required'/>}/>
                     )}
                 </FieldGroup>
                 <FieldGroup>
-                    <FieldLabel htmlFor={`prompt-description-${prompt?.id ?? 'new'}`}>
-                        <FormattedMessage defaultMessage='Brief Description'/>
-                    </FieldLabel>
                     <TextArea
                         id={`prompt-description-${prompt?.id ?? 'new'}`}
+                        label={<FormattedMessage defaultMessage='Brief Description'/>}
+                        rows={2}
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
                         placeholder={intl.formatMessage({defaultMessage: 'Enter a brief description'})}
@@ -471,13 +328,14 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                         </SystemPromptLabel>
                         <Dropdown
                             target={
-                                <ContextVariablesButton
-                                    type='button'
+                                <Button
+                                    emphasis='quaternary'
+                                    size='x-small'
                                     onClick={() => setShowContextVars(!showContextVars)}
                                     aria-label={intl.formatMessage({defaultMessage: 'Insert context variable'})}
                                 >
                                     <FormattedMessage defaultMessage='Context Variables'/>
-                                </ContextVariablesButton>
+                                </Button>
                             }
                             isOpen={showContextVars}
                             onOpenChange={setShowContextVars}
@@ -488,10 +346,12 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                             />
                         </Dropdown>
                     </SystemPromptHeader>
-                    <SystemPromptTextArea
+                    <TextArea
                         id={`prompt-template-${prompt?.id ?? 'new'}`}
                         ref={templateRef}
+                        rows={6}
                         value={template}
+                        invalid={errors.template}
                         onChange={(e) => {
                             setTemplate(e.target.value);
                             if (errors.template) {
@@ -501,9 +361,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                         placeholder={intl.formatMessage({defaultMessage: 'Enter the system prompt template'})}
                     />
                     {errors.template && (
-                        <ValidationError>
-                            <FormattedMessage defaultMessage='System prompt is required'/>
-                        </ValidationError>
+                        <ErrorMessage message={<FormattedMessage defaultMessage='System prompt is required'/>}/>
                     )}
                 </FieldGroup>
             </FormBody>

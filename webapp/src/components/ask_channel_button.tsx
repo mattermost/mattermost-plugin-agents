@@ -2,12 +2,14 @@
 // See LICENSE.txt for license information.
 
 import React, {useRef, useState, useEffect} from 'react';
-import styled, {css} from 'styled-components';
 import {useSelector, useDispatch} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
 import {FormattedMessage, useIntl} from 'react-intl';
+
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
@@ -17,54 +19,6 @@ import {useBotlist} from '@/bots';
 
 import IconAI from './assets/icon_ai';
 import {ChannelSummarizePopover} from './channel_summarize_popover';
-
-interface ButtonContainerProps {
-    $isActive: boolean;
-}
-
-const ButtonContainer = styled.button<ButtonContainerProps>`
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border-radius: 4px;
-    border: none;
-    padding: 6px;
-    cursor: pointer;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    transition: background 0.15s ease-in-out, color 0.15s ease-in-out;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-
-    &:active {
-        background: rgba(var(--center-channel-color-rgb), 0.16);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
-    }
-
-    ${({$isActive}) => $isActive && css`
-        background: rgba(var(--button-bg-rgb), 0.08);
-        color: var(--button-bg);
-
-        &:hover {
-            background: rgba(var(--button-bg-rgb), 0.12);
-            color: var(--button-bg);
-        }
-
-        &:active {
-            background: rgba(var(--button-bg-rgb), 0.16);
-            color: var(--button-bg);
-        }
-    `}
-
-    svg {
-        width: 16px;
-        height: 16px;
-        display: block;
-    }
-`;
 
 const PopoverWrapper = React.forwardRef((props: any, ref: any) => {
     const {
@@ -183,31 +137,31 @@ const AskChannelButton = () => {
     return (
         <>
             {showPopover ? (
-                <ButtonContainer
+                <IconButton
                     ref={target}
                     onClick={handleToggle}
-                    $isActive={showPopover}
+                    size='small'
+                    toggled={showPopover}
+                    icon={<Icon glyph={<IconAI/>}/>}
                     aria-label={buttonLabel}
                     title={buttonLabel}
                     data-testid='ask-channel-button'
-                >
-                    <IconAI/>
-                </ButtonContainer>
+                />
             ) : (
                 <OverlayTrigger
                     placement='bottom'
                     overlay={tooltip}
                 >
-                    <ButtonContainer
+                    <IconButton
                         ref={target}
                         onClick={handleToggle}
-                        $isActive={showPopover}
+                        size='small'
+                        toggled={showPopover}
+                        icon={<Icon glyph={<IconAI/>}/>}
                         aria-label={buttonLabel}
                         title={buttonLabel}
                         data-testid='ask-channel-button'
-                    >
-                        <IconAI/>
-                    </ButtonContainer>
+                    />
                 </OverlayTrigger>
             )}
             <Overlay

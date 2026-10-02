@@ -50,4 +50,18 @@ describe('ConfirmationDialog', () => {
         expect(onConfirm).toHaveBeenCalledTimes(expectConfirm);
         expect(onCancel).toHaveBeenCalledTimes(expectCancel);
     });
+
+    it('names the dialog after its title', () => {
+        renderDialog();
+
+        expect(screen.getByRole('dialog', {name: 'Delete agent?'})).toBeTruthy();
+    });
+
+    it('Escape cancels with managed accessibility', () => {
+        const {onCancel} = renderDialog({managedAccessibility: true});
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+
+        expect(onCancel).toHaveBeenCalledTimes(1);
+    });
 });

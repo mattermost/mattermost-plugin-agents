@@ -372,7 +372,7 @@ describe('AgentConfigView', () => {
         // Open the MCP tab and trigger reconciliation. The mocked McpsTab exposes
         // a button that fires onReconcileEnabledTools with an empty list, which
         // mirrors what the real tab does when every saved tool is orphaned.
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         fireEvent.click(screen.getByRole('button', {name: /Reconcile/}));
 
         fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
@@ -492,7 +492,7 @@ describe('AgentConfigView', () => {
         },
     ])('Escape used for $name stays on the page; a plain Escape still goes back', ({dismissChild}) => {
         const {onBack} = renderView();
-        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
 
         dismissChild();
 
@@ -501,6 +501,20 @@ describe('AgentConfigView', () => {
         fireEvent.keyDown(document, {key: 'Escape'});
 
         expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    test('disabling tools blocks the MCPs tab and leaves it if it was open', () => {
+        renderView();
+
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
+        expect(screen.getByLabelText('Use service accounts')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('tab', {name: 'Configuration'}));
+        fireEvent.click(screen.getByLabelText('Enable Tools'));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
+
+        expect(screen.queryByLabelText('Use service accounts')).toBeNull();
+        expect(screen.getByRole('tab', {name: 'MCPs'}).getAttribute('title')).toBe('Enable Tools to configure MCP integrations');
     });
 
     test('serializes dynamic tool loading default true on create', async () => {
@@ -543,7 +557,7 @@ describe('AgentConfigView', () => {
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
         fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
         fireEvent.click(screen.getByLabelText('Dynamic tool loading'));
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         fireEvent.click(screen.getByLabelText('Use service accounts'));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
 
@@ -700,7 +714,7 @@ describe('AgentConfigView', () => {
     }
 
     function switchAwayAndSave() {
-        fireEvent.click(screen.getByRole('button', {name: 'Access'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
         fireEvent.click(screen.getByRole('button', {name: 'Switch user access to everyone'}));
         fireEvent.click(screen.getByRole('button', {name: 'Save'}));
     }
@@ -851,7 +865,7 @@ describe('AgentConfigView', () => {
         fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'SA Agent Updated'}});
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
 
-        fireEvent.click(screen.getByRole('button', {name: 'MCPs'}));
+        fireEvent.click(screen.getByRole('tab', {name: 'MCPs'}));
         expect((screen.getByLabelText('Use service accounts') as HTMLInputElement).disabled).toBe(false);
 
         fireEvent.click(screen.getByLabelText('Use service accounts'));

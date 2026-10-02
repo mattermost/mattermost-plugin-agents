@@ -5,15 +5,22 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import {PlusIcon, MagnifyIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon} from '@mattermost/compass-icons/components';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {SearchInput} from '@mattermost/compass-ui/components/search-input';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
+
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
@@ -213,53 +220,44 @@ const AgentsList = () => {
                                     {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
                                     <CreateButtonWrapper>
                                         <CreateButton
+                                            emphasis='primary'
+                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                                             onClick={handleCreateAgent}
                                             disabled={true}
                                         >
-                                            <PlusIcon size={16}/>
                                             <FormattedMessage defaultMessage='Create agent'/>
                                         </CreateButton>
                                     </CreateButtonWrapper>
                                 </OverlayTrigger>
                             ) : (
                                 <CreateButton
+                                    emphasis='primary'
+                                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                                     onClick={handleCreateAgent}
                                     disabled={createButtonDisabled}
                                 >
-                                    <PlusIcon size={16}/>
                                     <FormattedMessage defaultMessage='Create agent'/>
                                 </CreateButton>
                             )
                         )}
                     </Header>
 
-                    <TabBar>
-                        <TabButton
-                            $active={activeTab === 'all'}
-                            onClick={() => setActiveTab('all')}
-                        >
-                            <FormattedMessage defaultMessage='All agents'/>
-                        </TabButton>
-                        <TabButton
-                            $active={activeTab === 'yours'}
-                            onClick={() => setActiveTab('yours')}
-                        >
-                            <FormattedMessage defaultMessage='Your agents'/>
-                        </TabButton>
-                    </TabBar>
+                    <TabBar
+                        tabs={[
+                            {key: 'all', label: <FormattedMessage defaultMessage='All agents'/>},
+                            {key: 'yours', label: <FormattedMessage defaultMessage='Your agents'/>},
+                        ]}
+                        activeKey={activeTab}
+                        onChange={(key) => setActiveTab(key as Tab)}
+                    />
 
                     <SearchContainer>
-                        <SearchInputWrapper>
-                            <SearchIconWrapper>
-                                <MagnifyIcon size={18}/>
-                            </SearchIconWrapper>
-                            <SearchInput
-                                type='text'
-                                placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                            />
-                        </SearchInputWrapper>
+                        <SearchInput
+                            placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onClear={() => setSearchQuery('')}
+                        />
                     </SearchContainer>
                 </ContentColumn>
             </FixedChrome>
@@ -268,35 +266,44 @@ const AgentsList = () => {
                 <ListContent>
                     {loading && (
                         <LoadingContainer>
+                            <Spinner size='20'/>
                             <FormattedMessage defaultMessage='Loading agents...'/>
                         </LoadingContainer>
                     )}
 
                     {error && (
-                        <ErrorContainer>{error}</ErrorContainer>
+                        <Notice
+                            type='danger'
+                            title={error}
+                        />
                     )}
 
                     {servicesError && !error && (
-                        <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
+                        <Notice
+                            type='warning'
+                            title={servicesError}
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
-                        <NoResultsMessage>
-                            <FormattedMessage
-                                defaultMessage='No agents match "{query}"'
-                                values={{query: searchQuery}}
-                            />
-                        </NoResultsMessage>
+                        <EmptyState
+                            title={
+                                <FormattedMessage
+                                    defaultMessage='No agents match "{query}"'
+                                    values={{query: searchQuery}}
+                                />
+                            }
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
-                        <EmptyState>
-                            {activeTab === 'yours' ? (
+                        <EmptyState
+                            title={activeTab === 'yours' ? (
                                 <FormattedMessage defaultMessage="You haven't created any agents yet."/>
                             ) : (
                                 <FormattedMessage defaultMessage='No agents have been created yet.'/>
                             )}
-                        </EmptyState>
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length > 0 && (
@@ -463,78 +470,18 @@ const CreateButtonWrapper = styled.div`
     flex-shrink: 0;
 `;
 
-const CreateButton = styled(PrimaryButton)`
-    gap: 8px;
+const CreateButton = styled(Button)`
     flex-shrink: 0;
 `;
 
-const TabBar = styled.div`
-    display: flex;
-    flex-direction: row;
-    gap: 4px;
-    padding-bottom: 16px;
+const TabBar = styled(Tabs)`
+    margin-bottom: 16px;
     flex-shrink: 0;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 4px 10px;
-    border: none;
-    border-radius: 4px;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    cursor: pointer;
-    background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'transparent')};
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-
-    &:hover {
-        background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-    }
 `;
 
 const SearchContainer = styled.div`
     padding: 0 0 16px 0;
     flex-shrink: 0;
-`;
-
-const SearchInputWrapper = styled.div`
-    position: relative;
-    width: 100%;
-    height: 40px;
-`;
-
-const SearchIconWrapper = styled.div`
-    position: absolute;
-    top: 50%;
-    left: 12px;
-    transform: translateY(-50%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    pointer-events: none;
-`;
-
-const SearchInput = styled.input`
-    width: 100%;
-    height: 40px;
-    padding: 0 12px 0 38px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 14px;
-
-    &::placeholder {
-        color: rgba(var(--center-channel-color-rgb), 0.56);
-    }
-
-    &:focus {
-        outline: none;
-        border-color: var(--button-bg);
-        box-shadow: inset 0 0 0 1px var(--button-bg);
-    }
 `;
 
 const AgentListContainer = styled.div`
@@ -546,45 +493,14 @@ const AgentListContainer = styled.div`
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
+    align-items: center;
+    gap: 8px;
     padding: 40px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;
 
-const ErrorContainer = styled.div`
-    display: flex;
-    align-items: center;
-    padding: 10px 12px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
-    color: var(--dnd-indicator, #D24B4E);
-`;
-
-const ServicesWarningBanner = styled.div`
-    display: flex;
-    align-items: center;
-    padding: 10px 12px;
+const Notice = styled(SectionNotice)`
     margin-bottom: 8px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
-    color: rgba(var(--center-channel-color-rgb), 0.88);
-    font-size: 14px;
-`;
-
-const NoResultsMessage = styled.div`
-    padding: 24px;
-    text-align: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
-`;
-
-const EmptyState = styled.div`
-    display: flex;
-    justify-content: center;
-    padding: 60px 20px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
 `;
 
 const Footer = styled.div`

@@ -7,6 +7,7 @@ import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
+import {Modal} from '@mattermost/compass-ui/components/modal';
 
 import {MODAL_SHEET_CLASS, MODAL_TRANSITION_MS, modalTransitionPhases} from '@/components/animated_modal_shell';
 
@@ -149,39 +150,42 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             $zIndex={zIndex}
             {...backdropProps}
         >
-            <DialogContent
+            <DialogSheet
                 ref={dialogRef}
                 className={MODAL_SHEET_CLASS}
                 onClick={(e) => e.stopPropagation()}
-                role='dialog'
-                aria-modal='true'
-                aria-labelledby={titleId}
             >
-                <DialogHeader>
-                    <DialogTitle id={titleId}>{title}</DialogTitle>
-                </DialogHeader>
-                <DialogBody>
-                    {message}
-                </DialogBody>
-                <DialogFooter>
-                    <Button
-                        emphasis='tertiary'
-                        disabled={cancelDisabled}
-                        onClick={onCancel}
-                    >
-                        {cancelButtonText}
-                    </Button>
-                    <Button
-                        ref={confirmButtonRef}
-                        emphasis='primary'
-                        destructive={isDestructive}
-                        disabled={confirmDisabled}
-                        onClick={onConfirm}
-                    >
-                        {confirmButtonText}
-                    </Button>
-                </DialogFooter>
-            </DialogContent>
+                <DialogModal
+                    title={<span id={titleId}>{title}</span>}
+                    headerDivider={false}
+                    footerDivider={false}
+                    scrollable={false}
+                    footer={(
+                        <>
+                            <Button
+                                emphasis='tertiary'
+                                disabled={cancelDisabled}
+                                onClick={onCancel}
+                            >
+                                {cancelButtonText}
+                            </Button>
+                            <Button
+                                ref={confirmButtonRef}
+                                emphasis='primary'
+                                destructive={isDestructive}
+                                disabled={confirmDisabled}
+                                onClick={onConfirm}
+                            >
+                                {confirmButtonText}
+                            </Button>
+                        </>
+                    )}
+                >
+                    <DialogBody>
+                        {message}
+                    </DialogBody>
+                </DialogModal>
+            </DialogSheet>
         </DialogWrapper>
     );
 
@@ -218,37 +222,21 @@ const DialogWrapper = styled.div<{$zIndex: number}>`
     z-index: ${(p) => p.$zIndex};
 `;
 
-const DialogContent = styled.div`
-    background-color: var(--center-channel-bg);
-    border-radius: 8px;
+const DialogSheet = styled.div`
     width: 100%;
     max-width: 512px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 `;
 
-const DialogHeader = styled.div`
-    padding: 24px 32px 0;
-`;
-
-const DialogTitle = styled.h2`
-    font-size: 22px;
-    font-weight: 600;
-    margin: 0;
-    color: var(--center-channel-color);
+const DialogModal = styled(Modal)`
+    && {
+        width: 100%;
+    }
 `;
 
 const DialogBody = styled.div`
-    padding: 24px 32px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
     font-size: 14px;
     line-height: 20px;
-`;
-
-const DialogFooter = styled.div`
-    padding: 0 32px 24px;
-    display: flex;
-    justify-content: flex-end;
-    gap: 12px;
 `;
 
 export default ConfirmationDialog;

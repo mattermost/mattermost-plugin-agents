@@ -5,10 +5,11 @@ import React, {useEffect, useCallback} from 'react';
 import styled from 'styled-components';
 import {useSelector, useDispatch} from 'react-redux';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds} from '@/redux';
 import {renderCustomPrompt, createPost} from '@/client';
-import {Button} from '../rhs/common';
 
 const ButtonContainer = styled.div`
     display: flex;
@@ -16,20 +17,6 @@ const ButtonContainer = styled.div`
     gap: 8px;
     margin-top: 24px;
     margin-bottom: 24px;
-`;
-
-const PromptButton = styled(Button)`
-    color: rgb(var(--link-color-rgb));
-    background-color: rgba(var(--button-bg-rgb), 0.08);
-    cursor: pointer;
-
-    &:hover {
-        background-color: rgba(var(--button-bg-rgb), 0.12);
-    }
-
-    font-weight: 600;
-    line-height: 16px;
-    font-size: 12px;
 `;
 
 interface Props {
@@ -74,12 +61,14 @@ const RHSPromptButtons = ({channelId, selectPost, setCurrentTab}: Props) => {
     return (
         <ButtonContainer>
             {pinnedPrompts.map((prompt) => (
-                <PromptButton
+                <Button
                     key={prompt.id}
+                    emphasis='tertiary'
+                    size='small'
                     onClick={() => handleClick(prompt.id)}
                 >
                     {prompt.name}
-                </PromptButton>
+                </Button>
             ))}
         </ButtonContainer>
     );
