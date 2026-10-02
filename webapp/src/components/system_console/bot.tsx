@@ -295,7 +295,7 @@ const Bot = (props: Props) => {
     return (
         <BotContainer>
             <HeaderContainer onClick={() => setOpen((o) => !o)}>
-                <IconAI/>
+                <HeaderIconAI/>
                 <Title>
                     <NameText>
                         {props.bot.displayName}
@@ -323,14 +323,28 @@ const Bot = (props: Props) => {
                         label={<FormattedMessage defaultMessage='Invalid Username'/>}
                     />
                 )}
-                <IconButton
-                    icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
-                    aria-label={intl.formatMessage({defaultMessage: 'Delete bot'})}
-                    size='small'
-                    destructive={true}
-                    onClick={props.onDelete}
-                />
-                {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
+                <HeaderActions>
+                    <IconButton
+                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Delete bot'})}
+                        size='small'
+                        destructive={true}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            props.onDelete();
+                        }}
+                    />
+                    <IconButton
+                        icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
+                        aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse bot'}) : intl.formatMessage({defaultMessage: 'Expand bot'})}
+                        aria-expanded={open}
+                        size='small'
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setOpen((o) => !o);
+                        }}
+                    />
+                </HeaderActions>
             </HeaderContainer>
             {open && (
                 <ItemListContainer>
@@ -523,6 +537,11 @@ const BotContainer = styled.div`
 	}
 `;
 
+const HeaderIconAI = styled(IconAI)`
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	flex-shrink: 0;
+`;
+
 const HeaderContainer = styled.div`
 	display: flex;
 	flex-direction: row;
@@ -532,6 +551,13 @@ const HeaderContainer = styled.div`
 	padding: 12px 16px 12px 20px;
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 	cursor: pointer;
+`;
+
+const HeaderActions = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 4px;
 `;
 
 const NativeToolsColumn = styled.div`

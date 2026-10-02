@@ -71,9 +71,9 @@ const PanelFooterText = styled.div`
 
 const Horizontal = styled.div`
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
 `;
 
 const LoadingContainer = styled.div`
@@ -422,22 +422,17 @@ const Config = (props: Props) => {
                     updateConfig({webSearch: config});
                 }}
             />
-            <AdminPanel
-                title={<FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>}
-                subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
-            >
-                <MCPServers
-                    mcpConfig={mcpConfig}
-                    onChange={(config) => {
-                        // Ensure we're creating a valid structure for the server configuration
-                        const updatedConfig = {
-                            ...config,
-                            servers: config.servers || [],
-                        };
-                        updateConfig({mcp: updatedConfig});
-                    }}
-                />
-            </AdminPanel>
+            <MCPServers
+                mcpConfig={mcpConfig}
+                onChange={(config) => {
+                    // Ensure we're creating a valid structure for the server configuration
+                    const updatedConfig = {
+                        ...config,
+                        servers: config.servers || [],
+                    };
+                    updateConfig({mcp: updatedConfig});
+                }}
+            />
         </ConfigContainer>
     );
 };

@@ -10,7 +10,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
-import {HelpText, ItemLabel, TextFieldContainer} from './item';
+import {FormRow, HelpText, ItemLabel, TextFieldContainer} from './item';
 
 export type CopyableTextItemProps = {
     label: string;
@@ -54,7 +54,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
         intl.formatMessage({id: 'aCdAsIsV', defaultMessage: 'Copy to clipboard'});
 
     return (
-        <>
+        <FormRow>
             <ItemLabel>{props.label}</ItemLabel>
             <TextFieldContainer>
                 <CopyableInputRow>
@@ -67,6 +67,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
                     />
                     <IconButton
                         icon={<Icon glyph={copied ? <CheckIcon/> : <ContentCopyIcon/>}/>}
+                        size='small'
                         onClick={handleCopy}
                         aria-label={copyLabel}
                         title={copyLabel}
@@ -76,7 +77,7 @@ export const CopyableTextItem = (props: CopyableTextItemProps) => {
                 <HelpText>{props.helptext}</HelpText>
                 }
             </TextFieldContainer>
-        </>
+        </FormRow>
     );
 };
 

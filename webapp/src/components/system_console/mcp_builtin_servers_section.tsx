@@ -102,21 +102,19 @@ export const BuiltInPluginServersSection = ({
     );
 };
 
-const BuiltInSection = styled.div`
-    margin-top: 8px;
-    margin-bottom: 8px;
-`;
+const BuiltInSection = styled.div``;
 
 const BuiltInSectionHeader = styled.div`
     display: flex;
     flex-direction: column;
     gap: 4px;
-    margin-top: 16px;
 `;
 
 const BuiltInSectionTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
     color: var(--center-channel-color);
 `;
 
@@ -130,16 +128,15 @@ const ServersList = styled.div`
     flex-direction: column;
     gap: 16px;
     margin-top: 16px;
-    margin-bottom: 16px;
 `;
 
 const ServerContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 8px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     border-radius: 4px;
-    padding: 16px;
+    padding: 12px;
     background-color: var(--center-channel-bg);
 `;
 
@@ -162,7 +159,8 @@ const ReadOnlyTitleRow = styled.div`
 
 const ReadOnlyServerTitle = styled.div`
     font-weight: 600;
-    font-size: 16px;
+    font-size: 14px;
+    line-height: 20px;
     color: var(--center-channel-color);
 `;
 

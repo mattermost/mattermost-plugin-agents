@@ -284,14 +284,13 @@ export const ItemLabel = styled.label<{$multiline?: boolean}>`
 	box-sizing: border-box;
 	display: flex;
 	align-items: center;
-	height: ${FIELD_HEIGHT};
+	min-height: ${FIELD_HEIGHT};
+	height: auto;
 	flex-shrink: 0;
 
 	${({$multiline}) => $multiline && `
 		align-items: flex-start;
 		padding-top: 10px;
-		height: auto;
-		min-height: ${FIELD_HEIGHT};
 	`}
 `;
 
@@ -396,29 +395,31 @@ export const BooleanItem = (props: BooleanItemProps) => {
     const name = useId();
     return (
         <FormRow>
-            <ItemLabel>{props.label}</ItemLabel>
+            <BooleanItemLabel>{props.label}</BooleanItemLabel>
             <TextFieldContainer>
-                <FieldControlRow>
-                    <InlineRadio
-                        name={name}
-                        value='true'
-                        checked={props.value}
-                        disabled={props.disabled || props.disableTrue}
-                        onChange={() => props.onChange(true)}
-                    >
-                        <FormattedMessage defaultMessage='true'/>
-                    </InlineRadio>
-                    <InlineRadio
-                        name={name}
-                        value='false'
-                        checked={!props.value}
-                        disabled={props.disabled}
-                        onChange={() => props.onChange(false)}
-                    >
-                        <FormattedMessage defaultMessage='false'/>
-                    </InlineRadio>
+                <BooleanFieldControlRow>
+                    <BooleanRadioGroup>
+                        <InlineRadio
+                            name={name}
+                            value='true'
+                            checked={props.value}
+                            disabled={props.disabled || props.disableTrue}
+                            onChange={() => props.onChange(true)}
+                        >
+                            <FormattedMessage defaultMessage='True'/>
+                        </InlineRadio>
+                        <InlineRadio
+                            name={name}
+                            value='false'
+                            checked={!props.value}
+                            disabled={props.disabled}
+                            onChange={() => props.onChange(false)}
+                        >
+                            <FormattedMessage defaultMessage='False'/>
+                        </InlineRadio>
+                    </BooleanRadioGroup>
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
-                </FieldControlRow>
+                </BooleanFieldControlRow>
                 {props.helpText &&
                 <HelpText>{props.helpText}</HelpText>
                 }
@@ -427,9 +428,36 @@ export const BooleanItem = (props: BooleanItemProps) => {
     );
 };
 
-// compass-ui Radio fills its row; true/false sit side by side.
+// Match radio row height instead of the taller text-field label box.
+const BooleanItemLabel = styled(ItemLabel)`
+	min-height: 0;
+	align-items: flex-start;
+	line-height: var(--line-height-100, 20px);
+`;
+
+// compass-ui Radio fills its row; True/False sit side by side.
+const BooleanFieldControlRow = styled(FieldControlRow)`
+	min-height: 0;
+	align-items: flex-start;
+`;
+
+const BooleanRadioGroup = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: 16px;
+
+	&& {
+		width: auto;
+	}
+`;
+
 const InlineRadio = styled(Radio)`
 	&& {
 		width: auto;
+
+		/* Admin console Bootstrap forms.less styles all <label>s; Compass Radio is a label. */
+		font-weight: 400;
+		margin-bottom: 0;
 	}
 `;

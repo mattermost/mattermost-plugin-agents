@@ -1,18 +1,19 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useId, useRef, useState} from 'react';
 import styled from 'styled-components';
-import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, TrashCanOutlineIcon, ChevronDownIcon, ChevronRightIcon, PencilOutlineIcon} from '@mattermost/compass-icons/components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 
+import {AdminPanelHeader} from '@mattermost/compass-ui/components/admin-panel-header';
 import {Button} from '@mattermost/compass-ui/components/button';
+import {Divider} from '@mattermost/compass-ui/components/divider';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
-import {Tabs} from '@mattermost/compass-ui/components/tabs';
 import {Tag} from '@mattermost/compass-ui/components/tag';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
@@ -37,7 +38,7 @@ import type {
 
 import {LicenseChip} from './enterprise_chip';
 
-import {BooleanItem, ItemList, TextItem} from './item';
+import {BooleanItem, FormRow, HelpText, ItemLabel, ItemList, TextFieldContainer, TextItem} from './item';
 
 export type MCPToolConfig = BaseMCPToolConfig;
 export type MCPEmbeddedServerConfig = BaseMCPEmbeddedServerConfig;
@@ -148,7 +149,7 @@ const HeaderMapEditor = ({
             </HeadersList>
             {!disableAdd && (
                 <AddHeaderButton
-                    emphasis='link'
+                    emphasis='quaternary'
                     size='small'
                     leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                     onClick={addHeader}
@@ -290,6 +291,12 @@ const MCPServer = ({
                 ) : (
                     <ServerTitle onClick={() => setIsEditingName(true)}>
                         {config.name || unnamedServerLabel}
+                        <ServerTitleEditIcon>
+                            <Icon
+                                glyph={<PencilOutlineIcon/>}
+                                size='16'
+                            />
+                        </ServerTitleEditIcon>
                     </ServerTitle>
                 )}
                 <Button
@@ -325,35 +332,37 @@ const MCPServer = ({
                 helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
             />
 
-            <HeadersSection>
-                <HeadersSectionTitle>
-                    {intl.formatMessage({defaultMessage: 'Headers'})}
-                </HeadersSectionTitle>
-                <HeaderMapEditor
-                    headers={config.headers}
-                    onChange={(headers) => onChange(serverIndex, {...config, headers})}
-                />
-            </HeadersSection>
+            <FormRow>
+                <ItemLabel>{intl.formatMessage({defaultMessage: 'Headers'})}</ItemLabel>
+                <TextFieldContainer>
+                    <HeaderMapEditor
+                        headers={config.headers}
+                        onChange={(headers) => onChange(serverIndex, {...config, headers})}
+                    />
+                </TextFieldContainer>
+            </FormRow>
 
-            <HeadersSection>
-                <HeadersSectionTitle>
+            <FormRow>
+                <GroupItemLabel>
                     {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
-                </HeadersSectionTitle>
-                <SectionHelpText>
-                    {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
-                </SectionHelpText>
-                {!serviceAccountLicensed && (
-                    <LicenseChip capability='mcp_service_account'/>
-                )}
-                <HeaderMapEditor
-                    headers={config.serviceAccountHeaders}
-                    onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
-                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
-                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
-                    disableAdd={!serviceAccountLicensed}
-                    disableEdit={!serviceAccountLicensed}
-                />
-            </HeadersSection>
+                </GroupItemLabel>
+                <TextFieldContainer>
+                    <HelpText>
+                        {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
+                    </HelpText>
+                    {!serviceAccountLicensed && (
+                        <LicenseChip capability='mcp_service_account'/>
+                    )}
+                    <HeaderMapEditor
+                        headers={config.serviceAccountHeaders}
+                        onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                        namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                        valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
+                        disableAdd={!serviceAccountLicensed}
+                        disableEdit={!serviceAccountLicensed}
+                    />
+                </TextFieldContainer>
+            </FormRow>
 
             <OAuthSection>
                 <OAuthSectionHeader
@@ -426,6 +435,7 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
+    const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
@@ -569,19 +579,47 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     };
 
     return (
-        <div>
-            <MCPTabs
-                tabs={[
-                    {key: 'config', label: <FormattedMessage defaultMessage='Configuration'/>},
-                    {key: 'tools', label: <FormattedMessage defaultMessage='Tools'/>},
-                ]}
-                activeKey={activeTab}
-                onChange={(key) => setActiveTab(key === 'tools' ? 'tools' : 'config')}
+        <MCPPanel aria-labelledby={titleId}>
+            <AdminPanelHeader
+                titleId={titleId}
+                title={<FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>}
+                subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
+                showDivider={false}
             />
+            <TabsContainer role='tablist'>
+                <TabButton
+                    type='button'
+                    role='tab'
+                    id='mcp-config-tab'
+                    aria-controls='mcp-config-panel'
+                    aria-selected={activeTab === 'config'}
+                    tabIndex={activeTab === 'config' ? 0 : -1}
+                    $active={activeTab === 'config'}
+                    onClick={() => setActiveTab('config')}
+                >
+                    <FormattedMessage defaultMessage='Configuration'/>
+                </TabButton>
+                <TabButton
+                    type='button'
+                    role='tab'
+                    id='mcp-tools-tab'
+                    aria-controls='mcp-tools-panel'
+                    aria-selected={activeTab === 'tools'}
+                    tabIndex={activeTab === 'tools' ? 0 : -1}
+                    $active={activeTab === 'tools'}
+                    onClick={() => setActiveTab('tools')}
+                >
+                    <FormattedMessage defaultMessage='Tools'/>
+                </TabButton>
+            </TabsContainer>
 
-            <TabContent>
+            <MCPPanelBody>
                 {activeTab === 'config' && (
-                    <>
+                    <ConfigTabPanel
+                        role='tabpanel'
+                        id='mcp-config-panel'
+                        aria-labelledby='mcp-config-tab'
+                    >
                         <ItemList title={intl.formatMessage({defaultMessage: 'MCP Configuration'})}>
                             <BooleanItem
                                 label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
@@ -639,54 +677,79 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 />
                             )}
                         </ItemList>
+                        <SectionDivider/>
                         <BuiltInPluginServersSection
                             embeddedServerId={config.embeddedServer.id}
                             pluginServers={pluginServers}
                         />
-                        <ServersList>
+                        <SectionDivider/>
+                        <RemoteServersSection>
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
-                                <EmptyState
-                                    title={<FormattedMessage defaultMessage='No remote MCP servers configured'/>}
-                                    description={<FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>}
-                                />
-                            ) : (
-                                normalizedServers.map((serverConfig, index) => (
-                                    <MCPServer
-                                        key={index}
-                                        serverIndex={index}
-                                        serverConfig={serverConfig}
-                                        onChange={updateServer}
-                                        onDelete={() => deleteServer(index)}
+                                <>
+                                    <RemoteServersEmptyState
+                                        title={<FormattedMessage defaultMessage='No remote MCP servers configured'/>}
+                                        description={<FormattedMessage defaultMessage='Add a server to connect to external MCP tools.'/>}
+                                        action={{
+                                            emphasis: 'primary',
+                                            onClick: addServer,
+                                            disabled: !remoteMcpLicensed,
+                                            leadingIcon: <Icon glyph={<PlusIcon/>}/>,
+                                            children: <FormattedMessage defaultMessage='Add Remote MCP Server'/>,
+                                        }}
                                     />
-                                ))
+                                    {!remoteMcpLicensed && (
+                                        <AddServerContainer>
+                                            <LicenseChip capability='remote_mcp'/>
+                                        </AddServerContainer>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <ServersList>
+                                        {normalizedServers.map((serverConfig, index) => (
+                                            <MCPServer
+                                                key={index}
+                                                serverIndex={index}
+                                                serverConfig={serverConfig}
+                                                onChange={updateServer}
+                                                onDelete={() => deleteServer(index)}
+                                            />
+                                        ))}
+                                    </ServersList>
+                                    <AddServerContainer>
+                                        <Button
+                                            emphasis='primary'
+                                            onClick={addServer}
+                                            disabled={!remoteMcpLicensed}
+                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                        >
+                                            <FormattedMessage defaultMessage='Add Remote MCP Server'/>
+                                        </Button>
+                                        {!remoteMcpLicensed && (
+                                            <LicenseChip capability='remote_mcp'/>
+                                        )}
+                                    </AddServerContainer>
+                                </>
                             )}
-                        </ServersList>
-
-                        <AddServerContainer>
-                            <Button
-                                emphasis='tertiary'
-                                onClick={addServer}
-                                disabled={!remoteMcpLicensed}
-                                leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                            >
-                                <FormattedMessage defaultMessage='Add Remote MCP Server'/>
-                            </Button>
-                            {!remoteMcpLicensed && (
-                                <LicenseChip capability='remote_mcp'/>
-                            )}
-                        </AddServerContainer>
-                    </>
+                        </RemoteServersSection>
+                    </ConfigTabPanel>
                 )}
 
                 {activeTab === 'tools' && (
-                    <MCPToolsViewer
-                        mcpConfig={config}
-                        onConfigChange={(updatedConfig) => onChange(updatedConfig)}
-                        initialToolsData={preloadedToolsData}
-                    />
+                    <div
+                        role='tabpanel'
+                        id='mcp-tools-panel'
+                        aria-labelledby='mcp-tools-tab'
+                    >
+                        <MCPToolsViewer
+                            mcpConfig={config}
+                            onConfigChange={(updatedConfig) => onChange(updatedConfig)}
+                            initialToolsData={preloadedToolsData}
+                        />
+                    </div>
                 )}
-            </TabContent>
-        </div>
+            </MCPPanelBody>
+        </MCPPanel>
     );
 };
 
@@ -695,8 +758,28 @@ const ServersList = styled.div`
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin-top: 16px;
-    margin-bottom: 16px;
+`;
+
+const RemoteServersSection = styled.div`
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+`;
+
+const RemoteServersEmptyState = styled(EmptyState)`
+	/* EmptyState title defaults to Heading 400; scale down for this compact section. */
+	h2 {
+		font-size: var(--font-size-200);
+		line-height: var(--line-height-200);
+	}
+
+	[class*='empty-state__titles'] {
+		gap: var(--spacing-xxxs, 4px);
+	}
+`;
+
+const SectionDivider = styled(Divider)`
+	padding: 0;
 `;
 
 const ServerContainer = styled.div`
@@ -709,48 +792,47 @@ const ServerContainer = styled.div`
     background-color: var(--center-channel-bg);
 `;
 
+const GroupItemLabel = styled(ItemLabel)`
+	align-items: flex-start;
+	min-height: 0;
+	padding-top: 0;
+`;
+
 const ServerHeader = styled.div`
     display: flex;
     justify-content: space-between;
     align-items: center;
 `;
 
+const ServerTitleEditIcon = styled.span`
+    display: inline-flex;
+    align-items: center;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+`;
+
 const ServerTitle = styled.div`
-    font-weight: 600;
-    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
     color: var(--center-channel-color);
     cursor: pointer;
-    padding: 4px 8px;
+    padding: 0;
+    margin: 0;
     border-radius: 4px;
 
     &:hover {
         background-color: rgba(var(--center-channel-color-rgb), 0.08);
     }
 
-    &::after {
-        content: '✎';
-        font-size: 12px;
-        margin-left: 8px;
-        opacity: 0;
-        transition: opacity 0.2s ease;
+    &:hover ${ServerTitleEditIcon} {
+        opacity: 0.72;
     }
-
-    &:hover::after {
-        opacity: 0.7;
-    }
-`;
-
-const HeadersSection = styled.div`
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-`;
-
-const HeadersSectionTitle = styled.div`
-    font-weight: 600;
-    font-size: 14px;
-    color: var(--center-channel-color);
-    margin-bottom: 4px;
 `;
 
 const OAuthSection = styled.div`
@@ -827,8 +909,6 @@ const AddServerContainer = styled.div`
     flex-direction: row;
     align-items: center;
     gap: 12px;
-    margin-bottom: 16px;
-    margin-top: 8px;
 `;
 
 const ServerNameInput = styled(TextInput)`
@@ -844,12 +924,62 @@ const ServerNameEditContainer = styled.div`
     max-width: 300px;
 `;
 
-const MCPTabs = styled(Tabs)`
-    margin-bottom: 24px;
+/* Mirrors Compass AdminPanel shell so tabs can sit between header and body. */
+const MCPPanel = styled.section`
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	max-width: 920px;
+	background: var(--center-channel-bg);
+	border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+	border-radius: var(--radius-m);
+	box-shadow: var(--elevation-1);
+	overflow: hidden;
+
+	[class*='admin-panel-header__main'] {
+		padding-bottom: calc(var(--spacing-xxl) - 16px);
+	}
 `;
 
-const TabContent = styled.div`
-    /* Tab content styling */
+const TabsContainer = styled.div`
+	display: flex;
+	flex-shrink: 0;
+	padding: 0 var(--spacing-xxl);
+	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+`;
+
+const TabButton = styled.button<{$active: boolean}>`
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    color: ${(props) => (props.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
+    border-bottom: 2px solid ${(props) => (props.$active ? 'var(--button-bg)' : 'transparent')};
+    margin-bottom: -1px;
+    transition: color 0.2s ease, border-color 0.2s ease;
+
+    &:hover {
+        color: ${(props) => (props.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+    }
+
+    &:first-child {
+        padding-left: 0;
+    }
+`;
+
+const MCPPanelBody = styled.div`
+	flex: 1 1 auto;
+	width: 100%;
+	padding: var(--spacing-xxl);
+	box-sizing: border-box;
+`;
+
+const ConfigTabPanel = styled.div`
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 `;
 
 export default MCPServers;
