@@ -1,4 +1,5 @@
 import { Page, Locator, expect } from '@playwright/test';
+import { chooseCompassOption } from './compass-select';
 
 /**
  * AgentPageHelper — Page object for the agent listing page and config view.
@@ -138,7 +139,7 @@ export class AgentPageHelper {
     }
 
     getAIServiceSelect(): Locator {
-        return this.getExactLabel('AI Service').locator('xpath=following-sibling::*[1]//select[1]');
+        return this.page.getByRole('combobox', {name: 'AI Service', exact: true});
     }
 
     getServiceSelect(): Locator {
@@ -163,7 +164,7 @@ export class AgentPageHelper {
     }
 
     getReasoningEffortSelect(): Locator {
-        return this.getExactLabel('Reasoning Effort').locator('xpath=ancestor::div[1]//select[1]');
+        return this.page.getByRole('combobox', {name: 'Reasoning Effort', exact: true});
     }
 
     getThinkingBudgetInput(): Locator {
@@ -229,7 +230,7 @@ export class AgentPageHelper {
         await this.getDisplayNameInput().fill(opts.displayName);
         await this.getUsernameInput().fill(opts.username);
         if (opts.serviceLabel) {
-            await this.getServiceSelect().selectOption({ label: opts.serviceLabel });
+            await chooseCompassOption(this.getServiceSelect(), opts.serviceLabel);
         }
         if (opts.instructions) {
             await this.getCustomInstructionsInput().fill(opts.instructions);
