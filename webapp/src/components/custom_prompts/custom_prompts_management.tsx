@@ -65,6 +65,12 @@ const ToolbarRow = styled.div`
 const SearchContainer = styled.div`
     flex: 1;
     min-width: 0;
+
+    /* SearchInput draws its own focus ring; suppress the host a11y ring on the inner input. */
+    input.a11y--focused {
+        box-shadow: none !important;
+        outline: none !important;
+    }
 `;
 
 const PromptList = styled.div`
@@ -84,22 +90,23 @@ const PromptRowHeader = styled.div`
     display: flex;
     align-items: center;
     gap: var(--spacing-xs);
-    padding: var(--spacing-m) var(--spacing-l);
-    cursor: pointer;
+    padding-right: var(--spacing-l);
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
-    }
-
-    &:focus-visible {
-        outline: none;
-        box-shadow: inset 0 0 0 2px var(--button-bg);
     }
 `;
 
 const PromptRowMain = styled.div`
     flex: 1;
     min-width: 0;
+    padding: var(--spacing-m) 0 var(--spacing-m) var(--spacing-l);
+    cursor: pointer;
+
+    &:focus-visible {
+        outline: none;
+        box-shadow: inset 0 0 0 2px var(--button-bg);
+    }
 `;
 
 const PromptInfo = styled.div`
@@ -321,6 +328,7 @@ const CustomPromptsManagement = () => {
                                             role='tab'
                                             $active={activeTab === 'all'}
                                             aria-selected={activeTab === 'all'}
+                                            tabIndex={activeTab === 'all' ? 0 : -1}
                                             onClick={() => setActiveTab('all')}
                                         >
                                             <FormattedMessage defaultMessage='All Prompts'/>
@@ -330,6 +338,7 @@ const CustomPromptsManagement = () => {
                                             role='tab'
                                             $active={activeTab === 'yours'}
                                             aria-selected={activeTab === 'yours'}
+                                            tabIndex={activeTab === 'yours' ? 0 : -1}
                                             onClick={() => setActiveTab('yours')}
                                         >
                                             <FormattedMessage defaultMessage='Your Prompts'/>
@@ -374,25 +383,22 @@ const CustomPromptsManagement = () => {
 
                                                 return (
                                                     <PromptRowContainer key={prompt.id}>
-                                                        <PromptRowHeader
-                                                            role='button'
-                                                            tabIndex={0}
-                                                            aria-label={intl.formatMessage(
-                                                                {defaultMessage: 'Open prompt {name}'},
-                                                                {name: prompt.name},
-                                                            )}
-                                                            onClick={openPrompt}
-                                                            onKeyDown={(e) => {
-                                                                if (e.target !== e.currentTarget) {
-                                                                    return;
-                                                                }
-                                                                if (e.key === 'Enter' || e.key === ' ') {
-                                                                    e.preventDefault();
-                                                                    openPrompt();
-                                                                }
-                                                            }}
-                                                        >
-                                                            <PromptRowMain>
+                                                        <PromptRowHeader>
+                                                            <PromptRowMain
+                                                                role='button'
+                                                                tabIndex={0}
+                                                                aria-label={intl.formatMessage(
+                                                                    {defaultMessage: 'Open prompt {name}'},
+                                                                    {name: prompt.name},
+                                                                )}
+                                                                onClick={openPrompt}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                                        e.preventDefault();
+                                                                        openPrompt();
+                                                                    }
+                                                                }}
+                                                            >
                                                                 <PromptInfo>
                                                                     <PromptName>{prompt.name}</PromptName>
                                                                     {prompt.description && (
@@ -405,10 +411,7 @@ const CustomPromptsManagement = () => {
                                                                 active={isPinned}
                                                                 aria-pressed={isPinned}
                                                                 icon={<Icon glyph={isPinned ? <PinIcon/> : <PinOutlineIcon/>}/>}
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation();
-                                                                    handleTogglePin(prompt.id);
-                                                                }}
+                                                                onClick={() => handleTogglePin(prompt.id)}
                                                                 aria-label={isPinned ? intl.formatMessage({defaultMessage: 'Unpin prompt'}) : intl.formatMessage({defaultMessage: 'Pin prompt'})
                                                                 }
                                                             />

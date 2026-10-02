@@ -1,15 +1,50 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import React from 'react';
 import styled from 'styled-components';
 
-/** Underline tab list used until compass-ui ships the matching Tabs variant. */
-export const UnderlineTabs = styled.div`
+const TabList = styled.div`
 	display: flex;
 	flex-shrink: 0;
 	gap: var(--spacing-xl);
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 `;
+
+const handleTabListKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+    if (!keys.includes(e.key)) {
+        return;
+    }
+    const tabs = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)'));
+    const current = tabs.indexOf(e.target as HTMLButtonElement);
+    if (current === -1) {
+        return;
+    }
+
+    let next = current;
+    if (e.key === 'ArrowRight') {
+        next = (current + 1) % tabs.length;
+    } else if (e.key === 'ArrowLeft') {
+        next = (current + (tabs.length - 1)) % tabs.length;
+    } else if (e.key === 'Home') {
+        next = 0;
+    } else {
+        next = tabs.length - 1;
+    }
+
+    e.preventDefault();
+    tabs[next].focus();
+    tabs[next].click();
+};
+
+/** Underline tab list used until compass-ui ships the matching Tabs variant. */
+export const UnderlineTabs = (props: React.ComponentProps<typeof TabList>) => (
+    <TabList
+        {...props}
+        onKeyDown={handleTabListKeyDown}
+    />
+);
 
 export const UnderlineTab = styled.button<{$active: boolean}>`
 	padding: var(--spacing-m) 0;

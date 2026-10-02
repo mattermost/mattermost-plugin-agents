@@ -56,12 +56,16 @@ export const UserAccessLevelItem = (props: UserAccessLevelProps) => {
     const showAttributeBased = Boolean(props.showAttributeBased && (abacLicensed || props.level === UserAccessLevel.AttributeBased));
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
     const name = useId();
+    const labelId = `${name}-label`;
 
     return (
         <FormRow>
-            <CompactItemLabel>{props.label}</CompactItemLabel>
+            <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
             <MainContainer>
-                <AllowTypes>
+                <AllowTypes
+                    role='radiogroup'
+                    aria-labelledby={labelId}
+                >
                     <Radio
                         name={name}
                         value={UserAccessLevel.All}
@@ -147,12 +151,16 @@ export const ChannelAccessLevelItem = (props: ChannelAccessLevelProps) => {
     const accessLicensed = useIsLicensedFor('agent_access_controls');
     const restrictDisabled = Boolean(props.disabled || !accessLicensed);
     const name = useId();
+    const labelId = `${name}-label`;
 
     return (
         <FormRow>
-            <CompactItemLabel>{props.label}</CompactItemLabel>
+            <CompactItemLabel id={labelId}>{props.label}</CompactItemLabel>
             <MainContainer>
-                <AllowTypes>
+                <AllowTypes
+                    role='radiogroup'
+                    aria-labelledby={labelId}
+                >
                     <Radio
                         name={name}
                         value={ChannelAccessLevel.All}

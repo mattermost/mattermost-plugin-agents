@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useRef} from 'react';
+import React, {useEffect, useRef} from 'react';
 import {CSSTransition} from 'react-transition-group';
 import styled, {css} from 'styled-components';
 
@@ -76,7 +76,13 @@ const ShellRoot = styled.div<{$zIndex: number}>`
     align-items: center;
     justify-content: center;
     z-index: ${(p) => p.$zIndex};
+
+    [role='dialog']:focus {
+        outline: none;
+    }
 `;
+
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 type ShellProps = {
     show: boolean;
@@ -91,6 +97,58 @@ type ShellProps = {
  */
 export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 2000}: ShellProps) => {
     const nodeRef = useRef<HTMLDivElement>(null);
+    const returnFocusRef = useRef<HTMLElement | null>(null);
+
+    const onCloseRef = useRef(onBackdropClick);
+    onCloseRef.current = onBackdropClick;
+
+    const handleEnter = () => {
+        returnFocusRef.current = document.activeElement as HTMLElement | null;
+        const dialog = nodeRef.current?.querySelector<HTMLElement>('[role="dialog"]');
+        dialog?.setAttribute('tabindex', '-1');
+        dialog?.focus();
+    };
+
+    // Document-level so Escape works even when focus sits outside the overlay.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !e.defaultPrevented) {
+                e.stopPropagation();
+                onCloseRef.current?.();
+            }
+        };
+        if (show) {
+            document.addEventListener('keydown', onKeyDown);
+        }
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [show]);
+
+    const handleExited = () => {
+        returnFocusRef.current?.focus();
+        returnFocusRef.current = null;
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'Tab') {
+            return;
+        }
+        const focusable = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (focusable.length === 0) {
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        const dialog = e.currentTarget.querySelector('[role="dialog"]');
+        if (e.shiftKey && (active === first || active === dialog)) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     return (
         <CSSTransition
             nodeRef={nodeRef}
@@ -100,10 +158,13 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
             unmountOnExit={true}
             mountOnEnter={true}
             appear={true}
+            onEnter={handleEnter}
+            onExited={handleExited}
         >
             <ShellRoot
                 ref={nodeRef}
                 $zIndex={zIndex}
+                onKeyDown={handleKeyDown}
                 onClick={(e) => {
                     if (e.target === e.currentTarget) {
                         onBackdropClick?.();
