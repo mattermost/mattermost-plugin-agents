@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import {SelectChannel, SelectUser} from './select';
@@ -113,6 +113,57 @@ describe('SelectChannel', () => {
 
         expect(await screen.findByRole('option', {name: /Random/})).toBeTruthy();
         expect(screen.queryByRole('option', {name: /Rabbits/})).toBeNull();
+    });
+
+    it('drops the previous results when a search fails', async () => {
+        client.searchAllChannels.mockImplementation((term: string) => (
+            term === 'ra' ? Promise.resolve([channel('c1', 'Rabbits')]) : Promise.reject(new Error('network'))
+        ));
+
+        render(
+            <SelectChannel
+                channelIDs={[]}
+                onChangeChannelIDs={jest.fn()}
+            />,
+        );
+        const input = screen.getByRole('combobox');
+        fireEvent.focus(input);
+
+        fireEvent.change(input, {target: {value: 'ra'}});
+        expect(await screen.findByRole('option', {name: /Rabbits/})).toBeTruthy();
+        fireEvent.change(input, {target: {value: 'ran'}});
+        await waitFor(() => expect(client.searchAllChannels).toHaveBeenCalledWith('ran'));
+
+        await waitFor(() => expect(screen.queryByRole('option', {name: /Rabbits/})).toBeNull());
+    });
+
+    it('keeps earlier picks when another is added before the selection reloads', async () => {
+        client.getChannelById.mockImplementation((id: string) => (
+            id === 'c0' ? Promise.resolve(channel('c0', 'Existing')) : new Promise(jest.fn())
+        ));
+        client.searchAllChannels.mockResolvedValue([channel('c1', 'Rabbits'), channel('c2', 'Random')]);
+        const onChangeChannelIDs = jest.fn();
+        const Harness = () => {
+            const [ids, setIDs] = useState(['c0']);
+            return (
+                <SelectChannel
+                    channelIDs={ids}
+                    onChangeChannelIDs={(next) => {
+                        onChangeChannelIDs(next);
+                        setIDs(next);
+                    }}
+                />
+            );
+        };
+        render(<Harness/>);
+
+        await screen.findByText('Existing');
+        fireEvent.focus(screen.getByRole('combobox'));
+        fireEvent.click(await screen.findByRole('option', {name: /Random/}));
+        fireEvent.focus(screen.getByRole('combobox'));
+        fireEvent.click(await screen.findByRole('option', {name: /Rabbits/}));
+
+        expect(onChangeChannelIDs).toHaveBeenLastCalledWith(['c0', 'c2', 'c1']);
     });
 
     it('reports the chosen channel ids', async () => {

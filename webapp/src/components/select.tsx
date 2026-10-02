@@ -46,6 +46,10 @@ const AsyncMultiPicker = (props: AsyncMultiPickerProps) => {
                 if (request === latestRequest.current) {
                     setResults(options);
                 }
+            } catch {
+                if (request === latestRequest.current) {
+                    setResults([]);
+                }
             } finally {
                 if (request === latestRequest.current) {
                     setLoading(false);
@@ -120,16 +124,22 @@ export const SelectUser = (props: SelectUserProps) => {
     const teamIDs = useRef(new Set<string>());
 
     useEffect(() => {
+        let cancelled = false;
         const loadSelected = async () => {
             const [users, teams] = await Promise.all([
                 getProfilesByIds(props.userIDs),
                 getTeamsByIds(props.teamIDs).then((found) => found.filter(Boolean)),
             ]);
             teams.forEach((team) => teamIDs.current.add(team.id));
-            setSelected([...users.map(userOption), ...teams.map((team) => teamOption(team, teamLabel))]);
+            if (!cancelled) {
+                setSelected([...users.map(userOption), ...teams.map((team) => teamOption(team, teamLabel))]);
+            }
         };
 
         loadSelected();
+        return () => {
+            cancelled = true;
+        };
     }, [props.userIDs, props.teamIDs, teamLabel]);
 
     const search = async (term: string) => {
@@ -146,6 +156,7 @@ export const SelectUser = (props: SelectUserProps) => {
 
     const handleChange = (options: ComboboxOption[]) => {
         const kinds = options.map((option) => (teamIDs.current.has(option.value) ? TEAM_KIND : 'user'));
+        setSelected(options);
         props.onChangeIDs(
             options.filter((_, i) => kinds[i] !== TEAM_KIND).map((option) => option.value),
             options.filter((_, i) => kinds[i] === TEAM_KIND).map((option) => option.value),
@@ -181,16 +192,23 @@ export const SelectChannel = (props: SelectChannelProps) => {
     const [selected, setSelected] = useState<ComboboxOption[]>([]);
 
     useEffect(() => {
+        let cancelled = false;
         const loadSelected = async () => {
-            if (props.channelIDs.length === 0) {
-                setSelected([]);
-                return;
-            }
             const channels = await Promise.all(props.channelIDs.map((id) => getChannelById(id)));
-            setSelected(channels.map(channelOption));
+            if (!cancelled) {
+                setSelected(channels.map(channelOption));
+            }
         };
         loadSelected();
+        return () => {
+            cancelled = true;
+        };
     }, [props.channelIDs]);
+
+    const handleChange = (options: ComboboxOption[]) => {
+        setSelected(options);
+        props.onChangeChannelIDs(options.map((option) => option.value));
+    };
 
     const search = async (term: string) => {
         const channels = await searchAllChannels(term);
@@ -201,7 +219,7 @@ export const SelectChannel = (props: SelectChannelProps) => {
         <AsyncMultiPicker
             selected={selected}
             search={search}
-            onChange={(options) => props.onChangeChannelIDs(options.map((option) => option.value))}
+            onChange={handleChange}
             placeholder={intl.formatMessage({defaultMessage: 'Search for channels'})}
             disabled={props.disabled}
         />
