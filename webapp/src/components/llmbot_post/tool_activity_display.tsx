@@ -7,6 +7,8 @@ import styled, {css, keyframes} from 'styled-components';
 
 import {ChevronRightIcon} from '@mattermost/compass-icons/components';
 
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {toolDisplayName} from '@/utils/tool_identity';
 
 import ToolStatusIcon from '../tool_status_icon';
@@ -15,7 +17,6 @@ import {ToolCallStatus} from '../tool_types';
 import {ActivityItem, PostActivity, isTerminalToolStatus} from './activity_items';
 import {CollapseChevron, CollapseHeaderRow} from './collapse_header';
 import {noMotionWhenReduced, prefersReducedMotion} from './motion';
-import {LoadingSpinner} from './reasoning_display';
 import {RollingLine} from './rolling_line';
 import {serverToolTitle} from './server_tool_set';
 import {Round} from './turn_content_utils';
@@ -24,7 +25,13 @@ const EXPAND_MS = 200;
 
 const SUMMARY_KEY = 'summary';
 
-const LineSpinner = () => <LoadingSpinner data-testid='llm-bot-activity-spinner'/>;
+const LineSpinner = () => (
+    <Spinner
+        size='16'
+        aria-hidden={true}
+        data-testid='llm-bot-activity-spinner'
+    />
+);
 
 function summaryStatus(activity: PostActivity): ToolCallStatus {
     if (activity.hasError) {

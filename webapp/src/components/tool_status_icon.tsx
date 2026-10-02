@@ -5,9 +5,9 @@ import React from 'react';
 import styled from 'styled-components';
 import {CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
 
-import {ToolCallStatus} from './tool_types';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import LoadingSpinner from './assets/loading_spinner';
+import {ToolCallStatus} from './tool_types';
 
 const StatusIcon = styled.div`
     color: rgba(var(--center-channel-color-rgb), 0.64);
@@ -15,11 +15,6 @@ const StatusIcon = styled.div`
     display: flex;
     align-items: center;
     justify-content: center;
-`;
-
-const SmallSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
 `;
 
 const SmallSuccessIcon = styled(CheckIcon)`
@@ -78,7 +73,12 @@ const ToolStatusIcon: React.FC<ToolStatusIconProps> = ({status, isProcessing = f
             data-testid='llm-bot-tool-status'
             data-status={glyph}
         >
-            {glyph === 'running' && <SmallSpinner/>}
+            {glyph === 'running' && (
+                <Spinner
+                    size='12'
+                    aria-hidden={true}
+                />
+            )}
             {glyph === 'success' && <SmallSuccessIcon/>}
             {glyph === 'error' && <SmallErrorIcon/>}
             {glyph === 'rejected' && <SmallRejectedIcon/>}

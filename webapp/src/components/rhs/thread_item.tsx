@@ -4,9 +4,9 @@
 import React from 'react';
 import styled from 'styled-components';
 
-import {Timestamp} from '@/mm_webapp';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {GrayPill} from '../pill';
+import {Timestamp} from '@/mm_webapp';
 
 const ThreadItemContainer = styled.div`
     padding: 16px;
@@ -43,16 +43,10 @@ const LastActivityDate = styled.div`
     margin-left: 13px;
 `;
 
-const Label = styled(GrayPill)`
-	padding: 0 4px;
-	font-size: 10px;
-	font-weight: 600;
-	line-height: 16px;
-`;
-
 const Footer = styled.div`
 	display: flex;
 	flex-direction: row;
+	align-items: center;
 	gap: 10px;
 	margin-top: 12px;
 `;
@@ -83,7 +77,11 @@ export default function ThreadItem(props: Props) {
                 </LastActivityDate>
             </Title>
             <Footer>
-                <Label>{props.label}</Label>
+                <Tag
+                    label={props.label}
+                    type='default'
+                    size='x-small'
+                />
                 <TurnCount>{turnText}</TurnCount>
             </Footer>
         </ThreadItemContainer>

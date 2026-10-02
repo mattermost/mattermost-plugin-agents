@@ -110,12 +110,12 @@ describe('ToolCard result rendering', () => {
 
 describe('ToolCard pending state', () => {
     test('shows a spinner without buttons for a live auto-executing tool', () => {
-        const {container} = renderComponent(
+        renderComponent(
             makeTool({would_auto_execute: true}),
             {approvalStage: 'done'},
         );
 
-        expect(container.querySelector('svg')).not.toBeNull();
+        expect(screen.getByTestId('llm-bot-tool-status').getAttribute('data-status')).toBe('running');
         expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
     });

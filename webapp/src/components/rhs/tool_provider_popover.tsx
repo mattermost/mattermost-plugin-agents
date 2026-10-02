@@ -6,6 +6,12 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
@@ -131,11 +137,12 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                 <PopoverHeaderTitle>
                     <FormattedMessage defaultMessage='Tool Providers'/>
                 </PopoverHeaderTitle>
-                <RefreshToolsButton
-                    type='button'
+                <IconButton
+                    size='x-small'
+                    icon={<Icon glyph={<RefreshIcon/>}/>}
                     aria-label={refreshLabel}
                     title={refreshLabel}
-                    disabled={loading}
+                    loading={loading}
                     onMouseDown={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
@@ -145,12 +152,11 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         e.stopPropagation();
                         fetchServers({showLoading: true, forceRefresh: true});
                     }}
-                >
-                    <RefreshIcon size={14}/>
-                </RefreshToolsButton>
+                />
             </PopoverHeader>
             {loading && servers.length === 0 && (
                 <LoadingRow>
+                    <Spinner size='16'/>
                     <FormattedMessage defaultMessage='Loading providers...'/>
                 </LoadingRow>
             )}
@@ -173,19 +179,26 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
                         </ProviderAvatar>
                         <ProviderName>{server.name}</ProviderName>
                         {showConnect ? (
-                            <ConnectButton
+                            <Button
+                                emphasis='primary'
+                                size='x-small'
                                 onClick={() => server.authURL && handleConnect(server.authURL)}
                                 disabled={!server.authURL}
                             >
                                 <FormattedMessage defaultMessage='Connect'/>
-                            </ConnectButton>
+                            </Button>
                         ) : (
                             <ProviderActions>
                                 {unavailable && <MCPUnavailableBadge/>}
                                 {!unavailable && server.authenticated && server.needsOAuth && (
-                                    <DisconnectButton onClick={() => handleDisconnect(server.name)}>
+                                    <Button
+                                        emphasis='link'
+                                        destructive={true}
+                                        size='x-small'
+                                        onClick={() => handleDisconnect(server.name)}
+                                    >
                                         <FormattedMessage defaultMessage='Disconnect'/>
-                                    </DisconnectButton>
+                                    </Button>
                                 )}
                                 <ToggleSwitch
                                     checked={!unavailable && !disabledServers.includes(server.serverOrigin)}
@@ -227,47 +240,21 @@ const ToolProviderButtonContent = styled.div`
 `;
 
 const ProviderDropdownMenu = styled(DropdownMenu)`
-    width: 262px;
-    padding: 8px 0;
+    && {
+        width: 262px;
+    }
 `;
 
 const PopoverHeader = styled.div`
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 4px 8px 4px 16px;
+    padding-right: 8px;
 `;
 
-const PopoverHeaderTitle = styled.div`
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    letter-spacing: 0.48px;
-    text-transform: uppercase;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const RefreshToolsButton = styled.button`
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    cursor: pointer;
-
-    &:hover:not(:disabled) {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: var(--center-channel-color);
-    }
-
-    &:disabled {
-        cursor: default;
-        opacity: 0.5;
+const PopoverHeaderTitle = styled(PopoverMenuTitle)`
+    && {
+        padding-bottom: var(--spacing-xxs);
     }
 `;
 
@@ -318,57 +305,12 @@ const ProviderActions = styled.div`
     height: 24px;
 `;
 
-const ConnectButton = styled.button`
-    padding: 4px 10px;
-    border-radius: 4px;
-    border: none;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-    cursor: pointer;
-    flex-shrink: 0;
-    background: var(--button-bg);
-    color: var(--button-color);
-
-    &:hover:not(:disabled) {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: default;
-    }
-`;
-
-const DisconnectButton = styled.button`
-    display: inline-flex;
+const LoadingRow = styled.div`
+    display: flex;
     align-items: center;
     justify-content: center;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    border: none;
-    min-width: 0;
-    min-height: 0;
-    height: 24px;
-    background: none;
-    font-family: inherit;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    cursor: pointer;
-    white-space: nowrap;
-    flex-shrink: 0;
-
-    &:hover {
-        color: var(--error-text);
-    }
-`;
-
-const LoadingRow = styled.div`
+    gap: 8px;
     padding: 12px 16px;
-    text-align: center;
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
 `;

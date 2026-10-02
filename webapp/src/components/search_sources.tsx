@@ -5,6 +5,11 @@ import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {CheckCircleIcon} from '@mattermost/compass-icons/components';
+
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {isValidId} from '@/utils/ids';
 
 import {PostPreview} from './post_preview';
@@ -41,15 +46,9 @@ const SourcesTitle = styled.div`
     line-height: 20px;
 `;
 
-const SourceCount = styled.span`
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-	border-radius: 8px;
-	padding: 0 4px;
+// e2e locates the count and score tags by these components' class names.
+const SourceCount = styled(Tag)`
     margin-left: 8px;
-	font-size: 11px;
-	font-weight: 700;
-	line-height: 16px;
 `;
 
 // Transient ($-prefixed) props so styled-components doesn't forward them to the DOM.
@@ -78,19 +77,8 @@ const SourceHeader = styled.div`
     margin-bottom: 4px;
 `;
 
-const RelevanceScore = styled.span`
-    color: rgba(var(--center-channel-color-rgb), 0.65);
-    font-size: 12px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    padding: 2px 6px;
-    border-radius: 4px;
+const RelevanceScore = styled(Tag)`
     margin-left: 8px;
-    font-weight: 500;
-`;
-
-const ScoreIcon = styled.i`
-    font-size: 10px;
-    margin-right: 4px;
 `;
 
 const SourceItem = styled.div`
@@ -172,10 +160,12 @@ const SearchSource = ({source, index}: SourceItemProps & {index: number}) => {
         <SourceItem>
             <SourceHeader>
                 <SourceNumber>{index + 1}{'.'}</SourceNumber>
-                <RelevanceScore>
-                    <ScoreIcon className='icon icon-check-circle'/>
-                    {formatScore(source.score)}
-                </RelevanceScore>
+                <RelevanceScore
+                    type='default'
+                    size='small'
+                    leadingIcon={<Icon glyph={<CheckCircleIcon/>}/>}
+                    label={formatScore(source.score)}
+                />
             </SourceHeader>
             <PostPreview
                 postId={source.postId}
@@ -203,7 +193,11 @@ export const SearchSources = ({sources}: Props) => {
             <SourcesHeader onClick={() => setIsOpen(!isOpen)}>
                 <SourcesTitle>
                     <FormattedMessage defaultMessage='Sources'/>
-                    <SourceCount>{sources.length}</SourceCount>
+                    <SourceCount
+                        type='default'
+                        size='x-small'
+                        label={sources.length}
+                    />
                 </SourcesTitle>
                 <CollapseIcon
                     className='icon-chevron-down'

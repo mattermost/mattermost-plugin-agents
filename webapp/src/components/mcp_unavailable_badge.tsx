@@ -8,18 +8,12 @@ import {FormattedMessage} from 'react-intl';
 // eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {getPortalTarget} from '@/utils/dom';
 
-const Badge = styled.span`
+const BadgeTrigger = styled.span`
     display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 10px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 11px;
-    font-weight: 600;
-    white-space: nowrap;
     cursor: default;
 `;
 
@@ -36,11 +30,13 @@ const MCPUnavailableBadge = () => {
                 </Tooltip>
             }
         >
-            <span>
-                <Badge>
-                    <FormattedMessage defaultMessage='Unavailable'/>
-                </Badge>
-            </span>
+            <BadgeTrigger>
+                <Tag
+                    type='default'
+                    size='small'
+                    label={<FormattedMessage defaultMessage='Unavailable'/>}
+                />
+            </BadgeTrigger>
         </OverlayTrigger>
     );
 };
