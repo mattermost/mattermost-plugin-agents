@@ -278,7 +278,7 @@ const AgentConfigView = (props: Props) => {
     }, []);
 
     // Escape key: same as back — confirm when there are unsaved changes.
-    // Skip Escapes a child already handled (e.g. closing a react-select menu or a nested dialog).
+    // Skip Escapes a child already handled (e.g. closing a picker menu or a nested dialog).
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || e.defaultPrevented) {

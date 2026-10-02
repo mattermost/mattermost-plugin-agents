@@ -132,7 +132,7 @@ jest.mock('./tabs/config_tab', () => ({
 
 jest.mock('./tabs/access_tab', () => {
     const {useState} = jest.requireActual('react');
-    const Select = jest.requireActual('react-select').default;
+    const {Combobox} = jest.requireActual('@mattermost/compass-ui/components/combobox');
     const ConfirmationDialog = jest.requireActual('@/components/confirmation_dialog').default;
 
     const MockAccessTab = ({onChange}: {onChange: (updates: Partial<AgentDraft>) => void}) => {
@@ -149,7 +149,7 @@ jest.mock('./tabs/access_tab', () => {
                 >
                     {'Switch user access to everyone'}
                 </button>
-                <Select
+                <Combobox
                     aria-label='Agent admins'
                     options={[{value: 'user_1', label: 'Admin User'}]}
                 />
@@ -470,14 +470,14 @@ describe('AgentConfigView', () => {
 
     test.each([
         {
-            name: 'closing an open react-select menu',
+            name: 'closing an open picker menu',
             dismissChild: () => {
                 const input = screen.getByLabelText('Agent admins');
                 fireEvent.keyDown(input, {key: 'ArrowDown'});
-                expect(screen.getByText('Admin User')).not.toBeNull();
+                expect(input.getAttribute('aria-expanded')).toBe('true');
 
                 fireEvent.keyDown(input, {key: 'Escape'});
-                expect(screen.queryByText('Admin User')).toBeNull();
+                expect(input.getAttribute('aria-expanded')).toBe('false');
             },
         },
         {
