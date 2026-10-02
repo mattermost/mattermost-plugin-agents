@@ -147,8 +147,10 @@ export type SelectionOption = {
     disabled?: boolean;
 };
 
-// compass-ui Select hides empty-value options from its menu, but '' is how
-// these settings say "none", so it travels through the menu as a sentinel.
+// compass-ui Select hides empty-value options from its menu and treats '' as
+// "nothing selected". Settings that offer an explicit '' option (e.g. "No
+// fallback") carry it through the menu as a sentinel; otherwise '' shows the
+// placeholder.
 const EMPTY_OPTION_VALUE = '__none__';
 const toSelectValue = (value: string) => (value === '' ? EMPTY_OPTION_VALUE : value);
 const fromSelectValue = (value: string) => (value === EMPTY_OPTION_VALUE ? '' : value);
@@ -162,15 +164,18 @@ type SelectFieldProps = {
     invalid?: boolean;
     maxWidth?: string;
     ariaLabel?: string;
+    placeholder?: string;
 };
 
 export const SelectField = (props: SelectFieldProps) => {
+    const hasEmptyOption = props.options.some((option) => option.value === '');
     return (
         <SelectFieldWrapper $maxWidth={props.maxWidth}>
             <Select
                 id={props.id}
-                value={toSelectValue(props.value)}
+                value={hasEmptyOption ? toSelectValue(props.value) : props.value}
                 options={props.options.map((option) => ({...option, value: toSelectValue(option.value)}))}
+                placeholder={props.placeholder}
                 onChange={(value) => props.onChange(fromSelectValue(value))}
                 disabled={props.disabled}
                 invalid={props.invalid}
@@ -191,6 +196,7 @@ export type SelectionItemProps = {
     disabled?: boolean
     error?: string
     extra?: React.ReactNode
+    placeholder?: string
 };
 
 export const SelectionItem = (props: SelectionItemProps) => {
@@ -207,6 +213,7 @@ export const SelectionItem = (props: SelectionItemProps) => {
                         onChange={props.onChange}
                         disabled={props.disabled}
                         invalid={Boolean(props.error)}
+                        placeholder={props.placeholder ?? props.label}
                     />
                     {props.extra && <FieldExtra>{props.extra}</FieldExtra>}
                 </FieldControlRow>
