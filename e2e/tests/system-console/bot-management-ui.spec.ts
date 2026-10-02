@@ -57,7 +57,7 @@ test.describe('Bot Management UI', () => {
         await systemConsole.waitForBotsPanel();
 
         await expect(page.getByText(/AI bot configuration has moved/i)).toBeVisible();
-        await expect(page.getByRole('link', { name: /open agents/i })).toBeVisible();
+        await expect(page.getByRole('button', { name: /open agents/i })).toBeVisible();
 
         await expect(systemConsole.getAddBotButton()).not.toBeVisible();
         await expect(page.locator('[class*="BotContainer"]')).toHaveCount(0);
