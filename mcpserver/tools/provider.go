@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -30,6 +31,55 @@ type MCPToolContext struct {
 	// UserID is the Mattermost user ID of the user the Client is authenticated as.
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
+
+	sourceMu          sync.Mutex
+	sourceChannels    []*model.Channel
+	sourceChannelsSet bool
+}
+
+// sourceChannelsMetaKey is the MCP CallToolResult.Meta key listing the
+// Mattermost channels a tool result drew from.
+const sourceChannelsMetaKey = "source_channels"
+
+// recordSourceChannels notes the Mattermost channels a tool result drew from.
+// An empty call still marks provenance as determined (no channel sources).
+func (c *MCPToolContext) recordSourceChannels(channels ...*model.Channel) {
+	if c == nil {
+		return
+	}
+	c.sourceMu.Lock()
+	defer c.sourceMu.Unlock()
+	c.sourceChannelsSet = true
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		already := false
+		for _, existing := range c.sourceChannels {
+			if existing != nil && existing.Id != "" && existing.Id == ch.Id {
+				already = true
+				break
+			}
+		}
+		if !already {
+			c.sourceChannels = append(c.sourceChannels, ch)
+		}
+	}
+}
+
+func sourceChannelsMeta(channels []*model.Channel) mcp.Meta {
+	encoded := make([]any, 0, len(channels))
+	for _, ch := range channels {
+		if ch == nil {
+			continue
+		}
+		encoded = append(encoded, map[string]any{
+			"id":      ch.Id,
+			"type":    string(ch.Type),
+			"team_id": ch.TeamId,
+		})
+	}
+	return mcp.Meta{sourceChannelsMetaKey: encoded}
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -345,6 +395,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 				&mcp.TextContent{Text: result},
 			},
 			IsError: false,
+		}
+		if mcpContext.sourceChannelsSet {
+			callToolResult.Meta = sourceChannelsMeta(mcpContext.sourceChannels)
 		}
 		return callToolResult, nil
 	}

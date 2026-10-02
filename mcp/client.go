@@ -634,6 +634,11 @@ func (c *Client) CallTool(ctx context.Context, toolName string, args map[string]
 
 // CallToolWithMetadata calls a tool on this MCP server with optional metadata
 func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, error) {
+	text, _, err := c.callToolWithMeta(ctx, toolName, args, metadata)
+	return text, err
+}
+
+func (c *Client) callToolWithMeta(ctx context.Context, toolName string, args map[string]any, metadata map[string]any) (string, mcp.Meta, error) {
 	ctx, span := telemetry.Tracer().Start(ctx, "mcp call tool",
 		trace.WithAttributes(
 			telemetry.MCPTool.String(toolName),
@@ -646,7 +651,7 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 		err := fmt.Errorf("MCP client not connected")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
-		return "", err
+		return "", nil, err
 	}
 
 	// Call the tool using new SDK
@@ -666,12 +671,12 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			if c.embeddedClient != nil {
 				// Reconnect to embedded server using stored client helper and session ID
 				if c.sessionID == "" {
-					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
+					return "", nil, fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
 				}
 
 				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
 				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
+					return "", nil, fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
 				}
 
 				c.toolsMu.Lock()
@@ -683,10 +688,10 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 				// Reconnect to remote server
 				newSession, reconnectErr := c.createSession(ctx, c.config)
 				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
+					return "", nil, fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
 				}
 				if adoptErr := c.adoptSession(ctx, newSession, c.config.Name); adoptErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
+					return "", nil, fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
 				}
 
 				if c.toolsCache != nil && c.useSharedToolsCache() {
@@ -703,10 +708,10 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 			// Retry the tool call after reconnecting
 			result, err = c.session.CallTool(ctx, params)
 			if err != nil {
-				return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
+				return "", nil, fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
 			}
 		} else {
-			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
+			return "", nil, fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
 		}
 	}
 	var textBuilder strings.Builder
@@ -723,14 +728,14 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	if result.IsError {
 		trimmed := strings.TrimSpace(text)
 		if trimmed == "" {
-			return "", fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
+			return "", nil, fmt.Errorf("tool %s on server %s returned an error", toolName, c.config.Name)
 		}
-		return trimmed, errors.New(trimmed)
+		return trimmed, nil, errors.New(trimmed)
 	}
 
 	if text != "" {
-		return text, nil
+		return text, result.Meta, nil
 	}
 
-	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+	return "", nil, fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
 }

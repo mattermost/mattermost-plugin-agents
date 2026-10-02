@@ -154,6 +154,7 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	if err != nil {
 		return "", fmt.Errorf("error fetching channel: %w", err)
 	}
+	mcpContext.recordSourceChannels(channel)
 
 	// Determine team display name; DMs/Groups have no team
 	channelDisplayName := channel.DisplayName

@@ -28,6 +28,12 @@ import (
 const ThreadIDProp = "referenced_thread"
 const AnalysisTypeProp = "prompt_type"
 
+// sourceChannelsParam lists the Mattermost channels a tool result drew from.
+// Auto-publish requires every listed source to be the destination channel
+// or a public channel of the destination's team. A missing list means
+// provenance was not determined.
+const sourceChannelsParam = "source_channels"
+
 // ConfigProvider provides configuration values for conversation behavior
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
@@ -355,10 +361,15 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 }
 
 // allToolsAutoRunEverywhere checks whether every tool call across the given
-// tool turns has an auto_run_everywhere policy.  When true, tool results can
-// be written with shared=true so the result-approval UI is skipped.
+// tool turns has an auto_run_everywhere policy and, when the destination is
+// not a direct message, whether every listed source channel is the
+// destination itself or a public channel of the destination's team. When
+// true, tool results can be written with shared=true so the result-approval
+// UI is skipped.
 func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
 	sawToolCall := false
+	sawBusinessTool := false
+	sawRemoteTool := false
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
 			sawToolCall = true
@@ -385,9 +396,66 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 			if !enabled || !mcp.IsToolPolicyAutoRunEverywhere(policy) {
 				return false
 			}
+			sawBusinessTool = true
+			if mcp.IsRemoteServerOrigin(lookup.ServerOrigin) {
+				sawRemoteTool = true
+			}
 		}
 	}
-	return sawToolCall
+	if !sawToolCall {
+		return false
+	}
+	if sawBusinessTool && !sourcesReadableByDestination(llmCtx, sawRemoteTool) {
+		return false
+	}
+	return true
+}
+
+// sourcesReadableByDestination reports whether every listed source channel
+// is the destination itself or a public channel of the destination's team.
+// Direct-message destinations skip the comparison. A missing list, a remote
+// tool (which does not report Mattermost channel sources), or a source that
+// is not the destination and not a public channel of its team means the
+// destination audience does not cover every source.
+func sourcesReadableByDestination(llmCtx *llm.Context, sawRemoteTool bool) bool {
+	if llmCtx == nil || llmCtx.Channel == nil {
+		return true
+	}
+	dest := llmCtx.Channel
+	if dest.Type == model.ChannelTypeDirect {
+		return true
+	}
+	if sawRemoteTool {
+		return false
+	}
+	if llmCtx.Parameters == nil {
+		return false
+	}
+	raw, ok := llmCtx.Parameters[sourceChannelsParam]
+	if !ok {
+		return false
+	}
+	sources, ok := raw.([]*model.Channel)
+	if !ok {
+		return false
+	}
+	destTeamID := dest.TeamId
+	if destTeamID == "" && llmCtx.Team != nil {
+		destTeamID = llmCtx.Team.Id
+	}
+	for _, src := range sources {
+		if src == nil {
+			return false
+		}
+		if src.Id != "" && src.Id == dest.Id {
+			continue
+		}
+		if src.Type == model.ChannelTypeOpen && destTeamID != "" && src.TeamId == destTeamID {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // isAutoExecuteBuiltIn reports whether the tool is a built-in flagged to run

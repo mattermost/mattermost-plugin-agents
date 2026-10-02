@@ -155,6 +155,7 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	}
 
 	if len(posts) == 0 {
+		mcpContext.recordSourceChannels()
 		return "no posts found", nil
 	}
 
@@ -163,11 +164,14 @@ func (p *MattermostToolProvider) toolReadPost(mcpContext *MCPToolContext, args R
 	if len(posts) > 0 {
 		channel, _, err := client.GetChannel(ctx, posts[0].ChannelId)
 		if err == nil {
+			mcpContext.recordSourceChannels(channel)
 			channelName = channel.DisplayName
 			team, _, teamErr := client.GetTeam(ctx, channel.TeamId, "")
 			if teamErr == nil {
 				teamName = team.DisplayName
 			}
+		} else {
+			mcpContext.recordSourceChannels(&model.Channel{Id: posts[0].ChannelId})
 		}
 	}
 
