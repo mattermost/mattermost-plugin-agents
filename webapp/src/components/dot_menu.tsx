@@ -2,12 +2,18 @@
 // See LICENSE.txt for license information.
 
 import React, {ComponentProps, useState} from 'react';
-import styled, {css} from 'styled-components';
+import styled from 'styled-components';
 
 import {useUpdateEffect} from 'react-use';
 
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton, type IconButtonSize} from '@mattermost/compass-ui/components/icon-button';
+import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
+import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
+
 import Dropdown from './dropdown';
 
+// Base for custom text-and-icon triggers passed as `dotMenuButton`.
 export const DotMenuButton = styled.div<{$isActive: boolean}>`
     display: inline-flex;
     padding: 0;
@@ -29,28 +35,7 @@ export const DotMenuButton = styled.div<{$isActive: boolean}>`
     }
 `;
 
-export const DropdownMenu = styled.div`
-    display: flex;
-    flex-direction: column;
-
-    width: max-content;
-    min-width: 16rem;
-    text-align: left;
-    list-style: none;
-
-    padding: 10px 0;
-    font-family: Open Sans;
-    font-style: normal;
-    font-weight: normal;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--center-channel-color);
-
-    background: var(--center-channel-bg);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
-    border-radius: 4px;
-`;
+export const DropdownMenu = PopoverMenu;
 
 type DotMenuProps = {
     children: React.ReactNode;
@@ -64,6 +49,7 @@ type DotMenuProps = {
     onOpenChange?: (isOpen: boolean) => void;
     closeOnClick?: boolean;
     testId?: string;
+    size?: IconButtonSize;
 };
 
 type DropdownProps = Omit<ComponentProps<typeof Dropdown>, 'target' | 'children' | 'isOpen'>;
@@ -80,6 +66,7 @@ const DotMenu = ({
     dropdownMenu,
     onOpenChange,
     testId,
+    size = 'small',
     ...props
 }: DotMenuProps & DropdownProps) => {
     const [isOpen, setOpen] = useState(false);
@@ -91,41 +78,60 @@ const DotMenu = ({
     }, [isOpen]);
 
     const Menu = dropdownMenu || DropdownMenu;
-    const MenuButton = dotMenuButton || DotMenuButton;
+    const active = (isActive ?? false) || isOpen;
+    const handleClick = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleOpen();
+    };
 
-    const button = (
+    let button;
+    if (dotMenuButton) {
+        const MenuButton = dotMenuButton;
+        button = (
 
-        // @ts-ignore
-        <MenuButton
-            title={title}
-            $isActive={(isActive ?? false) || isOpen}
-            onClick={(e: MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-                toggleOpen();
-            }}
-            onKeyDown={(e: KeyboardEvent) => {
-                // Handle Enter and Space as clicking on the button. The
-                // spacebar's KeyboardEvent.key is ' ' (a single space).
-                if (e.key === ' ' || e.key === 'Enter') {
-                    if (e.key === ' ') {
-                        // Space would otherwise also scroll the page; Enter
-                        // needs no preventDefault on a div.
-                        e.preventDefault();
+            // @ts-ignore
+            <MenuButton
+                title={title}
+                $isActive={active}
+                onClick={handleClick}
+                onKeyDown={(e: KeyboardEvent) => {
+                    // Handle Enter and Space as clicking on the button. The
+                    // spacebar's KeyboardEvent.key is ' ' (a single space).
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        if (e.key === ' ') {
+                            // Space would otherwise also scroll the page; Enter
+                            // needs no preventDefault on a div.
+                            e.preventDefault();
+                        }
+                        e.stopPropagation();
+                        toggleOpen();
                     }
-                    e.stopPropagation();
-                    toggleOpen();
-                }
-            }}
-            tabIndex={0}
-            className={className}
-            role={'button'}
-            disabled={disabled ?? false}
-            data-testid={testId}
-        >
-            {icon}
-        </MenuButton>
-    );
+                }}
+                tabIndex={0}
+                className={className}
+                role={'button'}
+                disabled={disabled ?? false}
+                data-testid={testId}
+            >
+                {icon}
+            </MenuButton>
+        );
+    } else {
+        button = (
+            <IconButton
+                icon={<Icon glyph={icon}/>}
+                aria-label={title}
+                title={title}
+                size={size}
+                active={active}
+                onClick={handleClick}
+                className={className}
+                disabled={disabled ?? false}
+                data-testid={testId}
+            />
+        );
+    }
 
     const menu = (
 
@@ -155,82 +161,37 @@ const DotMenu = ({
     );
 };
 
-export const DropdownMenuItemStyled = styled.a`
- && {
-    font-family: 'Open Sans';
-    font-style: normal;
-    font-weight: normal;
-    font-size: 14px;
-    color: var(--center-channel-color);
-    padding: 10px 20px;
-    text-decoration: unset;
-    display: inline-flex;
-    align-items: center;
+type DropdownMenuItemProps = {
+    label: React.ReactNode;
 
-    >.icon {
-        margin-right: 8px;
-    }
+    /** An icon glyph, sized by the menu item. */
+    icon?: React.ReactNode;
 
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: var(--center-channel-color);
-    }
-    &&:focus {
-        text-decoration: none;
-        color: inherit;
-  }
-}
-`;
+    /** A pre-sized leading node such as an avatar; takes precedence over `icon`. */
+    leading?: React.ReactNode;
 
-export const DisabledDropdownMenuItemStyled = styled.div`
- && {
-    cursor: default;
-    font-family: 'Open Sans';
-    font-style: normal;
-    font-weight: normal;
-    font-size: 14px;
-    color: var(--center-channel-color-40);
-    padding: 8px 20px;
-    text-decoration: unset;
-}
-`;
-
-export const iconSplitStyling = css`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-`;
-
-export const DropdownMenuItem = (props: { children: React.ReactNode, onClick?: (e: React.MouseEvent) => void, className?: string}) => {
-    return (
-        <DropdownMenuItemStyled
-            href='#'
-            onClick={props.onClick}
-            className={props.className}
-            role={'button'}
-
-            // Prevent trigger icon (parent) from propagating title prop to options
-            // Menu items use to be full text (not just icons) so don't need title
-            title=''
-        >
-            {props.children}
-        </DropdownMenuItemStyled>
-    );
+    /** Shows the menu item's check mark. */
+    selected?: boolean;
+    onClick?: (e: React.MouseEvent) => void;
+    className?: string;
+    destructive?: boolean;
+    disabled?: boolean;
 };
 
-// Alternate dot menu button. Use `dotMenuButton={TitleButton}` for this style.
-export const TitleButton = styled.div<{$isActive: boolean}>`
-    padding: 2px 2px 2px 6px;
-    display: inline-flex;
-    border-radius: 4px;
-    color: ${({$isActive}) => ($isActive ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    background: ${({$isActive}) => ($isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'auto')};
-
-    min-width: 0;
-
-    &:hover {
-        background: ${({$isActive}) => ($isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-    }
-`;
+export const DropdownMenuItem = (props: DropdownMenuItemProps) => {
+    const leading = props.leading ?? (props.icon ? <Icon glyph={props.icon}/> : undefined);
+    return (
+        <MenuItem
+            label={props.label}
+            leadingElement={Boolean(leading)}
+            leadingVisual={leading}
+            trailingElement={Boolean(props.selected)}
+            onClick={props.onClick}
+            className={props.className}
+            destructive={props.destructive}
+            disabled={props.disabled}
+        />
+    );
+};
 
 export default DotMenu;
