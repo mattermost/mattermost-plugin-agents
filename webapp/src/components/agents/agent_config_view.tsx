@@ -379,7 +379,7 @@ const AgentConfigView = (props: Props) => {
         } catch (e: any) {
             const message = (typeof e?.message === 'string' ? e.message : '').trim();
             if (e?.status_code === 409 || (message.includes('username') && (message.includes('taken') || message.includes('conflict')))) {
-                setErrors({username: intl.formatMessage({defaultMessage: 'This username is already taken'})});
+                setErrors({username: message || intl.formatMessage({defaultMessage: 'This username is already taken'})});
                 setActiveTab('config');
             } else if (e?.status_code === 403 && !message) {
                 setErrors({general: intl.formatMessage({defaultMessage: 'You do not have permission to perform this action.'})});

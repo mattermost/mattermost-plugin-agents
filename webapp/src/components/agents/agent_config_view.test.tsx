@@ -88,6 +88,7 @@ jest.mock('./tabs/config_tab', () => ({
                 value={draft.username}
                 onChange={(e) => onChange({username: e.target.value})}
             />
+            {errors.username && <div>{errors.username}</div>}
             <input
                 aria-label='Max tool turns'
                 value={draft.maxToolTurns}
@@ -765,6 +766,24 @@ describe('AgentConfigView', () => {
 
         await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
         expect(screen.queryByText('Custom instructions must be 100,000 characters or fewer')).toBeNull();
+    });
+
+    test.each([
+        [
+            'the server explanation',
+            'username "myagent" is unavailable because a deactivated bot account uses the username. A system admin can permanently delete that bot account and its history',
+            'username "myagent" is unavailable because a deactivated bot account uses the username. A system admin can permanently delete that bot account and its history',
+        ],
+        ['a generic message when the server gives none', '', 'This username is already taken'],
+    ])('shows %s on the username field when the username conflicts', async (_description, serverMessage, expected) => {
+        mockCreateAgent.mockRejectedValue(Object.assign(new Error(serverMessage), {status_code: 409}));
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'My Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'myagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(await screen.findByText(expected)).not.toBeNull();
     });
 
     test.each([
