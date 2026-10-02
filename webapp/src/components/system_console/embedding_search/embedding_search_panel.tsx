@@ -5,11 +5,11 @@ import React from 'react';
 import {useIntl, FormattedMessage} from 'react-intl';
 import styled from 'styled-components';
 
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+
 import {useIsLicensedFor} from '@/license';
 
-import {Pill} from '../../pill';
 import {LicenseChip} from '../enterprise_chip';
-import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem} from '../item';
 import {FloatItem, IntItem} from '../number_items';
 
@@ -21,13 +21,6 @@ import {ReindexConfirmation, RebuildVectorIndexConfirmation} from './reindex_con
 import {useJobStatus} from './use_job_status';
 import {embeddingIdentityMismatchKind} from './local_identity_mismatch';
 import {retentionWindowTightened, retentionWindowWidened} from './retention_window';
-
-const Horizontal = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-`;
 
 const IndexStorageGroup = styled.div`
     display: flex;
@@ -168,13 +161,10 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
     const hasLocalModelMismatch = localMismatchReason !== '';
 
     return (
-        <Panel
-            title={
-                <Horizontal>
-                    <FormattedMessage defaultMessage='Embedding Search'/>
-                    <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
-                </Horizontal>
-            }
+        <AdminPanel
+            title={<FormattedMessage defaultMessage='Embedding Search'/>}
+            showBeta={true}
+            betaLabel={intl.formatMessage({defaultMessage: 'EXPERIMENTAL'})}
             subtitle={intl.formatMessage({defaultMessage: 'Configure embedding search settings. Note: The current implementation is experimental and subject to breaking changes. This includes having to reindex all posts.'})}
         >
             <ItemList>
@@ -428,7 +418,7 @@ const EmbeddingSearchPanel = ({value, onChange}: Props) => {
                 onConfirm={handleConfirmRebuildVectorIndex}
                 onCancel={handleCancelRebuildVectorIndex}
             />
-        </Panel>
+        </AdminPanel>
     );
 };
 

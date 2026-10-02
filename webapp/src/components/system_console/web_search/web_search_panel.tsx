@@ -4,9 +4,10 @@
 import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+
 import {useIsLicensedFor} from '@/license';
 
-import Panel from '../panel';
 import {BooleanItem, ItemList, SelectionItem, TextItem} from '../item';
 import {LicenseChip} from '../enterprise_chip';
 
@@ -73,7 +74,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
     };
 
     return (
-        <Panel
+        <AdminPanel
             title={<FormattedMessage defaultMessage='Web Search'/>}
             subtitle={intl.formatMessage({defaultMessage: 'Configure built-in web search for agents that do not have native web search capabilities. NOTE: If your agent is configured to use native tool web search, that will be used instead of this web search.'})}
         >
@@ -194,7 +195,7 @@ const WebSearchPanel = ({value, onChange}: Props) => {
                     disabled={!value.enabled}
                 />
             </ItemList>
-        </Panel>
+        </AdminPanel>
     );
 };
 

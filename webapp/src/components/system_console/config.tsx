@@ -5,12 +5,12 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 import {useIsLicensedFor} from '@/license';
 
-import {Pill} from '../pill';
-
-import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
 import {BooleanItem, ItemList, SelectionItem, TextItem} from './item';
@@ -62,6 +62,12 @@ const ConfigContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 	gap: 20px;
+`;
+
+const PanelFooterText = styled.div`
+	margin-top: 20px;
+	color: rgba(var(--center-channel-color-rgb), 0.72);
+	font-size: 14px;
 `;
 
 const Horizontal = styled.div`
@@ -301,7 +307,7 @@ const Config = (props: Props) => {
     return (
         <ConfigContainer>
             <BetaMessage/>
-            <Panel
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Services'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
             >
@@ -315,14 +321,14 @@ const Config = (props: Props) => {
                 <PanelFooterText>
                     <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
                 </PanelFooterText>
-            </Panel>
-            <Panel
+            </AdminPanel>
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
                 <BotsMovedNotice/>
-            </Panel>
-            <Panel
+            </AdminPanel>
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
             >
@@ -356,7 +362,10 @@ const Config = (props: Props) => {
                         label={
                             <Horizontal>
                                 <FormattedMessage defaultMessage='Enable Channel Mention Tool Calling'/>
-                                <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
                             </Horizontal>
                         }
                         value={Boolean(value.enableChannelMentionToolCalling)}
@@ -378,11 +387,8 @@ const Config = (props: Props) => {
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
                 </ItemList>
-            </Panel>
-            <Panel
-                title={intl.formatMessage({defaultMessage: 'Debug'})}
-                subtitle=''
-            >
+            </AdminPanel>
+            <AdminPanel title={intl.formatMessage({defaultMessage: 'Debug'})}>
                 <ItemList>
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Trace Output'})}
@@ -415,7 +421,7 @@ const Config = (props: Props) => {
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
                 </ItemList>
-            </Panel>
+            </AdminPanel>
             <EmbeddingSearchPanel
                 value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
                 onChange={(config) => {
@@ -428,12 +434,8 @@ const Config = (props: Props) => {
                     updateConfig({webSearch: config});
                 }}
             />
-            <Panel
-                title={
-                    <Horizontal>
-                        <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                    </Horizontal>
-                }
+            <AdminPanel
+                title={<FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
             >
                 <MCPServers
@@ -447,7 +449,7 @@ const Config = (props: Props) => {
                         updateConfig({mcp: updatedConfig});
                     }}
                 />
-            </Panel>
+            </AdminPanel>
         </ConfigContainer>
     );
 };
