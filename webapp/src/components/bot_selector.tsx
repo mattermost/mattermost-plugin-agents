@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {FormattedMessage, useIntl} from 'react-intl';
+import {FormattedMessage} from 'react-intl';
 
 import styled from 'styled-components';
 
@@ -90,7 +90,6 @@ type BotDropdownProps = {
 }
 
 export const BotDropdown = (props: BotDropdownProps) => {
-    const intl = useIntl();
     return (
         <DotMenu
             icon={props.children}
@@ -100,7 +99,7 @@ export const BotDropdown = (props: BotDropdownProps) => {
             testId={props.testId}
         >
             <MenuHeader>
-                <MenuGroupHeading label={intl.formatMessage({defaultMessage: 'Choose an Agent'})}/>
+                <MenuGroupHeading label={<FormattedMessage defaultMessage='Choose an Agent'/>}/>
                 <Button
                     emphasis='link'
                     size='x-small'

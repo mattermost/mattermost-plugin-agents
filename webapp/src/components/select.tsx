@@ -76,6 +76,8 @@ const AsyncMultiPicker = (props: AsyncMultiPickerProps) => {
             emptyMessage={intl.formatMessage({defaultMessage: 'No results'})}
             placeholder={props.placeholder}
             aria-label={props.placeholder}
+            listboxLabel={props.placeholder}
+            selectionsLabel={intl.formatMessage({defaultMessage: 'Selected'})}
             disabled={props.disabled}
             portalContainer={getPortalTarget()}
             zIndex={PORTALED_MENU_Z_INDEX}

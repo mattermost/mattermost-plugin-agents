@@ -4,13 +4,10 @@
 import React, {useId} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {CloseIcon} from '@mattermost/compass-icons/components';
 
 import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
 import {Combobox} from '@mattermost/compass-ui/components/combobox';
 import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
-import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Radio} from '@mattermost/compass-ui/components/radio';
 import {Select} from '@mattermost/compass-ui/components/select';
 import {Tag} from '@mattermost/compass-ui/components/tag';
@@ -180,6 +177,7 @@ export const SelectField = (props: SelectFieldProps) => {
                 disabled={props.disabled}
                 invalid={props.invalid}
                 aria-label={props.ariaLabel}
+                listboxLabel={props.ariaLabel ?? props.placeholder}
                 portalContainer={getPortalTarget()}
                 zIndex={PORTALED_MENU_Z_INDEX}
             />
@@ -244,7 +242,6 @@ export type ComboboxItemProps = {
 export const ComboboxItem = (props: ComboboxItemProps) => {
     const intl = useIntl();
     const id = useId();
-    const isClearable = props.isClearable ?? true;
 
     return (
         <FormRow>
@@ -263,16 +260,12 @@ export const ComboboxItem = (props: ComboboxItemProps) => {
                             {modelName: inputValue},
                         )}
                         placeholder={props.placeholder || props.label}
+                        clearable={props.isClearable ?? true}
+                        clearLabel={intl.formatMessage({defaultMessage: 'Clear {label}'}, {label: props.label})}
+                        listboxLabel={props.label}
                         portalContainer={getPortalTarget()}
                         zIndex={PORTALED_MENU_Z_INDEX}
                     />
-                    {isClearable && props.value && (
-                        <IconButton
-                            icon={<Icon glyph={<CloseIcon/>}/>}
-                            aria-label={intl.formatMessage({defaultMessage: 'Clear {label}'}, {label: props.label})}
-                            onClick={() => props.onChange('')}
-                        />
-                    )}
                 </FieldControlRow>
                 {props.helptext &&
                 <HelpText>{props.helptext}</HelpText>

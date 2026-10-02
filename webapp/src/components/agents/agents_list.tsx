@@ -257,6 +257,7 @@ const AgentsList = () => {
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                             onClear={() => setSearchQuery('')}
+                            clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
                         />
                     </SearchContainer>
                 </ContentColumn>

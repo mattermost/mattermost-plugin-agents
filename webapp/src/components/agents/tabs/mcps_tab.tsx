@@ -409,6 +409,7 @@ const McpsTab = (props: Props) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onClear={() => setSearchQuery('')}
+                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
                 disabled={toolGrantsDisabled}
             />
 

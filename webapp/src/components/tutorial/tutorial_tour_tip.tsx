@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useState} from 'react';
+import {useIntl} from 'react-intl';
 import ReactDOM from 'react-dom';
 import Tippy from '@tippyjs/react';
 import styled, {createGlobalStyle} from 'styled-components';
@@ -68,7 +69,7 @@ const pointerPositionFor = (placement: Placement): TourPointPointerPosition => {
 };
 
 type Props = {
-    title: string;
+    title: React.ReactNode;
     screen: React.ReactNode;
     step: number;
     tutorialCategory: string;
@@ -93,6 +94,7 @@ const TutorialTourTip: React.FC<Props> = ({
 }) => {
     // Held in state rather than a ref so Tippy re-renders once the dot mounts.
     const [triggerElement, setTriggerElement] = useState<HTMLDivElement | null>(null);
+    const intl = useIntl();
     const {show, handleOpen, handleDismiss} = useTourManager(
         tutorialCategory,
         onFinish,
@@ -104,6 +106,8 @@ const TutorialTourTip: React.FC<Props> = ({
             pointerPosition={pointerPositionFor(placement)}
             showPulsingDot={false}
             onClose={handleDismiss}
+            closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+            closeButtonProps={{'data-testid': 'agents-tour-close'}}
         >
             {screen}
         </TourPoint>

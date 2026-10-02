@@ -125,12 +125,6 @@ const JobInfoValue = styled.span`
     color: var(--center-channel-color);
 `;
 
-const StaleActions = styled.div`
-    margin-top: 8px;
-    display: flex;
-    gap: 8px;
-`;
-
 // Unknown phases get fallback text (may come from a newer plugin version).
 const renderVectorIndexPhase = (phase: string) => {
     switch (phase) {
@@ -194,6 +188,22 @@ export const ReindexSection = ({
     const isRebuildJob = jobStatus?.operation === 'rebuild_vector_index';
     const embeddingIdentityMismatch = hasLocalModelMismatch || healthCheckResult?.model_compatible === false;
 
+    const reindexFromScratchLabel = <FormattedMessage defaultMessage='Reindex from scratch'/>;
+    let staleRecovery: {label: React.ReactNode; onClick: () => void; disabled: boolean} | null = null;
+    if (isRebuildJob) {
+        staleRecovery = {
+            label: <FormattedMessage defaultMessage='Rebuild vector index'/>,
+            onClick: onRebuildVectorIndexClick,
+            disabled: embeddingIdentityMismatch,
+        };
+    } else if (hasProgress) {
+        staleRecovery = {
+            label: <FormattedMessage defaultMessage='Resume from checkpoint'/>,
+            onClick: onResumeClick,
+            disabled: false,
+        };
+    }
+
     // Resume is for embed reindex jobs with progress. Rebuilds are not resumable.
     const canResume = !isRebuildJob &&
         (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
@@ -239,41 +249,16 @@ export const ReindexSection = ({
                     type='danger'
                     title={<FormattedMessage defaultMessage='Job May Be Stale'/>}
                     description={(
-                        <>
-                            <FormattedMessage
-                                defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
-                                values={{nodeId: jobStatus?.node_id || 'unknown'}}
-                            />
-                            <StaleActions>
-                                {!isRebuildJob && hasProgress && (
-                                    <Button
-                                        emphasis='secondary'
-                                        size='small'
-                                        onClick={onResumeClick}
-                                    >
-                                        <FormattedMessage defaultMessage='Resume from checkpoint'/>
-                                    </Button>
-                                )}
-                                {isRebuildJob && (
-                                    <Button
-                                        emphasis='secondary'
-                                        size='small'
-                                        onClick={onRebuildVectorIndexClick}
-                                        disabled={embeddingIdentityMismatch}
-                                    >
-                                        <FormattedMessage defaultMessage='Rebuild vector index'/>
-                                    </Button>
-                                )}
-                                <Button
-                                    emphasis='secondary'
-                                    size='small'
-                                    onClick={onReindexClick}
-                                >
-                                    <FormattedMessage defaultMessage='Reindex from scratch'/>
-                                </Button>
-                            </StaleActions>
-                        </>
+                        <FormattedMessage
+                            defaultMessage='The reindex job has not updated in over 10 minutes. The node running it ({nodeId}) may have crashed. Start a new run to take over from where it left off.'
+                            values={{nodeId: jobStatus?.node_id || 'unknown'}}
+                        />
                     )}
+                    primaryButtonLabel={staleRecovery?.label ?? reindexFromScratchLabel}
+                    onPrimaryAction={staleRecovery?.onClick ?? onReindexClick}
+                    primaryActionDisabled={staleRecovery?.disabled}
+                    secondaryButtonLabel={staleRecovery ? reindexFromScratchLabel : null}
+                    onSecondaryAction={onReindexClick}
                 />
             )}
 

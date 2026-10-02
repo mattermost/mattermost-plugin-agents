@@ -227,6 +227,7 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                     subtitle={channelName}
                     subtitlePlacement='beside'
                     onClose={onClose}
+                    closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
                     headerDivider={false}
                     footerDivider={false}
                     scrollable={false}

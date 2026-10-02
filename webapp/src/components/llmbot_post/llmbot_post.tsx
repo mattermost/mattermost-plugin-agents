@@ -728,12 +728,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 />
             )}
             { showPostbackButton &&
-            <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
-                <SectionNotice
-                    type='hint'
-                    title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
-                />
-            </PostSummaryHelpMessage>
+            <PostSummaryHelpMessage
+                data-testid='llm-bot-post-summary-help'
+                type='hint'
+                title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+            />
             }
             { showControlsBar &&
             <ControlsBarComponent
@@ -760,6 +759,6 @@ const AnswerArea = styled.div<{$afterActivity: boolean}>`
     }
 `;
 
-const PostSummaryHelpMessage = styled.div`
+const PostSummaryHelpMessage = styled(SectionNotice)`
     margin-top: 16px;
 `;

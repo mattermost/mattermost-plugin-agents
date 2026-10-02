@@ -273,8 +273,10 @@ const CustomPromptsManagement = () => {
                         size='large'
                         title={title}
                         onClose={handleClose}
+                        closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
                         showBackButton={Boolean(showCreateForm || editingPrompt)}
                         onBack={handleFormBack}
+                        backLabel={intl.formatMessage({defaultMessage: 'Back to prompts'})}
                         headerDivider={false}
                         bodyPadding='none'
                         scrollable={false}
@@ -328,6 +330,7 @@ const CustomPromptsManagement = () => {
                                                 value={searchQuery}
                                                 onChange={(e) => setSearchQuery(e.target.value)}
                                                 onClear={() => setSearchQuery('')}
+                                                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
                                                 placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
                                                 aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
                                             />
