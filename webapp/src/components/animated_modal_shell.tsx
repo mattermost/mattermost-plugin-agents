@@ -109,18 +109,34 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
         dialog?.focus();
     };
 
-    // Document-level so Escape works even when focus sits outside the overlay.
+    // A host menu closing as the modal opens can restore focus to its trigger; reclaim it.
+    const handleEntered = () => {
+        const dialog = nodeRef.current?.querySelector<HTMLElement>('[role="dialog"]');
+        if (dialog && !dialog.contains(document.activeElement)) {
+            dialog.focus();
+        }
+    };
+
+    // Window capture so host handlers (which may swallow Escape) can't pre-empt us;
+    // a dialog stacked outside this shell owns Escape instead.
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && !e.defaultPrevented) {
-                e.stopPropagation();
-                onCloseRef.current?.();
+            if (e.key !== 'Escape' || e.defaultPrevented) {
+                return;
             }
+            const root = nodeRef.current;
+            const hasOtherDialog = Array.from(document.querySelectorAll('[role="dialog"]')).
+                some((el) => !root?.contains(el));
+            if (hasOtherDialog) {
+                return;
+            }
+            e.stopPropagation();
+            onCloseRef.current?.();
         };
         if (show) {
-            document.addEventListener('keydown', onKeyDown);
+            window.addEventListener('keydown', onKeyDown, true);
         }
-        return () => document.removeEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
     }, [show]);
 
     const handleExited = () => {
@@ -159,6 +175,7 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
             mountOnEnter={true}
             appear={true}
             onEnter={handleEnter}
+            onEntered={handleEntered}
             onExited={handleExited}
         >
             <ShellRoot

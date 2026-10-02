@@ -7,6 +7,14 @@ import {IntlProvider} from 'react-intl';
 
 import ConfirmationDialog from './confirmation_dialog';
 
+jest.mock('react-intl', () => {
+    const actual = jest.requireActual('react-intl');
+    const intl = {
+        formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+    };
+    return {...actual, useIntl: () => intl};
+});
+
 function renderDialog(props: Partial<React.ComponentProps<typeof ConfirmationDialog>> = {}) {
     const onConfirm = jest.fn();
     const onCancel = jest.fn();
@@ -61,6 +69,14 @@ describe('ConfirmationDialog', () => {
         const {onCancel} = renderDialog({managedAccessibility: true});
 
         fireEvent.keyDown(document, {key: 'Escape'});
+
+        expect(onCancel).toHaveBeenCalledTimes(1);
+    });
+
+    it('close icon button cancels', () => {
+        const {onCancel} = renderDialog();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Close'}));
 
         expect(onCancel).toHaveBeenCalledTimes(1);
     });

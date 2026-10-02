@@ -4,7 +4,7 @@
 import React, {useEffect, useRef} from 'react';
 import {CSSTransition} from 'react-transition-group';
 import styled from 'styled-components';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Modal} from '@mattermost/compass-ui/components/modal';
@@ -54,6 +54,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
     managedAccessibility = false,
     show,
 }) => {
+    const intl = useIntl();
     const transitionRef = useRef<HTMLDivElement>(null);
     const dialogRef = useRef<HTMLDivElement>(null);
     const confirmButtonRef = useRef<HTMLButtonElement>(null);
@@ -157,6 +158,8 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             >
                 <DialogModal
                     title={<span id={titleId}>{title}</span>}
+                    onClose={() => !confirmPending && onCancel()}
+                    closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
                     headerDivider={false}
                     footerDivider={false}
                     scrollable={false}
@@ -181,9 +184,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
                         </>
                     )}
                 >
-                    <DialogBody>
-                        {message}
-                    </DialogBody>
+                    {message}
                 </DialogModal>
             </DialogSheet>
         </DialogWrapper>
@@ -231,12 +232,6 @@ const DialogModal = styled(Modal)`
     && {
         width: 100%;
     }
-`;
-
-const DialogBody = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 14px;
-    line-height: 20px;
 `;
 
 export default ConfirmationDialog;

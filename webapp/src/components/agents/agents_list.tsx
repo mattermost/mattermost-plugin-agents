@@ -325,14 +325,13 @@ const AgentsList = () => {
                 </ListContent>
             </ListViewport>
 
-            {deletingAgent && (
-                <DeleteAgentDialog
-                    agentName={deletingAgent.displayName}
-                    confirmPending={deleteInFlight}
-                    onConfirm={handleDeleteConfirm}
-                    onCancel={handleDeleteCancel}
-                />
-            )}
+            <DeleteAgentDialog
+                show={deletingAgent !== null}
+                agentName={deletingAgent?.displayName}
+                confirmPending={deleteInFlight}
+                onConfirm={handleDeleteConfirm}
+                onCancel={handleDeleteCancel}
+            />
 
             <FixedChrome>
                 <ContentColumn>
