@@ -390,6 +390,8 @@ func (c *Conversations) handleMentionViaConversation(
 	opts := c.toolsDisabledLLMOptions(bot, toolsDisabled)
 
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
+	// The channel answer itself waits until provenance is covered.
+	c.holdUncoveredChannelAnswer(llmContext)
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	progress.Advance(responseProgressConnectingProvider)
 	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionRequest,

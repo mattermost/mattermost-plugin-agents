@@ -351,7 +351,7 @@ func TestAllToolsAutoRunEverywhere_NamespacedToolUsesBarePolicy(t *testing.T) {
 			},
 		},
 	}
-	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: "example__example_tool", ServerOrigin: origin}})
 
 	turns := []toolrunner.ToolTurn{{
@@ -375,7 +375,7 @@ func TestAllToolsAutoRunEverywhere_AllowsMetaTools(t *testing.T) {
 	store := llm.NewToolStore()
 	store.AddTools(mcp.NewMetaTools(nil))
 	store.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: origin}})
-	llmCtx := &llm.Context{Tools: store}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: store}
 
 	turns := []toolrunner.ToolTurn{
 		{AssistantToolCalls: []llm.ToolCall{{Name: mcp.SearchToolsName}}},
@@ -444,7 +444,7 @@ func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) 
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{
@@ -483,7 +483,7 @@ func TestAllToolsAutoRunEverywhereDenormalizesNamespacedTool(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://mcp.atlassian.com"
 	const runtimeToolName = "jira__get_issue"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeToolName, ServerOrigin: origin}})
 	turns := []toolrunner.ToolTurn{{
 		AssistantToolCalls: []llm.ToolCall{{Name: runtimeToolName}},
@@ -514,7 +514,7 @@ func TestAllToolsAutoRunEverywhereUsesServerOriginToDisambiguateBareName(t *test
 	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
 	c := &Conversations{toolPolicyChecker: checker}
 	const origin = "https://github.example.com"
-	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx := &llm.Context{Channel: &model.Channel{Id: "dm", Type: model.ChannelTypeDirect}, Tools: llm.NewToolStore()}
 	llmCtx.Tools.AddTools([]llm.Tool{
 		{Name: "jira__get_issue", ServerOrigin: "https://jira.example.com"},
 		{Name: "github__get_issue", ServerOrigin: origin},
@@ -529,9 +529,10 @@ func TestAllToolsAutoRunEverywhereUsesServerOriginToDisambiguateBareName(t *test
 	assert.Equal(t, "get_issue", checker.lastToolName)
 }
 
-// TestAllToolsAutoRunEverywhere_RespectsDestinationAudience checks that
-// auto-publish requires every tool source to be readable by the destination
-// audience. Tools still auto-run when policy allows; only publication is gated.
+// TestAllToolsAutoRunEverywhere_RespectsDestinationAudience checks that the
+// channel answer is posted only when every executed tool reported provenance
+// the destination audience can read. Tools still auto-run when policy allows.
+// A false result withholds that answer until a share decision.
 func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 	const toolName = "read_channel"
 
@@ -554,6 +555,8 @@ func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 		sourceParam     any
 		extraRemote     bool
 		origin          string
+		noGuests        bool
+		extraTool       string
 		wantAutoRun     bool
 		wantAutoPublish bool
 	}{
@@ -586,8 +589,46 @@ func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 			dest:            destPublic,
 			sources:         []*model.Channel{otherPublicSameTeam},
 			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
 			wantAutoRun:     true,
 			wantAutoPublish: true,
+		},
+		{
+			name:            "public channel of destination team when a guest may be present",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "destination channel is missing",
+			dest:            nil,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "executed tool did not report provenance",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			extraTool:       "get_channel_info",
+			wantAutoRun:     true,
+			wantAutoPublish: false,
+		},
+		{
+			name:            "executed tool is outside the provenance allowlist",
+			dest:            destPublic,
+			sources:         []*model.Channel{otherPublicSameTeam},
+			origin:          mcp.EmbeddedClientKey,
+			noGuests:        true,
+			extraTool:       "create_post",
+			wantAutoRun:     true,
+			wantAutoPublish: false,
 		},
 		{
 			name:            "source is other private channel",
@@ -750,8 +791,9 @@ func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 			}
 			c := &Conversations{toolPolicyChecker: policies}
 			llmCtx := &llm.Context{
-				Channel: tc.dest,
-				Tools:   llm.NewToolStore(),
+				Channel:                tc.dest,
+				Tools:                  llm.NewToolStore(),
+				DestinationHasNoGuests: tc.noGuests,
 			}
 			if tc.dest != nil && tc.dest.TeamId != "" {
 				llmCtx.Team = &model.Team{Id: tc.dest.TeamId}
@@ -762,9 +804,20 @@ func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 			case tc.sources != nil:
 				llmCtx.Parameters = map[string]any{sourceChannelsParam: tc.sources}
 			}
+			if llmCtx.Parameters != nil {
+				llmCtx.Parameters[reportedSourceToolsParam] = map[string]bool{toolName: true}
+			}
 			llmCtx.Tools.AddTools([]llm.Tool{{Name: toolName, ServerOrigin: tc.origin}})
 			call := llm.ToolCall{Name: toolName, ServerOrigin: tc.origin}
 			calls := []llm.ToolCall{call}
+			if tc.extraTool != "" {
+				policies[tc.origin][tc.extraTool] = struct {
+					policy  string
+					enabled bool
+				}{policy: mcp.ToolPolicyAutoRunEverywhere, enabled: true}
+				llmCtx.Tools.AddTools([]llm.Tool{{Name: tc.extraTool, ServerOrigin: tc.origin}})
+				calls = append(calls, llm.ToolCall{Name: tc.extraTool, ServerOrigin: tc.origin})
+			}
 			if tc.extraRemote {
 				llmCtx.Tools.AddTools([]llm.Tool{{Name: remoteToolName, ServerOrigin: remoteOrigin}})
 				calls = append(calls, llm.ToolCall{Name: remoteToolName, ServerOrigin: remoteOrigin})
@@ -775,7 +828,14 @@ func TestAllToolsAutoRunEverywhere_RespectsDestinationAudience(t *testing.T) {
 			assert.Equal(t, tc.wantAutoRun, c.shouldAutoExecuteTool(llmCtx, isDM)(call),
 				"tools still auto-run when policy allows")
 			assert.Equal(t, tc.wantAutoPublish, c.allToolsAutoRunEverywhere(turns, llmCtx),
-				"auto-publish requires every tool source to be readable by the destination audience")
+				"the channel answer is posted only when provenance is covered")
+			if !isDM {
+				llmCtx.HoldChannelAnswer = func(calls []llm.ToolCall) bool {
+					return !c.allToolsAutoRunEverywhere([]toolrunner.ToolTurn{{AssistantToolCalls: calls}}, llmCtx)
+				}
+				assert.Equal(t, !tc.wantAutoPublish, llmCtx.HoldChannelAnswer(calls),
+					"an uncovered answer is withheld until a share decision")
+			}
 		})
 	}
 }

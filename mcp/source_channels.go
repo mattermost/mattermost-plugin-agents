@@ -13,7 +13,11 @@ import (
 // listing the Mattermost channels a tool result drew from.
 const sourceChannelsParam = "source_channels"
 
-func applySourceChannelsMeta(llmContext *llm.Context, meta sdkmcp.Meta) {
+// reportedSourceToolsParam lists bare tool names that included source-channel
+// metadata. The key must match conversations.reportedSourceToolsParam.
+const reportedSourceToolsParam = "source_channels_reported_tools"
+
+func applySourceChannelsMeta(llmContext *llm.Context, toolName string, meta sdkmcp.Meta) {
 	channels, ok := sourceChannelsFromMeta(meta)
 	if !ok || llmContext == nil {
 		return
@@ -23,6 +27,15 @@ func applySourceChannelsMeta(llmContext *llm.Context, meta sdkmcp.Meta) {
 	}
 	existing, _ := llmContext.Parameters[sourceChannelsParam].([]*model.Channel)
 	llmContext.Parameters[sourceChannelsParam] = mergeSourceChannels(existing, channels)
+	if toolName == "" {
+		return
+	}
+	reported, _ := llmContext.Parameters[reportedSourceToolsParam].(map[string]bool)
+	if reported == nil {
+		reported = map[string]bool{}
+	}
+	reported[toolName] = true
+	llmContext.Parameters[reportedSourceToolsParam] = reported
 }
 
 func sourceChannelsFromMeta(meta sdkmcp.Meta) ([]*model.Channel, bool) {
@@ -83,6 +96,12 @@ func channelFromMetaMap(item map[string]any) (*model.Channel, bool) {
 	}
 	if teamID, ok := item["team_id"].(string); ok {
 		ch.TeamId = teamID
+	}
+	if name, ok := item["name"].(string); ok {
+		ch.Name = name
+	}
+	if displayName, ok := item["display_name"].(string); ok {
+		ch.DisplayName = displayName
 	}
 	return ch, true
 }

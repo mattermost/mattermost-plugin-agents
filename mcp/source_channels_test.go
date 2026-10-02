@@ -219,7 +219,7 @@ func TestMergeSourceChannels(t *testing.T) {
 func TestApplySourceChannelsMeta(t *testing.T) {
 	t.Run("nil context is a no-op", func(t *testing.T) {
 		assert.NotPanics(t, func() {
-			applySourceChannelsMeta(nil, sdkmcp.Meta{sourceChannelsParam: []any{
+			applySourceChannelsMeta(nil, "read_channel", sdkmcp.Meta{sourceChannelsParam: []any{
 				map[string]any{"id": "ch-1", "type": "O", "team_id": "team-a"},
 			}})
 		})
@@ -227,7 +227,7 @@ func TestApplySourceChannelsMeta(t *testing.T) {
 
 	t.Run("unparseable meta leaves parameters untouched", func(t *testing.T) {
 		ctx := &llm.Context{Parameters: map[string]any{"keep": true}}
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: "bad"})
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: "bad"})
 		assert.Equal(t, true, ctx.Parameters["keep"])
 		_, present := ctx.Parameters[sourceChannelsParam]
 		assert.False(t, present)
@@ -235,13 +235,13 @@ func TestApplySourceChannelsMeta(t *testing.T) {
 
 	t.Run("missing key leaves parameters untouched", func(t *testing.T) {
 		ctx := &llm.Context{}
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{"other": 1})
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{"other": 1})
 		assert.Nil(t, ctx.Parameters)
 	})
 
 	t.Run("creates parameters and stores parsed channels", func(t *testing.T) {
 		ctx := &llm.Context{}
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: []any{
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: []any{
 			map[string]any{"id": "ch-1", "type": string(model.ChannelTypeOpen), "team_id": "team-a"},
 		}})
 		got, ok := ctx.Parameters[sourceChannelsParam].([]*model.Channel)
@@ -254,13 +254,13 @@ func TestApplySourceChannelsMeta(t *testing.T) {
 
 	t.Run("merges later tool results and skips a subsequent parse failure", func(t *testing.T) {
 		ctx := &llm.Context{}
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: []any{
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: []any{
 			map[string]any{"id": "ch-1", "type": string(model.ChannelTypeOpen), "team_id": "team-a"},
 		}})
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: []any{
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: []any{
 			map[string]any{"id": "ch-2", "type": string(model.ChannelTypePrivate), "team_id": "team-a"},
 		}})
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: "bad"})
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: "bad"})
 
 		got, ok := ctx.Parameters[sourceChannelsParam].([]*model.Channel)
 		require.True(t, ok)
@@ -271,7 +271,7 @@ func TestApplySourceChannelsMeta(t *testing.T) {
 
 	t.Run("empty list still records an empty source list", func(t *testing.T) {
 		ctx := &llm.Context{}
-		applySourceChannelsMeta(ctx, sdkmcp.Meta{sourceChannelsParam: []any{}})
+		applySourceChannelsMeta(ctx, "read_channel", sdkmcp.Meta{sourceChannelsParam: []any{}})
 		got, ok := ctx.Parameters[sourceChannelsParam].([]*model.Channel)
 		require.True(t, ok)
 		assert.Empty(t, got)

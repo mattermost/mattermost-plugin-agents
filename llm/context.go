@@ -53,6 +53,17 @@ type Context struct {
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
 	Parameters        map[string]any
 
+	// DestinationHasNoGuests is true only when the destination channel is known
+	// to contain no guests. Other public channels of the destination team are
+	// readable by that audience only when this is set. Unknown fails closed.
+	DestinationHasNoGuests bool
+
+	// HoldChannelAnswer, when set, is consulted after a tool round has run.
+	// A true result stops the runner before the next completion, so that
+	// completion's text is not written to the channel. The caller keeps the
+	// draft for the requester until a share decision is recorded.
+	HoldChannelAnswer func(calls []ToolCall) bool
+
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.

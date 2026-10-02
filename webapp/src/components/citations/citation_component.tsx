@@ -5,7 +5,7 @@ import React, {useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
-import {LinkVariantIcon} from '@mattermost/compass-icons/components';
+import {GlobeIcon, LinkVariantIcon, LockIcon} from '@mattermost/compass-icons/components';
 
 import {CitationBase, CitationWrapper} from './citation_base';
 import {Annotation} from './types';
@@ -16,6 +16,34 @@ interface CitationComponentProps {
 
 export const CitationComponent = (props: CitationComponentProps) => {
     const intl = useIntl();
+
+    if (props.annotation.type === 'mattermost_channel') {
+        const channelName = props.annotation.channel_name || '';
+        const isPrivate = Boolean(props.annotation.private);
+        const ariaLabel = channelName ?
+            intl.formatMessage({defaultMessage: 'Source: {channel}'}, {channel: channelName}) :
+            intl.formatMessage({defaultMessage: 'Source: private channel'});
+        return (
+            <CitationBase
+                icon={isPrivate ? <LockIcon size={12}/> : <GlobeIcon size={12}/>}
+                tooltipContent={
+                    <TooltipContent>
+                        <TooltipDomain>
+                            {channelName || intl.formatMessage({defaultMessage: 'Private channel'})}
+                        </TooltipDomain>
+                    </TooltipContent>
+                }
+                onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }}
+                ariaLabel={ariaLabel}
+                testId='llm-channel-source'
+                tooltipTestId='llm-channel-source-tooltip'
+                citationIndex={props.annotation.index}
+            />
+        );
+    }
 
     const handleClick = (e: React.MouseEvent | React.KeyboardEvent) => {
         e.preventDefault();

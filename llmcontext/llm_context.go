@@ -48,6 +48,20 @@ type Builder struct {
 	licenseChecker  *enterprise.LicenseChecker
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
+
+	// destinationGuestCount, when set, returns the guest count for a channel.
+	// A nil func or an error leaves the destination fail-closed for other
+	// public channels.
+	destinationGuestCount func(channelID string) (int64, error)
+}
+
+// SetDestinationGuestCount installs the lookup used to decide whether other
+// public channels of the destination team are readable by its audience.
+func (b *Builder) SetDestinationGuestCount(fn func(channelID string) (int64, error)) {
+	if b == nil {
+		return
+	}
+	b.destinationGuestCount = fn
 }
 
 // NewLLMContextBuilder creates a new LLM context builder
@@ -113,6 +127,13 @@ func (b *Builder) WithLLMContextChannel(channel *model.Channel) llm.ContextOptio
 		}
 
 		c.Team = team
+		// A guest can view the team without being able to read its public
+		// channels. Unknown stats fail closed.
+		if b.destinationGuestCount != nil {
+			if guests, guestErr := b.destinationGuestCount(channel.Id); guestErr == nil && guests == 0 {
+				c.DestinationHasNoGuests = true
+			}
+		}
 	}
 }
 

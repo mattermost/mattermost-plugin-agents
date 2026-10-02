@@ -5,6 +5,8 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
+
 import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
@@ -65,6 +67,7 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
+    privateChannelNames?: string[];
 }
 
 // Define a type for tool decisions
@@ -91,6 +94,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
+    const answerLevel = isResultStage && props.canApprove && props.toolCalls.some((call) => call.audience_review);
     const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
 
     // Onlookers get redacted calls without arguments or results.
@@ -301,8 +305,8 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             isProcessing: (isDecisionCall || isInterruptedAutoRound) && isSubmitting,
                             localDecision: isDecisionCall ? toolDecisions[tool.id] : undefined, // eslint-disable-line no-undefined
                             onToggleCollapse: () => toggleCollapse(tool.id),
-                            onApprove: isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
-                            onReject: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            onApprove: isDecisionCall && !answerLevel ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
+                            onReject: isDecisionCall && !answerLevel ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
                             canExpand: props.canExpand,
                             showArguments,
                             showResults,
@@ -316,8 +320,59 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 );
             })}
 
+            {answerLevel && (
+                <AnswerReview>
+                    <WarningTitle>
+                        <FormattedMessage
+                            id='ai.tool_call.private_source_warning_title'
+                            defaultMessage='This answer uses content from private channels'
+                        />
+                    </WarningTitle>
+                    <WarningText>
+                        {(props.privateChannelNames ?? []).length > 0 ? (
+                            <FormattedMessage
+                                id='ai.tool_call.private_source_warning'
+                                defaultMessage='To answer, the agent read {channels}. Members of this channel may not have access. The marked passages came from there. Review them before sharing.'
+                                values={{channels: (props.privateChannelNames ?? []).join(', ')}}
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.private_source_warning_unnamed'
+                                defaultMessage='To answer, the agent read a private channel. Members of this channel may not have access to it. The marked passages came from there. Review them before sharing.'
+                            />
+                        )}
+                    </WarningText>
+                    <AnswerButtons>
+                        <AnswerButton
+                            type='button'
+                            $primary={true}
+                            disabled={isSubmitting}
+                            onClick={() => handleBatchDecision(false)}
+                        >
+                            <LockIcon size={14}/>
+                            <FormattedMessage
+                                id='ai.tool_call.keep_private'
+                                defaultMessage='Keep private'
+                            />
+                        </AnswerButton>
+                        <AnswerButton
+                            type='button'
+                            $primary={false}
+                            disabled={isSubmitting}
+                            onClick={() => handleBatchDecision(true)}
+                        >
+                            <GlobeIcon size={14}/>
+                            <FormattedMessage
+                                id='ai.tool_call.share_with_channel'
+                                defaultMessage='Share with channel'
+                            />
+                        </AnswerButton>
+                    </AnswerButtons>
+                </AnswerReview>
+            )}
+
             {/* Only show status bar for multiple approval decisions */}
-            {approvalDecisionCalls.length > 1 && isSubmitting && (
+            {!answerLevel && approvalDecisionCalls.length > 1 && isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
@@ -328,7 +383,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                 </StatusBar>
             )}
 
-            {approvalDecisionCalls.length > 1 && undecidedApprovalCount > 0 && !isSubmitting && (
+            {!answerLevel && approvalDecisionCalls.length > 1 && undecidedApprovalCount > 0 && !isSubmitting && (
                 <StatusBar>
                     <div>
                         <FormattedMessage
@@ -387,3 +442,52 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 };
 
 export default ToolApprovalSet;
+
+const AnswerReview = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+    padding: 12px;
+    border-radius: 4px;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
+`;
+
+const WarningTitle = styled.div`
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+`;
+
+const WarningText = styled.p`
+    margin: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: rgba(var(--center-channel-color-rgb), 0.8);
+`;
+
+const AnswerButtons = styled.div`
+    display: flex;
+    gap: 8px;
+`;
+
+const AnswerButton = styled.button<{$primary: boolean}>`
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 16px;
+    cursor: pointer;
+    background: ${(props) => (props.$primary ? 'var(--button-bg)' : 'transparent')};
+    color: ${(props) => (props.$primary ? 'var(--button-color)' : 'var(--button-bg)')};
+    border: 1px solid ${(props) => (props.$primary ? 'transparent' : 'var(--button-bg)')};
+
+    &:disabled {
+        opacity: 0.6;
+        cursor: default;
+    }
+`;

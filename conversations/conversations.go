@@ -29,10 +29,32 @@ const ThreadIDProp = "referenced_thread"
 const AnalysisTypeProp = "prompt_type"
 
 // sourceChannelsParam lists the Mattermost channels a tool result drew from.
-// Auto-publish requires every listed source to be the destination channel
-// or a public channel of the destination's team. A missing list means
-// provenance was not determined.
+// The channel answer is posted only when every executed tool reported
+// provenance and every listed source is covered by the destination audience.
+// A missing list means provenance was not determined.
 const sourceChannelsParam = "source_channels"
+
+// reportedSourceToolsParam is the set of bare tool names that included
+// source-channel metadata on their result. A tool that ran without this
+// record does not have determined provenance.
+const reportedSourceToolsParam = "source_channels_reported_tools"
+
+// provenanceReportingTools are the embedded read tools that record the
+// channels they drew from. Any other executed tool leaves provenance
+// undetermined.
+var provenanceReportingTools = map[string]struct{}{
+	"read_channel":        {},
+	"read_post":           {},
+	"search_posts":        {},
+	"get_channel_info":    {},
+	"get_channel_members": {},
+	"get_user_channels":   {},
+	"read_file":           {},
+	"get_file_info":       {},
+	"get_post_files":      {},
+	"get_file_link":       {},
+	"search_files":        {},
+}
 
 // ConfigProvider provides configuration values for conversation behavior
 type ConfigProvider interface {
@@ -294,10 +316,26 @@ func (c *Conversations) runToolLoop(
 	opts = c.withProviderWebSearchLicense(opts)
 	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds))
 	return runner.Run(ctx, req, shouldExecute, func(turns []toolrunner.ToolTurn) {
-		if writeErr := c.convService.WriteToolTurns(convID, turns, sharedForTurns(turns)); writeErr != nil {
+		shared := sharedForTurns(turns)
+		if !shared {
+			annotateHeldAnswers(turns, req.Context)
+		}
+		if writeErr := c.convService.WriteToolTurns(convID, turns, shared); writeErr != nil {
 			c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)
 		}
 	}, opts...)
+}
+
+// holdUncoveredChannelAnswer stops the channel-visible completion when the
+// tools that just ran are not covered by the destination audience. Direct
+// messages do not set this.
+func (c *Conversations) holdUncoveredChannelAnswer(llmCtx *llm.Context) {
+	if llmCtx == nil {
+		return
+	}
+	llmCtx.HoldChannelAnswer = func(calls []llm.ToolCall) bool {
+		return !c.allToolsAutoRunEverywhere([]toolrunner.ToolTurn{{AssistantToolCalls: calls}}, llmCtx)
+	}
 }
 
 // withProviderWebSearchLicense omits the provider-native web search tool below
@@ -360,16 +398,17 @@ func (c *Conversations) shouldAutoExecuteTool(llmCtx *llm.Context, isDM bool) fu
 	}
 }
 
-// allToolsAutoRunEverywhere checks whether every tool call across the given
-// tool turns has an auto_run_everywhere policy and, when the destination is
-// not a direct message, whether every listed source channel is the
-// destination itself or a public channel of the destination's team. When
-// true, tool results can be written with shared=true so the result-approval
-// UI is skipped.
+// allToolsAutoRunEverywhere reports whether the channel-visible answer may be
+// posted now. Every business tool must be auto_run_everywhere, and, outside a
+// direct message, every executed tool must have reported provenance that the
+// destination audience can read. A false result withholds that answer until
+// the requester records a share decision. Tools still run; this does not
+// decide execution.
 func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, llmCtx *llm.Context) bool {
 	sawToolCall := false
 	sawBusinessTool := false
 	sawRemoteTool := false
+	var executedBare []string
 	for _, turn := range turns {
 		for _, tc := range turn.AssistantToolCalls {
 			sawToolCall = true
@@ -385,7 +424,7 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 				return false
 			}
 			// Auto-execute built-ins never require approval, so a round made
-			// up only of them can still be written shared=true.
+			// up only of them can still post its answer.
 			if isAutoExecuteBuiltIn(lookup.Tool) {
 				continue
 			}
@@ -397,6 +436,7 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 				return false
 			}
 			sawBusinessTool = true
+			executedBare = append(executedBare, lookup.BareName)
 			if mcp.IsRemoteServerOrigin(lookup.ServerOrigin) {
 				sawRemoteTool = true
 			}
@@ -405,21 +445,20 @@ func (c *Conversations) allToolsAutoRunEverywhere(turns []toolrunner.ToolTurn, l
 	if !sawToolCall {
 		return false
 	}
-	if sawBusinessTool && !sourcesReadableByDestination(llmCtx, sawRemoteTool) {
+	if sawBusinessTool && !sourcesReadableByDestination(llmCtx, executedBare, sawRemoteTool) {
 		return false
 	}
 	return true
 }
 
-// sourcesReadableByDestination reports whether every listed source channel
-// is the destination itself or a public channel of the destination's team.
-// Direct-message destinations skip the comparison. A missing list, a remote
-// tool (which does not report Mattermost channel sources), or a source that
-// is not the destination and not a public channel of its team means the
-// destination audience does not cover every source.
-func sourcesReadableByDestination(llmCtx *llm.Context, sawRemoteTool bool) bool {
+// sourcesReadableByDestination reports whether the destination audience covers
+// every source the executed tools drew from. Direct-message destinations skip
+// the comparison. A nil destination channel, a remote tool, a tool that did
+// not report provenance, or a source the audience cannot read withholds the
+// channel answer.
+func sourcesReadableByDestination(llmCtx *llm.Context, executedBareNames []string, sawRemoteTool bool) bool {
 	if llmCtx == nil || llmCtx.Channel == nil {
-		return true
+		return false
 	}
 	dest := llmCtx.Channel
 	if dest.Type == model.ChannelTypeDirect {
@@ -427,6 +466,15 @@ func sourcesReadableByDestination(llmCtx *llm.Context, sawRemoteTool bool) bool 
 	}
 	if sawRemoteTool {
 		return false
+	}
+	reported := reportedSourceToolSet(llmCtx)
+	for _, name := range executedBareNames {
+		if _, ok := provenanceReportingTools[name]; !ok {
+			return false
+		}
+		if !reported[name] {
+			return false
+		}
 	}
 	if llmCtx.Parameters == nil {
 		return false
@@ -444,18 +492,43 @@ func sourcesReadableByDestination(llmCtx *llm.Context, sawRemoteTool bool) bool 
 		destTeamID = llmCtx.Team.Id
 	}
 	for _, src := range sources {
-		if src == nil {
+		if !sourceCoveredByDestination(src, dest, destTeamID, llmCtx.DestinationHasNoGuests) {
 			return false
 		}
-		if src.Id != "" && src.Id == dest.Id {
-			continue
-		}
-		if src.Type == model.ChannelTypeOpen && destTeamID != "" && src.TeamId == destTeamID {
-			continue
-		}
-		return false
 	}
 	return true
+}
+
+func sourceCoveredByDestination(src, dest *model.Channel, destTeamID string, destHasNoGuests bool) bool {
+	if src == nil || dest == nil {
+		return false
+	}
+	if src.Id != "" && src.Id == dest.Id {
+		return true
+	}
+	// Guests can view the team but cannot read an arbitrary public channel.
+	// Only a destination known to have no guests covers other public channels.
+	return src.Type == model.ChannelTypeOpen && destHasNoGuests && destTeamID != "" && src.TeamId == destTeamID
+}
+
+func reportedSourceToolSet(llmCtx *llm.Context) map[string]bool {
+	out := map[string]bool{}
+	if llmCtx == nil || llmCtx.Parameters == nil {
+		return out
+	}
+	switch v := llmCtx.Parameters[reportedSourceToolsParam].(type) {
+	case map[string]bool:
+		return v
+	case map[string]struct{}:
+		for name := range v {
+			out[name] = true
+		}
+	case []string:
+		for _, name := range v {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 // isAutoExecuteBuiltIn reports whether the tool is a built-in flagged to run

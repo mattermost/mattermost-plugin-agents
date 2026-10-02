@@ -820,7 +820,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 		}
 
 		c.clearOAuthNeededForServer(client)
-		applySourceChannelsMeta(llmContext, meta)
+		applySourceChannelsMeta(llmContext, toolName, meta)
 		return result, nil
 	}
 }

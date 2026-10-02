@@ -67,6 +67,52 @@ func (c *MCPToolContext) recordSourceChannels(channels ...*model.Channel) {
 	}
 }
 
+// recordChannelByID records the channel a read looked at. A failed lookup
+// still records the id so provenance is determined but not treated as readable.
+func recordChannelByID(mcpContext *MCPToolContext, channelID string) {
+	if mcpContext == nil {
+		return
+	}
+	if channelID == "" || mcpContext.Client == nil {
+		mcpContext.recordSourceChannels(&model.Channel{Id: channelID})
+		return
+	}
+	channel, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, channelID)
+	if err != nil || channel == nil {
+		mcpContext.recordSourceChannels(&model.Channel{Id: channelID})
+		return
+	}
+	mcpContext.recordSourceChannels(channel)
+}
+
+// recordFileChannels records the channels that own the given files.
+func recordFileChannels(mcpContext *MCPToolContext, infos []*model.FileInfo) {
+	if mcpContext == nil {
+		return
+	}
+	if len(infos) == 0 {
+		mcpContext.recordSourceChannels()
+		return
+	}
+	var channels []*model.Channel
+	for _, info := range infos {
+		if info == nil || info.ChannelId == "" {
+			continue
+		}
+		if mcpContext.Client == nil {
+			channels = append(channels, &model.Channel{Id: info.ChannelId})
+			continue
+		}
+		channel, _, err := mcpContext.Client.GetChannel(mcpContext.Ctx, info.ChannelId)
+		if err != nil || channel == nil {
+			channels = append(channels, &model.Channel{Id: info.ChannelId})
+			continue
+		}
+		channels = append(channels, channel)
+	}
+	mcpContext.recordSourceChannels(channels...)
+}
+
 func sourceChannelsMeta(channels []*model.Channel) mcp.Meta {
 	encoded := make([]any, 0, len(channels))
 	for _, ch := range channels {
@@ -74,9 +120,11 @@ func sourceChannelsMeta(channels []*model.Channel) mcp.Meta {
 			continue
 		}
 		encoded = append(encoded, map[string]any{
-			"id":      ch.Id,
-			"type":    string(ch.Type),
-			"team_id": ch.TeamId,
+			"id":           ch.Id,
+			"type":         string(ch.Type),
+			"team_id":      ch.TeamId,
+			"name":         ch.Name,
+			"display_name": ch.DisplayName,
 		})
 	}
 	return mcp.Meta{sourceChannelsMetaKey: encoded}

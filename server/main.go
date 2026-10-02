@@ -507,6 +507,13 @@ func (p *Plugin) OnActivate() error {
 		mcpClientManager,
 		&p.configuration,
 	)
+	contextBuilder.SetDestinationGuestCount(func(channelID string) (int64, error) {
+		stats, err := pluginAPI.Channel.GetChannelStats(channelID)
+		if err != nil || stats == nil {
+			return 0, err
+		}
+		return stats.GuestCount, nil
+	})
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
 
 	conversationsService := conversations.New(

@@ -2,19 +2,20 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, waitFor} from '@testing-library/react';
+import {cleanup, fireEvent, render, waitFor, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 const mockDoToolCall = jest.fn();
+const mockDoToolResult = jest.fn();
 const mockInvalidateConversation = jest.fn();
 
 jest.mock('@/client', () => ({
     doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
         mockDoToolCall(postID, toolIDs, toolAnswers),
-    doToolResult: jest.fn(),
+    doToolResult: (postID: string, toolIDs: string[]) => mockDoToolResult(postID, toolIDs),
 }));
 
 jest.mock('@/hooks/use_conversation', () => ({
@@ -47,7 +48,7 @@ function makeTool(overrides: Partial<ToolCall>): ToolCall {
     };
 }
 
-function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call', canApprove = true) {
+function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage = 'call', canApprove = true, privateChannelNames?: string[]) {
     return render(
         <IntlProvider locale='en'>
             <ToolApprovalSet
@@ -57,6 +58,7 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 approvalStage={approvalStage}
                 canApprove={canApprove}
                 canExpand={true}
+                privateChannelNames={privateChannelNames}
             />
         </IntlProvider>,
     );
@@ -72,6 +74,8 @@ beforeEach(() => {
     mockRenderToolCall.mockClear();
     mockDoToolCall.mockReset();
     mockDoToolCall.mockImplementation(() => Promise.resolve());
+    mockDoToolResult.mockReset();
+    mockDoToolResult.mockImplementation(() => Promise.resolve());
     mockInvalidateConversation.mockClear();
 });
 
@@ -175,5 +179,34 @@ describe('ToolApprovalSet', () => {
         ]);
 
         getByText('2 tools need decisions');
+    });
+
+    test('uses one keep-private decision when the answer needs review', async () => {
+        const {getByText, queryByText} = renderComponent([
+            makeTool({id: 'tool_a', status: ToolCallStatus.Success, audience_review: true}),
+            makeTool({id: 'tool_b', status: ToolCallStatus.Success, audience_review: true}),
+        ], 'result', true, ['Procurement Restricted']);
+
+        expect(getToolCardProps('tool_a').onApprove).toBeUndefined();
+        expect(getToolCardProps('tool_b').onReject).toBeUndefined();
+        getByText('Procurement Restricted', {exact: false});
+        expect(queryByText('2 tools need decisions')).toBeNull();
+
+        fireEvent.click(getByText('Keep private'));
+        await waitFor(() => {
+            expect(mockDoToolResult).toHaveBeenCalledWith('post_1', []);
+        });
+
+        // render() queries are bound to document.body, so the first tree has
+        // to be removed before asserting the non-requester view.
+        cleanup();
+        const hidden = renderComponent([
+            makeTool({id: 'tool_c', status: ToolCallStatus.Success, audience_review: true}),
+        ], 'result', false, ['Procurement Restricted']);
+        const nonRequester = within(hidden.container);
+        expect(nonRequester.queryByText('Procurement Restricted', {exact: false})).toBeNull();
+        expect(nonRequester.queryByText('This answer uses content from private channels')).toBeNull();
+        expect(nonRequester.queryByText('Keep private')).toBeNull();
+        expect(nonRequester.queryByText('Share with channel')).toBeNull();
     });
 });

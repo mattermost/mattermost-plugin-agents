@@ -11,6 +11,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // FileContentService reads the text contents of Mattermost file attachments on
@@ -59,6 +60,11 @@ func (p *MattermostToolProvider) toolReadFile(mcpContext *MCPToolContext, args R
 			return "you do not have permission to read this file", nil
 		}
 		return "", fmt.Errorf("error reading file %s: %w", args.FileID, err)
+	}
+	if mcpContext.Client != nil {
+		if info, _, infoErr := mcpContext.Client.GetFileInfo(mcpContext.Ctx, args.FileID); infoErr == nil {
+			recordFileChannels(mcpContext, []*model.FileInfo{info})
+		}
 	}
 
 	return formatFileContent(content), nil
@@ -135,6 +141,7 @@ func (p *MattermostToolProvider) toolGetFileInfo(mcpContext *MCPToolContext, arg
 	if err != nil {
 		return "", fmt.Errorf("error fetching file info: %w", err)
 	}
+	recordFileChannels(mcpContext, []*model.FileInfo{info})
 	var result strings.Builder
 	format.WriteFileDescriptor(&result, format.FileDescriptorEntry{FileInfo: info})
 	return result.String(), nil
@@ -150,8 +157,10 @@ func (p *MattermostToolProvider) toolGetPostFiles(mcpContext *MCPToolContext, ar
 		return "", fmt.Errorf("error fetching post files: %w", err)
 	}
 	if len(infos) == 0 {
+		mcpContext.recordSourceChannels()
 		return "no files attached to this post", nil
 	}
+	recordFileChannels(mcpContext, infos)
 	var result strings.Builder
 	fmt.Fprintf(&result, "Found %d file(s) on post %s:\n\n", len(infos), args.PostID)
 	for i, info := range infos {
@@ -168,6 +177,11 @@ func (p *MattermostToolProvider) toolGetFileLink(mcpContext *MCPToolContext, arg
 	link, _, err := mcpContext.Client.GetFileLink(mcpContext.Ctx, args.FileID)
 	if err != nil {
 		return "", fmt.Errorf("error fetching file link (public links may be disabled on the server): %w", err)
+	}
+	if mcpContext.Client != nil {
+		if info, _, infoErr := mcpContext.Client.GetFileInfo(mcpContext.Ctx, args.FileID); infoErr == nil {
+			recordFileChannels(mcpContext, []*model.FileInfo{info})
+		}
 	}
 	return fmt.Sprintf("Public link for file %s:\n%s", args.FileID, link), nil
 }
@@ -186,8 +200,17 @@ func (p *MattermostToolProvider) toolSearchFiles(mcpContext *MCPToolContext, arg
 		return "", fmt.Errorf("error searching files: %w", err)
 	}
 	if results == nil || len(results.Order) == 0 {
+		mcpContext.recordSourceChannels()
 		return fmt.Sprintf("no files found for %q", args.Terms), nil
 	}
+
+	infos := make([]*model.FileInfo, 0, len(results.Order))
+	for _, id := range results.Order {
+		if info := results.FileInfos[id]; info != nil {
+			infos = append(infos, info)
+		}
+	}
+	recordFileChannels(mcpContext, infos)
 
 	var result strings.Builder
 	fmt.Fprintf(&result, "Found %d file(s) for %q:\n\n", len(results.Order), args.Terms)
