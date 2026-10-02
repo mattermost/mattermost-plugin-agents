@@ -320,7 +320,7 @@ test.describe('Agent CRUD', () => {
         await expect(enableToolsLabel).toBeVisible({ timeout: 10000 });
         await enableToolsLabel.locator('xpath=following-sibling::*[1]').locator('input[type="radio"]').nth(1).click();
 
-        const mcpsTab = page.getByRole('button', { name: 'MCPs' });
+        const mcpsTab = page.getByRole('tab', { name: 'MCPs' });
         await expect(mcpsTab).toBeDisabled();
     });
 

@@ -94,7 +94,7 @@ test.describe('Agents Tour - Basic Flow', () => {
         const overlay = page.getByTestId('agents-tour-overlay').or(page.locator('[class*="TourOverlay"]'));
         await expect(overlay).toBeVisible();
 
-        const closeButton = page.getByTestId('agents-tour-close').or(page.locator('.tour-tip-tippy button').filter({ has: page.locator('.icon-close') }));
+        const closeButton = page.locator('.tour-tip-tippy').getByRole('button', { name: 'Close' });
         await closeButton.click();
 
         // 7. Verify popover disappears immediately

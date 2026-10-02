@@ -62,7 +62,7 @@ test.describe('Agents Tour - Edge Cases', () => {
         await page.setViewportSize({ width: 1400, height: 900 });
         await expect(tourPopover).toBeVisible();
 
-        const closeButton = page.getByTestId('agents-tour-close');
+        const closeButton = page.locator('.tour-tip-tippy').getByRole('button', { name: 'Close' });
         await expect(closeButton).toBeVisible();
         await closeButton.click();
         await expect(tourPopover).not.toBeVisible({ timeout: 5000 });

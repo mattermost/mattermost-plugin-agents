@@ -117,7 +117,7 @@ export class AgentPageHelper {
     }
 
     getModalTab(tabName: 'Configuration' | 'Access' | 'MCPs'): Locator {
-        return this.page.getByRole('button', {name: tabName, exact: true});
+        return this.page.getByRole('tab', {name: tabName, exact: true});
     }
 
     getModalSaveButton(): Locator {
@@ -214,8 +214,7 @@ export class AgentPageHelper {
     }
 
     getToolToggles(): Locator {
-        // Tool toggles are custom button elements styled as switches
-        return this.page.locator('button[class*="Toggle"]');
+        return this.page.getByRole('switch');
     }
 
     // --- Convenience Methods ---
