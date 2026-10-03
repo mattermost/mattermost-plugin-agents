@@ -269,6 +269,22 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			wantManagerCall: true,
 		},
 		{
+			name:   "server denied by access policy",
+			caller: testUserID,
+			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
+			setup: func(e *TestEnvironment) *[]readAppResourceCall {
+				calls := seedDefaults(e, new(true), true, true)
+				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
+					return nil, mcp.ErrServerAccessDenied
+				}
+				return calls
+			},
+			wantStatus:      http.StatusForbidden,
+			wantErrorCode:   appResourceErrForbidden,
+			wantManagerCall: true,
+		},
+		{
 			name:   "manager returns OAuthNeededError",
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",

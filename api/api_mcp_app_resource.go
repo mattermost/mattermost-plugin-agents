@@ -144,6 +144,10 @@ func (a *API) handleGetMCPAppResource(c *gin.Context) {
 			writeAppResourceError(c, http.StatusUnauthorized, appResourceErrAuthRequired, "MCP authentication required", oauthErr.AuthURL())
 			return
 		}
+		if errors.Is(err, mcp.ErrServerAccessDenied) {
+			writeAppResourceError(c, http.StatusForbidden, appResourceErrForbidden, "access to MCP server denied", "")
+			return
+		}
 		if errors.Is(err, mcp.ErrServerNotConfigured) {
 			writeAppResourceError(c, http.StatusNotFound, appResourceErrNotFound, "server no longer configured", "")
 			return
