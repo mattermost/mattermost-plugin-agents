@@ -698,6 +698,12 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 		sort.Strings(toolNames)
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
+			uiMeta := parseToolUIMeta(tool.Meta)
+			// Spec: tools whose visibility excludes "model" MUST NOT be
+			// exposed to the agent. App-callable tools are Phase 3.
+			if !uiMeta.VisibleToModel() {
+				continue
+			}
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)
 			if existingServerID, exists := seenTools[runtimeToolName]; exists {
 				log.Warn("Namespaced MCP tool name conflict detected",
@@ -724,6 +730,7 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 				Schema:       tool.InputSchema,
 				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
+				UIMeta:       uiMeta,
 			})
 		}
 	}

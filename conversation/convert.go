@@ -110,6 +110,7 @@ func BlocksToPost(
 				Title:          block.Title,
 				Description:    block.Description,
 				DeferredResult: block.DeferredResult,
+				UIMeta:         block.UIMeta,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""

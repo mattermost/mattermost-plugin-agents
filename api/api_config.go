@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
@@ -14,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/sandbox"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -21,6 +23,8 @@ import (
 func normalizeAdminConfig(cfg config.Config) config.Config {
 	cfg.MCP.Enabled = true
 	cfg.MCP.EmbeddedServer.Enabled = true
+	cfg.MCP.Apps.SandboxURL = strings.TrimSpace(cfg.MCP.Apps.SandboxURL)
+	cfg.MCP.Apps.SandboxListenAddress = strings.TrimSpace(cfg.MCP.Apps.SandboxListenAddress)
 
 	for i := range cfg.Services {
 		if cfg.Services[i].Type == llm.ServiceTypeOpenAI {
@@ -117,6 +121,11 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 		return
 	}
 
+	if err := sandbox.ValidateAppsConfig(cfg.MCP.Apps, a.siteURLString()); err != nil {
+		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid MCP Apps configuration: %w", err))
+		return
+	}
+
 	// Names key per-user clients and OAuth grants, while URLs key the shared
 	// tools cache, so duplicate names or endpoints cannot be persisted.
 	if err := cfg.MCP.Validate(); err != nil {
@@ -134,7 +143,10 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 	// abort with 409. Empty list-item IDs represent creates and receive fresh
 	// IDs; they never reclaim an existing identity by name or origin.
 	var changedKeys []string
+	wasInsecure := false
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		// nil prior = fresh install (was off).
+		wasInsecure = prev != nil && prev.MCP.Apps.AllowInsecureSameOriginSandbox
 		next := cfg
 		if err := config.ValidateServiceIDUniqueness(next.Services); err != nil {
 			return config.Config{}, err
@@ -180,6 +192,15 @@ func (a *API) handleSaveConfig(c *gin.Context) {
 
 	// Update in-memory config on this node
 	a.configUpdater.Update(&saved)
+
+	// Log exactly on the committed false→true transition of the insecure
+	// toggle (prior state read inside the serialized UpdateConfig).
+	if !wasInsecure && saved.MCP.Apps.AllowInsecureSameOriginSandbox {
+		a.pluginAPI.Log.Warn(
+			"MCP Apps: insecure same-origin sandbox fallback ENABLED — app content will execute on the Mattermost origin without iframe origin isolation",
+			"actor_user_id", c.GetHeader("Mattermost-User-Id"),
+		)
+	}
 
 	// Notify other cluster nodes to reload config from DB
 	if err := a.clusterNotifier.PublishConfigUpdate(); err != nil {

@@ -51,6 +51,7 @@ const groups = {
         'tests/ask-another-user/ask-another-user.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/mcp-apps/demo-app.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',

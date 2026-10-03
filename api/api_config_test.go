@@ -9,6 +9,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -19,12 +22,16 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
+	mu      sync.Mutex
 	cfg     *config.Config
 	getErr  error
 	saveErr error
@@ -35,6 +42,8 @@ type testConfigStore struct {
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.getErr != nil {
 		return nil, s.getErr
 	}
@@ -42,6 +51,12 @@ func (s *testConfigStore) GetConfig() (*config.Config, error) {
 }
 
 func (s *testConfigStore) SaveConfig(cfg config.Config) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(cfg)
+}
+
+func (s *testConfigStore) saveLocked(cfg config.Config) error {
 	if s.saveErr != nil {
 		return s.saveErr
 	}
@@ -51,6 +66,8 @@ func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 }
 
 func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.getErr != nil {
 		return config.Config{}, s.getErr
 	}
@@ -65,7 +82,7 @@ func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 			}
 		}
 	}
-	if err := s.SaveConfig(next); err != nil {
+	if err := s.saveLocked(next); err != nil {
 		return next, err
 	}
 	return next, nil
@@ -73,34 +90,68 @@ func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (conf
 
 // testConfigUpdater tracks whether Update was called and with what config.
 type testConfigUpdater struct {
+	mu         sync.Mutex
 	lastUpdate *config.Config
 	callCount  int
 }
 
 func (u *testConfigUpdater) Update(cfg *config.Config) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	u.lastUpdate = cfg
 	u.callCount++
 }
 
 // testClusterNotifier tracks whether PublishConfigUpdate was called.
 type testClusterNotifier struct {
+	mu        sync.Mutex
 	callCount int
 	err       error
 }
 
 func (n *testClusterNotifier) PublishConfigUpdate() error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	n.callCount++
 	return n.err
 }
 
 func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) *gin.Engine {
+	router, _ := setupTestRouterWithMockAPI(store, updater, notifier)
+	return router
+}
+
+// newConfigTestMockAPI returns a plugin API mock that tolerates logging and
+// serves a Site URL, which the save handler reads for MCP Apps validation.
+func newConfigTestMockAPI() *plugintest.API {
+	mockAPI := &plugintest.API{}
+	for i := 1; i <= 20; i++ {
+		args := make([]interface{}, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+	siteURL := "https://mm.example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+	return mockAPI
+}
+
+func setupTestRouterWithMockAPI(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) (*gin.Engine, *plugintest.API) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
+	mockAPI := newConfigTestMockAPI()
 	a := &API{
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
+		pluginAPI:       pluginapi.NewClient(mockAPI, nil),
 		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
 	}
 
@@ -108,7 +159,7 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
 
-	return router
+	return router, mockAPI
 }
 
 func TestHandleGetConfig(t *testing.T) {
@@ -642,6 +693,235 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	// Step 4: Verify side effects
 	assert.Equal(t, 1, updater.callCount)
 	assert.Equal(t, 1, notifier.callCount)
+}
+
+func TestHandleSaveConfigMCPAppsValidation(t *testing.T) {
+	tests := []struct {
+		name           string
+		apps           config.MCPAppsConfig
+		expectedStatus int
+		wantSaved      bool
+	}{
+		{
+			name:           "invalid sandboxURL",
+			apps:           config.MCPAppsConfig{SandboxURL: "/relative"},
+			expectedStatus: http.StatusBadRequest,
+			wantSaved:      false,
+		},
+		{
+			name:           "invalid sandboxListenAddress",
+			apps:           config.MCPAppsConfig{SandboxListenAddress: "localhost"},
+			expectedStatus: http.StatusBadRequest,
+			wantSaved:      false,
+		},
+		{
+			name: "valid apps config",
+			apps: config.MCPAppsConfig{
+				Enabled:              true,
+				SandboxURL:           "https://apps.example.com",
+				SandboxListenAddress: ":8066",
+			},
+			expectedStatus: http.StatusOK,
+			wantSaved:      true,
+		},
+		{
+			name: "same-origin sandboxURL without opt-in",
+			apps: config.MCPAppsConfig{
+				Enabled:    true,
+				SandboxURL: "https://mm.example.com/apps",
+			},
+			expectedStatus: http.StatusBadRequest,
+			wantSaved:      false,
+		},
+		{
+			name: "same-origin sandboxURL with opt-in still rejected",
+			apps: config.MCPAppsConfig{
+				Enabled:                        true,
+				SandboxURL:                     "https://mm.example.com/proxy",
+				AllowInsecureSameOriginSandbox: true,
+			},
+			expectedStatus: http.StatusBadRequest,
+			wantSaved:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router := setupTestRouter(store, updater, notifier)
+
+			body, err := json.Marshal(config.Config{MCP: config.MCPConfig{Apps: tt.apps}})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "adminuserid")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			require.Equal(t, tt.expectedStatus, w.Code)
+			if tt.wantSaved {
+				require.NotNil(t, store.cfg)
+				require.Equal(t, 1, updater.callCount)
+			} else {
+				require.Nil(t, store.cfg)
+				require.Equal(t, 0, updater.callCount)
+			}
+		})
+	}
+}
+
+func TestHandleSaveConfigInsecureSandboxAuditLog(t *testing.T) {
+	const auditMsg = "insecure same-origin sandbox"
+
+	tests := []struct {
+		name        string
+		prevStored  *config.Config
+		newInsecure bool
+		wantLogged  bool
+	}{
+		{
+			name: "off → on",
+			prevStored: &config.Config{
+				MCP: config.MCPConfig{Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: false}},
+			},
+			newInsecure: true,
+			wantLogged:  true,
+		},
+		{
+			name: "on → on",
+			prevStored: &config.Config{
+				MCP: config.MCPConfig{Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: true}},
+			},
+			newInsecure: true,
+			wantLogged:  false,
+		},
+		{
+			name: "on → off",
+			prevStored: &config.Config{
+				MCP: config.MCPConfig{Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: true}},
+			},
+			newInsecure: false,
+			wantLogged:  false,
+		},
+		{
+			name:        "no stored config → on",
+			prevStored:  nil,
+			newInsecure: true,
+			wantLogged:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &testConfigStore{cfg: tt.prevStored}
+			updater := &testConfigUpdater{}
+			notifier := &testClusterNotifier{}
+			router, mockAPI := setupTestRouterWithMockAPI(store, updater, notifier)
+
+			body, err := json.Marshal(config.Config{
+				MCP: config.MCPConfig{
+					Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: tt.newInsecure},
+				},
+			})
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "adminuserid")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			logged := false
+			for _, call := range mockAPI.Calls {
+				if call.Method != "LogWarn" || len(call.Arguments) == 0 {
+					continue
+				}
+				msg, _ := call.Arguments[0].(string)
+				if strings.Contains(msg, auditMsg) {
+					logged = true
+					require.Contains(t, call.Arguments, "actor_user_id")
+					require.Contains(t, call.Arguments, "adminuserid")
+				}
+			}
+			require.Equal(t, tt.wantLogged, logged)
+		})
+	}
+}
+
+func TestHandleSaveConfigInsecureSandboxAuditLogConcurrent(t *testing.T) {
+	const auditMsg = "insecure same-origin sandbox"
+	store := &testConfigStore{cfg: &config.Config{
+		MCP: config.MCPConfig{Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: false}},
+	}}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{}
+
+	var auditCount atomic.Int32
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	mockAPI := &plugintest.API{}
+	countAudit := func(args mock.Arguments) {
+		if len(args) == 0 {
+			return
+		}
+		msg, _ := args.Get(0).(string)
+		if strings.Contains(msg, auditMsg) {
+			auditCount.Add(1)
+		}
+	}
+	for i := 1; i <= 20; i++ {
+		args := make([]interface{}, i)
+		for j := range args {
+			args[j] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Run(countAudit).Maybe()
+	}
+	siteURL := "https://mm.example.com"
+	mockAPI.On("GetConfig").Return(&model.Config{
+		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
+	}).Maybe()
+
+	a := &API{
+		configStore:     store,
+		configUpdater:   updater,
+		clusterNotifier: notifier,
+		pluginAPI:       pluginapi.NewClient(mockAPI, nil),
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+	}
+	adminRouter := router.Group("/admin")
+	adminRouter.PUT("/config", a.handleSaveConfig)
+
+	body, err := json.Marshal(config.Config{
+		MCP: config.MCPConfig{
+			Apps: config.MCPAppsConfig{AllowInsecureSameOriginSandbox: true},
+		},
+	})
+	require.NoError(t, err)
+
+	const n = 8
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "adminuserid")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+		}()
+	}
+	wg.Wait()
+
+	require.Equal(t, int32(1), auditCount.Load(), "exactly one false→true audit line across concurrent saves")
 }
 
 func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {

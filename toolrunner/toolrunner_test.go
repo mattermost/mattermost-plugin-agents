@@ -17,6 +17,25 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
+func TestBuildResolvedToolCallsCarriesUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html", Visibility: []string{"model", "app"}}
+	toolCalls := []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		Description:  "Demo",
+		Arguments:    json.RawMessage(`{}`),
+		ServerOrigin: "https://srv.example",
+		MCPBareName:  "demo",
+		UIMeta:       uiMeta,
+	}}
+	results := []ToolResult{{Result: "ok", IsError: false}}
+
+	resolved := buildResolvedToolCalls(toolCalls, results)
+	require.Len(t, resolved, 1)
+	assert.Equal(t, uiMeta, resolved[0].UIMeta)
+	assert.Equal(t, llm.ToolCallStatusAutoApproved, resolved[0].Status)
+}
+
 // testLLM implements llm.LanguageModel with scripted responses.
 type testLLM struct {
 	responses []testResponse

@@ -26,6 +26,10 @@ interface RoundViewProps {
 
     /** Takes the round id so the post can pass one callback to every round. */
     onToggleReasoning: (roundId: string, collapsed: boolean) => void;
+
+    /** False for live (streaming) rounds, whose tool calls are not yet persisted. */
+    appsEligible?: boolean;
+    requesterUserID?: string;
 }
 
 /**
@@ -64,6 +68,8 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     approvalStage={props.approvalStage}
                     canApprove={props.canApprove}
                     canExpand={props.canExpand}
+                    appsEligible={props.appsEligible}
+                    requesterUserID={props.requesterUserID}
                 />
             )}
         </RoundContainer>

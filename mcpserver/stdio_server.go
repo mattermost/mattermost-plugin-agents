@@ -73,7 +73,7 @@ func NewStdioServer(config StdioConfig, logger loggerlib.Logger, searchService t
 	// outside the plugin and have no license information, so state-changing
 	// tools stay available. Delegation is embedded-only, so stdio servers do
 	// not expose ask_agent.
-	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, func() bool { return true }, nil)
+	mattermostServer.registerTools(tools.AccessModeLocal, searchService, fileContentService, func() bool { return true }, nil, false)
 
 	return mattermostServer, nil
 }

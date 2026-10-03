@@ -92,12 +92,16 @@ func PluginServerHTTPClient(base http.RoundTripper, userID string) *http.Client 
 // clientName to the plugin-registered MCP server at path, using httpClient for
 // PluginHTTP transport.
 func ConnectPluginServer(ctx context.Context, clientName, path string, httpClient *http.Client) (*mcp.ClientSession, error) {
+	return connectPluginServerWithOptions(ctx, clientName, path, httpClient, nil)
+}
+
+func connectPluginServerWithOptions(ctx context.Context, clientName, path string, httpClient *http.Client, opts *mcp.ClientOptions) (*mcp.ClientSession, error) {
 	client := NewSDKClient(
 		&mcp.Implementation{
 			Name:    clientName,
 			Version: "1.0",
 		},
-		nil,
+		opts,
 	)
 	return client.Connect(ctx, &mcp.StreamableClientTransport{
 		Endpoint:   "http://plugin" + path,

@@ -95,7 +95,7 @@ func NewHTTPServer(config HTTPConfig, logger loggerlib.Logger) (*MattermostHTTPM
 	// outside the plugin and have no license information, so state-changing
 	// tools stay available. Delegation is embedded-only, so external HTTP
 	// servers do not expose ask_agent.
-	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, func() bool { return true }, nil)
+	mattermostServer.registerTools(tools.AccessModeRemote, searchService, fileContentService, func() bool { return true }, nil, false)
 
 	// Create HTTP server with OAuth endpoints and MCP routing
 	addr := fmt.Sprintf("%s:%d", config.HTTPBindAddr, config.HTTPPort)

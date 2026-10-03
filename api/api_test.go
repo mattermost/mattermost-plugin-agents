@@ -186,6 +186,8 @@ type mockMCPClientManager struct {
 	// Plugin discovery runs concurrently, so its bookkeeping is guarded.
 	discoverMu                   sync.Mutex
 	discoverPluginToolsCallCount int
+
+	readUserAppResource func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -421,6 +423,13 @@ func (f *fakeChannelAutoReplyStore) Delete(channelID string) error {
 	f.deleteCalls = append(f.deleteCalls, channelID)
 	delete(f.settings, channelID)
 	return nil
+}
+
+func (m *mockMCPClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+	if m.readUserAppResource != nil {
+		return m.readUserAppResource(ctx, userID, serverOrigin, uri)
+	}
+	return nil, mcp.ErrServerNotConnected
 }
 
 type fakeMCPOAuthClusterNotifier struct {

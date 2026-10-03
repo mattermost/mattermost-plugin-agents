@@ -35,6 +35,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/sandbox"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -67,6 +68,7 @@ type Plugin struct {
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
+	sandboxManager       *sandbox.Manager
 	store                *store.Store
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
@@ -465,28 +467,33 @@ func (p *Plugin) OnActivate() error {
 	delegationService := delegation.New(mmClient, bots, streamingService, prompts, i18nBundle, metricsService)
 
 	var (
-		embeddedMu     sync.Mutex
-		embeddedServer *EmbeddedMCPServer
+		embeddedMu       sync.Mutex
+		embeddedServer   *EmbeddedMCPServer
+		embeddedDemoApps bool
 	)
 	// ensureEmbeddedMCPServer builds the embedded server once and reuses it.
-	// The constructor reads Mattermost server config and injected services, not
-	// plugin MCP config, so a plugin-config update must not force every
-	// embedded session to reconnect; only a construction failure is retried.
+	// Apart from EnableDemoApps, the constructor reads Mattermost server config
+	// and injected services, not plugin MCP config, so a plugin-config update
+	// must not force every embedded session to reconnect; the server is rebuilt
+	// only when EnableDemoApps changes or a previous construction failed.
 	// The result is a nil interface, not a typed nil pointer, when the server
 	// is unavailable, so callers skip embedded sessions entirely.
 	ensureEmbeddedMCPServer := func() mcp.EmbeddedMCPServer {
 		embeddedMu.Lock()
 		defer embeddedMu.Unlock()
 
-		if embeddedServer == nil {
+		enableDemoApps := p.configuration.MCP().EmbeddedServer.EnableDemoApps
+		if embeddedServer == nil || embeddedDemoApps != enableDemoApps {
 			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
-			}, delegationService)
+			}, delegationService, enableDemoApps)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server", "error", embeddedErr)
+				embeddedServer = nil
 				return nil
 			}
 			embeddedServer = created
+			embeddedDemoApps = enableDemoApps
 			pluginAPI.Log.Info("Embedded MCP server created successfully")
 		}
 		return embeddedServer
@@ -649,6 +656,22 @@ func (p *Plugin) OnActivate() error {
 	p.applyTelemetryConfig()
 	p.configuration.RegisterUpdateListener(p.applyTelemetryConfig)
 
+	// Start (or stop) the MCP Apps sandbox listener from config and re-apply
+	// on every config change so port/URL changes do not need a plugin restart.
+	p.sandboxManager = sandbox.NewManager(
+		func() (config.MCPAppsConfig, string) {
+			siteURL := ""
+			if s := p.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; s != nil {
+				siteURL = *s
+			}
+			return p.configuration.MCP().Apps, siteURL
+		},
+		&pluginLogger{service: &p.pluginAPI.Log},
+		nil,
+	)
+	p.sandboxManager.ApplyCurrent()
+	p.configuration.RegisterUpdateListener(p.sandboxManager.ApplyCurrent)
+
 	// Keep only what we need
 	p.apiService = apiService
 	p.bots = bots
@@ -671,6 +694,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	if p.sandboxManager != nil {
+		p.sandboxManager.Close()
+	}
 
 	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
 	// fail before bots is assigned, so guard against a nil registry.
