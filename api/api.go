@@ -338,6 +338,13 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// MCP Apps sandbox page — insecure same-origin fallback (master spec D1).
+	// Deliberately registered BEFORE MattermostAuthorizationRequired: the
+	// page is loaded by an iframe with no Mattermost session context. It
+	// serves only static templated HTML and is gated per-request on the
+	// explicit admin opt-in inside the handler.
+	router.GET(mcpAppsSameOriginSandboxPath, a.handleGetSameOriginSandbox)
+
 	router.Use(a.MattermostAuthorizationRequired)
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
@@ -603,6 +610,7 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	MCPApps          MCPAppsInfo `json:"mcpApps"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -674,6 +682,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:             bots,
 		SearchEnabled:    searchEnabled,
 		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		MCPApps:          a.resolveMCPAppsInfo(),
 	})
 }
 

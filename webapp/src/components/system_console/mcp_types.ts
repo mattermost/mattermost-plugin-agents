@@ -38,12 +38,21 @@ export type PluginServerConfig = {
     tool_configs?: MCPToolConfig[];
 };
 
+// Mirrors config.MCPAppsConfig (json:"apps").
+export type MCPAppsConfig = {
+    enabled: boolean;
+    sandboxURL: string;
+    sandboxListenAddress: string;
+    allowInsecureSameOriginSandbox: boolean;
+};
+
 export type MCPConfig = {
     enabled: boolean;
     enablePluginServer: boolean;
     servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
     plugin_servers?: PluginServerConfig[] | null;
     embeddedServer: MCPEmbeddedServerConfig;
+    apps?: MCPAppsConfig;
     idleTimeoutMinutes?: number;
 };
 
