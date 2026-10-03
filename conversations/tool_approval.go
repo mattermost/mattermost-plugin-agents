@@ -235,6 +235,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			c.contextBuilder.WithLLMContextResponseFiles(),
 		}, c.conversationToolOptions(bot, conv)...)...,
 	)
+	llmContext.ResponsePostID = post.Id
 	// The clicked post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -682,6 +683,7 @@ func (c *Conversations) streamToolFollowUp(
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)
+	llmContext.ResponsePostID = post.Id
 	// The continuation post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 

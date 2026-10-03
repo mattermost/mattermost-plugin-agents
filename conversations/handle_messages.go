@@ -359,6 +359,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 	if channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
@@ -501,6 +502,7 @@ func (c *Conversations) streamDMConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, convResult.ConversationID, convResult.UserTurnID)
 	defer runSpan.End()
