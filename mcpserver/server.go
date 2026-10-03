@@ -34,8 +34,9 @@ func newPluginCallbackServices(mmServerURL string) (*tools.HTTPSemanticSearchSer
 // corresponding capability is unavailable.
 // allowStateChangingTools is evaluated per request; a nil predicate means
 // state-changing tools are not available.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) {
-	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, allowStateChangingTools)
+// delegationService is optional and can be nil; ask_agent is hidden without it.
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool, delegationService tools.DelegationService) {
+	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, allowStateChangingTools, delegationService)
 	toolProvider.ProvideTools(s.mcpServer)
 }
 

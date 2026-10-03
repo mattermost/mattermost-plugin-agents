@@ -25,7 +25,7 @@ func newTestInMemoryServer(t *testing.T, allowStateChangingTools func() bool) *m
 			DevMode:     false,
 		},
 	}
-	server, err := mcpserver.NewInMemoryServer(config, &testLogger{t: t}, nil, nil, allowStateChangingTools)
+	server, err := mcpserver.NewInMemoryServer(config, &testLogger{t: t}, nil, nil, allowStateChangingTools, nil)
 	require.NoError(t, err)
 	return server
 }

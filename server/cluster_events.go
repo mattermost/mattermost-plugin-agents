@@ -16,6 +16,7 @@ const clusterEventConfigUpdate = "config_update"
 const clusterEventAgentUpdate = "agent_update"
 const clusterEventMCPOAuthUserInvalidate = "mcp_oauth_user_invalidate"
 const clusterEventStreamStop = "stream_stop"
+const clusterEventDelegationComplete = "delegation_complete"
 const clusterEventChannelAutoReplyInvalidate = "channel_autoreply_invalidate"
 
 type mcpOAuthUserInvalidateClusterPayload struct {
@@ -24,6 +25,10 @@ type mcpOAuthUserInvalidateClusterPayload struct {
 
 type streamStopClusterPayload struct {
 	PostID string `json:"postID"`
+}
+
+type delegationCompleteClusterPayload struct {
+	ConversationID string `json:"conversationID"`
 }
 
 type channelAutoReplyInvalidateClusterPayload struct {
@@ -99,6 +104,19 @@ func (p *Plugin) PublishChannelAutoReplyInvalidate(channelID string) error {
 	return p.publishClusterEventWithPayload(clusterEventChannelAutoReplyInvalidate, channelAutoReplyInvalidateClusterPayload{ChannelID: channelID})
 }
 
+// PublishDelegationComplete broadcasts a delegated sub-turn completion to all
+// other nodes. The parent turn waiting on the delegation may live on a
+// different node than the one that handled the initiator's approval; the
+// waiting node re-reads the conversation state from the database on wake, so
+// the event only needs to carry the conversation ID.
+func (p *Plugin) PublishDelegationComplete(conversationID string) error {
+	if conversationID == "" {
+		return nil
+	}
+
+	return p.publishClusterEventWithPayload(clusterEventDelegationComplete, delegationCompleteClusterPayload{ConversationID: conversationID})
+}
+
 // OnPluginClusterEvent handles cluster events from other nodes.
 func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterEvent) {
 	switch ev.Id {
@@ -163,6 +181,20 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 			if err := p.autoreplyService.RefreshChannel(payload.ChannelID); err != nil {
 				p.pluginAPI.Log.Error("Failed to refresh channel auto-reply cache on cluster event", "channel_id", payload.ChannelID, "error", err.Error())
 			}
+		}
+
+	case clusterEventDelegationComplete:
+		var payload delegationCompleteClusterPayload
+		if err := json.Unmarshal(ev.Data, &payload); err != nil {
+			p.pluginAPI.Log.Error("Failed to unmarshal delegation complete cluster payload", "error", err.Error())
+			return
+		}
+		if payload.ConversationID == "" {
+			p.pluginAPI.Log.Error("Received delegation complete cluster event with empty conversationID")
+			return
+		}
+		if p.delegationService != nil {
+			p.delegationService.HandleClusterCompletion(payload.ConversationID)
 		}
 	}
 }

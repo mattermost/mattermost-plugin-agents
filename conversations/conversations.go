@@ -36,19 +36,20 @@ type ConfigProvider interface {
 }
 
 type Conversations struct {
-	prompts           *llm.Prompts
-	mmClient          mmapi.Client
-	streamingService  streaming.Service
-	contextBuilder    *llmcontext.Builder
-	bots              *bots.MMBots
-	db                *mmapi.DBClient
-	licenseChecker    *enterprise.LicenseChecker
-	i18n              *i18n.Bundle
-	meetingsService   MeetingsService
-	configProvider    ConfigProvider
-	toolPolicyChecker mcp.ToolPolicyChecker
-	convService       *conversation.Service
-	autoReplySettings AutoReplySettings
+	prompts            *llm.Prompts
+	mmClient           mmapi.Client
+	streamingService   streaming.Service
+	contextBuilder     *llmcontext.Builder
+	bots               *bots.MMBots
+	db                 *mmapi.DBClient
+	licenseChecker     *enterprise.LicenseChecker
+	i18n               *i18n.Bundle
+	meetingsService    MeetingsService
+	configProvider     ConfigProvider
+	toolPolicyChecker  mcp.ToolPolicyChecker
+	convService        *conversation.Service
+	autoReplySettings  AutoReplySettings
+	delegationNotifier DelegationNotifier
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations

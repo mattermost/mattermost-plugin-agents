@@ -279,12 +279,17 @@ func (c *Conversations) regenerateViaConversation(
 	}
 
 	// Regeneration is triggered by the requester clicking the regen control,
-	// so the user is interactively present.
+	// so the user is interactively present. Delegation conversations keep
+	// ask_agent excluded on regen too.
+	regenOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
+	}
+	regenOpts = append(regenOpts, c.delegationConversationContextOptions(conv)...)
 	llmContext := c.buildConversationContextWithTools(
 		ctx, bot, user, channel,
 		"Failed to load user tool preferences on regen, proceeding without filtering",
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
+		regenOpts...,
 	)
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
@@ -315,7 +320,7 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
-	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,
 		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },

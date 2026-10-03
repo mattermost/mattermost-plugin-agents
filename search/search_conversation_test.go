@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -98,6 +99,43 @@ func (s *fakeConversationStore) UpdateTurnContent(id string, content json.RawMes
 		}
 	}
 	return errors.New("turn not found")
+}
+
+func (s *fakeConversationStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	for _, turn := range s.turns {
+		if turn.ID != id {
+			continue
+		}
+		var current, want any
+		if err := json.Unmarshal(turn.Content, &current); err != nil {
+			return false, err
+		}
+		if err := json.Unmarshal(expected, &want); err != nil {
+			return false, err
+		}
+		if !reflect.DeepEqual(current, want) {
+			return false, nil
+		}
+		turn.Content = updated
+		return true, nil
+	}
+	return false, nil
+}
+
+func TestFakeConversationStoreRejectsStaleTurnClaim(t *testing.T) {
+	original := json.RawMessage(`[{"status":"pending"}]`)
+	testStore := newFakeConversationStore()
+	require.NoError(t, testStore.CreateTurn(&store.Turn{ID: "turn-1", ConversationID: "conv-1", Content: original}))
+
+	claimed, err := testStore.UpdateTurnContentIfMatches(
+		"turn-1",
+		json.RawMessage(`[{"status":"accepted"}]`),
+		json.RawMessage(`[{"status":"error"}]`),
+	)
+
+	require.NoError(t, err)
+	require.False(t, claimed)
+	require.JSONEq(t, string(original), string(testStore.turns[0].Content))
 }
 
 func (s *fakeConversationStore) UpdateTurnTokens(id string, tokensIn, tokensOut int64) error {

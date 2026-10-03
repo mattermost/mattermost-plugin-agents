@@ -2,14 +2,17 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
+
+import type {ConversationResponse} from '@/types/conversation';
 
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 const mockDoToolCall = jest.fn();
 const mockInvalidateConversation = jest.fn();
+const useConversationMock = jest.fn();
 
 jest.mock('@/client', () => ({
     doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
@@ -19,6 +22,7 @@ jest.mock('@/client', () => ({
 
 jest.mock('@/hooks/use_conversation', () => ({
     invalidateConversation: (conversationID: string) => mockInvalidateConversation(conversationID),
+    useConversation: (id: string) => useConversationMock(id),
 }));
 
 type MockRenderContext = {
@@ -26,6 +30,7 @@ type MockRenderContext = {
     onApprove?: () => void;
     onReject?: () => void;
     isAutoApproved?: boolean;
+    renderDelegatedApprovals?: (delegationID: string) => React.ReactNode;
 };
 
 // Mock the registry so these tests cover ToolApprovalSet's decision logic
@@ -73,6 +78,8 @@ beforeEach(() => {
     mockDoToolCall.mockReset();
     mockDoToolCall.mockImplementation(() => Promise.resolve());
     mockInvalidateConversation.mockClear();
+    useConversationMock.mockReset();
+    useConversationMock.mockReturnValue({conversation: null, loading: false, error: null});
 });
 
 describe('ToolApprovalSet', () => {
@@ -175,5 +182,78 @@ describe('ToolApprovalSet', () => {
         ]);
 
         getByText('2 tools need decisions');
+    });
+
+    test('submits delegated approvals from the parent delegation card', async () => {
+        const delegatedConversation: ConversationResponse = {
+            id: 'delegation_conv',
+            user_id: 'user_1',
+            bot_id: 'subagent_bot',
+            channel_id: 'subagent_dm',
+            root_post_id: 'task_post',
+            title: '',
+            operation: 'delegation',
+            turns: [{
+                id: 'approval_turn',
+                post_id: 'delegated_response_post',
+                role: 'assistant',
+                content: [{
+                    type: 'tool_use',
+                    id: 'nested_tool',
+                    name: 'mattermost__get_channel_info',
+                    input: {channel_id: 'town-square'},
+                    status: 'pending',
+                }],
+                tokens_in: 0,
+                tokens_out: 0,
+                sequence: 1,
+                approval_state: 'call',
+            }],
+        };
+        useConversationMock.mockReturnValue({conversation: delegatedConversation, loading: false, error: null});
+
+        renderComponent([makeTool({
+            id: 'parent_tool',
+            name: 'mattermost__ask_agent',
+            server_origin: 'embedded://mattermost',
+            arguments: {agent: 'subagent', task: 'Inspect the channel'},
+            status: ToolCallStatus.Accepted,
+        })]);
+
+        // The registry hands this hook to the delegation card, which renders
+        // it once the sub-agent is waiting on the user.
+        const {renderDelegatedApprovals} = getToolCardProps('parent_tool');
+        expect(renderDelegatedApprovals).toBeDefined();
+
+        const {getByTestId} = render(
+            <IntlProvider locale='en'>
+                {renderDelegatedApprovals!('delegation_conv')}
+            </IntlProvider>,
+        );
+
+        await waitFor(() => {
+            getByTestId('delegation-embedded-approvals');
+        });
+        expect(useConversationMock).toHaveBeenCalledWith('delegation_conv');
+
+        const nestedTool = getToolCardProps('nested_tool');
+        await act(async () => {
+            nestedTool.onApprove?.();
+        });
+
+        await waitFor(() => {
+            expect(mockDoToolCall).toHaveBeenCalledWith('delegated_response_post', ['nested_tool'], {});
+        });
+    });
+
+    test('omits delegated approvals for viewers who cannot approve', () => {
+        renderComponent([makeTool({
+            id: 'parent_tool',
+            name: 'mattermost__ask_agent',
+            server_origin: 'embedded://mattermost',
+            status: ToolCallStatus.Accepted,
+        })], 'call', false);
+
+        expect(getToolCardProps('parent_tool').renderDelegatedApprovals).toBeUndefined();
     });
 });

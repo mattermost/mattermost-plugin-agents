@@ -633,14 +633,66 @@ func TestPrepareToolCallMetadata_EmbeddedSetsBotUserID(t *testing.T) {
 	embeddedClient := &Client{config: ServerConfig{Name: EmbeddedClientKey}}
 	remoteClient := &Client{config: ServerConfig{Name: "remote-server"}}
 
-	embeddedMeta := clients.prepareToolCallMetadata(embeddedClient, llmContext)
+	embeddedMeta := clients.prepareToolCallMetadata(context.Background(), embeddedClient, llmContext)
 	require.Equal(t, map[string]any{"bot_user_id": "bot-user-id"}, embeddedMeta)
 
-	remoteMeta := clients.prepareToolCallMetadata(remoteClient, llmContext)
+	remoteMeta := clients.prepareToolCallMetadata(context.Background(), remoteClient, llmContext)
 	require.Nil(t, remoteMeta)
 
 	emptyBot := llm.NewContext()
-	require.Nil(t, clients.prepareToolCallMetadata(embeddedClient, emptyBot))
+	require.Nil(t, clients.prepareToolCallMetadata(context.Background(), embeddedClient, emptyBot))
+}
+
+func TestPrepareToolCallMetadata_ParentToolCallID(t *testing.T) {
+	llmContext := llm.NewContext()
+	llmContext.BotUserID = "bot-user-id"
+
+	clients := &UserClients{}
+	embeddedClient := &Client{config: ServerConfig{Name: EmbeddedClientKey}}
+	remoteClient := &Client{config: ServerConfig{Name: "remote-server"}}
+
+	tests := []struct {
+		name       string
+		ctx        context.Context
+		client     *Client
+		wantMeta   bool
+		wantCallID string
+	}{
+		{
+			name:       "embedded with stamped tool call ID",
+			ctx:        llm.ContextWithToolCallID(context.Background(), "toolcall-123"),
+			client:     embeddedClient,
+			wantMeta:   true,
+			wantCallID: "toolcall-123",
+		},
+		{
+			name:     "embedded without stamped tool call ID",
+			ctx:      context.Background(),
+			client:   embeddedClient,
+			wantMeta: true,
+		},
+		{
+			name:   "remote never gets metadata",
+			ctx:    llm.ContextWithToolCallID(context.Background(), "toolcall-123"),
+			client: remoteClient,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			meta := clients.prepareToolCallMetadata(tc.ctx, tc.client, llmContext)
+			if !tc.wantMeta {
+				require.Nil(t, meta)
+				return
+			}
+			require.NotNil(t, meta)
+			if tc.wantCallID == "" {
+				require.NotContains(t, meta, "parent_tool_call_id")
+			} else {
+				require.Equal(t, tc.wantCallID, meta["parent_tool_call_id"])
+			}
+		})
+	}
 }
 
 func testClientWithTools(name, baseURL string, toolNames ...string) *Client {

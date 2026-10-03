@@ -30,6 +30,7 @@ const (
 	OperationEvalGrading              = "eval_grading"
 	OperationBridgeAgent              = "bridge_agent"
 	OperationBridgeService            = "bridge_service"
+	OperationDelegation               = "delegation"
 )
 
 // tool_auth_mode identifies which auth mode the request's tool catalog was built with.

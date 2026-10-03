@@ -165,6 +165,7 @@ var expectedToolReadOnly = map[string]bool{
 
 	// agents
 	"list_agents": true,
+	"ask_agent":   false,
 }
 
 func TestMCPToolClassification(t *testing.T) {

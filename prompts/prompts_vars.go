@@ -6,6 +6,7 @@ package prompts
 // Automatically generated convenience vars for the filenames in prompts/
 const (
 	PromptCitationFormat                   = "citation_format"
+	PromptDelegatedTaskSystem              = "delegated_task_system"
 	PromptDirectMessageQuestionSystem      = "direct_message_question_system"
 	PromptEmojiSelectSystem                = "emoji_select_system"
 	PromptFindActionItemsSystem            = "find_action_items_system"

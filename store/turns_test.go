@@ -197,6 +197,69 @@ func TestGetTurnsForConversation(t *testing.T) {
 	}
 }
 
+func TestUpdateTurnContentIfMatches(t *testing.T) {
+	originalContent := json.RawMessage(`[{"type":"tool_use","id":"t1","status":"pending"}]`)
+	claimedContent := json.RawMessage(`[{"type":"tool_use","id":"t1","status":"accepted"}]`)
+
+	tests := []struct {
+		name        string
+		expected    json.RawMessage
+		wantClaimed bool
+		wantContent json.RawMessage
+	}{
+		{
+			name:        "claim wins while content matches",
+			expected:    originalContent,
+			wantClaimed: true,
+			wantContent: claimedContent,
+		},
+		{
+			name: "claim wins on semantically equal content with different formatting",
+			// jsonb equality is semantic: whitespace and key order do not matter.
+			expected:    json.RawMessage(`[ { "status": "pending", "id": "t1", "type": "tool_use" } ]`),
+			wantClaimed: true,
+			wantContent: claimedContent,
+		},
+		{
+			name:        "claim loses when content changed since the read",
+			expected:    json.RawMessage(`[{"type":"tool_use","id":"t1","status":"rejected"}]`),
+			wantClaimed: false,
+			wantContent: originalContent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			conv := makeConversation()
+			require.NoError(t, s.CreateConversation(conv))
+			turn := makeTurn(conv.ID, 1, func(tu *Turn) {
+				tu.Content = originalContent
+			})
+			require.NoError(t, s.CreateTurn(turn))
+
+			claimed, err := s.UpdateTurnContentIfMatches(turn.ID, tt.expected, claimedContent)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantClaimed, claimed)
+
+			turns, err := s.GetTurnsForConversation(conv.ID)
+			require.NoError(t, err)
+			require.Len(t, turns, 1)
+			assert.JSONEq(t, string(tt.wantContent), string(turns[0].Content))
+
+			// A second identical claim must lose: the content no longer
+			// matches the pre-claim snapshot.
+			if tt.wantClaimed {
+				again, err := s.UpdateTurnContentIfMatches(turn.ID, tt.expected, claimedContent)
+				require.NoError(t, err)
+				assert.False(t, again, "a claim must only be winnable once")
+			}
+		})
+	}
+}
+
 func TestUpdateTurnContent(t *testing.T) {
 	tests := []struct {
 		name     string
