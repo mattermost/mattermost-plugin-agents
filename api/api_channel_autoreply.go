@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -37,8 +38,9 @@ type ChannelAutoReply struct {
 
 // handleGetChannelAutoReply returns the channel's auto-reply setting. Readable
 // by any channel member (PermissionReadChannel is enforced by the router
-// middleware). GET is intentionally not license-gated so the webapp can always
-// render the current state; only writing and firing are licensed.
+// middleware). GET is not license-gated so the current state is always
+// readable; writing root_posts/threads is available at Enterprise Advanced
+// and above.
 func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
@@ -56,12 +58,11 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 
 // handlePutChannelAutoReply updates the channel's auto-reply setting. Requires
 // the channel-management permission matching the channel type; DM/GM channels
-// are rejected. Enabling (root_posts/threads) additionally requires a license;
-// mode "off" deletes the row and is never license-gated so an existing setting
-// stays clearable after a license downgrade. The requested setting itself is
-// validated by the auto-reply service, whose ErrValidation failures become
-// 400s. On success the new state is published as a channel-scoped websocket
-// event and echoed back.
+// are rejected. Enabling (root_posts/threads) is available at Enterprise
+// Advanced and above; mode "off" deletes the row and is never license-gated.
+// The requested setting itself is validated by the auto-reply service, whose
+// ErrValidation failures become 400s. On success the new state is published as
+// a channel-scoped websocket event and echoed back.
 func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
@@ -111,8 +112,7 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 		}
 		saved = ChannelAutoReply{BotID: "", Mode: channelAutoReplyModeOff}
 	case channelAutoReplyModeRootPosts, channelAutoReplyModeThreads:
-		if !a.licenseChecker.IsBasicsLicensed() {
-			c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+		if !a.requireCapability(c, enterprise.CapChannelAutoReply) {
 			return
 		}
 		// bot_id is validated by the auto-reply service (present, known, and

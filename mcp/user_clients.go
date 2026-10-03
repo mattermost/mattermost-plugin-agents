@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -740,11 +739,9 @@ func sanitizeDisplayTitle(title string) string {
 }
 
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
-// Per-call metadata is sourced from the tool itself (set at scope-time via
-// llm.Tool.WithCallMetadata) so callers can plumb runtime info — like before-hook
-// keys — without leaking it into the LLM-visible schema or onto llm.Context.
-// bot_user_id is sourced from llm.Context because it is identity, not per-call config.
-func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, llmContext *llm.Context) map[string]any {
+// bot_user_id is sourced from llm.Context for AI-generated-content tracking
+// and is only injected for the embedded server.
+func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
@@ -754,22 +751,13 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, toolName string, l
 		return nil
 	}
 
-	var metadata map[string]any
-	if llmContext.Tools != nil {
-		if tool := llmContext.Tools.GetTool(toolName); tool != nil && len(tool.CallMetadata) > 0 {
-			metadata = make(map[string]any, len(tool.CallMetadata)+1)
-			maps.Copy(metadata, tool.CallMetadata)
-		}
+	if llmContext.BotUserID == "" {
+		return nil
 	}
 
-	if llmContext.BotUserID != "" {
-		if metadata == nil {
-			metadata = make(map[string]any, 1)
-		}
-		metadata["bot_user_id"] = llmContext.BotUserID
+	return map[string]any{
+		"bot_user_id": llmContext.BotUserID,
 	}
-
-	return metadata
 }
 
 func (c *UserClients) clearOAuthNeededForServer(client *Client) {
@@ -823,7 +811,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		metadata := c.prepareToolCallMetadata(client, toolName, llmContext)
+		metadata := c.prepareToolCallMetadata(client, llmContext)
 
 		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {

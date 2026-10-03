@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -66,7 +68,7 @@ type recordingBaseLLMBuilder struct {
 	shutdowns int
 }
 
-func (r *recordingBaseLLMBuilder) build(svc llm.ServiceConfig, _ llm.BotConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+func (r *recordingBaseLLMBuilder) build(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 	r.mu.Lock()
 	r.builds = append(r.builds, serviceLLMBuild{svc: svc, fallbacks: fallbacks})
 	err := r.err
@@ -110,6 +112,8 @@ func setupServiceBridge(t *testing.T, services []llm.ServiceConfig, fake *FakeLL
 
 	e := SetupTestEnvironment(t)
 	t.Cleanup(func() { e.Cleanup(t) })
+	// Fallback chains are exercised here, so run at the level that has them.
+	e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 	e.config.services = services
 
 	builder := e.installServiceLLM(fake)

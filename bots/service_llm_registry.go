@@ -12,11 +12,12 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// serviceLLMEntry is one lazily built service-backed language model plus the
-// configuration it was built from.
+// serviceLLMEntry is one lazily built provider client plus the configuration
+// it was built from. Direct service calls use model; agents on the service
+// derive their own models from client.
 type serviceLLMEntry struct {
+	client    *providerClient
 	model     llm.LanguageModel
-	shutdown  func()
 	svc       llm.ServiceConfig
 	fallbacks []llm.ServiceConfig
 
@@ -30,24 +31,30 @@ type serviceLLMEntry struct {
 // shutdownNow releases the underlying client at most once, so a plugin
 // deactivation racing a retirement cannot shut the same client down twice.
 func (e *serviceLLMEntry) shutdownNow() {
-	e.shutdownOnce.Do(func() {
-		if e.shutdown != nil {
-			e.shutdown()
-		}
-	})
+	e.shutdownOnce.Do(e.client.shutdown)
 }
 
 // AcquireServiceLLM returns a language model for direct (agent-less) calls
-// against svc, building it on first use and caching it by service ID.
-//
-// Models are cached rather than built per request because each Bifrost client
-// starts a worker pool (1,000 goroutines and a 5,000-item queue per registered
-// provider by default). The caller must invoke release when the request is
-// done; the model may be shut down shortly afterwards if the configuration
-// changed in the meantime.
+// against svc. The caller must invoke release when the request is done; the
+// model may be shut down shortly afterwards if the configuration changed in the
+// meantime.
 func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+	entry, err := b.leaseServiceLLM(svc, fallbacks)
+	if err != nil {
+		return nil, nil, err
+	}
+	return entry.model, releaseLease(entry), nil
+}
+
+// leaseServiceLLM returns the entry for svc with a lease taken on it, building
+// the provider client on first use and caching it by service ID.
+//
+// Clients are cached rather than built per request or per agent because each
+// Bifrost client starts a worker pool (1,000 goroutines and a 5,000-item queue
+// per registered provider by default).
+func (b *MMBots) leaseServiceLLM(svc llm.ServiceConfig, fallbacks []llm.ServiceConfig) (*serviceLLMEntry, error) {
 	if entry, ok := b.leaseCachedServiceLLM(svc, fallbacks); ok {
-		return entry.model, releaseLease(entry), nil
+		return entry, nil
 	}
 
 	// Serialize builds so a burst of first requests creates one client, not one
@@ -57,20 +64,20 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 
 	// Another builder may have populated the cache while we waited.
 	if entry, ok := b.leaseCachedServiceLLM(svc, fallbacks); ok {
-		return entry.model, releaseLease(entry), nil
+		return entry, nil
 	}
 
-	model, shutdown, err := b.buildLLM(svc, nil, fallbacks)
+	client, err := b.newProviderClient(svc, fallbacks)
 	if err != nil {
 		// Build failures are never cached: the next request retries, which
 		// matters when the failure is transient or the admin just fixed the
 		// configuration.
-		return nil, nil, err
+		return nil, err
 	}
 
 	entry := &serviceLLMEntry{
-		model:     model,
-		shutdown:  shutdown,
+		client:    client,
+		model:     b.wrapLLM(client.model, svc, nil, fallbacks),
 		svc:       svc,
 		fallbacks: fallbacks,
 	}
@@ -95,7 +102,7 @@ func (b *MMBots) AcquireServiceLLM(svc llm.ServiceConfig, fallbacks []llm.Servic
 		b.serviceLLMs = make(map[string]*serviceLLMEntry)
 	}
 	b.serviceLLMs[svc.ID] = entry
-	return entry.model, releaseLease(entry), nil
+	return entry, nil
 }
 
 // ReconcileServiceLLMs drops cached models whose service or fallback chain
@@ -123,8 +130,9 @@ func (b *MMBots) ReconcileServiceLLMs(services []llm.ServiceConfig) {
 	}
 }
 
-// ShutdownServiceLLMs shuts every service model down, cached or retired,
-// regardless of outstanding leases. Called on plugin deactivation.
+// ShutdownServiceLLMs shuts every provider client down, cached or retired,
+// regardless of outstanding leases. Agents use these clients too. Called on
+// plugin deactivation.
 func (b *MMBots) ShutdownServiceLLMs() {
 	b.serviceLLMMu.Lock()
 	entries := slices.Collect(maps.Values(b.serviceLLMs))

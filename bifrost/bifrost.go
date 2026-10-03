@@ -468,7 +468,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file retrieve error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := providerError(nil, "bifrost file retrieve error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if meta == nil {
@@ -483,7 +483,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := providerError(nil, "bifrost file content error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if resp == nil {
@@ -585,7 +585,7 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed {
+	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed && !cfg.SkipNativeWebSearch {
 		return true
 	}
 	return false

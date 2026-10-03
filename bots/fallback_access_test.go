@@ -69,15 +69,13 @@ func TestBuildLLMFallbackAccessOnlyForAgents(t *testing.T) {
 			e.bots.config = &mockConfig{services: []llm.ServiceConfig{primary, fallback}}
 
 			inner := &capturingLLM{}
-			e.bots.SetBaseLLMBuilderForTest(func(llm.ServiceConfig, llm.BotConfig, []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
+			e.bots.SetBaseLLMBuilderForTest(func(llm.ServiceConfig, []llm.ServiceConfig) (llm.LanguageModel, func(), error) {
 				return inner, func() {}, nil
 			})
 
-			built, shutdown, err := e.bots.buildLLM(primary, tc.botConfig, []llm.ServiceConfig{fallback})
-			require.NoError(t, err)
-			defer shutdown()
+			built := buildTestLLM(t, e.bots, primary, tc.botConfig, []llm.ServiceConfig{fallback})
 
-			_, err = built.ChatCompletion(context.Background(), llm.CompletionRequest{
+			_, err := built.ChatCompletion(context.Background(), llm.CompletionRequest{
 				Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "hi"}},
 				Context: &llm.Context{RequestingUser: &model.User{Id: userID}},
 			})

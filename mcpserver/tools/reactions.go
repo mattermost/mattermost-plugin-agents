@@ -50,9 +50,9 @@ const (
 // getReactionTools returns the reaction and custom-emoji tools.
 func (p *MattermostToolProvider) getReactionTools() []MCPTool {
 	return []MCPTool{
-		mcpTool(p, "get_post_reactions", getPostReactionsDescription, p.toolGetPostReactions),
-		mcpTool(p, "list_custom_emoji", listCustomEmojiDescription, p.toolListCustomEmoji),
-		mcpTool(p, "search_custom_emoji", searchCustomEmojiDescription, p.toolSearchCustomEmoji),
+		mcpReadTool(p, "get_post_reactions", getPostReactionsDescription, p.toolGetPostReactions),
+		mcpReadTool(p, "list_custom_emoji", listCustomEmojiDescription, p.toolListCustomEmoji),
+		mcpReadTool(p, "search_custom_emoji", searchCustomEmojiDescription, p.toolSearchCustomEmoji),
 		mcpTool(p, "add_reaction", addReactionDescription, p.toolAddReaction),
 		mcpTool(p, "remove_reaction", removeReactionDescription, p.toolRemoveReaction),
 	}

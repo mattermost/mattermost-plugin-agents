@@ -23,8 +23,19 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 jest.mock('../../client', () => ({
     fetchModels: jest.fn(),
+}));
+
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => (level: number) => ['Free', 'Professional', 'Enterprise', 'Enterprise Advanced'][level]),
+    requiredLevelFor: jest.fn((capability: string) => (capability === 'model_fallback' ? 3 : 2)),
 }));
 
 jest.mock('../access_control/console_policy_section', () => ({
@@ -370,6 +381,29 @@ describe('ServiceFields fallback selector', () => {
         const {fallbackSelect, onChange} = await renderFallback(current, [current, other]);
         fireEvent.change(fallbackSelect, {target: {value: other.id}});
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: other.id}));
+    });
+
+    it('disables selecting a fallback below Enterprise Advanced while still allowing clearing one', async () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(false);
+
+        const empty = await renderFallback(current, [current, other]);
+        expect(empty.fallbackSelect.disabled).toBe(true);
+        expect(screen.getByText('Enterprise Advanced')).toBeTruthy();
+        empty.unmount();
+
+        const third: LLMService = {...baseService, id: 'svc-third', name: 'Tertiary Service'};
+        const configured = await renderFallback(
+            {...current, fallbackServiceID: other.id},
+            [current, other, third],
+        );
+        expect(configured.fallbackSelect.disabled).toBe(false);
+        fireEvent.change(configured.fallbackSelect, {target: {value: third.id}});
+        expect(configured.onChange).not.toHaveBeenCalled();
+        fireEvent.change(configured.fallbackSelect, {target: {value: ''}});
+        expect(configured.onChange).toHaveBeenCalledWith(expect.objectContaining({fallbackServiceID: ''}));
+
+        useIsLicensedFor.mockReturnValue(true);
     });
 });
 

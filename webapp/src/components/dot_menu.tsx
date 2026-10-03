@@ -8,7 +8,7 @@ import {useUpdateEffect} from 'react-use';
 
 import Dropdown from './dropdown';
 
-export const DotMenuButton = styled.div<{isActive: boolean}>`
+export const DotMenuButton = styled.div<{$isActive: boolean}>`
     display: inline-flex;
     padding: 0;
     border: none;
@@ -20,12 +20,12 @@ export const DotMenuButton = styled.div<{isActive: boolean}>`
     fill: rgba(var(--center-channel-color-rgb), 0.56);
     cursor: pointer;
 
-    color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.56)')};
-    background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'transparent')};
+    color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.56)')};
+    background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'transparent')};
 
     &:hover {
-        color: ${(props) => (props.isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.56)')};
-        background-color: ${(props) => (props.isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
+        color: ${(props) => (props.$isActive ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.56)')};
+        background-color: ${(props) => (props.$isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
     }
 `;
 
@@ -98,7 +98,7 @@ const DotMenu = ({
         // @ts-ignore
         <MenuButton
             title={title}
-            isActive={(isActive ?? false) || isOpen}
+            $isActive={(isActive ?? false) || isOpen}
             onClick={(e: MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
@@ -219,17 +219,17 @@ export const DropdownMenuItem = (props: { children: React.ReactNode, onClick?: (
 };
 
 // Alternate dot menu button. Use `dotMenuButton={TitleButton}` for this style.
-export const TitleButton = styled.div<{isActive: boolean}>`
+export const TitleButton = styled.div<{$isActive: boolean}>`
     padding: 2px 2px 2px 6px;
     display: inline-flex;
     border-radius: 4px;
-    color: ${({isActive}) => (isActive ? 'var(--button-bg)' : 'var(--center-channel-color)')};
-    background: ${({isActive}) => (isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'auto')};
+    color: ${({$isActive}) => ($isActive ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+    background: ${({$isActive}) => ($isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'auto')};
 
     min-width: 0;
 
     &:hover {
-        background: ${({isActive}) => (isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
+        background: ${({$isActive}) => ($isActive ? 'rgba(var(--button-bg-rgb), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
     }
 `;
 

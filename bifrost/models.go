@@ -71,7 +71,7 @@ func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, e
 
 	resp, bifrostErr := client.ListAllModels(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost list models error: %s", bifrostErrorString(bifrostErr)), cfg.APIKey)
+		return nil, providerError(nil, "bifrost list models error", bifrostErr, cfg.APIKey)
 	}
 
 	if resp == nil {

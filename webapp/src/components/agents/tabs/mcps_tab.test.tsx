@@ -27,6 +27,12 @@ jest.mock('@/client', () => ({
     getUserMCPTools: jest.fn(),
 }));
 
+jest.mock('@/license', () => ({
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
+}));
+
 jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
@@ -127,6 +133,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
 describe('McpsTab', () => {
     beforeEach(() => {
         mockedGetUserMCPTools.mockReset();
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockReturnValue(true);
     });
 
     // MM-69185 regression: when the live MCP catalog drops entries that were
@@ -449,6 +457,30 @@ describe('McpsTab', () => {
         await screen.findByText('OAuth Server');
         expect(screen.getByRole('button', {name: 'Connect'})).not.toBeNull();
         expect(screen.queryByText('Unavailable')).toBeNull();
+    });
+
+    test('hides Connect when remote MCP is not licensed', async () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation((capability: string) => capability !== 'remote_mcp');
+
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'OAuth Server',
+                serverOrigin: 'https://oauth.example.com/mcp',
+                kind: 'remote',
+                authenticated: false,
+                needsOAuth: true,
+                authURL: 'http://localhost/oauth/start',
+                serviceAccountConfigured: false,
+                tools: [],
+            }],
+        });
+
+        renderTab({useServiceAccountAuth: false});
+
+        await screen.findByText('OAuth Server');
+        expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
+        useIsLicensedFor.mockReturnValue(true);
     });
 
     test('does not mark an authenticated SA-configured server as unavailable in user mode', async () => {

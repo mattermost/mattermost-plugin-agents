@@ -28,6 +28,11 @@ import (
 var channelMentionTestConnStr string
 
 func TestMain(m *testing.M) {
+	if !channelMentionDockerAvailable() {
+		fmt.Println("docker unavailable; skipping channel-mention postgres fixture")
+		os.Exit(m.Run())
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	container, err := tcpostgres.Run(ctx,
 		"postgres:16-alpine",
@@ -57,6 +62,21 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func channelMentionDockerAvailable() bool {
+	if os.Getenv("DOCKER_HOST") != "" {
+		return true
+	}
+	if _, err := os.Stat("/var/run/docker.sock"); err == nil {
+		return true
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if _, err := os.Stat(home + "/.docker/run/docker.sock"); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // channelMentionBotLookup implements conversation.BotLookup for testing.
 type channelMentionBotLookup struct {
 	botIDs map[string]bool
@@ -72,6 +92,10 @@ func (b *channelMentionBotLookup) GetBotConfigByID(botID string) (bool, int64, b
 
 func setupChannelMentionService(t *testing.T) (*conversation.Service, *store.Store) {
 	t.Helper()
+
+	if channelMentionTestConnStr == "" {
+		t.Skip("postgres testcontainer not available")
+	}
 
 	db, err := sqlx.Connect("postgres", channelMentionTestConnStr)
 	require.NoError(t, err)
@@ -635,4 +659,30 @@ func TestChannelMentionTurnLookupByPostID(t *testing.T) {
 	conv, err := s.GetConversation(turn.ConversationID)
 	require.NoError(t, err)
 	assert.Equal(t, userID, conv.UserID)
+}
+
+// With channel tool calling off, the mention is answered without tool
+// definitions, so the stored system prompt must not tell the model to call the
+// dynamic MCP meta-tools.
+func TestChannelMentionWithToolsDisabledOmitsDynamicToolWorkflow(t *testing.T) {
+	botConfig := autoReplyBotConfig()
+	botConfig.MCPDynamicToolLoading = true
+	botConfig.AutoEnableNewMCPTools = true
+	env := setupAutoReplyTestEnv(t, []llm.BotConfig{botConfig}, dmMakeTextStream("done"))
+	env.mcpMgr.tools = []llm.Tool{{
+		Name:         "fusion__create_geojson",
+		Description:  "Build a GeoJSON document",
+		ServerOrigin: "https://fusion.example.com",
+		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
+		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+			return "{}", nil
+		},
+	}}
+
+	env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "@"+autoReplyBotUsername+" create a GeoJSON overlay"))
+
+	convs := allConversations(env.convStore)
+	require.Len(t, convs, 1)
+	assert.NotContains(t, convs[0].SystemPrompt, "call search_tools")
+	assert.Contains(t, convs[0].SystemPrompt, "can only be used in a Direct Message (DM) or via the Agents tab")
 }

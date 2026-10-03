@@ -26,3 +26,26 @@ func TestSetFileLogger_ShutsDownPreviousLogger(t *testing.T) {
 	// Setting nil when no logger was set should not panic.
 	sinks.SetFileLogger(nil)
 }
+
+func TestAccountingEnabledFailsClosed(t *testing.T) {
+	sinks := NewTokenUsageSinks(nil)
+	sinks.SetLoggingEnabled(true)
+	sinks.SetPluginEnabled(true)
+
+	if sinks.AccountingEnabled() {
+		t.Fatal("unset predicate must fail closed")
+	}
+	if sinks.LoggingEnabled() {
+		t.Fatal("logging must stay off when accounting is unset")
+	}
+
+	sinks.SetAccountingEnabled(func() bool { return false })
+	if sinks.LoggingEnabled() {
+		t.Fatal("logging must stay off when accounting is disabled")
+	}
+
+	sinks.SetAccountingEnabled(func() bool { return true })
+	if !sinks.LoggingEnabled() {
+		t.Fatal("logging should follow the config flag when accounting is enabled")
+	}
+}
