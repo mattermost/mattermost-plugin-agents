@@ -448,7 +448,6 @@
   "fanuyRDS": "The base URL of your Cohere North instance, for example https://north.example.com",
   "feK3CmYg": "(only you)",
   "ffq9KbyO": "Enter users to block for this bot",
-  "fhwTpAcB": "Sources",
   "fio5opLc": "Output",
   "flqdoAVq": "Comma-separated list of domains to exclude from search results (e.g., example.com, spam-site.org). Results from these domains will be filtered out and the LLM will never see them.",
   "foR7Xn8O": "Confirm Reindexing",

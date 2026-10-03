@@ -155,6 +155,16 @@ func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
 }
 
+// GetConversationByThread returns the conversation rooted at rootPostID for
+// the bot and user, or nil when the thread has none.
+func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
+	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	if errors.Is(err, store.ErrConversationNotFound) {
+		return nil, nil
+	}
+	return conv, err
+}
+
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)

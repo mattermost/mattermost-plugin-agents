@@ -20,7 +20,7 @@ func TestSearchServiceLicenseGate(t *testing.T) {
 
 	for _, level := range enterprisetest.AllLevels {
 		t.Run(level.String(), func(t *testing.T) {
-			s := New(getSearch, nil, nil, nil, enterprisetest.CheckerAt(level), nil)
+			s := New(getSearch, nil, enterprisetest.CheckerAt(level))
 			licensed := level >= enterprise.LevelEnterprise
 			require.Equal(t, licensed, s.Enabled())
 
@@ -33,24 +33,16 @@ func TestSearchServiceLicenseGate(t *testing.T) {
 			require.Error(t, err)
 			require.True(t, errors.As(err, &licErr))
 			require.Equal(t, enterprise.CapSemanticSearch, licErr.Capability)
-
-			_, runErr := s.RunSearch(t.Context(), "user", nil, "hello", "", "", 5)
-			require.Error(t, runErr)
-			require.True(t, errors.As(runErr, &licErr))
 		})
 	}
 
 	t.Run("nil checker fails closed", func(t *testing.T) {
-		s := New(getSearch, nil, nil, nil, nil, nil)
+		s := New(getSearch, nil, nil)
 		require.False(t, s.Enabled())
 		_, err := s.Search(t.Context(), "hello", Options{Limit: 5})
 		var licErr *enterprise.LicenseError
 		require.Error(t, err)
 		require.True(t, errors.As(err, &licErr))
-
-		_, runErr := s.RunSearch(t.Context(), "user", nil, "hello", "", "", 5)
-		require.Error(t, runErr)
-		require.True(t, errors.As(runErr, &licErr))
 	})
 }
 

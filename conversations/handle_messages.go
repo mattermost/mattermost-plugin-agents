@@ -466,6 +466,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	if webSearchParams := c.extractWebSearchContext(post); len(webSearchParams) > 0 {
 		extraOpts = append(extraOpts, c.contextBuilder.WithLLMContextParameters(webSearchParams))
 	}
+	extraOpts = append(extraOpts, c.threadConversationToolOptions(bot, postingUser, post)...)
 	// Build the context once WITH tools so the system prompt can reference them.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -474,12 +475,28 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 		extraOpts...,
 	)
 	progress.Advance(responseProgressLoadingConversation)
-	ensureDMWebSearchTracking(llmContext)
 
 	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
+
+	return c.streamDMConversation(ctx, bot, channel, postingUser, post, responsePost, progress, llmContext, convResult)
+}
+
+// streamDMConversation runs the tool loop for the conversation's latest user
+// turn and streams the answer onto responsePost.
+func (c *Conversations) streamDMConversation(
+	ctx context.Context,
+	bot *bots.Bot,
+	channel *model.Channel,
+	postingUser *model.User,
+	post, responsePost *model.Post,
+	progress *responseProgressReporter,
+	llmContext *llm.Context,
+	convResult *DMConversationResult,
+) error {
+	ensureDMWebSearchTracking(llmContext)
 	responsePost.AddProp(streaming.ConversationIDProp, convResult.ConversationID)
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
@@ -583,14 +600,19 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 }
 
 func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {
-	message := "Sorry! An error occurred while accessing the LLM. See server logs for details."
+	c.setPlaceholderMessage(post, userLocale, "agents.stream_to_post_access_llm_error",
+		"Sorry! An error occurred while accessing the LLM. See server logs for details.")
+}
+
+func (c *Conversations) setPlaceholderMessage(post *model.Post, userLocale, messageID, fallback string) {
+	message := fallback
 	if c.i18n != nil {
 		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(userLocale))
-		message = T("agents.stream_to_post_access_llm_error", message)
+		message = T(messageID, fallback)
 	}
 	post.Message = message
 	if err := c.mmClient.UpdatePost(post); err != nil {
-		c.mmClient.LogError("Failed to update response placeholder after startup error", "error", err)
+		c.mmClient.LogError("Failed to update response placeholder", "error", err)
 	}
 }
 

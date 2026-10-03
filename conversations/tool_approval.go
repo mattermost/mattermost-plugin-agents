@@ -230,8 +230,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
+		append([]llm.ContextOption{
+			c.contextBuilder.WithLLMContextInteractive(),
+			c.contextBuilder.WithLLMContextResponseFiles(),
+		}, c.conversationToolOptions(bot, conv)...)...,
 	)
 	// The clicked post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
@@ -672,6 +674,7 @@ func (c *Conversations) streamToolFollowUp(
 		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
 	channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextResponseFiles())
+	channelToolFilterOpts = append(channelToolFilterOpts, c.conversationToolOptions(bot, conv)...)
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,

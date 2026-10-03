@@ -334,7 +334,7 @@ export default class Plugin {
 
                     const result = await doRunSearch(
                         searchTerms,
-                        '',
+                        state.entities.teams.currentTeamId,
                         '',
                         activeBot?.username,
                     );

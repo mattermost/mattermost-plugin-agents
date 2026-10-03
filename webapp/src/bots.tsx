@@ -84,11 +84,6 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     });
 
     dispatch({
-        type: 'SET_SEARCH_ENABLED',
-        searchEnabled: response.searchEnabled,
-    });
-
-    dispatch({
         type: 'SET_ALLOW_UNSAFE_LINKS',
         allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
     });

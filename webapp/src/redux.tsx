@@ -23,7 +23,6 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
-        searchEnabled,
         allowUnsafeLinks,
         customPrompts,
         pinnedPromptIds,
@@ -71,15 +70,6 @@ function bots(state = null, action: any) {
     switch (action.type) {
     case BotsHandler:
         return action.bots;
-    default:
-        return state;
-    }
-}
-
-function searchEnabled(state = false, action: any) {
-    switch (action.type) {
-    case 'SET_SEARCH_ENABLED':
-        return action.searchEnabled;
     default:
         return state;
     }

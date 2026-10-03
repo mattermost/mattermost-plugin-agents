@@ -48,6 +48,8 @@ type fakeMMClient struct {
 	fileInfos            map[string]*model.FileInfo
 	onUpdatePost         func(*model.Post)
 	websocketEvents      []fakeWebSocketEvent
+	// dmChannelID, when set, is the channel DM posts are created in.
+	dmChannelID string
 
 	// logMu guards logErrors: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
@@ -172,8 +174,16 @@ func (c *fakeMMClient) GetPostsBefore(string, string, int, int) (*model.PostList
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) DM(string, string, *model.Post) error {
-	return errors.New("not implemented")
+func (c *fakeMMClient) DM(senderID, _ string, post *model.Post) error {
+	if c.dmChannelID == "" {
+		return errors.New("not implemented")
+	}
+	if post.Id == "" {
+		post.Id = model.NewId()
+	}
+	post.UserId = senderID
+	post.ChannelId = c.dmChannelID
+	return nil
 }
 
 func (c *fakeMMClient) GetTeam(string) (*model.Team, error) {
@@ -278,6 +288,8 @@ func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
 
 type fakeStreamingService struct {
 	streamedPosts []*model.Post
+	// finished, when set, receives the ID of each post whose stream ends.
+	finished chan string
 }
 
 func (s *fakeStreamingService) StreamToNewPost(_ context.Context, _ string, _ string, _ *llm.TextStreamResult, post *model.Post, _ string) error {
@@ -307,7 +319,11 @@ func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ stri
 	return inCtx, nil
 }
 
-func (s *fakeStreamingService) FinishStreaming(string) {}
+func (s *fakeStreamingService) FinishStreaming(postID string) {
+	if s.finished != nil {
+		s.finished <- postID
+	}
+}
 
 type testToolProvider struct {
 	tools []llm.Tool

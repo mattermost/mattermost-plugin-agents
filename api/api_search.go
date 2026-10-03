@@ -4,7 +4,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,38 +12,35 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// SearchRequest represents a search query request from the API
+// SearchRequest is a search started from the search bar or /ask-channel.
 type SearchRequest struct {
-	Query      string `json:"query"`
-	TeamID     string `json:"teamId"`
-	ChannelID  string `json:"channelId"`
-	MaxResults int    `json:"maxResults"`
+	Query string `json:"query"`
+	// TeamID is the user's current team, used for citation links.
+	TeamID string `json:"teamId"`
+	// ChannelID is the channel the agent searches first.
+	ChannelID string `json:"channelId"`
 }
 
-const (
-	defaultMaxResults    = 5
-	maxMaxResults        = 100
-	maxSearchQueryLength = 4000
-)
+const maxSearchQueryLength = 4000
 
-// handleBotSearch validates a SearchRequest and responds with the result of run.
-func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error)) {
+// handleRunSearch posts the query to the user's DM with the agent and starts
+// a conversation that answers it by searching Mattermost with tools.
+func (a *API) handleRunSearch(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
-	// Search triggers a full LLM completion, so the agent+service usage gate
-	// applies (user-level only: search requests are not channel-scoped here).
+	// Search runs a full agent conversation, so the agent+service usage gate
+	// applies (user-level only: the conversation happens in the agent DM).
 	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
 		c.AbortWithError(http.StatusForbidden, err)
-		return
-	}
-
-	if !a.searchService.Enabled() {
-		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
 		return
 	}
 
@@ -64,40 +60,62 @@ func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, user
 		return
 	}
 
-	// Validate MaxResults
-	if req.MaxResults <= 0 {
-		req.MaxResults = defaultMaxResults
-	} else if req.MaxResults > maxMaxResults {
-		req.MaxResults = maxMaxResults
+	searchReq := conversations.SearchRequest{Query: req.Query}
+
+	if req.TeamID != "" {
+		if !model.IsValidId(req.TeamID) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid team ID"))
+			return
+		}
+		if !a.pluginAPI.User.HasPermissionToTeam(userID, req.TeamID, model.PermissionViewTeam) {
+			c.AbortWithError(http.StatusForbidden, fmt.Errorf("user doesn't have permission to view the team"))
+			return
+		}
+		team, err := a.pluginAPI.Team.Get(req.TeamID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get team: %w", err))
+			return
+		}
+		searchReq.Team = team
 	}
 
-	result, err := run(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
+	if req.ChannelID != "" {
+		if !model.IsValidId(req.ChannelID) {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid channel ID"))
+			return
+		}
+		if !a.pluginAPI.User.HasPermissionToChannel(userID, req.ChannelID, model.PermissionReadChannel) {
+			c.AbortWithError(http.StatusForbidden, fmt.Errorf("user doesn't have permission to read the channel"))
+			return
+		}
+		channel, err := a.pluginAPI.Channel.Get(req.ChannelID)
+		if err != nil {
+			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get channel: %w", err))
+			return
+		}
+		searchReq.Channel = channel
+	}
+
+	user, err := a.pluginAPI.User.Get(userID)
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
-			abortNotLicensed(c, err)
-			return
-		}
-		if errors.Is(err, search.ErrSearchUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-			return
-		}
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to get user: %w", err))
+		return
+	}
+
+	// The answer is generated after this request returns.
+	ctx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	questionPost, err := a.conversationsService.HandleSearch(ctx, bot, user, searchReq)
+	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
-	c.JSON(http.StatusOK, result)
-}
-
-func (a *API) handleRunSearch(c *gin.Context) {
-	a.handleBotSearch(c, func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error) {
-		return a.searchService.RunSearch(ctx, userID, bot, query, teamID, channelID, maxResults)
-	})
-}
-
-func (a *API) handleSearchQuery(c *gin.Context) {
-	a.handleBotSearch(c, func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error) {
-		return a.searchService.SearchQuery(ctx, userID, bot, query, teamID, channelID, maxResults)
+	c.JSON(http.StatusOK, map[string]string{
+		"postid":    questionPost.Id,
+		"channelid": questionPost.ChannelId,
 	})
 }
 
