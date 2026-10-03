@@ -10,6 +10,7 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
+import type {DelegationStatus} from '@/types/delegation';
 import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
@@ -43,6 +44,73 @@ export type UserMCPServerInfo = {
 export type UserMCPToolsResponse = {
     servers: UserMCPServerInfo[];
 };
+
+export interface MCPAppsBootstrap {
+    enabled: boolean;
+    sandboxURL?: string;
+    disabledReason?: string;
+}
+
+export interface AppResourceCSP {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+}
+
+export interface AppResourceUIMeta {
+    csp?: AppResourceCSP;
+    permissions?: Record<string, Record<string, unknown>>;
+    domain?: string;
+    prefersBorder?: boolean;
+}
+
+export interface AppResourceContents {
+    uri: string;
+    mimeType: string;
+    text: string;
+    _meta?: {ui?: AppResourceUIMeta};
+}
+
+// Mirrors MCP ReadResourceResult — returned verbatim to @mcp-ui/client's
+// onReadResource.
+export interface AppResourceResponse {
+    contents: AppResourceContents[];
+}
+
+export class MCPAppResourceError extends Error {
+    status: number;
+    errorCode: string;
+    authURL?: string;
+
+    constructor(status: number, errorCode: string, message: string, authURL?: string) {
+        super(message);
+        this.name = 'MCPAppResourceError';
+        this.status = status;
+        this.errorCode = errorCode;
+        this.authURL = authURL;
+    }
+}
+
+export async function getMCPAppResource(postID: string, toolCallID: string): Promise<AppResourceResponse> {
+    const params = new URLSearchParams({post_id: postID, tool_call_id: toolCallID});
+    const response = await fetch(`${baseRoute()}/mcp/app-resource?${params}`, Client4.getOptions({method: 'GET'}));
+    if (response.ok) {
+        return response.json();
+    }
+    let body: {error_code?: string; message?: string; auth_url?: string} | null = null;
+    try {
+        body = await response.json();
+    } catch {
+        // non-JSON error body (e.g. gin 500) — fall through
+    }
+    throw new MCPAppResourceError(
+        response.status,
+        body?.error_code ?? 'unknown',
+        body?.message ?? 'app resource fetch failed',
+        body?.auth_url,
+    );
+}
 
 // Mirrors components/system_console/mcp_servers.tsx MCPToolConfig; duplicated to
 // avoid client.tsx depending on UI components.
@@ -260,6 +328,67 @@ export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?
     });
 }
 
+export type AskUserResponseAction = 'answer' | 'decline';
+export type AskUserResponseStatus = 'answered' | 'declined' | 'canceled';
+
+// Request body for the ask_user_response endpoint. Mirrors
+// conversations.AskUserResponse on the server.
+export interface AskUserResponseBody {
+    action: AskUserResponseAction;
+    selected: string[];
+    free_form: string;
+}
+
+// botUsername must be the card bot's username (the card post's author): the
+// endpoint's middleware resolves the bot from this query param — falling back
+// to the DEFAULT bot when absent — and runs usage-restriction checks against
+// that bot. Omitting it would 403 targets who lack access to the default bot.
+export async function doAskUserResponse(postid: string, botUsername: string, body: AskUserResponseBody): Promise<{status: AskUserResponseStatus}> {
+    const url = `${postRoute(postid)}/ask_user_response?botUsername=${encodeURIComponent(botUsername)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
+// Request body for the ask_user_cancel endpoint. Mirrors the V2-C4 contract:
+// tool_use_id is the provider-issued id of the waiting tool_use block.
+export interface AskUserCancelBody {
+    tool_use_id: string;
+}
+
+// Cancels an outstanding AskAnotherUser question from the initiator's anchor
+// post. botUsername names the conversation bot (the anchor post's author) so
+// the endpoint middleware runs its checks against that bot rather than the
+// default one (same rationale as doAskUserResponse).
+export async function doAskUserCancel(postid: string, botUsername: string, body: AskUserCancelBody): Promise<{status: string}> {
+    const url = `${postRoute(postid)}/ask_user_cancel?botUsername=${encodeURIComponent(botUsername)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(body),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolResult(postid: string, toolIDs: string[]): Promise<void> {
     const url = `${postRoute(postid)}/tool_result`;
     const response = await fetch(url, Client4.getOptions({
@@ -391,6 +520,23 @@ export async function getConversation(conversationId: string): Promise<Conversat
     });
 }
 
+export async function getDelegationStatus(parentToolCallId: string): Promise<DelegationStatus> {
+    const url = `${baseRoute()}/delegations/${parentToolCallId}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return (await response.json()) as DelegationStatus;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function getConversationContext(conversationId: string): Promise<Composition> {
     // Same as getConversation: never build a request from a malformed id.
     if (!isValidId(conversationId)) {
@@ -455,6 +601,9 @@ export async function getBotProfilePictureUrl(username: string) {
     return getProfilePictureUrl(user.id, user.last_picture_update);
 }
 
+// doRunSearch starts a search conversation with the agent. teamId is the
+// user's current team (used for citation links); channelId, when set, is the
+// channel the agent searches first.
 export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
     const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
     const response = await fetch(url, Client4.getOptions({

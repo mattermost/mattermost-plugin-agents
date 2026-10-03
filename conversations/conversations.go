@@ -31,24 +31,26 @@ const AnalysisTypeProp = "prompt_type"
 // ConfigProvider provides configuration values for conversation behavior
 type ConfigProvider interface {
 	EnableChannelMentionToolCalling() bool
+	EnableAskAnotherUser() bool
 	AllowNativeWebSearchInChannels() bool
 	MCP() mcp.Config
 }
 
 type Conversations struct {
-	prompts           *llm.Prompts
-	mmClient          mmapi.Client
-	streamingService  streaming.Service
-	contextBuilder    *llmcontext.Builder
-	bots              *bots.MMBots
-	db                *mmapi.DBClient
-	licenseChecker    *enterprise.LicenseChecker
-	i18n              *i18n.Bundle
-	meetingsService   MeetingsService
-	configProvider    ConfigProvider
-	toolPolicyChecker mcp.ToolPolicyChecker
-	convService       *conversation.Service
-	autoReplySettings AutoReplySettings
+	prompts            *llm.Prompts
+	mmClient           mmapi.Client
+	streamingService   streaming.Service
+	contextBuilder     *llmcontext.Builder
+	bots               *bots.MMBots
+	db                 *mmapi.DBClient
+	licenseChecker     *enterprise.LicenseChecker
+	i18n               *i18n.Bundle
+	meetingsService    MeetingsService
+	configProvider     ConfigProvider
+	toolPolicyChecker  mcp.ToolPolicyChecker
+	convService        *conversation.Service
+	autoReplySettings  AutoReplySettings
+	delegationNotifier DelegationNotifier
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -252,7 +254,17 @@ func (c *Conversations) processDMRequest(
 	if beforeProvider != nil {
 		beforeProvider()
 	}
-	runResult, err := c.runToolLoop(ctx, lm, maxToolTurns, *completionReq,
+	// The initial-DM entry point receives only the language model, so the
+	// deferred dispatcher's bot is resolved from the conversation. When the
+	// bot cannot be resolved, run without a dispatcher — the runner's
+	// no-dispatcher fallback emits deferred batches pending instead.
+	var dispatcher toolrunner.DeferredDispatcher
+	if c.bots != nil {
+		if bot := c.bots.GetBotByID(conv.BotID); bot != nil {
+			dispatcher = c.newDeferredDispatcherForConversation(bot, conv, "")
+		}
+	}
+	runResult, err := c.runToolLoop(ctx, lm, maxToolTurns, dispatcher, *completionReq,
 		c.shouldAutoExecuteTool(llmCtx, true),
 		convID,
 		func([]toolrunner.ToolTurn) bool { return true },
@@ -270,13 +282,15 @@ func (c *Conversations) processDMRequest(
 }
 
 // runToolLoop runs the ToolRunner over req, persisting each intermediate tool
-// round to the conversation as it completes. sharedForTurns decides the shared
-// flag written with each round; writeFailMsg (plus writeFailArgs) is logged
-// when persisting a round fails.
+// round to the conversation as it completes. dispatcher handles deferred-result
+// tool calls; nil runs without one (deferred batches are emitted pending).
+// sharedForTurns decides the shared flag written with each round; writeFailMsg
+// (plus writeFailArgs) is logged when persisting a round fails.
 func (c *Conversations) runToolLoop(
 	ctx stdcontext.Context,
 	lm llm.LanguageModel,
 	maxRounds int,
+	dispatcher toolrunner.DeferredDispatcher,
 	req llm.CompletionRequest,
 	shouldExecute func(llm.ToolCall) bool,
 	convID string,
@@ -286,7 +300,7 @@ func (c *Conversations) runToolLoop(
 	writeFailArgs ...any,
 ) (*toolrunner.ToolRunResult, error) {
 	opts = c.withProviderWebSearchLicense(opts)
-	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds))
+	runner := toolrunner.New(lm, toolrunner.WithMaxRounds(maxRounds), toolrunner.WithDeferredDispatcher(dispatcher))
 	return runner.Run(ctx, req, shouldExecute, func(turns []toolrunner.ToolTurn) {
 		if writeErr := c.convService.WriteToolTurns(convID, turns, sharedForTurns(turns)); writeErr != nil {
 			c.mmClient.LogError(writeFailMsg, append([]any{"error", writeErr}, writeFailArgs...)...)

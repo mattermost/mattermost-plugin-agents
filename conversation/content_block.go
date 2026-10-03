@@ -31,6 +31,7 @@ const (
 	StatusError        = "error"
 	StatusSuccess      = "success"
 	StatusAutoApproved = "auto_approved"
+	StatusWaiting      = "waiting"
 )
 
 // ContentBlock is a flat struct representing any content block type.
@@ -60,12 +61,18 @@ type ContentBlock struct {
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
 
+	// UIMeta is the persisted MCP Apps tool metadata (tool_use blocks only).
+	UIMeta *llm.ToolUIMeta `json:"ui_meta,omitempty"`
+
 	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
 	// WouldAutoExecute marks any pending tool_use block that passed the
 	// auto-execution policy (see llm.ToolCall.WouldAutoExecute).
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
+
+	// DeferredResult is the persisted form of llm.ToolCall.DeferredResult.
+	DeferredResult bool `json:"deferred_result,omitempty"`
 
 	// DecidedAt (tool_result blocks) records when the share/keep-private
 	// decision was made — either by the user clicking Share or Keep Private
@@ -111,11 +118,12 @@ type WebSearchContext struct {
 }
 
 // FilterForNonRequester returns a new slice of content blocks with private
-// tool data redacted. Tool use blocks with shared != true have Input and
-// MCPBareName cleared; tool result blocks with shared != true have Content
-// cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
+// tool data redacted. Tool use blocks with shared != true have Input,
+// MCPBareName, and UIMeta cleared; tool result blocks with shared != true have
+// Content cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
 // visible, mirroring redactToolCalls on the live path so both paths render
-// identically. The original slice is never mutated; nil in, nil out.
+// identically. Shared tool_use blocks keep UIMeta so onlookers can detect an
+// app after a share. The original slice is never mutated; nil in, nil out.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -129,6 +137,7 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 			if block.Shared == nil || !*block.Shared {
 				result[i].Input = nil
 				result[i].MCPBareName = ""
+				result[i].UIMeta = nil
 			}
 		case BlockTypeToolResult:
 			if block.Shared == nil || !*block.Shared {

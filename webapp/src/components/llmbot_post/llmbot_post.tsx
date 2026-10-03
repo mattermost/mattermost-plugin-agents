@@ -19,8 +19,7 @@ import {isValidId} from '@/utils/ids';
 
 import {ServerToolUse} from '@/types/conversation';
 
-import {SearchSources, parseSearchSources} from '../search_sources';
-import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
+import {isCancelableAskCall, needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
@@ -36,8 +35,6 @@ import {extractPermalinkData} from './permalink_data';
 import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
 import ToolActivityDisplay from './tool_activity_display';
-
-const SearchResultsPropKey = 'search_results';
 
 // Sentinel id for the in-progress streaming round; persisted rounds use turn ids.
 const LIVE_ROUND_ID = 'live';
@@ -618,21 +615,17 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     // Accept after finalizeTurn has already persisted the pending turn.
     const anchorStage: ToolApprovalStage = livePendingForRequester ? 'call' : persistedAnchorStage;
 
-    // Parsed defensively: search_results is a free-form post prop, so a
-    // malformed value yields an empty list instead of throwing during render.
-    const searchSources = useMemo(
-        () => parseSearchSources(props.post.props?.[SearchResultsPropKey]),
-        [props.post.props],
-    );
-
     const toggleReasoning = useCallback((roundId: string, collapsed: boolean) => {
         setExpandedReasoning((prev) => ({...prev, [roundId]: !collapsed}));
     }, []);
 
     // A round the viewer owes a decision on stays out of the activity area so
     // its approval card renders in full. Onlookers owe none, so it folds in.
+    // A waiting AskAnotherUser question stays out too, so the requester can
+    // reach its Cancel control.
     const awaitingDecision = anchorRound !== null &&
-        needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester);
+        (needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester) ||
+            anchorRound.toolCalls.some((call) => isCancelableAskCall(call, mayBeRequester)));
     const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
     const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined
@@ -662,6 +655,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
+                appsEligible={!isLiveRound && !round.id.startsWith('live-')}
+                requesterUserID={knownConversation?.user_id}
             />
         );
     }, [
@@ -676,6 +671,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         isReasoningLoading,
         expandedReasoning,
         toggleReasoning,
+        knownConversation?.user_id,
     ]);
 
     // Tool-only posts leave post.message empty, so precontent stays true on
@@ -721,11 +717,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             <AnswerArea $afterActivity={activity.items.length > 0}>
                 {activity.answerRounds.map(renderRound)}
             </AnswerArea>
-            {searchSources.length > 0 && (
-                <SearchSources
-                    sources={searchSources}
-                />
-            )}
             { showPostbackButton &&
             <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
                 <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>

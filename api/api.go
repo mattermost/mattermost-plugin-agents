@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/delegation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -56,6 +57,7 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAskAnotherUser() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -83,6 +85,8 @@ type MCPClientManager interface {
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
+
+	ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
 }
 
 // ConfigStore provides read/write access to the plugin configuration in the database.
@@ -183,6 +187,7 @@ type API struct {
 	streamStopNotifier    StreamStopClusterNotifier
 	conversationStore     ConversationStore
 	convService           *conversation.Service
+	delegationService     *delegation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 	autoReplyStore        ChannelAutoReplyStore
@@ -336,10 +341,18 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 		})
 	}
 
+	// MCP Apps sandbox page — insecure same-origin fallback (master spec D1).
+	// Deliberately registered BEFORE MattermostAuthorizationRequired: the
+	// page is loaded by an iframe with no Mattermost session context. It
+	// serves only static templated HTML and is gated per-request on the
+	// explicit admin opt-in inside the handler.
+	router.GET(mcpAppsSameOriginSandboxPath, a.handleGetSameOriginSandbox)
+
 	router.Use(a.MattermostAuthorizationRequired)
 
 	router.GET("/conversations/:conversationid", a.handleGetConversation)
 	router.GET("/conversations/:conversationid/context", a.handleGetConversationContext)
+	router.GET("/delegations/:parenttoolcallid", a.handleGetDelegationStatus)
 
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
@@ -350,6 +363,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/mcp/user-preferences", a.handleGetUserPreferences)
 	router.PUT("/mcp/user-preferences", a.handlePutUserPreferences)
 	router.DELETE("/mcp/oauth/:serverName", a.handleDeleteUserMCPOAuth)
+	router.GET("/mcp/app-resource", a.handleGetMCPAppResource)
 
 	// Agent routes — authenticated. Free-tier instances (no multi-LLM license)
 	// can CRUD up to one self-service agent; the quota is enforced inside
@@ -404,6 +418,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
 	postRouter.POST("/tool_result", a.handleToolResult)
+	postRouter.POST("/ask_user_response", a.handleAskUserResponse)
+	postRouter.POST("/ask_user_cancel", a.handleAskUserCancel)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
 
@@ -461,9 +477,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	searchRouter := botRequiredRouter.Group("/search")
 	searchRouter.Use(a.capabilityRequired(enterprise.CapSemanticSearch))
-	// Only returns search results
-	searchRouter.POST("", a.handleSearchQuery)
-	// Initiates a search and responds to the user in a DM with the selected bot
+	// Starts a search conversation with the selected bot in the user's DM
 	searchRouter.POST("/run", a.handleRunSearch)
 
 	router.ServeHTTP(w, r)
@@ -600,6 +614,7 @@ type AIBotsResponse struct {
 	Bots             []AIBotInfo `json:"bots"`
 	SearchEnabled    bool        `json:"searchEnabled"`
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	MCPApps          MCPAppsInfo `json:"mcpApps"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -671,6 +686,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		Bots:             bots,
 		SearchEnabled:    searchEnabled,
 		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		MCPApps:          a.resolveMCPAppsInfo(),
 	})
 }
 

@@ -11,8 +11,10 @@ import React from 'react';
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
+import {type AskCancelState} from '../ask_another_user_tool';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
+import DelegationCard, {isAskAgentToolCall} from '../delegation/delegation_card';
 
 import {RichCardProps} from './tool_card_shell';
 import ReadPostPreviewCard from './posts/read_post';
@@ -34,10 +36,25 @@ export interface ToolRenderContext {
     approvalStage: ToolApprovalStage;
     isAutoApproved: boolean;
 
+    // MCP Apps wiring, forwarded to the card shell.
+    postID?: string;
+    requesterUserID?: string;
+    appsEligible?: boolean;
+
     // User-interaction (question) wiring.
     canAnswer: boolean;
     onAnswer?: (selections: string[], custom: string) => void;
     onSkip?: () => void;
+
+    // Delegation wiring: renders the delegated conversation's pending
+    // approvals inside the ask_agent card. Omitted when the viewer cannot
+    // approve.
+    renderDelegatedApprovals?: (delegationID: string) => React.ReactNode;
+
+    // Requester-side cancel of a waiting AskAnotherUser call.
+    onCancelAsk?: () => void;
+    askCancelState?: AskCancelState;
+    askCancelDisabled?: boolean;
 }
 
 interface RendererEntry {
@@ -45,10 +62,10 @@ interface RendererEntry {
     render: (ctx: ToolRenderContext) => React.ReactNode;
 }
 
-// Strip the question wiring; everything else is card props.
+// Strip the question and delegation wiring; everything else is card props.
 function toRichProps(ctx: ToolRenderContext): RichCardProps {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const {canAnswer, onAnswer, onSkip, ...cardProps} = ctx;
+    const {canAnswer, onAnswer, onSkip, renderDelegatedApprovals, ...cardProps} = ctx;
     return cardProps;
 }
 
@@ -65,6 +82,24 @@ function embeddedEntry(bareName: string, Component: React.FC<RichCardProps>): Re
 }
 
 const registry: RendererEntry[] = [
+
+    // DelegationCard: the embedded ask_agent tool, including redacted
+    // payloads (the card tolerates missing arguments).
+    {
+        match: isAskAgentToolCall,
+        render: (ctx) => (
+            <DelegationCard
+                tool={ctx.tool}
+                approvalStage={ctx.approvalStage}
+                isProcessing={ctx.isProcessing}
+                localDecision={ctx.localDecision}
+                canApprove={Boolean(ctx.onApprove)}
+                onApprove={ctx.onApprove}
+                onReject={ctx.onReject}
+                renderPendingApprovals={ctx.renderDelegatedApprovals}
+            />
+        ),
+    },
 
     // QuestionCard: a select-interaction tool whose arguments parse into a
     // renderable question. Redacted payloads render the generic card.

@@ -5,6 +5,7 @@ package mmtools
 
 import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 )
@@ -18,16 +19,27 @@ type ToolProvider interface {
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
 type MMToolProvider struct {
-	pluginAPI mmapi.Client
-	webSearch WebSearchService
+	pluginAPI    mmapi.Client
+	webSearch    WebSearchService
+	cfgGetter    func() *config.Config
+	scheduleWake ScheduleWake
 }
 
-// NewMMToolProvider creates a new tool provider
-func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMToolProvider {
+// NewMMToolProvider creates a new tool provider. cfgGetter supplies the live
+// plugin configuration for catalog gates (same pattern as
+// NewWebSearchService); a nil getter fails closed on gated tools.
+func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService, cfgGetter func() *config.Config) *MMToolProvider {
 	return &MMToolProvider{
 		pluginAPI: pluginAPI,
 		webSearch: webSearch,
+		cfgGetter: cfgGetter,
 	}
+}
+
+// SetScheduleWake installs the wake scheduler used by wait_for_async_work.
+// Called after conversations are wired because the wake handler resumes them.
+func (p *MMToolProvider) SetScheduleWake(schedule ScheduleWake) {
+	p.scheduleWake = schedule
 }
 
 // GetTools returns all available tools. Tool execution is restricted at runtime via
@@ -59,6 +71,23 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {
 		builtInTools = append(builtInTools, NewAskUserQuestionTool())
+	}
+
+	// Same catalog gate as CreateFile: only conversation flows that stream a
+	// response post can later resume onto that post (they stamp
+	// llm.Context.ResponsePostID once the placeholder exists).
+	if p.scheduleWake != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported {
+		builtInTools = append(builtInTools, NewWaitForAsyncWorkTool(p.scheduleWake))
+	}
+
+	// AskAnotherUser does not require an interactive invoker (the *target*
+	// answers), but it is experimental and master-gated by the admin toggle
+	// (V2-C1): with the toggle off the model never sees the tool. Fail
+	// closed on a nil getter or config.
+	if p.cfgGetter != nil {
+		if cfg := p.cfgGetter(); cfg != nil && cfg.EnableAskAnotherUser {
+			builtInTools = append(builtInTools, NewAskAnotherUserTool())
+		}
 	}
 
 	return builtInTools

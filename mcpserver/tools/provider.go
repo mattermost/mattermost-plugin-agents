@@ -30,6 +30,11 @@ type MCPToolContext struct {
 	// UserID is the Mattermost user ID of the user the Client is authenticated as.
 	// Empty when the auth provider cannot resolve an authenticated user.
 	UserID string
+
+	// ParentToolCallID is the tool_use ID of the calling agent's tool call,
+	// forwarded via call metadata by the plugin's MCP client (embedded
+	// servers only). Used to key delegation progress on the parent turn.
+	ParentToolCallID string
 }
 
 // MCPToolResolver defines the signature for MCP tool resolvers
@@ -75,9 +80,18 @@ type MCPTool struct {
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
 
+	// Meta is attached verbatim as the tool's `_meta` (e.g. MCP Apps
+	// `ui.resourceUri`). Nil for ordinary tools.
+	Meta mcp.Meta
+
 	// ReadOnly is true when the tool only retrieves data. State-changing tools
 	// are available at Enterprise and above.
 	ReadOnly bool
+
+	// Available, when set, gates the tool's visibility: it is evaluated on each
+	// tools/list request and the tool is hidden when it returns false. Nil means
+	// always available.
+	Available func() bool
 }
 
 type ToolProvider interface {
@@ -112,13 +126,22 @@ type MattermostToolProvider struct {
 	searchService           SemanticSearchService // Optional semantic search service, can be nil
 	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
 	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
+	delegationService       DelegationService     // Optional delegation service for ask_agent, can be nil (embedded servers only)
+	enableDemoApps          bool                  // Registers demo MCP Apps tools/resources (embedded only)
+}
+
+// SetEnableDemoApps selects the demo MCP Apps tool group for mcpTools/ProvideTools.
+// Config-time gate: tools are omitted entirely when false.
+func (p *MattermostToolProvider) SetEnableDemoApps(enabled bool) {
+	p.enableDemoApps = enabled
 }
 
 // NewMattermostToolProvider creates a new tool provider.
 // searchService is optional and can be nil if semantic search is not available.
 // allowStateChangingTools is a runtime predicate evaluated on each tools/list
 // and tools/call; a nil predicate means state-changing tools are not available.
-func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool) *MattermostToolProvider {
+// delegationService is optional and can be nil; ask_agent is hidden without it.
+func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger logger.Logger, config ServerConfig, accessMode AccessMode, searchService SemanticSearchService, fileContentService FileContentService, allowStateChangingTools func() bool, delegationService DelegationService) *MattermostToolProvider {
 	// Use internal URL for API communication if provided, otherwise fallback to external URL
 	serverURL := config.GetMMInternalServerURL()
 	if serverURL == "" {
@@ -135,6 +158,7 @@ func NewMattermostToolProvider(authProvider auth.AuthenticationProvider, logger 
 		searchService:           searchService,
 		fileContentService:      fileContentService,
 		allowStateChangingTools: allowStateChangingTools,
+		delegationService:       delegationService,
 	}
 }
 
@@ -164,6 +188,10 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		groups = append(groups, p.getDevUserTools, p.getDevPostTools, p.getDevTeamTools)
 	}
 
+	if p.enableDemoApps {
+		groups = append(groups, p.getDemoAppTools)
+	}
+
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
@@ -184,16 +212,52 @@ func (p *MattermostToolProvider) ToolNames() []string {
 // ProvideTools registers all available MCP tools with the server.
 func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	stateChanging := map[string]struct{}{}
+	availability := map[string]func() bool{}
 	for _, mcpTool := range p.mcpTools() {
 		p.registerDynamicTool(mcpServer, mcpTool)
 		if !mcpTool.ReadOnly {
 			stateChanging[mcpTool.Name] = struct{}{}
+		}
+		if mcpTool.Available != nil {
+			availability[mcpTool.Name] = mcpTool.Available
 		}
 	}
 
 	// State-changing tools are listed and callable when allowStateChangingTools
 	// reports they are available (Enterprise and above).
 	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
+	mcpServer.AddReceivingMiddleware(toolAvailabilityMiddleware(availability))
+
+	if p.enableDemoApps {
+		p.registerDemoAppResources(mcpServer)
+	}
+}
+
+// toolAvailabilityMiddleware returns MCP receiving middleware that drops any
+// tool from tools/list whose Available predicate reports it as unavailable.
+func toolAvailabilityMiddleware(availability map[string]func() bool) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, req)
+			if err != nil || method != "tools/list" || len(availability) == 0 {
+				return result, err
+			}
+			listResult, ok := result.(*mcp.ListToolsResult)
+			if !ok {
+				return result, nil
+			}
+
+			filtered := make([]*mcp.Tool, 0, len(listResult.Tools))
+			for _, tool := range listResult.Tools {
+				if available, gated := availability[tool.Name]; gated && !available() {
+					continue
+				}
+				filtered = append(filtered, tool)
+			}
+			listResult.Tools = filtered
+			return listResult, nil
+		}
+	}
 }
 
 // stateChangingAllowed reports whether state-changing tools are available.
@@ -275,6 +339,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: mcpTool.ReadOnly,
 		},
+	}
+	if mcpTool.Meta != nil {
+		tool.Meta = mcpTool.Meta
 	}
 
 	// Set the InputSchema from the MCPTool schema
@@ -376,11 +443,17 @@ func (p *MattermostToolProvider) createMCPToolContext(ctx context.Context, metad
 		UserID:     userID,
 	}
 
-	// Extract bot_user_id from metadata if present (for embedded servers)
-	// Only do this when tracking is enabled
-	if p.trackAIGenerated && metadata != nil {
+	// Extract identity fields from server-injected metadata (embedded servers
+	// only; never model-controlled). BotUserID is calling-agent identity used
+	// by delegation and (separately, gated on trackAIGenerated inside
+	// stampAIGenerated) by AI-content attribution — the tracking setting must
+	// not decide whether identity is available.
+	if metadata != nil {
 		if botUserID, ok := metadata["bot_user_id"].(string); ok {
 			mcpContext.BotUserID = botUserID
+		}
+		if parentToolCallID, ok := metadata["parent_tool_call_id"].(string); ok {
+			mcpContext.ParentToolCallID = parentToolCallID
 		}
 	}
 

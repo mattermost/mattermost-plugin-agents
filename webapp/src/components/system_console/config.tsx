@@ -19,6 +19,7 @@ import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
 import EmbeddingSearchPanel from './embedding_search/embedding_search_panel';
 import {HNSW_DEFAULTS, REINDEX_DEFAULTS, REINDEX_INDEX_STRATEGY, VECTOR_ELEMENT_TYPE} from './embedding_search/types';
+import {defaultMCPAppsConfig} from './mcp_apps';
 import MCPServers from './mcp_servers';
 import {PluginConfig} from './plugin_config_types';
 import WebSearchPanel from './web_search/web_search_panel';
@@ -111,6 +112,7 @@ const defaultConfig: Config = {
     allowedUpstreamHostnames: '',
     allowUnsafeLinks: false,
     enableChannelMentionToolCalling: false,
+    enableAskAnotherUser: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
         type: '',
@@ -143,6 +145,7 @@ const defaultConfig: Config = {
         embeddedServer: {
             enabled: true,
         },
+        apps: defaultMCPAppsConfig,
         idleTimeoutMinutes: 30,
     },
     webSearch: {
@@ -372,6 +375,19 @@ const Config = (props: Props) => {
                             updateConfig({enableChannelMentionToolCalling: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, @mentioning a bot in public channels allows tool calling (e.g., web search, integrations). When disabled, channel mentions still work but tools are disabled—only DMs allow tool usage. This is an experimental feature for multi-player tool calling in channels.'})}
+                    />
+                    <BooleanItem
+                        label={
+                            <Horizontal>
+                                <FormattedMessage defaultMessage='Enable Agents to Ask Other Users'/>
+                                <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                            </Horizontal>
+                        }
+                        value={Boolean(value.enableAskAnotherUser)}
+                        onChange={(to) => {
+                            updateConfig({enableAskAnotherUser: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, an agent can use the AskAnotherUser tool to send a clarifying question to another Mattermost user as an interactive direct-message card, on behalf of the person who asked the agent. Consider the implications before enabling: the question text is written by the AI model, so users can receive AI-authored messages they never asked for; answers flow back into the originating conversation and may appear in channel-visible follow-up messages; and this expands the surface for prompt-injection and social-engineering attempts. Question cards mitigate this by naming the requester, disclosing where the answer will go, and visually separating AI-generated text from system text. Off by default while experimental.'})}
                     />
                     <BooleanItem
                         label={<FormattedMessage defaultMessage='Allow native web search in channels'/>}

@@ -1640,6 +1640,86 @@ func TestRedactToolCallsPreservesUserInteraction(t *testing.T) {
 	require.True(t, redacted[0].WouldAutoExecute)
 }
 
+// TestBuildContentBlocksDeferredWaiting pins that a dispatched deferred call
+// persists with the waiting status and the deferred flag intact so the
+// webapp can render the waiting affordance after reload.
+func TestBuildContentBlocksDeferredWaiting(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+	acc.toolCalls = []llm.ToolCall{{
+		ID:             "ask-1",
+		Name:           "AskAnotherUser",
+		Arguments:      json.RawMessage(`{"username":"bob","question":"Q?"}`),
+		Status:         llm.ToolCallStatusWaiting,
+		DeferredResult: true,
+	}}
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 1)
+	require.Equal(t, conversation.BlockTypeToolUse, blocks[0].Type)
+	require.Equal(t, conversation.StatusWaiting, blocks[0].Status)
+	require.True(t, blocks[0].DeferredResult)
+}
+
+// TestRedactToolCallsKeepsDeferredResult pins that the observer-facing
+// redacted copy keeps the deferred flag (name/status-level metadata, needed
+// for the generic waiting placeholder) while dropping payloads.
+func TestRedactToolCallsKeepsDeferredResult(t *testing.T) {
+	redacted := redactToolCalls([]llm.ToolCall{{
+		ID:             "ask-1",
+		Name:           "AskAnotherUser",
+		Arguments:      json.RawMessage(`{"username":"bob","question":"secret"}`),
+		Result:         `{"status":"answered"}`,
+		Status:         llm.ToolCallStatusWaiting,
+		DeferredResult: true,
+	}})
+
+	require.Len(t, redacted, 1)
+	require.Empty(t, redacted[0].Arguments)
+	require.Empty(t, redacted[0].Result)
+	require.True(t, redacted[0].DeferredResult)
+	require.Equal(t, llm.ToolCallStatusWaiting, redacted[0].Status)
+}
+
+func TestRedactToolCallsClearsUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
+	redacted := redactToolCalls([]llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		ServerOrigin: "https://srv.example",
+		Status:       llm.ToolCallStatusSuccess,
+		Arguments:    json.RawMessage(`{"q":1}`),
+		Result:       "ok",
+		UIMeta:       uiMeta,
+	}})
+
+	require.Len(t, redacted, 1)
+	require.Nil(t, redacted[0].UIMeta)
+	require.Equal(t, "tc1", redacted[0].ID)
+	require.Equal(t, "demo", redacted[0].Name)
+	require.Equal(t, "https://srv.example", redacted[0].ServerOrigin)
+	require.Equal(t, llm.ToolCallStatusSuccess, redacted[0].Status)
+	require.Empty(t, redacted[0].Arguments)
+	require.Empty(t, redacted[0].Result)
+}
+
+func TestBuildContentBlocksCarriesUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+	acc.toolCalls = []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		ServerOrigin: "https://srv.example",
+		Status:       llm.ToolCallStatusPending,
+		UIMeta:       uiMeta,
+	}}
+
+	blocks := acc.buildContentBlocks()
+	require.Len(t, blocks, 1)
+	require.Equal(t, conversation.BlockTypeToolUse, blocks[0].Type)
+	require.Equal(t, uiMeta, blocks[0].UIMeta)
+}
+
 func TestBuildContentBlocksPreservesArrivalOrder(t *testing.T) {
 	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
 

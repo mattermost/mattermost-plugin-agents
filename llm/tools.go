@@ -43,6 +43,10 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// UIMeta is the MCP Apps metadata (_meta.ui) declared on the tool by its
+	// MCP server. Nil for built-in tools and tools without an app UI.
+	UIMeta *ToolUIMeta
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.
@@ -54,11 +58,19 @@ type Tool struct {
 	// arguments are not consumed until after a user round trip.
 	ValidateArguments func(json.RawMessage) error
 
+	// DeferredResult marks a tool whose approval/auto-run performs a dispatch
+	// side effect (handled by the conversation layer) instead of producing a
+	// tool result synchronously; the result arrives later out-of-band and the
+	// call sits in ToolCallStatusWaiting until then. The Resolver is only an
+	// error backstop, like UserInteraction tools.
+	DeferredResult bool
+
 	// AutoExecute marks a built-in tool that runs without user approval, like
-	// the MCP dynamic-loading meta-tools. Reserve it for tools whose only side
-	// effect is scoped to the assistant's own response (e.g. CreateFile
-	// attaching a file to the reply post). Only honored for tools with an
-	// empty ServerOrigin — MCP tools must never auto-execute through this flag.
+	// the MCP dynamic-loading meta-tools. Reserve it for tools whose side
+	// effect is scoped to this assistant's own response or conversation
+	// control flow (e.g. CreateFile attaching a file, wait_for_async_work
+	// scheduling a later resume). Only honored for tools with an empty
+	// ServerOrigin — MCP tools must never auto-execute through this flag.
 	AutoExecute bool
 }
 
@@ -231,6 +243,10 @@ const (
 	// This status is set by the stream wrapper and consumed by the streaming layer
 	// to skip the call-approval UI and proceed directly to result-sharing.
 	ToolCallStatusAutoApproved
+	// ToolCallStatusWaiting indicates a deferred-result tool call that was
+	// dispatched (e.g. a question card sent to another user) and is awaiting
+	// an out-of-band answer. Not a terminal status: no tool result exists yet.
+	ToolCallStatusWaiting
 )
 
 // IsResolvedToolCallBatch reports whether a ToolCalls event represents the
@@ -242,6 +258,8 @@ const (
 // else — most commonly Pending, but also Rejected — indicates the batch has
 // not been executed. Streaming persistence and the annotation decorator both
 // reset per-round state at this boundary, so they must share this predicate.
+// ToolCallStatusWaiting is deliberately non-terminal here: waiting batches
+// must be retained in the turn accumulator so finalizeTurn persists them.
 func IsResolvedToolCallBatch(toolCalls []ToolCall) bool {
 	if len(toolCalls) == 0 {
 		return false
@@ -283,9 +301,18 @@ type ToolCall struct {
 	// re-checks the policy before executing it on resume.
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
 
+	// DeferredResult mirrors Tool.DeferredResult so the approval flow and the
+	// webapp can recognize deferred calls on pending/waiting blocks.
+	DeferredResult bool `json:"deferred_result,omitempty"`
+
 	// ServerOrigin identifies the MCP server this tool came from (the BaseURL).
 	// Empty for built-in tools. Used for auto-approval decisions.
 	ServerOrigin string `json:"server_origin,omitempty"`
+
+	// UIMeta mirrors Tool.UIMeta so the webapp can detect UI-enabled tool
+	// calls. Nil when the tool has no MCP Apps UI. Redacted for
+	// non-requesters until the result is shared.
+	UIMeta *ToolUIMeta `json:"ui_meta,omitempty"`
 }
 
 // SanitizeNonPrintableChars replaces non-printable Unicode characters with their
@@ -454,11 +481,12 @@ type EnrichToolCallOptions struct {
 	BareNameFallback bool
 }
 
-// EnrichToolCall fills a tool call's Description, Title, ServerOrigin, and
-// MCPBareName from the resolved store entry. MCPBareName is only set for MCP
-// tools (those with a server origin); builtins are left untouched. Title and
-// Description follow the same overwrite semantics: rehydration trusts the store
-// (OverwriteDescription), approval preserves any value already present.
+// EnrichToolCall fills a tool call's Description, Title, ServerOrigin,
+// MCPBareName, and UIMeta from the resolved store entry. MCPBareName is only
+// set for MCP tools (those with a server origin); builtins are left untouched.
+// Title and Description follow the same overwrite semantics: rehydration trusts
+// the store (OverwriteDescription), approval preserves any value already
+// present. UIMeta is filled only when the call does not already carry one.
 func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) {
 	if tc == nil || store == nil {
 		return
@@ -478,11 +506,15 @@ func EnrichToolCall(tc *ToolCall, store *ToolStore, opts EnrichToolCallOptions) 
 		tc.Title = tool.Title
 	}
 	tc.UserInteraction = tool.UserInteraction
+	tc.DeferredResult = tool.DeferredResult
 	if tc.ServerOrigin == "" {
 		tc.ServerOrigin = lookup.ServerOrigin
 	}
 	if tc.MCPBareName == "" && lookup.ServerOrigin != "" {
 		tc.MCPBareName = lookup.BareName
+	}
+	if tc.UIMeta == nil {
+		tc.UIMeta = tool.UIMeta
 	}
 }
 

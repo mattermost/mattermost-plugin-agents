@@ -8,7 +8,12 @@ export enum ToolCallStatus {
     Error = 3,
     Success = 4,
     AutoApproved = 5,
+    Waiting = 6,
 }
+
+// Built-in deferred-result tool that asks a different Mattermost user a
+// question. Mirrors mmtools.AskAnotherUserToolName on the server.
+export const AskAnotherUserToolName = 'AskAnotherUser';
 
 export type JSONValue =
     | string
@@ -29,6 +34,12 @@ export interface ToolAnswer {
     custom?: string;
 }
 
+// Mirrors llm.ToolUIMeta JSON (llm/tools_ui.go).
+export interface ToolUIMeta {
+    resource_uri: string;
+    visibility?: string[];
+}
+
 export interface ToolCall {
     id: string;
     name: string;
@@ -47,6 +58,10 @@ export interface ToolCall {
     result?: string;
     status: ToolCallStatus;
 
+    // MCP Apps metadata from the tool's _meta.ui. Present only when the tool
+    // declares an app UI and the viewer may see it (requester, or shared).
+    ui_meta?: ToolUIMeta;
+
     // Non-empty for tools answered by the user instead of executed by the
     // server (e.g. AskUserQuestion). See UserInteractionSelect.
     user_interaction?: string;
@@ -55,6 +70,10 @@ export interface ToolCall {
     // may be running live or paused in a persisted round, but never needs an
     // individual approval decision.
     would_auto_execute?: boolean;
+
+    // True when the tool's result arrives out-of-band after a dispatch side
+    // effect (deferred-result tools, e.g. AskAnotherUser).
+    deferred_result?: boolean;
 
     // True when the matching tool result has already received its terminal
     // share/keep-private decision (decided_at set server-side). Derived from

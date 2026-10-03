@@ -10,7 +10,6 @@ import {useConversation} from '@/hooks/use_conversation';
 import {PluginWebSocketMessage} from '@/types';
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {MAX_SEARCH_SOURCES} from '../search_sources';
 import {ToolCallStatus} from '../tool_types';
 
 import {LLMBotPost, PostUpdateWebsocketMessage} from './llmbot_post';
@@ -165,17 +164,6 @@ function makeToolOnlyConversation(
             }],
         }),
     ], userId);
-}
-
-// Builds a search source entry with a unique well-formed post id.
-function makeSource(i: number) {
-    return {
-        postId: String(i).padStart(26, '0'),
-        channelId: WELL_FORMED_ID,
-        userId: WELL_FORMED_ID,
-        content: `source message ${i}`,
-        score: 0.5,
-    };
 }
 
 function renderPost(
@@ -805,6 +793,40 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         expect(screen.queryByText('Used 1 tool')).toBeNull();
     });
 
+    // A dispatched AskAnotherUser question leaves the round with nothing to
+    // approve, but the requester still needs its card for the Cancel control.
+    test.each([
+        {viewer: 'the requester', userId: 'user_1', keptOut: true},
+        {viewer: 'an onlooker', userId: 'someone_else', keptOut: false},
+    ])('a waiting AskAnotherUser round for $viewer stays out of the activity area: $keptOut', ({userId, keptOut}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'u1', post_id: 'user_post', role: 'user', content: [{type: 'text', text: 'ask bob'}]}),
+                makeTurn({
+                    id: 'anchor',
+                    sequence: 2,
+                    approval_state: 'done',
+                    content: [
+                        {type: 'text', text: 'Asking Bob now'},
+                        {type: 'tool_use', id: 'tc_ask', name: 'AskAnotherUser', status: 'waiting', deferred_result: true},
+                    ],
+                }),
+            ], userId),
+            loading: false,
+            error: null,
+        });
+
+        renderPost();
+
+        if (keptOut) {
+            expect(screen.getByText('Asking Bob now')).toBeTruthy();
+            expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
+        } else {
+            expect(screen.queryByText('Asking Bob now')).toBeNull();
+            expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('AskAnotherUser');
+        }
+    });
+
     // A pending tool_call can land over the websocket before the refetch persists the round.
     test('keeps a live pending tool call out of the activity area for the requester', () => {
         mockUseConversation.mockReturnValue({
@@ -1300,39 +1322,6 @@ describe('LLMBotPost conversation_id prop handling', () => {
         expect(() => renderPost(makePost('', {conversation_id: value}))).not.toThrow();
 
         expect(mockUseConversation).toHaveBeenCalledWith(void 0); // eslint-disable-line no-void
-    });
-});
-
-describe('LLMBotPost search_results prop handling', () => {
-    test('renders the source list for a well-formed search_results prop', () => {
-        const sources = [makeSource(1), makeSource(2)];
-        renderPost(makePost('hello', {search_results: JSON.stringify(sources)}));
-
-        expect(screen.getByText('Sources')).toBeTruthy();
-        expect(screen.getByText('2')).toBeTruthy();
-    });
-
-    test('bounds the rendered source list to the server maximum result count', () => {
-        const sources = Array.from({length: MAX_SEARCH_SOURCES + 50}, (_, i) => makeSource(i));
-        renderPost(makePost('hello', {search_results: JSON.stringify(sources)}));
-
-        expect(screen.getByText(String(MAX_SEARCH_SOURCES))).toBeTruthy();
-    });
-
-    // Post props are free-form JSON; none of these values may throw during
-    // render, and none should produce a source list.
-    test.each([
-        {name: 'not a string', value: 42},
-        {name: 'an object instead of a JSON string', value: {postId: WELL_FORMED_ID}},
-        {name: 'not valid JSON', value: '{not json'},
-        {name: 'a JSON object instead of an array', value: '{"postId":"x"}'},
-        {name: 'a JSON string instead of an array', value: '"just a string"'},
-        {name: 'entries that are not objects', value: '[null, "x", 7]'},
-        {name: 'entries without well-formed ids', value: JSON.stringify([{postId: 'short', channelId: 'short', userId: 'short', content: 'hi', score: 1}])},
-    ])('renders no source list when search_results is malformed: $name', ({value}) => {
-        expect(() => renderPost(makePost('hello', {search_results: value}))).not.toThrow();
-
-        expect(screen.queryByText('Sources')).toBeNull();
     });
 });
 

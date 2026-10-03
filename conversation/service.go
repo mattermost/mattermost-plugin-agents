@@ -38,6 +38,8 @@ type Store interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	// UpdateTurnContent updates the content JSON of a turn.
 	UpdateTurnContent(id string, content json.RawMessage) error
+	// UpdateTurnContentIfMatches atomically replaces a turn's content only while it still equals expected.
+	UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error)
 	UpdateTurnTokens(id string, tokensIn, tokensOut int64) error
 	// UpdateTurnPostID sets or clears the PostID on a turn.
 	UpdateTurnPostID(id string, postID *string) error
@@ -155,6 +157,16 @@ func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 	return s.store.GetConversation(id)
 }
 
+// GetConversationByThread returns the conversation rooted at rootPostID for
+// the bot and user, or nil when the thread has none.
+func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
+	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	if errors.Is(err, store.ErrConversationNotFound) {
+		return nil, nil
+	}
+	return conv, err
+}
+
 // GetTurns returns all turns for a conversation, ordered by sequence.
 func (s *Service) GetTurns(conversationID string) ([]store.Turn, error) {
 	return s.store.GetTurnsForConversation(conversationID)
@@ -215,6 +227,14 @@ func (s *Service) GetPreviousUserTurn(conversationID, currentUserTurnID string) 
 // UpdateTurnContent updates the content JSON of a turn.
 func (s *Service) UpdateTurnContent(turnID string, content json.RawMessage) error {
 	return s.store.UpdateTurnContent(turnID, content)
+}
+
+// ClaimTurnContent atomically replaces a turn's content only while it still
+// equals expected, returning whether this caller won the claim. Losing the
+// claim means another request (possibly on another node) already resolved the
+// same blocks.
+func (s *Service) ClaimTurnContent(turnID string, expected, updated json.RawMessage) (bool, error) {
+	return s.store.UpdateTurnContentIfMatches(turnID, expected, updated)
 }
 
 // CreateTurnAutoSequence persists a new turn, atomically assigning the next sequence number.
@@ -330,6 +350,14 @@ func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreat
 		IsNew:        true,
 		UserTurnID:   createResult.UserTurnID,
 	}, nil
+}
+
+// AppendSyntheticUserTurn appends a user turn with no backing Mattermost
+// post: included in the LLM context on the next request, invisible in the
+// thread. Used to re-wake an agent (wait_for_async_work).
+func (s *Service) AppendSyntheticUserTurn(conversationID, message string) error {
+	_, err := s.appendUserTurn(conversationID, message, nil, nil, "")
+	return err
 }
 
 // appendUserTurn creates a new user turn at the next available sequence number.

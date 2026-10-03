@@ -165,24 +165,29 @@ var expectedToolReadOnly = map[string]bool{
 
 	// agents
 	"list_agents": true,
+	"ask_agent":   false,
+
+	// demo MCP Apps
+	"preview_post": true, // demo apps
 }
 
 func TestMCPToolClassification(t *testing.T) {
 	seen := map[string]bool{}
-	for _, devMode := range []bool{false, true} {
+	for _, optional := range []bool{false, true} {
 		provider := &MattermostToolProvider{
-			logger:     &testLogger{t: t},
-			accessMode: AccessModeRemote,
-			devMode:    devMode,
+			logger:         &testLogger{t: t},
+			accessMode:     AccessModeRemote,
+			devMode:        optional,
+			enableDemoApps: optional,
 		}
 		for _, tool := range provider.mcpTools() {
 			want, ok := expectedToolReadOnly[tool.Name]
-			require.True(t, ok, "missing expected classification row for %q (devMode=%t); add it to expectedToolReadOnly", tool.Name, devMode)
-			assert.Equal(t, want, tool.ReadOnly, "ReadOnly mismatch for %q (devMode=%t)", tool.Name, devMode)
+			require.True(t, ok, "missing expected classification row for %q (dev mode and demo apps=%t); add it to expectedToolReadOnly", tool.Name, optional)
+			assert.Equal(t, want, tool.ReadOnly, "ReadOnly mismatch for %q (dev mode and demo apps=%t)", tool.Name, optional)
 			seen[tool.Name] = true
 		}
 	}
 	for name := range expectedToolReadOnly {
-		assert.True(t, seen[name], "expected tool %q was not returned by mcpTools() with dev mode on or off", name)
+		assert.True(t, seen[name], "expected tool %q was not returned by mcpTools() with dev mode and demo apps on or off", name)
 	}
 }

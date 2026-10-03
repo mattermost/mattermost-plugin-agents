@@ -87,6 +87,32 @@ func isUserRejectedToolUse(block conversation.ContentBlock) bool {
 		!block.WouldAutoExecute
 }
 
+// isRequesterRejectedToolUse narrows isUserRejectedToolUse for deferred-result
+// calls: a target's decline of an AskAnotherUser question also leaves the
+// block rejected, so a deferred block only counts as the requester's
+// rejection when its tool_result carries the user-rejection reason.
+func isRequesterRejectedToolUse(block conversation.ContentBlock, userRejectionResults map[string]bool) bool {
+	return isUserRejectedToolUse(block) && (!block.DeferredResult || userRejectionResults[block.ID])
+}
+
+// userRejectionResultIDs returns the tool_use IDs whose tool_result records a
+// user rejection.
+func userRejectionResultIDs(turns []store.Turn) map[string]bool {
+	ids := make(map[string]bool)
+	for _, turn := range turns {
+		blocks, err := conversation.UnmarshalBlocks(turn.Content)
+		if err != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == conversation.BlockTypeToolResult && b.Content == toolCallRejectedByUserResult {
+				ids[b.ToolUseID] = true
+			}
+		}
+	}
+	return ids
+}
+
 // isRemoteMCPLicensed reports whether remote and plugin MCP servers are
 // available at the current license level. A nil license checker fails closed.
 func (c *Conversations) isRemoteMCPLicensed() bool {
@@ -225,14 +251,21 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Build the execution context bound to this conversation. A tool-approval
 	// click is by definition an interactive user action. ResponseFiles keeps
 	// CreateFile in the catalog so approved/auto-resumed CreateFile blocks
-	// can resolve and record their created files.
+	// can resolve and record their created files. Delegation conversations
+	// additionally exclude ask_agent from the rebuilt store.
+	contextOpts := []llm.ContextOption{
+		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
+	}
+	contextOpts = append(contextOpts, c.delegationConversationContextOptions(conv)...)
+	contextOpts = append(contextOpts, c.conversationToolOptions(bot, conv)...)
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
-		c.contextBuilder.WithLLMContextInteractive(),
-		c.contextBuilder.WithLLMContextResponseFiles(),
+		contextOpts...,
 	)
+	llmContext.ResponsePostID = post.Id
 	// The clicked post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -245,6 +278,237 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	if err != nil {
 		return err
 	}
+
+	// A delegated conversation can render the same approval controls in its
+	// DM and on the parent delegation card. Claim its full decision batch
+	// before executing so only one surface can win. Parent batches that
+	// execute ask_agent need the same claim and then detach because the call
+	// can wait on the sub-agent for a long time.
+	executesDelegation := batchWillExecuteDelegationCall(pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+	claimBeforeExecution := shouldClaimToolDecisions(conv, executesDelegation)
+	var claimedContent json.RawMessage
+	if claimBeforeExecution {
+		claimedContent, err = c.persistToolDecisions(pendingTurn, pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+		if err != nil {
+			return err
+		}
+	}
+
+	if executesDelegation {
+		// The detached context below drops the request's audit record, so
+		// record the user's decision here — the claimed statuses are already
+		// durable, making this the truthful record even if execution fails.
+		acceptedNames, rejectedNames := decisionAuditNames(pendingBlocks, acceptedToolIDs, c.shouldAutoExecuteTool(llmContext, isDM))
+		audit.AddParam(auditRec, "accepted_tools", acceptedNames)
+		audit.AddParam(auditRec, "rejected_tools", rejectedNames)
+
+		detachedCtx := telemetry.DetachContext(ctx)
+		go func() {
+			if execErr := c.executeResolvedToolBatch(detachedCtx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, true); execErr != nil {
+				c.handleClaimedToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
+			}
+		}()
+		return nil
+	}
+
+	execErr := c.executeResolvedToolBatch(ctx, bot, user, channel, post, conv, convID, pendingTurn, pendingBlocks, acceptedToolIDs, interactionResults, llmContext, isDM, false)
+	if execErr != nil && claimBeforeExecution {
+		c.handleClaimedToolBatchFailure(conv, pendingTurn.ID, claimedContent, post, execErr)
+	}
+	return execErr
+}
+
+// isDelegationToolUseBlock reports whether a persisted tool_use block is the
+// embedded ask_agent delegation call.
+func isDelegationToolUseBlock(block conversation.ContentBlock) bool {
+	if llm.NormalizeMCPServerOrigin(block.ServerOrigin) != mcp.EmbeddedClientKey {
+		return false
+	}
+	if block.MCPBareName != "" {
+		return block.MCPBareName == DelegationAskAgentToolName
+	}
+	return llm.BareMCPToolName(block.Name) == DelegationAskAgentToolName
+}
+
+// batchWillExecuteDelegationCall reports whether resolving this batch will
+// execute an embedded ask_agent call (directly accepted, or auto-resumed via
+// WouldAutoExecute + policy).
+func batchWillExecuteDelegationCall(blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) bool {
+	for _, block := range blocks {
+		if block.Type != conversation.BlockTypeToolUse || block.UserInteraction != "" {
+			continue
+		}
+		if block.Status != conversation.StatusPending && block.Status != conversation.StatusAccepted {
+			continue
+		}
+		if !isDelegationToolUseBlock(block) {
+			continue
+		}
+		if slices.Contains(acceptedToolIDs, block.ID) {
+			return true
+		}
+		if block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldClaimToolDecisions(conv *store.Conversation, executesDelegation bool) bool {
+	return executesDelegation || (conv != nil && conv.Operation == llm.OperationDelegation)
+}
+
+// willExecuteToolBlock reports whether resolving the batch will execute this
+// pending block: directly accepted, or auto-resumed via WouldAutoExecute plus
+// a fresh policy check. Single source of truth for the claim and its audit.
+func willExecuteToolBlock(block conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) bool {
+	return slices.Contains(acceptedToolIDs, block.ID) ||
+		(block.UserInteraction == "" && block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))
+}
+
+// decisionAuditNames derives the accepted/rejected tool names an audit record
+// should carry for a claimed batch, mirroring persistToolDecisions.
+func decisionAuditNames(blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) (accepted, rejected []string) {
+	accepted = []string{}
+	rejected = []string{}
+	for _, block := range blocks {
+		if block.Type != conversation.BlockTypeToolUse || block.Status != conversation.StatusPending {
+			continue
+		}
+		if willExecuteToolBlock(block, acceptedToolIDs, autoExec) {
+			accepted = append(accepted, block.Name)
+		} else {
+			rejected = append(rejected, block.Name)
+		}
+	}
+	return accepted, rejected
+}
+
+// persistToolDecisions records every decision in a claimed batch: calls that
+// will run become accepted and every other pending call becomes rejected. The
+// entire batch is persisted with one atomic
+// compare-and-set against the content this request originally read. Two
+// concurrent approval clicks (on any node) can therefore never both execute.
+// The in-memory snapshot stays pending so the winning request can execute it.
+func (c *Conversations) persistToolDecisions(pendingTurn *store.Turn, blocks []conversation.ContentBlock, acceptedToolIDs []string, autoExec func(llm.ToolCall) bool) (json.RawMessage, error) {
+	persisted := slices.Clone(blocks)
+	changed := false
+	for i := range persisted {
+		block := &persisted[i]
+		if block.Type != conversation.BlockTypeToolUse || block.Status != conversation.StatusPending {
+			continue
+		}
+		if willExecuteToolBlock(*block, acceptedToolIDs, autoExec) {
+			block.Status = conversation.StatusAccepted
+		} else {
+			block.Status = conversation.StatusRejected
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, nil
+	}
+	updatedContent, err := json.Marshal(persisted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal tool decisions: %w", err)
+	}
+	claimed, err := c.convService.ClaimTurnContent(pendingTurn.ID, pendingTurn.Content, updatedContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to persist tool decisions: %w", err)
+	}
+	if !claimed {
+		return nil, fmt.Errorf("another request already resolved these tool calls: %w", ErrStaleToolClick)
+	}
+	return updatedContent, nil
+}
+
+// handleClaimedToolBatchFailure terminalizes a claimed batch when execution
+// fails before it can durably persist its own resolved statuses.
+// The compare-and-set cannot overwrite a batch that already advanced; either
+// way the delegation waiter is woken to re-read the database.
+func (c *Conversations) handleClaimedToolBatchFailure(conv *store.Conversation, turnID string, claimedContent json.RawMessage, post *model.Post, executionErr error) {
+	conversationID := ""
+	if conv != nil {
+		conversationID = conv.ID
+	}
+	postID := ""
+	if post != nil {
+		postID = post.Id
+	}
+
+	if c.mmClient != nil {
+		c.mmClient.LogError("Async tool batch execution failed", "error", executionErr, "conversation_id", conversationID, "post_id", postID)
+	}
+
+	failedContent, changed, err := failedClaimedToolContent(claimedContent)
+	switch {
+	case err != nil:
+		if c.mmClient != nil {
+			c.mmClient.LogError("Failed to build terminal state for async tool batch", "error", err, "conversation_id", conversationID, "post_id", postID)
+		}
+	case changed:
+		finalized, finalizeErr := c.convService.ClaimTurnContent(turnID, claimedContent, failedContent)
+		if finalizeErr != nil && c.mmClient != nil {
+			c.mmClient.LogError("Failed to persist terminal state for async tool batch", "error", finalizeErr, "conversation_id", conversationID, "post_id", postID)
+		} else if !finalized && c.mmClient != nil {
+			c.mmClient.LogDebug("Async tool batch already advanced before failure finalization", "conversation_id", conversationID, "post_id", postID)
+		}
+	}
+
+	c.notifyDelegationSubTurnCompleted(conv)
+	c.publishConversationPostUpdated(conv, post)
+}
+
+func failedClaimedToolContent(claimedContent json.RawMessage) (json.RawMessage, bool, error) {
+	var blocks []conversation.ContentBlock
+	if err := json.Unmarshal(claimedContent, &blocks); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal claimed tool decisions: %w", err)
+	}
+
+	changed := false
+	for i := range blocks {
+		if blocks[i].Type == conversation.BlockTypeToolUse && blocks[i].Status == conversation.StatusAccepted {
+			blocks[i].Status = conversation.StatusError
+			changed = true
+		}
+	}
+	if !changed {
+		return claimedContent, false, nil
+	}
+
+	failedContent, err := json.Marshal(blocks)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to marshal failed tool decisions: %w", err)
+	}
+	return failedContent, true, nil
+}
+
+// executeResolvedToolBatch executes the user's approval decisions: it runs
+// approved tools, persists resolved statuses and results, and streams the
+// follow-up. It is the continuation of HandleToolCall, either inline or (for
+// delegation batches) on a detached goroutine. isAsync marks the detached
+// case: clients refetch on the HTTP response for synchronous batches, but an
+// asynchronous batch that settles without a stream must nudge them itself.
+func (c *Conversations) executeResolvedToolBatch(
+	ctx context.Context,
+	bot *bots.Bot,
+	user *model.User,
+	channel *model.Channel,
+	post *model.Post,
+	conv *store.Conversation,
+	convID string,
+	pendingTurn *store.Turn,
+	pendingBlocks []conversation.ContentBlock,
+	acceptedToolIDs []string,
+	interactionResults map[string]string,
+	llmContext *llm.Context,
+	isDM bool,
+	isAsync bool,
+) error {
+	// The async delegation path runs on a detached context whose audit record
+	// is absent by design (HandleToolCall records the decision before
+	// detaching); these calls are then no-ops.
+	auditRec := audit.RecordFromContext(ctx)
 
 	// Execute approved tools and build results. Blocks resolved in a prior
 	// call keep their status and are not part of this decision, so they enter
@@ -260,12 +524,61 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		if block.Type != conversation.BlockTypeToolUse {
 			continue
 		}
-		if block.Status != conversation.StatusPending && block.Status != conversation.StatusAccepted {
+		if block.Status != conversation.StatusPending {
 			// Preserve previously resolved statuses (e.g., auto-approved).
+			// An accepted status here means another request already claimed
+			// the block for asynchronous execution — never execute it twice.
 			continue
 		}
 
 		switch {
+		case block.DeferredResult && (slices.Contains(acceptedToolIDs, block.ID) ||
+			(block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}))):
+			// Deferred-result tool (AskAnotherUser): dispatch the side effect
+			// and park the block in waiting. Flip-and-persist BEFORE
+			// dispatching so a second Accept click can never send a second
+			// card (findPendingToolTurn requires a pending block → repeat
+			// click gets ErrStaleToolClick).
+			block.Status = conversation.StatusWaiting
+			if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+				return fmt.Errorf("failed to persist waiting status: %w", persistErr)
+			}
+			// Atomic dispatch claim: the persist above stops sequential
+			// repeat clicks (findPendingToolTurn no longer sees a pending
+			// block), and this CAS closes the concurrent window (two tabs,
+			// two HA nodes) in which both requests read the block as pending
+			// — only the claim winner sends the card.
+			won, claimErr := c.claimAskToolUse(askClaimStageDispatch, block.ID, askClaimStageDispatch)
+			if claimErr != nil {
+				return fmt.Errorf("failed to claim deferred dispatch: %w", claimErr)
+			}
+			if !won {
+				return ErrStaleToolClick
+			}
+			if dispatchErr := c.dispatchAskAnotherUser(ctx, bot, conv, post.Id, block.ID, block.Input); dispatchErr != nil {
+				// Compensate: waiting → error, and surface the failure as an
+				// error tool result so the model can retry.
+				block.Status = conversation.StatusError
+				if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+					// Double fault: the block is persisted as waiting even
+					// though no card went out, so nothing will ever resolve
+					// it. Name the stuck IDs so an operator can find it.
+					c.mmClient.LogError("AskAnotherUser dispatch and compensating persist both failed; tool_use block stranded in waiting",
+						"tool_use_id", block.ID,
+						"conversation_id", convID,
+						"dispatch_error", dispatchErr.Error(),
+						"persist_error", persistErr.Error(),
+					)
+					return fmt.Errorf("failed to persist dispatch failure: %w", persistErr)
+				}
+				toolResults = append(toolResults, toolrunner.ToolResult{
+					ToolCallID: block.ID,
+					Name:       block.Name,
+					Result:     dispatchErr.Error(),
+					IsError:    true,
+				})
+			}
+			// Success: no tool result yet; the follow-up is gated below.
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
@@ -373,70 +686,95 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
 	// Update the assistant turn with resolved statuses.
-	updatedContent, err := json.Marshal(pendingBlocks)
-	if err != nil {
-		return fmt.Errorf("failed to marshal updated blocks: %w", err)
-	}
-	if updateErr := c.convService.UpdateTurnContent(pendingTurn.ID, updatedContent); updateErr != nil {
-		return fmt.Errorf("failed to update turn with resolved statuses: %w", updateErr)
+	if persistErr := c.persistBlocks(pendingTurn.ID, pendingBlocks); persistErr != nil {
+		return fmt.Errorf("failed to update turn with resolved statuses: %w", persistErr)
 	}
 
 	// Write tool results as a tool_result turn. DecidedAt is set when no
 	// share/keep-private decision remains (see terminal below); other channel
 	// results stay undecided until the requester clicks Share or Keep Private.
-	toolUseStatusByID := make(map[string]string, len(pendingBlocks))
-	interactionByID := make(map[string]bool, len(pendingBlocks))
-	for _, b := range pendingBlocks {
-		if b.Type == conversation.BlockTypeToolUse {
-			toolUseStatusByID[b.ID] = b.Status
-			interactionByID[b.ID] = b.UserInteraction != ""
-		}
-	}
-	now := model.GetMillis()
+	// A successfully dispatched deferred call produces no result, so guard the
+	// turn write: an empty tool_result turn would pollute GetTurns.
 	needsShareDecision := false
-	resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
-	for _, tr := range toolResults {
-		status := conversation.StatusSuccess
-		if tr.IsError {
-			status = conversation.StatusError
+	if len(toolResults) > 0 {
+		toolUseStatusByID := make(map[string]string, len(pendingBlocks))
+		interactionByID := make(map[string]bool, len(pendingBlocks))
+		for _, b := range pendingBlocks {
+			if b.Type == conversation.BlockTypeToolUse {
+				toolUseStatusByID[b.ID] = b.Status
+				interactionByID[b.ID] = b.UserInteraction != ""
+			}
 		}
-		// Interaction results (answered or skipped) are user-authored, so they
-		// are terminal and shared with no separate share/keep-private step.
-		// Rejected results (user rejection or policy/license denial) share only
-		// the canned reason; tool_use arguments stay unshared so they are not
-		// paraphrased into a channel reply.
-		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
-		rb := conversation.ContentBlock{
-			Type:      conversation.BlockTypeToolResult,
-			ToolUseID: tr.ToolCallID,
-			Content:   tr.Result,
-			Status:    status,
-			Shared:    new(terminal),
+		now := model.GetMillis()
+		resultBlocks := make([]conversation.ContentBlock, 0, len(toolResults))
+		for _, tr := range toolResults {
+			status := conversation.StatusSuccess
+			if tr.IsError {
+				status = conversation.StatusError
+			}
+			// Interaction results (answered or skipped) are user-authored, so they
+			// are terminal and shared with no separate share/keep-private step.
+			// Rejected results (user rejection or policy/license denial) share only
+			// the canned reason; tool_use arguments stay unshared so they are not
+			// paraphrased into a channel reply.
+			rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+			terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
+			rb := conversation.ContentBlock{
+				Type:      conversation.BlockTypeToolResult,
+				ToolUseID: tr.ToolCallID,
+				Content:   tr.Result,
+				Status:    status,
+				Shared:    new(terminal),
+			}
+			if terminal {
+				rb.DecidedAt = new(now)
+			} else {
+				needsShareDecision = true
+			}
+			resultBlocks = append(resultBlocks, rb)
 		}
-		if terminal {
-			rb.DecidedAt = new(now)
-		} else {
-			needsShareDecision = true
+		resultContent, marshalErr := json.Marshal(resultBlocks)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal tool result blocks: %w", marshalErr)
 		}
-		resultBlocks = append(resultBlocks, rb)
+		resultTurn := &store.Turn{
+			ID:             model.NewId(),
+			ConversationID: convID,
+			Role:           "tool_result",
+			Content:        resultContent,
+			CreatedAt:      model.GetMillis(),
+		}
+		if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
+			return fmt.Errorf("failed to create tool result turn: %w", err)
+		}
 	}
-	resultContent, err := json.Marshal(resultBlocks)
-	if err != nil {
-		return fmt.Errorf("failed to marshal tool result blocks: %w", err)
-	}
-	resultTurn := &store.Turn{
-		ID:             model.NewId(),
-		ConversationID: convID,
-		Role:           "tool_result",
-		Content:        resultContent,
-		CreatedAt:      model.GetMillis(),
-	}
-	if err := c.convService.CreateTurnAutoSequence(resultTurn); err != nil {
-		return fmt.Errorf("failed to create tool result turn: %w", err)
+
+	// A waiting block means a question card just went out: refresh the
+	// initiator's conversation view so the Accept/Reject controls leave the
+	// pending state live.
+	hasWaiting := slices.ContainsFunc(pendingBlocks, func(b conversation.ContentBlock) bool {
+		return b.Type == conversation.BlockTypeToolUse && b.Status == conversation.StatusWaiting
+	})
+	if hasWaiting {
+		c.publishConversationUpdated(convID, channel.Id)
 	}
 
 	if len(toolResults) == 0 {
+		// Nothing to follow up on, so no follow-up stream starts; a waiting
+		// delegation parent must still be told the sub-turn settled, and
+		// (async only) open clients need a refetch nudge since neither a
+		// stream event nor an HTTP completion will trigger one.
+		c.notifyDelegationSubTurnCompleted(conv)
+		if isAsync {
+			c.publishConversationPostUpdated(conv, post)
+		}
+		return nil
+	}
+
+	// A deferred call parked in waiting blocks the follow-up: the answer
+	// handler streams it once the last outstanding block resolves (C3 resume
+	// invariant: no pending, accepted, or waiting blocks may remain).
+	if hasUnresolvedToolUse(pendingBlocks) {
 		return nil
 	}
 
@@ -444,12 +782,53 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// output, so it must not stream until the requester approves sharing in
 	// HandleToolResult. When no share decision remains (every result is
 	// rejected, a user-interaction answer, or otherwise terminal),
-	// HandleToolResult will never fire, so stream the follow-up now.
+	// HandleToolResult will never fire, so stream the follow-up now. Batches
+	// executed asynchronously (delegations) have long since answered their
+	// HTTP request, so nudge open clients to refetch the conversation — that
+	// is what reveals the Share decision.
 	if !isDM && needsShareDecision {
+		if isAsync {
+			c.publishConversationPostUpdated(conv, post)
+		}
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, userRejected, llmContext)
+	if err := c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, userRejected, llmContext); err != nil {
+		// The follow-up never started, so its onDone hook will not fire;
+		// wake any waiting delegation parent to observe the failed state.
+		c.notifyDelegationSubTurnCompleted(conv)
+		return err
+	}
+	return nil
+}
+
+// persistBlocks marshals blocks and writes them onto the turn.
+func (c *Conversations) persistBlocks(turnID string, blocks []conversation.ContentBlock) error {
+	content, err := json.Marshal(blocks)
+	if err != nil {
+		return fmt.Errorf("failed to marshal blocks: %w", err)
+	}
+	return c.convService.UpdateTurnContent(turnID, content)
+}
+
+// hasUnresolvedToolUse reports whether any tool_use block still awaits
+// resolution: pending (needs an approval click), accepted (decision recorded
+// but not yet executed), or waiting (deferred question outstanding). This is
+// the C3 resume invariant shared by HandleToolCall, HandleToolResult, and
+// HandleAskUserResponse: a follow-up must never stream while such a block
+// remains on the anchor turn.
+func hasUnresolvedToolUse(blocks []conversation.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type != conversation.BlockTypeToolUse {
+			continue
+		}
+		if b.Status == conversation.StatusPending ||
+			b.Status == conversation.StatusAccepted ||
+			b.Status == conversation.StatusWaiting {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -511,12 +890,17 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
 	clickedPostUserRejected := false
+	anchorHasUnresolvedToolUse := false
 	acceptedToolNames := []string{}
 	rejectedToolNames := []string{}
 	acceptedRemoteMCPTool := false
+	userRejectionResults := userRejectionResultIDs(turns)
 	for i, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
 			continue
+		}
+		if hasUnresolvedToolUse(decoded[i]) {
+			anchorHasUnresolvedToolUse = true
 		}
 		for _, b := range decoded[i] {
 			if b.Type != conversation.BlockTypeToolUse || b.ID == "" {
@@ -533,7 +917,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
 			}
-			if isUserRejectedToolUse(b) {
+			if isRequesterRejectedToolUse(b, userRejectionResults) {
 				clickedPostUserRejected = true
 			}
 			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
@@ -634,6 +1018,17 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return nil
 	}
 
+	// C3 resume invariant: the share decision above is recorded, but the
+	// follow-up must not stream while any tool_use on the anchor turn is
+	// still pending, accepted, or waiting — e.g. a mixed batch whose
+	// AskAnotherUser question is unanswered. Streaming now would feed the
+	// model a dangling tool_use and demote the anchor turn, orphaning the
+	// eventual answer's resume; HandleAskUserResponse streams once the last
+	// block resolves.
+	if anchorHasUnresolvedToolUse {
+		return nil
+	}
+
 	user, err := c.mmClient.GetUser(userID)
 	if err != nil {
 		return fmt.Errorf("unable to get user: %w", err)
@@ -672,6 +1067,9 @@ func (c *Conversations) streamToolFollowUp(
 		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
 	channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextResponseFiles())
+	// Delegation conversations never regain ask_agent on resume.
+	channelToolFilterOpts = append(channelToolFilterOpts, c.delegationConversationContextOptions(conv)...)
+	channelToolFilterOpts = append(channelToolFilterOpts, c.conversationToolOptions(bot, conv)...)
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -679,6 +1077,7 @@ func (c *Conversations) streamToolFollowUp(
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)
+	llmContext.ResponsePostID = post.Id
 	// The continuation post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -699,7 +1098,8 @@ func (c *Conversations) streamToolFollowUp(
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
-	runResult, err := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+	runResult, err := c.runToolLoop(ctx, bot.LLM(), maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv),
+		c.newDeferredDispatcherForConversation(bot, conv, post.Id), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,
 		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },
@@ -719,9 +1119,18 @@ func (c *Conversations) streamToolFollowUp(
 	extraFileIDs := c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, post, extraFileIDs, llmContext, llmContext, approvalContext)
 
+	// Delegated sub-turns signal the waiting parent once the resumed round
+	// has fully streamed (the DB then holds the final answer or the next
+	// pending approval).
+	var onDone func()
+	if conv != nil && conv.Operation == llm.OperationDelegation {
+		convForNotify := conv
+		onDone = func() { c.notifyDelegationSubTurnCompleted(convForNotify) }
+	}
+
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, user, channel, true); err != nil {
+	if err := c.streamToExistingPost(ctx, stream, post, user, channel, true, onDone); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
@@ -772,6 +1181,10 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 	if block.MCPBareName != "" && lookup.BareName != block.MCPBareName {
 		return "", fmt.Errorf("tool %s no longer matches the approved tool metadata", block.Name)
 	}
+
+	// Stamp the tool call ID so per-call consumers (e.g. embedded MCP call
+	// metadata) can key state on it, matching the tool runner's behavior.
+	ctx = llm.ContextWithToolCallID(ctx, block.ID)
 
 	return llmContext.Tools.ResolveTool(ctx, lookup.RuntimeName, func(args any) error {
 		return json.Unmarshal(block.Input, args)

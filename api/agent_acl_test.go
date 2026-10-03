@@ -16,6 +16,7 @@ import (
 // change while service account auth stays on. Must stay in sync with
 // clearManagerEditableFields. Every other BotConfig field is sensitive by default.
 var managerEditableBotConfigFields = map[string]bool{
+	"Name":                    true,
 	"DisplayName":             true,
 	"CustomInstructions":      true,
 	"Model":                   true,

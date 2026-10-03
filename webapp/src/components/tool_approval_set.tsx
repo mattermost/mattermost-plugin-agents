@@ -4,13 +4,21 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
+import {useDispatch, useSelector} from 'react-redux';
 
-import {doToolCall, doToolResult} from '@/client';
-import {invalidateConversation} from '@/hooks/use_conversation';
+import type {ClientError} from '@mattermost/client';
 
+import {GlobalState} from '@mattermost/types/store';
+
+import {doAskUserCancel, doToolCall, doToolResult, getProfilesByIds} from '@/client';
+import {invalidateConversation, useConversation} from '@/hooks/use_conversation';
+
+import LoadingSpinner from './assets/loading_spinner';
+import {deriveApprovalStageForPost, extractToolCallsForPost, findApprovalPostID} from './llmbot_post/turn_content_utils';
 import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
-import {isInterruptedAutoApprovalRound, selectDecisionToolCalls} from './tool_decisions';
+import {isCancelableAskCall, isInterruptedAutoApprovalRound, selectDecisionToolCalls} from './tool_decisions';
 import {renderToolCall} from './tool_renderers/registry';
+import {type AskCancelState} from './ask_another_user_tool';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -57,6 +65,20 @@ const BatchButton = styled.button`
     }
 `;
 
+const DelegatedApprovalsContainer = styled.div`
+    padding: 0 8px;
+    border-left: 2px solid rgba(var(--button-bg-rgb), 0.24);
+`;
+
+const DelegatedApprovalsLoading = styled.div`
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 24px;
+    font-size: 12px;
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+`;
+
 // Tool call interfaces
 interface ToolApprovalSetProps {
     postID: string;
@@ -65,6 +87,8 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
+    requesterUserID?: string;
+    appsEligible?: boolean;
 }
 
 // Define a type for tool decisions
@@ -88,6 +112,42 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     // Structured answers for accepted user-interaction tools, keyed by tool
     // call ID. Sent as tool_answers alongside accepted_tool_ids.
     const toolAnswersRef = useRef<Record<string, ToolAnswer>>({});
+
+    // Cancel state per waiting AskAnotherUser call (F5). A successful cancel
+    // stays 'submitting' until the conversation refetch removes the waiting
+    // card, so the control cannot be clicked twice.
+    const [askCancelStates, setAskCancelStates] = useState<Record<string, AskCancelState>>({});
+
+    // The anchor post's author is the conversation bot; its username rides
+    // along on the cancel request (same rationale as doAskUserResponse).
+    const botUserID = useSelector<GlobalState, string | undefined>(
+        (state) => state.entities.posts.posts[props.postID]?.user_id,
+    );
+    const botUsername = useSelector<GlobalState, string | undefined>(
+        (state) => (botUserID ? state.entities.users.profiles[botUserID]?.username : undefined), // eslint-disable-line no-undefined
+    );
+    const dispatch = useDispatch();
+
+    const hasCancelableAskCall = props.toolCalls.some((call) => isCancelableAskCall(call, props.canApprove));
+
+    // The cancel request needs the bot's username, so hydrate the anchor-post
+    // author's profile when redux hasn't cached it (same pattern as the
+    // target card); the control stays disabled until it resolves.
+    useEffect(() => {
+        if (!hasCancelableAskCall || !botUserID || botUsername) {
+            return;
+        }
+        getProfilesByIds([botUserID]).then((profiles) => {
+            const profilesById = profiles.reduce<Record<string, unknown>>((acc, p) => {
+                acc[p.id] = p;
+                return acc;
+            }, {});
+            dispatch({type: 'RECEIVED_PROFILES', data: profilesById});
+        }).catch(() => {
+            // Best-effort: the control stays disabled until the profile
+            // lands in redux some other way or the component remounts.
+        });
+    }, [hasCancelableAskCall, botUserID, botUsername, dispatch]);
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
@@ -114,6 +174,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         setToolDecisions({});
         setIsSubmitting(false);
         setError('');
+        setAskCancelStates({});
         submitInFlightRef.current = false;
         toolDecisionsRef.current = {};
         toolAnswersRef.current = {};
@@ -185,6 +246,33 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
         submitDecisions(approvedToolIDs);
     }, [effectiveCanApprove, isSubmitting, decisionToolIDSet, decisionToolCalls, submitDecisions]);
+
+    const handleAskCancel = useCallback(async (toolID: string) => {
+        if (!botUsername || askCancelStates[toolID] === 'submitting') {
+            return;
+        }
+        setAskCancelStates((prev) => ({...prev, [toolID]: 'submitting'}));
+        try {
+            await doAskUserCancel(props.postID, botUsername, {tool_use_id: toolID});
+            if (props.conversationID) {
+                invalidateConversation(props.conversationID);
+            }
+
+            // Stay 'submitting': the refetched conversation removes the
+            // waiting card (or renders the terminal state) and the state
+            // reset effect clears this entry.
+        } catch (err) {
+            if ((err as ClientError).status_code === 409) {
+                // The question was resolved by a racing answer/decline —
+                // not an error; the refetched terminal state settles the UI.
+                if (props.conversationID) {
+                    invalidateConversation(props.conversationID);
+                }
+            } else {
+                setAskCancelStates((prev) => ({...prev, [toolID]: 'error'}));
+            }
+        }
+    }, [botUsername, askCancelStates, props.postID, props.conversationID]);
 
     const handleQuestionAnswer = useCallback((toolID: string, selections: string[], custom: string) => {
         const answer: ToolAnswer = custom ? {selected: selections, custom} : {selected: selections};
@@ -291,6 +379,10 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     return null;
                 }
 
+                // Requester-only cancel control for outstanding
+                // AskAnotherUser questions (F5). Observers never see it.
+                const canCancelAsk = isCancelableAskCall(tool, props.canApprove);
+
                 // The registry routes each call to its rich card or
                 // QuestionCard, falling back to the generic ToolCard.
                 return (
@@ -311,6 +403,17 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             canAnswer: isDecisionCall && isCallStage,
                             onAnswer: isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined, // eslint-disable-line no-undefined
                             onSkip: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            renderDelegatedApprovals: props.canApprove ? (delegationID) => (
+                                <DelegatedApprovalSet
+                                    delegationID={delegationID}
+                                />
+                            ) : undefined, // eslint-disable-line no-undefined
+                            onCancelAsk: canCancelAsk ? () => handleAskCancel(tool.id) : undefined, // eslint-disable-line no-undefined
+                            askCancelState: canCancelAsk ? (askCancelStates[tool.id] ?? 'idle') : undefined, // eslint-disable-line no-undefined
+                            askCancelDisabled: canCancelAsk && !botUsername,
+                            postID: props.postID,
+                            requesterUserID: props.requesterUserID,
+                            appsEligible: props.appsEligible,
                         })}
                     </React.Fragment>
                 );
@@ -385,5 +488,47 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
         </ToolCallsContainer>
     );
 };
+
+function DelegatedApprovalSet({delegationID}: {delegationID: string}) {
+    const {conversation, loading, error} = useConversation(delegationID);
+
+    if (loading) {
+        return (
+            <DelegatedApprovalsLoading data-testid='delegation-approvals-loading'>
+                <LoadingSpinner/>
+                <FormattedMessage
+                    id='ai.delegation.loading_approvals'
+                    defaultMessage='Loading agent request…'
+                />
+            </DelegatedApprovalsLoading>
+        );
+    }
+    if (error || !conversation) {
+        return null;
+    }
+
+    const responsePostID = findApprovalPostID(conversation);
+    if (!responsePostID) {
+        return null;
+    }
+
+    const toolCalls = extractToolCallsForPost(conversation, responsePostID);
+    if (toolCalls.length === 0) {
+        return null;
+    }
+
+    return (
+        <DelegatedApprovalsContainer data-testid='delegation-embedded-approvals'>
+            <ToolApprovalSet
+                postID={responsePostID}
+                conversationID={delegationID}
+                toolCalls={toolCalls}
+                approvalStage={deriveApprovalStageForPost(conversation, responsePostID)}
+                canApprove={true}
+                canExpand={true}
+            />
+        </DelegatedApprovalsContainer>
+    );
+}
 
 export default ToolApprovalSet;

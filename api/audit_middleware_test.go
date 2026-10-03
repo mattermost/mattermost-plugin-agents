@@ -262,6 +262,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
 		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
 		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventAskUserCancel, method: http.MethodPost, path: "/post/postid/ask_user_cancel"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is

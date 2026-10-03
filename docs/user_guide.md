@@ -122,6 +122,18 @@ Some MCP providers require each user to connect their own account before those t
 
 Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
 
+### Answer a question an agent asks you
+
+When your system admin enables the experimental **Enable Agents to Ask Other Users** setting, an agent working on someone else's request can ask **you** a clarifying question. The question arrives as an interactive card in your direct message with the agent, showing the question, optional answer choices, and an optional free-form answer field.
+
+Because the question text is written by the AI model, the card visually separates it from trusted system information. The question and answer choices appear inside a highlighted region labeled **AI-generated content**; everything outside that region comes from Mattermost itself. Above the region, an attribution line tells you who is asking — "Asked on behalf of @username" when a person started the conversation, with their display name and job title when available, or an explicit note that the agent is running unattended when no person did. Below it, a disclosure line tells you who your answer will be shared with: the requester directly when the question started in a direct message, or the members of the originating channel (with the channel name and member count when known) when it started in a channel. If the originating channel is governed by an attribute-based access policy, the card says so. Select **View conversation** to open the conversation the question came from (you'll only see it if you have access to it).
+
+Choose an option and/or type an answer, then select **Answer** — your response is passed back to the agent and attributed to you in the requesting conversation. If you can't or don't want to answer, select **Decline**; the agent is told you declined and continues without your input. Only you can answer or decline your card. Once resolved, the card shows your answer (or that you declined) and can't be changed.
+
+The requester can also withdraw a question: if you started the conversation and a question you approved is still waiting, select **Cancel question** on the waiting tool card, and the agent continues without the answer. On the receiving side, a canceled card switches to "This question is no longer needed." and no response is expected. The same message appears if a response was already recorded — for example, you answered or declined from another device — and it means nothing more is needed from you.
+
+> **Note:** Answering isn't currently supported in the Mattermost mobile apps — the question appears as plain text there. Open Mattermost in a browser or the desktop app to respond.
+
 ### Ask agents to create files
 
 You can ask an agent to produce content as a file instead of pasting it into the chat. For example, ask for "the meeting notes as a markdown file" or "a Python script that parses this log, as a file". The agent creates the files and attaches them to its reply, so you can download or share them like any other Mattermost attachment.
@@ -162,9 +174,13 @@ For more flexible channel analysis options, including **Ask Agents about this ch
 
 ## Search with AI
 
-You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
-Open the Agents pane from the right sidebar and use natural language to search for content (such as "find discussions about the new product launch"). The AI will find semantically relevant results, even if they don't contain the exact keywords, and results respect your permissions so you'll only see content you have access to.
+Select the Mattermost search bar, choose **Agents**, and ask a question or enter search terms (such as "what did we decide about the new product launch?"). The selected agent opens a conversation in the Agents pane and searches Mattermost for you: it can run several keyword searches and read the surrounding threads before it answers. If your system admin has set up embedding search, the agent also uses semantic search, which finds related content even without the exact keywords. The answer cites the posts it's based on with inline links, and you can reply in the thread to ask follow-up questions. Searches run as you, so the agent only finds content you have access to.
+
+To ask about the channel you're viewing, use the `/ask-channel` slash command followed by your question. The agent starts by searching that channel and, if the answer isn't there, can search other content you have access to.
+
+Searching requires the agent to have access to the built-in Mattermost tools. Contact your system admin if the agent replies that it can't search.
 
 This feature accelerates decision-making and improves information flows by making it easier to find relevant content across threads, channels, and teams.
 

@@ -27,6 +27,7 @@ var persistedToolUseFields = []string{
 	"description",
 	"user_interaction",
 	"would_auto_execute",
+	"ui_meta",
 }
 
 func parityToolCall() llm.ToolCall {
@@ -41,6 +42,7 @@ func parityToolCall() llm.ToolCall {
 		UserInteraction:  llm.UserInteractionSelect,
 		WouldAutoExecute: true,
 		ServerOrigin:     "embedded://mattermost",
+		UIMeta:           &llm.ToolUIMeta{ResourceURI: "ui://mattermost/app.html"},
 	}
 }
 

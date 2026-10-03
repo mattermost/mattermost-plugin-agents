@@ -4,16 +4,18 @@
 import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, LockIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon, ChevronRightIcon, CheckIcon, AlertCircleOutlineIcon, CloseCircleOutlineIcon, GlobeIcon, LockIcon, MinusCircleOutlineIcon} from '@mattermost/compass-icons/components';
 
 // eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {toolDisplayName} from '@/utils/tool_identity';
 
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {AskAnotherUserToolName, ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
+import {AskCancelState, parseAskAnotherUserCanceled, parseAskAnotherUserDecline, parseAskAnotherUserTarget} from '../ask_another_user_tool';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
 import ToolStatusIcon from '../tool_status_icon';
+import MCPAppView from '../mcp_apps/mcp_app_view';
 
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
@@ -156,6 +158,35 @@ const AcceptRejectButton = styled.button<{$primary?: boolean}>`
     &:active {
         background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.92)' : 'rgba(var(--button-bg-rgb), 0.16)')};
     }
+`;
+
+// Right-aligned secondary control on the waiting AskAnotherUser row (F5).
+const CancelAskButton = styled(AcceptRejectButton)`
+    margin-left: auto;
+
+    &:disabled {
+        cursor: not-allowed;
+        background: rgba(var(--center-channel-color-rgb), 0.08);
+        color: rgba(var(--center-channel-color-rgb), 0.32);
+    }
+`;
+
+const CancelingText = styled.span`
+    margin-left: auto;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const CancelErrorLine = styled.div`
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 16px;
+    color: var(--error-text);
+`;
+
+const CanceledIcon = styled(MinusCircleOutlineIcon)`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    width: 12px;
+    height: 12px;
 `;
 
 const ResultDecisionButton = styled.button<{$variant: 'primary' | 'secondary'}>`
@@ -313,6 +344,19 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
+    // F5: initiator-side cancel of a waiting AskAnotherUser call. Only set
+    // when the viewer may cancel (the conversation requester). The control
+    // renders disabled while a prerequisite (the bot profile) is loading.
+    onCancelAsk?: () => void;
+    askCancelState?: AskCancelState;
+    askCancelDisabled?: boolean;
+
+    // MCP Apps: the app renders only for persisted rounds (appsEligible) of a
+    // successful call whose tool declares ui_meta.
+    postID?: string;
+    requesterUserID?: string;
+    appsEligible?: boolean;
+
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
@@ -339,6 +383,12 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
+    onCancelAsk,
+    askCancelState = 'idle',
+    askCancelDisabled = false,
+    postID,
+    requesterUserID,
+    appsEligible = false,
     children,
 }) => {
     const {formatMessage} = useIntl();
@@ -348,11 +398,18 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     const isSuccess = tool.status === ToolCallStatus.Success || tool.status === ToolCallStatus.AutoApproved;
     const isError = tool.status === ToolCallStatus.Error;
     const isRejected = tool.status === ToolCallStatus.Rejected;
+    const isWaiting = tool.status === ToolCallStatus.Waiting;
     const isResultApprovalStage = approvalStage === 'result';
     const showDecisionButtons = Boolean(onApprove && onReject) &&
         (isResultApprovalStage ||
             (approvalStage === 'call' && isPending && !tool.would_auto_execute));
     const showResultReviewCallout = !isCollapsed && showDecisionButtons && isResultApprovalStage;
+
+    // A waiting AskAnotherUser call names its target in the arguments;
+    // observers see redacted (null) arguments and get the generic fallback.
+    const waitingTarget = tool.name === AskAnotherUserToolName ? parseAskAnotherUserTarget(tool.arguments) : '';
+    const declinedBy = parseAskAnotherUserDecline(tool);
+    const wasCanceled = parseAskAnotherUserCanceled(tool);
 
     const displayName = toolDisplayName(tool);
 
@@ -500,6 +557,14 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                 )}
             </ToolCallHeader>
 
+            {appsEligible && postID && tool.ui_meta?.resource_uri && isSuccess && (
+                <MCPAppView
+                    postID={postID}
+                    tool={tool}
+                    requesterUserID={requesterUserID}
+                />
+            )}
+
             {!isCollapsed && (
                 <>
                     {showArguments && (showRaw ? <ToolArgumentsRaw arguments={tool.arguments}/> : children)}
@@ -587,11 +652,86 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     {isRejected && (
                         <StatusContainer>
                             <ResponseRejectedIcon/>
+                            {declinedBy === null && (
+                                <FormattedMessage
+                                    id='ai.tool_call.status.rejected'
+                                    defaultMessage='Rejected'
+                                />
+                            )}
+                            {declinedBy !== null && declinedBy !== '' && (
+                                <FormattedMessage
+                                    id='ai.tool_call.declined_to_answer'
+                                    defaultMessage='@{username} declined to answer'
+                                    values={{username: declinedBy}}
+                                />
+                            )}
+                            {declinedBy === '' && (
+                                <FormattedMessage
+                                    id='ai.tool_call.declined_to_answer_unknown'
+                                    defaultMessage='Declined to answer'
+                                />
+                            )}
+                        </StatusContainer>
+                    )}
+
+                    {wasCanceled && (
+                        <StatusContainer>
+                            <CanceledIcon size={16}/>
                             <FormattedMessage
-                                id='ai.tool_call.status.rejected'
-                                defaultMessage='Rejected'
+                                id='ai.tool_call.canceled_no_answer'
+                                defaultMessage='Canceled — the agent continued without an answer'
                             />
                         </StatusContainer>
+                    )}
+                </>
+            )}
+
+            {isWaiting && (
+                <>
+                    <StatusContainer>
+                        <ProcessingSpinnerContainer>
+                            <ProcessingSpinner/>
+                        </ProcessingSpinnerContainer>
+                        {waitingTarget ? (
+                            <FormattedMessage
+                                id='ai.tool_call.waiting_for_user'
+                                defaultMessage='Waiting for @{username} to answer…'
+                                values={{username: waitingTarget}}
+                            />
+                        ) : (
+                            <FormattedMessage
+                                id='ai.tool_call.waiting_for_response'
+                                defaultMessage='Waiting for a response…'
+                            />
+                        )}
+                        {onCancelAsk && askCancelState !== 'submitting' && (
+                            <CancelAskButton
+                                type='button'
+                                disabled={askCancelDisabled}
+                                onClick={onCancelAsk}
+                            >
+                                <FormattedMessage
+                                    id='ai.tool_call.cancel_question'
+                                    defaultMessage='Cancel question'
+                                />
+                            </CancelAskButton>
+                        )}
+                        {onCancelAsk && askCancelState === 'submitting' && (
+                            <CancelingText>
+                                <FormattedMessage
+                                    id='ai.tool_call.canceling'
+                                    defaultMessage='Canceling…'
+                                />
+                            </CancelingText>
+                        )}
+                    </StatusContainer>
+                    {onCancelAsk && askCancelState === 'error' && (
+                        <CancelErrorLine>
+                            <FormattedMessage
+                                id='ai.tool_call.cancel_failed'
+                                defaultMessage='Failed to cancel the question. Please try again.'
+                            />
+                        </CancelErrorLine>
                     )}
                 </>
             )}

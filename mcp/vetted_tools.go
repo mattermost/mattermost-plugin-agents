@@ -49,6 +49,15 @@ func SeedVettedToolConfigs(baseURL string) []ToolConfig {
 	}
 }
 
+// SeedBuiltInToolConfigs returns the default policies for built-in
+// (empty-origin) tools. Stored admin entries win via mergeSeedConfigs.
+func SeedBuiltInToolConfigs() []ToolConfig {
+	return []ToolConfig{
+		// Keep in sync with mmtools.AskAnotherUserToolName.
+		{Name: "AskAnotherUser", Policy: ToolPolicyAsk, Enabled: true},
+	}
+}
+
 func vettedHostFromBaseURL(baseURL string) (string, bool) {
 	if baseURL == "" {
 		return "", false
@@ -240,6 +249,19 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 	"whoami",
 })
 
+// mattermostVettedToolConfigs combines the auto-run-in-DM reads with tools
+// that are deliberately seeded at policy "ask".
+var mattermostVettedToolConfigs = buildMattermostVettedToolConfigs()
+
+func buildMattermostVettedToolConfigs() []ToolConfig {
+	out := append([]ToolConfig{}, mattermostAutoRunInDMToolConfigs...)
+	// ask_agent delegates work to an agent as the requesting user; it can
+	// trigger arbitrary downstream tool use, so it is explicitly seeded at
+	// policy "ask" (admins may relax it later).
+	out = append(out, askToolConfigs([]string{"ask_agent"})...)
+	return out
+}
+
 // Read-only Mattermost tools auto-run in DMs but ask in channels, where results
 // are visible to everyone. Every tool here is a caller-scoped read that only
 // returns data the requesting user can already access, so auto-running it in a
@@ -251,7 +273,7 @@ var figmaVettedToolConfigs = autoRunInDMToolConfigs([]string{
 //     tokens that are effectively posting credentials.
 //
 // These mirror the credential-exposing GitHub reads in githubSecurityAskTools.
-var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
+var mattermostAutoRunInDMToolConfigs = autoRunInDMToolConfigs([]string{
 	// Posts & scheduled posts
 	"read_post",
 	"get_post_info",

@@ -46,6 +46,7 @@ function glyphFor(status: ToolCallStatus): StatusGlyph {
     switch (status) {
     case ToolCallStatus.Pending:
     case ToolCallStatus.Accepted:
+    case ToolCallStatus.Waiting:
         return 'running';
     case ToolCallStatus.Success:
     case ToolCallStatus.AutoApproved:

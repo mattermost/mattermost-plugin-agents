@@ -43,10 +43,14 @@ var toolCallFieldPolicies = map[string]toolCallFieldPolicy{
 	"status":             {blockJSON: "status", visibleToNonRequester: true},
 	"user_interaction":   {blockJSON: "user_interaction", visibleToNonRequester: true},
 	"would_auto_execute": {blockJSON: "would_auto_execute", visibleToNonRequester: true},
+	"deferred_result":    {blockJSON: "deferred_result", visibleToNonRequester: true},
 
 	// Private payloads: persisted (for the requester) but redacted for others.
 	"arguments":     {blockJSON: "input", visibleToNonRequester: false},
 	"mcp_bare_name": {blockJSON: "mcp_bare_name", visibleToNonRequester: false},
+	// MCP Apps resource pointer: onlookers only see it after the result is
+	// shared (persisted path); the live broadcast always redacts it.
+	"ui_meta": {blockJSON: "ui_meta", visibleToNonRequester: false},
 
 	// Result is not persisted on the tool_use block (it lives on the paired
 	// tool_result block) and is redacted from the live payload for others.
@@ -67,7 +71,9 @@ func fullyPopulatedToolCall() llm.ToolCall {
 		MCPBareName:      "create_post",
 		UserInteraction:  llm.UserInteractionSelect,
 		WouldAutoExecute: true,
+		DeferredResult:   true,
 		ServerOrigin:     "embedded://mattermost",
+		UIMeta:           &llm.ToolUIMeta{ResourceURI: "ui://mattermost/app.html"},
 	}
 }
 

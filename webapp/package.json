@@ -68,6 +68,7 @@
     "@mattermost/client": "11.9.0",
     "@mattermost/compass-icons": "0.1.61",
     "@mattermost/eslint-plugin": "1.1.0-0",
+    "@mcp-ui/client": "7.1.1",
     "@tippyjs/react": "4.2.6",
     "core-js": "3.50.0",
     "debounce": "3.0.0",

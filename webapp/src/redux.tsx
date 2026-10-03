@@ -5,7 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
-import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
+import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins, MCPAppsBootstrap} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
 import {CustomPrompt} from './types';
@@ -14,6 +14,7 @@ type WebappStore = Store<GlobalState, UnknownAction>
 
 const CallsClickHandler = 'calls_post_button_clicked_handler';
 export const BotsHandler = manifest.id + '_bots';
+export const MCPAppsHandler = 'SET_MCP_APPS';
 export const CustomPromptsHandler = 'SET_CUSTOM_PROMPTS';
 export const PinnedPromptIdsHandler = 'SET_PINNED_PROMPT_IDS';
 export const ShowCustomPromptsModalHandler = 'SHOW_CUSTOM_PROMPTS_MODAL';
@@ -23,8 +24,8 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
-        searchEnabled,
         allowUnsafeLinks,
+        mcpApps,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -76,19 +77,19 @@ function bots(state = null, action: any) {
     }
 }
 
-function searchEnabled(state = false, action: any) {
+function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
-    case 'SET_SEARCH_ENABLED':
-        return action.searchEnabled;
+    case 'SET_ALLOW_UNSAFE_LINKS':
+        return action.allowUnsafeLinks;
     default:
         return state;
     }
 }
 
-function allowUnsafeLinks(state = false, action: any) {
+function mcpApps(state: MCPAppsBootstrap = {enabled: false}, action: any) {
     switch (action.type) {
-    case 'SET_ALLOW_UNSAFE_LINKS':
-        return action.allowUnsafeLinks;
+    case MCPAppsHandler:
+        return action.mcpApps;
     default:
         return state;
     }

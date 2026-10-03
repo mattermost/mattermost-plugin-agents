@@ -67,6 +67,7 @@ type TestEnvironment struct {
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
+	enableAskAnotherUser            bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
 }
@@ -89,6 +90,10 @@ func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConf
 
 func (tc *testConfigImpl) EnableChannelMentionToolCalling() bool {
 	return tc.enableChannelMentionToolCalling
+}
+
+func (tc *testConfigImpl) EnableAskAnotherUser() bool {
+	return tc.enableAskAnotherUser
 }
 
 func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
@@ -181,6 +186,8 @@ type mockMCPClientManager struct {
 	// Plugin discovery runs concurrently, so its bookkeeping is guarded.
 	discoverMu                   sync.Mutex
 	discoverPluginToolsCallCount int
+
+	readUserAppResource func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
 }
 
 func newTestMCPClientManager(t *testing.T) *mockMCPClientManager {
@@ -416,6 +423,13 @@ func (f *fakeChannelAutoReplyStore) Delete(channelID string) error {
 	f.deleteCalls = append(f.deleteCalls, channelID)
 	delete(f.settings, channelID)
 	return nil
+}
+
+func (m *mockMCPClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
+	if m.readUserAppResource != nil {
+		return m.readUserAppResource(ctx, userID, serverOrigin, uri)
+	}
+	return nil, mcp.ErrServerNotConnected
 }
 
 type fakeMCPOAuthClusterNotifier struct {
@@ -1173,7 +1187,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
@@ -1184,7 +1198,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		},
 		{
 			name:                     "search disabled - non-nil service with nil embedding search",
-			searchService:            search.New(nil, nil, nil, nil, nil, nil),
+			searchService:            search.New(nil, nil, nil),
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

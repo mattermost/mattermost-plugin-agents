@@ -143,6 +143,8 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			WouldAutoExecute: tc.WouldAutoExecute,
 			Title:            tc.Title,
 			Description:      tc.Description,
+			DeferredResult:   tc.DeferredResult,
+			UIMeta:           tc.UIMeta,
 		})
 	}
 
@@ -354,11 +356,12 @@ func (p *MMPostStreamService) broadcastToolCalls(post *model.Post, toolCalls []l
 	}, map[string]any{"control": "tool_call", "tool_call": string(redactedJSON)})
 }
 
-// redactToolCalls returns a copy of the tool calls with Arguments, Result, and
-// MCPBareName cleared so non-requesters see tool identity and status but not
-// payloads. Must stay in lockstep with conversation.FilterForNonRequester
-// (enforced by tool_call_parity_test.go); new llm.ToolCall fields default to
-// redacted here by omission.
+// redactToolCalls returns a copy of the tool calls with Arguments, Result,
+// MCPBareName, and UIMeta cleared so non-requesters see tool identity and
+// status but not payloads or app-resource pointers (onlookers obtain UIMeta via
+// GET /conversations/:id once the result is shared). Must stay in lockstep with
+// conversation.FilterForNonRequester (enforced by tool_call_parity_test.go);
+// new llm.ToolCall fields default to redacted here by omission.
 func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	redacted := make([]llm.ToolCall, len(toolCalls))
 	for i, tc := range toolCalls {
@@ -371,6 +374,7 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 			Status:           tc.Status,
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			DeferredResult:   tc.DeferredResult,
 		}
 	}
 	return redacted

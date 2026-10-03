@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/delegation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -34,6 +35,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/sandbox"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
@@ -61,10 +63,12 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
+	delegationService    *delegation.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
 	telemetryEndpoint    string
+	sandboxManager       *sandbox.Manager
 	store                *store.Store
 	autoreplyService     channelAutoReplyRefresher
 	configMigrated       bool
@@ -404,10 +408,7 @@ func (p *Plugin) OnActivate() error {
 	searchService := search.New(
 		searchAvailability.QuerySearch,
 		mmClient,
-		prompts,
-		streamingService,
 		licenseChecker,
-		nil, // conversation service wired in a later step
 	)
 
 	// Reinitialize embedding search on config changes and license changes.
@@ -442,6 +443,9 @@ func (p *Plugin) OnActivate() error {
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		webSearchService,
+		func() *config.Config {
+			return p.configuration.Config()
+		},
 	)
 
 	// Build redirect URI
@@ -455,29 +459,41 @@ func (p *Plugin) OnActivate() error {
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
+
+	// Delegation service skeleton: created before the embedded MCP server so
+	// ask_agent can be registered, completed later once the conversation
+	// service and context builder exist (they depend on the MCP client
+	// manager, which depends on the embedded server).
+	delegationService := delegation.New(mmClient, bots, streamingService, prompts, i18nBundle, metricsService)
+
 	var (
-		embeddedMu     sync.Mutex
-		embeddedServer *EmbeddedMCPServer
+		embeddedMu       sync.Mutex
+		embeddedServer   *EmbeddedMCPServer
+		embeddedDemoApps bool
 	)
 	// ensureEmbeddedMCPServer builds the embedded server once and reuses it.
-	// The constructor reads Mattermost server config and injected services, not
-	// plugin MCP config, so a plugin-config update must not force every
-	// embedded session to reconnect; only a construction failure is retried.
+	// Apart from EnableDemoApps, the constructor reads Mattermost server config
+	// and injected services, not plugin MCP config, so a plugin-config update
+	// must not force every embedded session to reconnect; the server is rebuilt
+	// only when EnableDemoApps changes or a previous construction failed.
 	// The result is a nil interface, not a typed nil pointer, when the server
 	// is unavailable, so callers skip embedded sessions entirely.
 	ensureEmbeddedMCPServer := func() mcp.EmbeddedMCPServer {
 		embeddedMu.Lock()
 		defer embeddedMu.Unlock()
 
-		if embeddedServer == nil {
+		enableDemoApps := p.configuration.MCP().EmbeddedServer.EnableDemoApps
+		if embeddedServer == nil || embeddedDemoApps != enableDemoApps {
 			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
-			})
+			}, delegationService, enableDemoApps)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server", "error", embeddedErr)
+				embeddedServer = nil
 				return nil
 			}
 			embeddedServer = created
+			embeddedDemoApps = enableDemoApps
 			pluginAPI.Log.Info("Embedded MCP server created successfully")
 		}
 		return embeddedServer
@@ -525,7 +541,6 @@ func (p *Plugin) OnActivate() error {
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
 	conversationsService.SetAutoReplySettings(autoreplyService)
-	searchService.SetConversationService(convService)
 
 	meetingsService := meetings.NewService(
 		pluginAPI,
@@ -550,6 +565,34 @@ func (p *Plugin) OnActivate() error {
 	})
 	streamingService.SetTurnStore(p.store)
 	conversationsService.SetToolPolicyChecker(policyChecker)
+
+	// wait_for_async_work wakes ride on the cluster JobOnce scheduler: jobs
+	// persist in KV, survive restarts, and fire exactly once cluster-wide.
+	wakeJobs := cluster.GetJobOnceScheduler(p.API)
+	if wakeErr := wakeJobs.SetCallback(conversationsService.HandleWakeJob); wakeErr != nil {
+		pluginAPI.Log.Error("Failed to set wait_for_async_work wake callback", "error", wakeErr)
+	} else {
+		// The scheduler is a process-wide singleton: on OnActivate re-runs
+		// Start errors with "already been started" while the refreshed
+		// callback above keeps working, so a Start error must not disable
+		// scheduling. ScheduleOnce self-guards if Start genuinely failed.
+		if wakeErr := wakeJobs.Start(); wakeErr != nil {
+			pluginAPI.Log.Warn("wait_for_async_work wake scheduler did not (re)start", "error", wakeErr)
+		}
+		toolProvider.SetScheduleWake(func(postID, reason string, wait time.Duration) error {
+			_, scheduleErr := wakeJobs.ScheduleOnce(
+				conversations.WakeJobKeyPrefix+model.NewId(),
+				time.Now().Add(wait),
+				conversations.WakeJob{PostID: postID, Reason: reason},
+			)
+			return scheduleErr
+		})
+	}
+
+	// Complete the delegation service now that the conversation machinery
+	// exists, and hook sub-turn completion notifications back into it.
+	delegationService.Complete(convService, conversationsService, contextBuilder, p, mcpClientManager)
+	conversationsService.SetDelegationNotifier(delegationService)
 
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
@@ -606,11 +649,28 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	apiService.SetDelegationService(delegationService)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
 	p.applyTelemetryConfig()
 	p.configuration.RegisterUpdateListener(p.applyTelemetryConfig)
+
+	// Start (or stop) the MCP Apps sandbox listener from config and re-apply
+	// on every config change so port/URL changes do not need a plugin restart.
+	p.sandboxManager = sandbox.NewManager(
+		func() (config.MCPAppsConfig, string) {
+			siteURL := ""
+			if s := p.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL; s != nil {
+				siteURL = *s
+			}
+			return p.configuration.MCP().Apps, siteURL
+		},
+		&pluginLogger{service: &p.pluginAPI.Log},
+		nil,
+	)
+	p.sandboxManager.ApplyCurrent()
+	p.configuration.RegisterUpdateListener(p.sandboxManager.ApplyCurrent)
 
 	// Keep only what we need
 	p.apiService = apiService
@@ -619,6 +679,7 @@ func (p *Plugin) OnActivate() error {
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
+	p.delegationService = delegationService
 
 	return nil
 }
@@ -633,6 +694,10 @@ func (p *Plugin) OnDeactivate() error {
 		p.telemetryShutdown = nil
 	}
 	p.telemetryMu.Unlock()
+
+	if p.sandboxManager != nil {
+		p.sandboxManager.Close()
+	}
 
 	// Release Bifrost worker pools held by service-backed LLMs. OnActivate can
 	// fail before bots is assigned, so guard against a nil registry.

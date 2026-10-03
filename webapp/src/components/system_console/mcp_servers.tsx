@@ -19,6 +19,7 @@ import ConsolePolicySection from '../access_control/console_policy_section';
 
 import {CopyableTextItem} from './copyable_text_item';
 import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
+import MCPAppsSection, {defaultMCPAppsConfig} from './mcp_apps';
 import MCPToolsViewer from './mcp_tools_viewer';
 import type {
     MCPConfig as BaseMCPConfig,
@@ -43,6 +44,25 @@ export type MCPServerConfig = BaseMCPServerConfig & {
 
 export type MCPConfig = Omit<BaseMCPConfig, 'servers'> & {
     servers: MCPServerConfig[] | null;
+};
+
+// normalizeMCPConfig rebuilds the MCP config literal used by System Console
+// edits. It spreads mcpConfig so fields like plugin_servers and
+// embeddedServer.id survive rebuilds that only override a subset of keys.
+export const normalizeMCPConfig = (mcpConfig?: MCPConfig): MCPConfig => {
+    const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
+    return {
+        ...mcpConfig,
+        enabled: true,
+        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
+        servers: normalizedServers,
+        embeddedServer: {
+            ...(mcpConfig?.embeddedServer || {}),
+            enabled: true,
+        },
+        apps: mcpConfig?.apps ?? defaultMCPAppsConfig,
+        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
+    };
 };
 
 type Props = {
@@ -477,19 +497,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
 
     // MCP client and embedded server are always enabled; users can still
     // disable individual tools but cannot turn off MCP entirely.
-    // Spread mcpConfig so fields like plugin_servers and embeddedServer.id
-    // survive rebuilds that only override a subset of keys.
-    const config: MCPConfig = {
-        ...mcpConfig,
-        enabled: true,
-        enablePluginServer: mcpConfig?.enablePluginServer ?? false,
-        servers: normalizedServers,
-        embeddedServer: {
-            ...(mcpConfig?.embeddedServer || {}),
-            enabled: true,
-        },
-        idleTimeoutMinutes: mcpConfig?.idleTimeoutMinutes,
-    };
+    const config: MCPConfig = normalizeMCPConfig(mcpConfig);
 
     const pluginServers = (preloadedToolsData?.servers ?? []).filter(
         (server) => server.serverType === 'plugin',
@@ -627,6 +635,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 />
                             )}
                         </ItemList>
+                        <MCPAppsSection
+                            value={config.apps ?? defaultMCPAppsConfig}
+                            onChange={(apps) => onChange({...config, apps})}
+                        />
                         <BuiltInPluginServersSection
                             embeddedServerId={config.embeddedServer.id}
                             pluginServers={pluginServers}

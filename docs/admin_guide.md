@@ -143,7 +143,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Set it when creating the agent; it can't be changed later. |
+| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Changing it later renames the existing bot account, so conversations are kept, but old @mentions and integrations that use the previous name stop reaching the agent. See [Renaming an agent](features/managing_agents.md#renaming-an-agent). |
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |
@@ -301,9 +301,46 @@ To obtain Google Custom Search credentials:
 - Search results include clickable citations that link back to source websites
 - Domain denylisting applies to all providers and is enforced for _web page fetching only_. 
 
+### Ask another user (experimental)
+
+The built-in `AskAnotherUser` tool lets an agent send a clarifying question to another Mattermost user as an interactive direct-message card, on behalf of the person who asked the agent. The whole capability is gated by the experimental **Enable Agents to Ask Other Users** setting in the **AI Functions** panel of the plugin's System Console page, and is **off by default**.
+
+Consider the implications before enabling: the question text is written by the AI model, so users can receive AI-authored messages they never asked for; answers flow back into the originating conversation and may appear in channel-visible follow-up messages; and this expands the surface for prompt-injection and social-engineering attempts. Question cards mitigate this by naming the requester, disclosing where the answer will go, and visually separating AI-generated text from system text (see [asking another user](features/multiplayer_tool_calling.md#10-asking-another-user-the-target-as-a-second-actor) in the multiplayer reference for the full trust model).
+
+While the setting is off, the tool isn't offered to models at all, and the answer and cancel endpoints refuse requests. If you turn the setting off while a question is outstanding, the target can no longer answer and the initiator can no longer cancel — the conversation stays parked on the waiting tool call. To unstick it, either re-enable the setting so the outstanding question can be resolved, or have the initiator regenerate the conversation (which supersedes the waiting call).
+
+When the feature is on, the standard approval policies apply per the [built-in tool policies](#built-in-tool-policies) section; the toggle is the master switch, and off wins over any configured policy.
+
+### Built-in tool policies
+
+Built-in (non-MCP) tools — such as `AskAnotherUser` and the built-in web search tool — follow the same three approval policies as MCP tools (`ask`, `auto_run_in_dm`, `auto_run_everywhere`; see the [multiplayer tool calling](features/multiplayer_tool_calling.md) reference). Unconfigured built-in tools default to policy `ask`, which always requires the initiator's approval. `AskAnotherUser` ships with an explicit `ask` default and is additionally gated by the [Ask another user](#ask-another-user-experimental) master switch — its policy only matters while that setting is on.
+
+There is no System Console panel for built-in tool policies in this release. Configure them through the plugin's admin config API: `GET` the current configuration from `/plugins/mattermost-ai/admin/config`, add or edit the `mcp.builtInTools` array, and `PUT` the **full** configuration object back (the endpoint replaces the stored configuration; don't send a partial body). Example fragment of the configuration object:
+
+```json
+{
+  "mcp": {
+    "builtInTools": [
+      {"name": "AskAnotherUser", "policy": "auto_run_in_dm", "enabled": true}
+    ]
+  }
+}
+```
+
+Semantics:
+
+- `policy` accepts `ask`, `auto_run_in_dm`, and `auto_run_everywhere`; invalid values fall back to `ask`.
+- `enabled: false` prevents the tool from auto-running; combined with `ask`, the tool still shows the Accept/Reject card. This setting doesn't remove built-in tools from the Agent's catalog.
+- Entries here override the shipped defaults; built-in tools you don't list keep the default `ask` policy.
+- `AskAnotherUser` never runs from automated `activate_ai` bot flows regardless of policy (see [bot-triggered flows](features/multiplayer_tool_calling.md#9-bot-triggered-flows) in the multiplayer reference).
+
+For the question-card experience on the receiving end of `AskAnotherUser`, see [Answer a question an agent asks you](user_guide.md#answer-a-question-an-agent-asks-you) in the user guide.
+
 ### Embed search configuration
 
 To enable semantic search capabilities, you'll need to enable the `pgvector` extension in your PostgreSQL database, then configure embeddings provider settings including the provider (OpenAI, etc.), model for embeddings, and dimensions that match your chosen embedding model. Embedding search is available at Enterprise and above (see [license requirements](#license-requirements)) and is available as an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature. Performance may vary with large datasets.
+
+Embedding search is optional for Agents search from the search bar and `/ask-channel`: without it, agents search with keyword search; with it, they also get semantic results.
 
 Configure chunking options based on your needs:
 
@@ -639,7 +676,7 @@ When users report repeated tool failures, use **LLM Trace** and debug logging to
 
 ## Integrations
 
-Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**.
+Integrations are available in direct messages by default. If you enable the experimental **Enable Channel Mention Tool Calling** setting, @mentioning an agent in a public channel can also allow tool calling there. Native provider web search in public and private channels is controlled separately by **Allow native web search in channels**, and the ability of agents to send question cards to other users is controlled by the experimental **Enable Agents to Ask Other Users** setting (see [Ask another user](#ask-another-user-experimental)).
 
 ### File creation by agents
 
@@ -753,6 +790,109 @@ Dynamic loading applies to normal agent conversation turns. Bridge integrations 
 - **Per-User Connections**: Each user gets their own connection to MCP servers for security and isolation. Agents using service account authentication share one remote connection per agent (keyed to the agent's bot account) for external MCP servers; embedded Mattermost and plugin connections stay per requesting user
 - **Tool Policies**: Use the **Tools** tab to allow, require approval for, or disable individual tools, and to add optional retrieval description overrides used by dynamic tool loading search
 - **Agent Scoping**: The RHS **Tools** popover only shows MCP providers allowed for the selected agent, and is hidden entirely for agents using service account authentication (there are no per-user remote connections or preferences to manage; embedded Mattermost and plugin connections still run as the requesting user). Tool use is still subject to admin tool policies and the user's Mattermost permissions
+
+### MCP Apps (interactive tool UIs)
+
+MCP servers can ship interactive HTML UIs (the MCP Apps extension, `io.modelcontextprotocol/ui`) that render inside tool results. App content runs in a double-sandboxed iframe; the outer sandbox page **must** be served from a different browser origin than Mattermost so third-party app content can never touch the Mattermost session.
+
+#### Configuration fields
+
+Configure under **System Console → Plugins → Agents → MCP Servers** (the **MCP Apps** section). Stored keys:
+
+| Field | Config key | Description |
+|---|---|---|
+| Enable MCP Apps | `mcp.apps.enabled` | Master toggle for rendering interactive app UIs |
+| Sandbox Base URL | `mcp.apps.sandboxURL` | Externally reachable base URL (different origin than Site URL) that reverse-proxies the plugin's sandbox listener. The plugin appends `/sandbox.html` |
+| Sandbox Listener Address | `mcp.apps.sandboxListenAddress` | `host:port` the plugin binds (default `:8066`). Every cluster node binds this address |
+| Allow insecure same-origin sandbox | `mcp.apps.allowInsecureSameOriginSandbox` | Opt-in fallback that serves the sandbox from the Mattermost origin when no Sandbox Base URL is set. **Not recommended** |
+
+#### Security model
+
+| Mode | Origin | DNS / cert work | Isolation | Recommended for |
+|---|---|---|---|---|
+| Subdomain (secure) | `https://mm-apps.example.com` | New DNS record + cert (or wildcard) | Full | Production |
+| Second port (secure) | `https://mm.example.com:8443` | None — certs are hostname-bound, not port-bound | Full | Production without DNS control; caveat: some corporate egress firewalls block nonstandard ports |
+| Same-origin fallback (insecure, opt-in) | Mattermost's own origin | None | **None** — app content runs on the Mattermost origin | Trials/dev only; enabling is written to the server log with the acting admin's user ID |
+
+#### Reverse-proxy examples
+
+**nginx, subdomain** — set `sandboxURL` to `https://mm-apps.example.com`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name mm-apps.example.com;
+    ssl_certificate     /etc/ssl/certs/mm-apps.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/mm-apps.example.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8066;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+**nginx, second port** (reuses the existing `mm.example.com` cert) — set `sandboxURL` to `https://mm.example.com:8443`:
+
+```nginx
+server {
+    listen 8443 ssl;
+    server_name mm.example.com;
+    ssl_certificate     /etc/ssl/certs/mm.example.com.crt;
+    ssl_certificate_key /etc/ssl/private/mm.example.com.key;
+
+    location / {
+        proxy_pass http://127.0.0.1:8066;
+        proxy_http_version 1.1;
+    }
+}
+```
+
+**HAProxy, subdomain** (SNI-routed on the shared `:443` frontend) — set `sandboxURL` to `https://mm-apps.example.com`:
+
+```haproxy
+frontend https-in
+    bind *:443 ssl crt /etc/haproxy/certs/
+    acl is_mcp_apps hdr(host) -i mm-apps.example.com
+    use_backend mcp_apps_sandbox if is_mcp_apps
+    default_backend mattermost
+
+backend mcp_apps_sandbox
+    server sandbox1 127.0.0.1:8066 check
+```
+
+**HAProxy, second port** — set `sandboxURL` to `https://mm.example.com:8443`:
+
+```haproxy
+frontend mcp-apps-in
+    bind *:8443 ssl crt /etc/haproxy/certs/mm.example.com.pem
+    default_backend mcp_apps_sandbox
+
+backend mcp_apps_sandbox
+    server sandbox1 127.0.0.1:8066 check
+```
+
+#### High availability
+
+Every cluster node runs the plugin and binds `sandboxListenAddress`. Sandbox content is static and identical across nodes, so the proxy backend may point at any node or all nodes (add each node as a `server` line / upstream member). Single-host multi-node development setups will hit a port conflict on the second node: the plugin logs an error and disables sandbox serving on that node only (log-and-disable); the rest of the plugin continues normally.
+
+#### Firewall caveat
+
+The second-port option requires the chosen port open on the load balancer **and** reachable from end-user networks. Some corporate egress policies allow only 443 — if app iframes time out after ~10 s for remote users but work in the office, suspect this. The listener itself speaks plain HTTP; TLS terminates at the proxy. Prefer binding `127.0.0.1:8066` when the proxy is co-located with Mattermost.
+
+#### Insecure same-origin fallback
+
+To enable for trials/dev: turn on **Enable MCP Apps**, leave **Sandbox Base URL** empty, and enable **Allow insecure same-origin sandbox**. No listener or reverse proxy is needed; the page is served from `<SiteURL>/plugins/mattermost-ai/mcp/apps/sandbox` (including any Site URL subpath, e.g. `https://example.com/mattermost/plugins/mattermost-ai/mcp/apps/sandbox`).
+
+This forfeits browser origin isolation between third-party app content and Mattermost. Enabling it emits a server log line at Warn level:
+
+`MCP Apps: insecure same-origin sandbox fallback ENABLED`
+
+with `actor_user_id` set to the admin who saved the config.
+
+#### Demo apps
+
+For demos, QA, and e2e, set `mcp.embeddedServer.enableDemoApps` to `true` via `PUT /plugins/mattermost-ai/admin/config` (no System Console UI; default `false`). When enabled, the embedded MCP server registers a `preview_post` tool that returns post preview JSON and a companion `ui://mattermost/preview-post.html` MCP App resource. Leave this off in production unless you intentionally want the demo tool available.
 
 ### OAuth-backed MCP servers
 
@@ -871,6 +1011,16 @@ The embedded Mattermost MCP server is available automatically to configured AI a
 Use **System Console > Plugins > Agents > Model Context Protocol (MCP)** to configure remote MCP servers, review plugin-registered MCP servers, set the idle timeout, control the optional HTTP endpoint for external clients, and manage per-tool enablement and approval policies. Then use each agent's **MCPs** tab on the **Agents** page to either automatically enable all MCP tools or restrict that agent to specific tools.
 
 Configured agents can use these tools subject to their own MCP settings, admin tool policies, user permissions, and any required approval flow.
+
+##### Agent-to-agent delegation (`ask_agent`)
+
+The embedded server includes an `ask_agent` tool that lets an agent delegate a self-contained task to any agent the user can access, including itself. The delegated work runs as the requesting user in a visible thread in their direct-message channel with the target agent; the target agent's final answer is returned to the delegating agent as the tool result, and the user can continue the conversation in that thread afterward.
+
+- `ask_agent` defaults to the **ask** approval policy, so the requesting user approves each delegation before it runs; admins can relax this from the MCP **Tools** tab like any other embedded tool.
+- Per-agent enablement follows the normal MCP allowlist rules on each agent's **MCPs** tab.
+- The target agent's own tools and approval policies apply inside the delegation thread, and only the requesting user can approve them. Pending approvals are also shown on the parent delegation card so the user can respond without leaving the main thread. Users who cannot access the target agent (per that agent's **Access** tab) cannot delegate to it.
+- In channels, the delegated answer stays private to the requester until they explicitly share it, like any other tool result.
+- Delegated work is limited to one level: an agent working on a delegated task cannot delegate further.
 
 #### For External Clients
 

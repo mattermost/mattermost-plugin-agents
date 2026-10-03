@@ -6,7 +6,7 @@ import {render, screen, fireEvent, waitFor} from '@testing-library/react';
 import {Provider} from 'react-redux';
 import {IntlProvider} from 'react-intl';
 
-import {getPost} from '@/client';
+import {getDelegationStatus, getPost} from '@/client';
 
 import {ToolCall, ToolCallStatus} from '../tool_types';
 
@@ -20,6 +20,7 @@ jest.mock('react-bootstrap', () => ({
 jest.mock('@/client', () => ({
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(() => Promise.resolve([])),
+    getDelegationStatus: jest.fn(),
 }));
 
 const postMessagePreviewMock = jest.fn<React.ReactElement, [unknown]>(() => <div>{'post-preview-box'}</div>);
@@ -29,6 +30,7 @@ jest.mock('@/mm_webapp', () => ({
 }));
 
 const mockGetPost = getPost as jest.Mock;
+const mockGetDelegationStatus = getDelegationStatus as jest.Mock;
 
 const state = {
     entities: {
@@ -48,6 +50,8 @@ const store = {
 
 beforeEach(() => {
     mockGetPost.mockReset();
+    mockGetDelegationStatus.mockReset();
+    mockGetDelegationStatus.mockRejectedValue(new Error('not found'));
     postMessagePreviewMock.mockClear();
 });
 
@@ -66,11 +70,11 @@ function makeCtx(tool: ToolCall): ToolRenderContext {
     };
 }
 
-function renderTool(tool: ToolCall) {
+function renderTool(tool: ToolCall, overrides: Partial<ToolRenderContext> = {}) {
     return render(
         <Provider store={store}>
             <IntlProvider locale='en'>
-                {renderToolCall(makeCtx(tool))}
+                {renderToolCall({...makeCtx(tool), ...overrides})}
             </IntlProvider>
         </Provider>,
     );
@@ -106,6 +110,33 @@ describe('renderToolCall routing', () => {
 
         expect(screen.getByText('AskUserQuestion')).not.toBeNull();
         expect(screen.queryByText('Pick one')).toBeNull();
+    });
+
+    test('routes an embedded ask_agent call to DelegationCard with its delegated approvals', async () => {
+        mockGetDelegationStatus.mockResolvedValue({
+            delegation_id: 'delegation_conv',
+            parent_tool_call_id: 'tc1',
+            phase: 'waiting_on_you',
+            task_post_id: 'task_post',
+            permalink: '/_redirect/pl/task_post',
+            target_agent_id: 'subagent_bot',
+            target_agent_username: 'subagent',
+            target_agent_displayname: 'Sub Agent',
+            created_at: Date.now(),
+        });
+        const renderDelegatedApprovals = jest.fn(() => <div>{'nested-approvals'}</div>);
+
+        renderTool(makeTool({
+            name: 'mattermost__ask_agent',
+            server_origin: 'embedded://mattermost',
+            arguments: {agent: 'subagent', task: 'Inspect the channel'},
+            status: ToolCallStatus.Accepted,
+        }), {renderDelegatedApprovals});
+
+        await waitFor(() => {
+            expect(screen.getByText('nested-approvals')).not.toBeNull();
+        });
+        expect(renderDelegatedApprovals).toHaveBeenCalledWith('delegation_conv');
     });
 
     test('routes an embedded read_post to the post preview card', async () => {

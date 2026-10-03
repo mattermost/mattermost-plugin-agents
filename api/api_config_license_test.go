@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,6 +67,7 @@ func TestHandleSaveConfigLicenseGates(t *testing.T) {
 						configStore:     store,
 						configUpdater:   &testConfigUpdater{},
 						clusterNotifier: &testClusterNotifier{},
+						pluginAPI:       pluginapi.NewClient(newConfigTestMockAPI(), nil),
 						licenseChecker:  enterprisetest.CheckerAt(level),
 					}
 					router.PUT("/admin/config", a.handleSaveConfig)
@@ -105,6 +107,7 @@ func TestHandleSaveConfigUnchangedOverLimitAccepted(t *testing.T) {
 		configStore:     store,
 		configUpdater:   &testConfigUpdater{},
 		clusterNotifier: &testClusterNotifier{},
+		pluginAPI:       pluginapi.NewClient(newConfigTestMockAPI(), nil),
 		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelUnlicensed),
 	}
 	router.PUT("/admin/config", a.handleSaveConfig)

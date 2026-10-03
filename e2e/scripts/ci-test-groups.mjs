@@ -10,6 +10,7 @@ const testsRoot = path.resolve(e2eRoot, 'tests');
 
 const groups = {
     'e2e-shard-1': [
+        'tests/agent-delegation/delegation.spec.ts',
         'tests/agents/provider-config.spec.ts',
         'tests/channel-analysis/integration/integration.spec.ts',
         'tests/bot-configuration/service-changes.spec.ts',
@@ -36,7 +37,7 @@ const groups = {
         'tests/system-console/initial-state-navigation.spec.ts',
         'tests/advanced-error-scenarios/network-errors.spec.ts',
         'tests/smart-reactions/basic-reactions.spec.ts',
-        'tests/semantic-search/search-sources.spec.ts',
+        'tests/semantic-search/search-conversation.spec.ts',
         'tests/bot-configuration/reasoning-config.spec.ts',
         'tests/action-item-extraction/error-handling.spec.ts',
         'tests/multiple-bot-conversations/bot-switching.spec.ts',
@@ -47,8 +48,10 @@ const groups = {
         'tests/llmbot-post-component/citations-annotations.spec.ts',
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
+        'tests/ask-another-user/ask-another-user.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
+        'tests/mcp-apps/demo-app.spec.ts',
     ],
     'e2e-shard-3': [
         'tests/system-console/bot-native-tools.spec.ts',

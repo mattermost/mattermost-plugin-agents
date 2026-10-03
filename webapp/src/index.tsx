@@ -31,6 +31,7 @@ import {setupRedux} from './redux';
 import UnreadsSummarize from './components/unreads_summarize';
 import {PostbackPost} from './components/postback_post';
 import {AgentMentionReminderPost} from './components/agent_mention_reminder_post';
+import {AskUserPost, AskUserPostType} from './components/ask_user_post/ask_user_post';
 import {isRHSCompatable} from './mm_webapp';
 import SearchButton from './components/search_button';
 import AskChannelButton from './components/ask_channel_button';
@@ -41,6 +42,8 @@ import {invalidateConversation} from './hooks/use_conversation';
 // clears the matching composition cache.
 import '@/hooks/use_conversation_context';
 import {notifyMCPConnectionUpdated, MCPConnectionEvent} from './hooks/use_mcp_connection_events';
+import {notifyDelegationUpdate} from './hooks/use_delegation_updates';
+import {DelegationUpdate} from './types/delegation';
 import {handleAskChannelCommand, handleSummarizeChannelCommand} from './commands';
 import SearchHints from './components/search_hints';
 import {useBotlist, resolveActiveBot, getSelectedAgentId, fetchAndStoreBots} from './bots';
@@ -187,6 +190,14 @@ export default class Plugin {
             },
         );
 
+        // Live agent-to-agent delegation progress for delegation cards.
+        registry.registerWebSocketEventHandler(
+            'custom_mattermost-ai_delegation_update',
+            (msg: PluginWebSocketMessage<DelegationUpdate>) => {
+                notifyDelegationUpdate(msg.data);
+            },
+        );
+
         const LLMBotPostWithWebsockets = (props: any) => {
             return (
                 <LLMBotPost
@@ -214,6 +225,7 @@ export default class Plugin {
         registry.registerPostTypeComponent('custom_llmbot', LLMBotPostWithWebsockets);
         registry.registerPostTypeComponent('custom_llm_postback', PostbackPost);
         registry.registerPostTypeComponent('custom_agent_mention_reminder', AgentMentionReminderPost);
+        registry.registerPostTypeComponent(AskUserPostType, AskUserPost);
         if (registry.registerPostActionComponent) {
             registry.registerPostActionComponent(PostMenu);
         } else {
@@ -334,7 +346,7 @@ export default class Plugin {
 
                     const result = await doRunSearch(
                         searchTerms,
-                        '',
+                        state.entities.teams.currentTeamId,
                         '',
                         activeBot?.username,
                     );

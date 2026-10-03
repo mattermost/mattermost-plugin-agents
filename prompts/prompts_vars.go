@@ -6,6 +6,7 @@ package prompts
 // Automatically generated convenience vars for the filenames in prompts/
 const (
 	PromptCitationFormat                   = "citation_format"
+	PromptDelegatedTaskSystem              = "delegated_task_system"
 	PromptDirectMessageQuestionSystem      = "direct_message_question_system"
 	PromptEmojiSelectSystem                = "emoji_select_system"
 	PromptFindActionItemsSystem            = "find_action_items_system"
@@ -16,9 +17,7 @@ const (
 	PromptMeetingSummaryGeneral            = "meeting_summary_general"
 	PromptMeetingSummarySystem             = "meeting_summary_system"
 	PromptMeetingSummaryUser               = "meeting_summary_user"
-	PromptSearchResults                    = "search_results"
 	PromptSearchSystem                     = "search_system"
-	PromptSearchUser                       = "search_user"
 	PromptStandardPersonality              = "standard_personality"
 	PromptStandardPersonalityWithoutLocale = "standard_personality_without_locale"
 	PromptSummarizeChannelRangeSystem      = "summarize_channel_range_system"

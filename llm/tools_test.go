@@ -302,6 +302,10 @@ func TestIsResolvedToolCallBatch(t *testing.T) {
 		// rejected-approval turn, and the annotation decorator must reset its
 		// builder at exactly the same boundaries.
 		{name: "rejected call keeps the batch unresolved", statuses: []ToolCallStatus{ToolCallStatusSuccess, ToolCallStatusRejected}, want: false},
+		// Waiting batches must be retained by the streaming accumulator (and
+		// later persisted by finalizeTurn) rather than treated as executed.
+		{name: "waiting call alone is not resolved", statuses: []ToolCallStatus{ToolCallStatusWaiting}, want: false},
+		{name: "waiting call mixed with terminal statuses is not resolved", statuses: []ToolCallStatus{ToolCallStatusWaiting, ToolCallStatusError, ToolCallStatusSuccess}, want: false},
 	}
 
 	for _, tt := range tests {
@@ -1153,4 +1157,49 @@ func TestEnrichToolCallNilSafe(t *testing.T) {
 	EnrichToolCall(&tc, nil, EnrichToolCallOptions{})
 	assert.Empty(t, tc.Description)
 	assert.Empty(t, tc.Title)
+}
+
+func TestEnrichToolCallUIMeta(t *testing.T) {
+	storeUIMeta := &ToolUIMeta{ResourceURI: "ui://store/app"}
+	callUIMeta := &ToolUIMeta{ResourceURI: "ui://call/app"}
+
+	tests := []struct {
+		name     string
+		store    *ToolUIMeta
+		tc       *ToolCall
+		wantMeta *ToolUIMeta
+	}{
+		{
+			name:     "fills UIMeta from store when call has none",
+			store:    storeUIMeta,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example"},
+			wantMeta: storeUIMeta,
+		},
+		{
+			name:     "preserves existing UIMeta on the call",
+			store:    storeUIMeta,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example", UIMeta: callUIMeta},
+			wantMeta: callUIMeta,
+		},
+		{
+			name:     "stays nil when store tool has no UIMeta",
+			store:    nil,
+			tc:       &ToolCall{Name: "app_tool", ServerOrigin: "https://srv.example"},
+			wantMeta: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewToolStore()
+			store.AddTools([]Tool{{
+				Name:         "app_tool",
+				Description:  "App tool",
+				ServerOrigin: "https://srv.example",
+				UIMeta:       tt.store,
+			}})
+			EnrichToolCall(tt.tc, store, EnrichToolCallOptions{})
+			assert.Equal(t, tt.wantMeta, tt.tc.UIMeta)
+		})
+	}
 }

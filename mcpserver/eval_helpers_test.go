@@ -41,6 +41,8 @@ type evalChannelData struct {
 	charlie       *model.User
 	// bobTimelinePost is Bob's "What's the timeline?" post, used as a thread root.
 	bobTimelinePost *model.Post
+	// aliceRollbackPost is Alice's description of the migration rollback plan.
+	aliceRollbackPost *model.Post
 }
 
 // extractMCPText extracts all text content from an MCP tool result.
@@ -130,7 +132,7 @@ func seedChannelConversation(t *testing.T, serverURL, adminToken string) *evalCh
 	require.NoError(t, err)
 
 	// Alice describes rollback approach
-	_, _, err = aliceClient.CreatePost(ctx, &model.Post{
+	aliceRollbackPost, _, err := aliceClient.CreatePost(ctx, &model.Post{
 		ChannelId: channel.Id,
 		Message:   "We'll keep the MySQL instance running in read-only mode during the cutover. If anything fails, we can switch back within minutes. I've also set up continuous replication as a safety net.",
 	})
@@ -169,13 +171,14 @@ func seedChannelConversation(t *testing.T, serverURL, adminToken string) *evalCh
 	require.NoError(t, err)
 
 	return &evalChannelData{
-		team:            team,
-		channel:         channel,
-		designChannel:   designChannel,
-		alice:           alice,
-		bob:             bob,
-		charlie:         charlie,
-		bobTimelinePost: bobTimelinePost,
+		team:              team,
+		channel:           channel,
+		designChannel:     designChannel,
+		alice:             alice,
+		bob:               bob,
+		charlie:           charlie,
+		bobTimelinePost:   bobTimelinePost,
+		aliceRollbackPost: aliceRollbackPost,
 	}
 }
 
@@ -218,7 +221,6 @@ func (s *embeddingSearchService) Search(ctx context.Context, query string, opts 
 		}
 
 		ragResults[i] = search.RAGResult{
-			Index:       i + 1,
 			PostID:      r.Document.PostID,
 			ChannelID:   r.Document.ChannelID,
 			ChannelName: channelName,
@@ -477,6 +479,7 @@ type evalStreamLogger struct {
 	t           *testing.T
 	mu          sync.Mutex
 	calledTools []string
+	toolCalls   []llm.ToolCall
 }
 
 // CalledTools returns a copy of all tool names invoked during the eval run.
@@ -486,6 +489,16 @@ func (w *evalStreamLogger) CalledTools() []string {
 	defer w.mu.Unlock()
 	out := make([]string, len(w.calledTools))
 	copy(out, w.calledTools)
+	return out
+}
+
+// ToolCalls returns a copy of every tool call, with arguments, made during
+// the eval run. Safe to call after ReadAll() completes.
+func (w *evalStreamLogger) ToolCalls() []llm.ToolCall {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := make([]llm.ToolCall, len(w.toolCalls))
+	copy(out, w.toolCalls)
 	return out
 }
 
@@ -515,6 +528,7 @@ func (w *evalStreamLogger) ChatCompletion(ctx context.Context, request llm.Compl
 					for _, tc := range tcs {
 						w.t.Logf("[LLM tool call] %s args=%s", tc.Name, string(tc.Arguments))
 						w.calledTools = append(w.calledTools, tc.Name)
+						w.toolCalls = append(w.toolCalls, tc)
 					}
 					w.mu.Unlock()
 				}
