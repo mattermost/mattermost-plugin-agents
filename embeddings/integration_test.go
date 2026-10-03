@@ -156,6 +156,11 @@ func addTestPost(t *testing.T, db *sqlx.DB, postID, userID, channelID, message s
 
 // createFullSearchSystem creates a CompositeSearch with mock provider and real PGVector
 func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embeddings.EmbeddingSearch {
+	return createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{})
+}
+
+// createFullSearchSystemWithRecency is createFullSearchSystem with recency bias settings.
+func createFullSearchSystemWithRecency(t *testing.T, db *sqlx.DB, dimensions int, recency embeddings.RecencyBiasSettings) embeddings.EmbeddingSearch {
 	provider := embeddings.NewMockEmbeddingProvider(dimensions)
 
 	pgVectorConfig := postgres.PGVectorConfig{
@@ -170,7 +175,7 @@ func createFullSearchSystem(t *testing.T, db *sqlx.DB, dimensions int) embedding
 		ChunkingStrategy: "sentences",
 	}
 
-	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts)
+	return embeddings.NewCompositeSearch(vectorStore, provider, chunkingOpts, recency)
 }
 
 // TestBasicIndexAndSearchMechanics tests that the indexing and search plumbing works
@@ -230,17 +235,52 @@ func TestBasicIndexAndSearchMechanics(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, results, 3, "Should return all indexed posts")
+}
 
-	// Test time filter works
-	results2, err := search.Search(ctx, "query", embeddings.SearchOptions{
-		Limit:        5,
-		UserID:       "user1",
-		CreatedAfter: now + 500,
+// TestRecencyBiasEndToEnd verifies the over-fetch + rerank path against real
+// pgvector: two posts with identical content produce identical similarity
+// (the mock provider is deterministic), so with recency bias enabled the
+// ordering can only come from the time decay.
+func TestRecencyBiasEndToEnd(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	const dimensions = 64
+	search := createFullSearchSystemWithRecency(t, db, dimensions, embeddings.RecencyBiasSettings{
+		Enabled:      true,
+		HalfLifeDays: 7,
+		Floor:        0.7,
+	})
+	ctx := context.Background()
+
+	addTestChannel(t, db, "channel1", "team1", "O", []string{"user1"})
+
+	const content = "How do I configure the deployment pipeline for staging?"
+	now := model.GetMillis()
+	oldCreateAt := now - 90*24*60*60*1000 // 90 days ago
+	freshCreateAt := now - 60*60*1000     // 1 hour ago
+
+	addTestPost(t, db, "old_post", "user1", "channel1", content, oldCreateAt)
+	addTestPost(t, db, "fresh_post", "user1", "channel1", content, freshCreateAt)
+
+	err := search.Store(ctx, []embeddings.PostDocument{
+		{PostID: "old_post", CreateAt: oldCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
+		{PostID: "fresh_post", CreateAt: freshCreateAt, TeamID: "team1", ChannelID: "channel1", UserID: "user1", Content: content},
 	})
 	require.NoError(t, err)
-	for _, result := range results2 {
-		assert.Greater(t, result.Document.CreateAt, now+500, "All results should be after filter time")
-	}
+
+	results, err := search.Search(ctx, content, embeddings.SearchOptions{
+		Limit:  2,
+		UserID: "user1",
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	// Identical content means identical raw similarity scores...
+	assert.InDelta(t, float64(results[0].Score), float64(results[1].Score), 1e-6)
+	// ...so the newer post ranking first proves the recency rerank worked.
+	assert.Equal(t, "fresh_post", results[0].Document.PostID)
+	assert.Equal(t, "old_post", results[1].Document.PostID)
 }
 
 // TestReindexWithDimensionMismatch verifies Full Reindex Clear recreates the
@@ -334,7 +374,7 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up multiple channels
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		addTestChannel(t, db, fmt.Sprintf("channel%d", i), "team1", "O", []string{"user1"})
 	}
 
@@ -342,7 +382,7 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 
 	// Create initial posts
 	var initialDocs []embeddings.PostDocument
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		postID := fmt.Sprintf("initial_post_%d", i)
 		channelID := fmt.Sprintf("channel%d", i%5)
 		message := fmt.Sprintf("Initial post content number %d about various topics", i)
@@ -370,8 +410,8 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 
 	// Pre-create all concurrent posts in the database first (needed for foreign key)
 	var concurrentDocs []embeddings.PostDocument
-	for i := 0; i < 5; i++ {
-		for j := 0; j < 10; j++ {
+	for i := range 5 {
+		for j := range 10 {
 			postID := fmt.Sprintf("concurrent_post_%d_%d", i, j)
 			channelID := fmt.Sprintf("channel%d", i%5)
 			message := fmt.Sprintf("Concurrent indexed content %d-%d about testing", i, j)
@@ -391,11 +431,11 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	}
 
 	// Start concurrent indexing goroutines
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			for j := 0; j < 10; j++ {
+			for j := range 10 {
 				docIdx := idx*10 + j
 				doc := concurrentDocs[docIdx]
 
@@ -409,12 +449,12 @@ func TestConcurrentIndexingAndSearching(t *testing.T) {
 	}
 
 	// Start concurrent search goroutines
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			queries := []string{"initial content", "various topics", "testing concurrent", "post number"}
-			for j := 0; j < 5; j++ {
+			for j := range 5 {
 				query := queries[j%len(queries)]
 				_, searchErr := search.Search(ctx, query, embeddings.SearchOptions{
 					Limit:  10,

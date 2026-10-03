@@ -4,11 +4,16 @@
 const config = {
     presets: [
         ['@babel/preset-env', {
+
+            // Minimum supported browsers, per
+            // https://docs.mattermost.com/deployment-guide/software-hardware-requirements.html
+            // Strings, not numbers: a numeric target loses trailing zeroes, so
+            // a version like 16.10 would be read as 16.1.
             targets: {
-                chrome: 110,
-                firefox: 102,
-                edge: 110,
-                safari: 16.2,
+                chrome: '146',
+                firefox: '140',
+                edge: '146',
+                safari: '26.2',
             },
             modules: false,
             corejs: 3,
@@ -17,7 +22,7 @@ const config = {
             shippedProposals: true,
         }],
         ['@babel/preset-react', {
-            useBuiltIns: true,
+            runtime: 'automatic',
         }],
         ['@babel/typescript', {
             allExtensions: true,
@@ -47,6 +52,16 @@ config.env = {
     test: {
         presets: config.presets,
         plugins: config.plugins,
+    },
+
+    // Selected by webpack's babel-loader envName for `npm run debug`.
+    development: {
+        presets: [
+            ['@babel/preset-react', {
+                runtime: 'automatic',
+                development: true,
+            }],
+        ],
     },
 };
 config.env.test.presets[0][1].modules = 'auto';

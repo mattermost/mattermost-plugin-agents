@@ -4,124 +4,149 @@
 package bifrost
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 )
 
-// bifrostErrorString returns a non-empty description of a bifrost error.
-// Error.Message is blank when the provider response body doesn't match bifrost's
-// expected error shape, and on transport/cancellation paths — so fall back to
-// the wrapped Go error, then to status/type/code, before giving up.
-func bifrostErrorString(bifrostErr *schemas.BifrostError) string {
+// providerError converts a bifrost error into the error returned to callers,
+// with redactKeys scrubbed, and records it on span when span is non-nil.
+func providerError(span trace.Span, prefix string, bifrostErr *schemas.BifrostError, redactKeys ...string) error {
+	details := describeBifrostError(bifrostErr)
+	err := llm.SanitizeProviderError(fmt.Errorf("%s: %s", prefix, details), redactKeys...)
+	if span != nil {
+		span.SetAttributes(details.attributes()...)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return err
+}
+
+type bifrostErrorDetails struct {
+	message        string
+	status         *int
+	typ            string
+	code           string
+	provider       string
+	isBifrostError bool
+}
+
+// describeBifrostError falls back to the wrapped Go error because
+// Error.Message is blank on transport and cancellation paths.
+func describeBifrostError(bifrostErr *schemas.BifrostError) bifrostErrorDetails {
 	if bifrostErr == nil {
-		return "<nil bifrost error>"
+		return bifrostErrorDetails{message: "<nil bifrost error>"}
 	}
 
+	details := bifrostErrorDetails{
+		status:         bifrostErr.StatusCode,
+		provider:       string(bifrostErr.ExtraFields.RoutingInfo.Provider),
+		isBifrostError: bifrostErr.IsBifrostError,
+	}
+	var errorType string
 	if bifrostErr.Error != nil {
-		if msg := strings.TrimSpace(bifrostErr.Error.Message); msg != "" {
-			return msg
+		details.message = strings.TrimSpace(bifrostErr.Error.Message)
+		if details.message == "" && bifrostErr.Error.Error != nil {
+			details.message = strings.TrimSpace(bifrostErr.Error.Error.Error())
 		}
-		if bifrostErr.Error.Error != nil {
-			if msg := strings.TrimSpace(bifrostErr.Error.Error.Error()); msg != "" {
-				return msg
-			}
-		}
+		errorType = derefString(bifrostErr.Error.Type)
+		details.code = derefString(bifrostErr.Error.Code)
 	}
+	details.message = cmp.Or(details.message, "empty bifrost error")
+	details.typ = cmp.Or(errorType, derefString(bifrostErr.Type))
+	return details
+}
 
+func (d bifrostErrorDetails) String() string {
 	var parts []string
-	if bifrostErr.StatusCode != nil {
-		parts = append(parts, fmt.Sprintf("status=%d", *bifrostErr.StatusCode))
+	if d.status != nil {
+		parts = append(parts, fmt.Sprintf("status=%d", *d.status))
 	}
-	if t := errorType(bifrostErr); t != "" {
-		parts = append(parts, fmt.Sprintf("type=%s", t))
+	if d.typ != "" {
+		parts = append(parts, "type="+d.typ)
 	}
-	if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code != "" {
-		parts = append(parts, fmt.Sprintf("code=%s", *bifrostErr.Error.Code))
+	if d.code != "" {
+		parts = append(parts, "code="+d.code)
 	}
-
+	if d.provider != "" {
+		parts = append(parts, "provider="+d.provider)
+	}
 	if len(parts) == 0 {
-		return "empty bifrost error"
+		return d.message
 	}
-	return "empty bifrost error (" + strings.Join(parts, " ") + ")"
+	return d.message + " (" + strings.Join(parts, " ") + ")"
 }
 
-func errorType(bifrostErr *schemas.BifrostError) string {
-	if bifrostErr.Error != nil && bifrostErr.Error.Type != nil && *bifrostErr.Error.Type != "" {
-		return *bifrostErr.Error.Type
+func (d bifrostErrorDetails) attributes() []attribute.KeyValue {
+	attrs := []attribute.KeyValue{telemetry.LLMBifrostIsBifrostErr.Bool(d.isBifrostError)}
+	if d.status != nil {
+		attrs = append(attrs, telemetry.LLMBifrostStatusCode.Int(*d.status))
 	}
-	if bifrostErr.Type != nil && *bifrostErr.Type != "" {
-		return *bifrostErr.Type
+	if d.typ != "" {
+		attrs = append(attrs, telemetry.LLMBifrostErrorType.String(d.typ))
 	}
-	return ""
+	if d.code != "" {
+		attrs = append(attrs, telemetry.LLMBifrostErrorCode.String(d.code))
+	}
+	if d.provider != "" {
+		attrs = append(attrs, telemetry.LLMBifrostErrorProvider.String(d.provider))
+	}
+	return attrs
 }
 
-// recordBifrostError attaches BifrostError fields to the current span as
-// attributes so opaque "bifrost error: …" log lines can be correlated with the
-// upstream status / type / code at trace time.
-func recordBifrostError(span trace.Span, bifrostErr *schemas.BifrostError) {
-	if span == nil || bifrostErr == nil {
-		return
+func derefString(s *string) string {
+	if s == nil {
+		return ""
 	}
-	attrs := make([]attribute.KeyValue, 0, 5)
-	attrs = append(attrs, telemetry.LLMBifrostIsBifrostErr.Bool(bifrostErr.IsBifrostError))
-	if bifrostErr.StatusCode != nil {
-		attrs = append(attrs, telemetry.LLMBifrostStatusCode.Int(*bifrostErr.StatusCode))
-	}
-	if t := errorType(bifrostErr); t != "" {
-		attrs = append(attrs, telemetry.LLMBifrostErrorType.String(t))
-	}
-	if bifrostErr.Error != nil && bifrostErr.Error.Code != nil && *bifrostErr.Error.Code != "" {
-		attrs = append(attrs, telemetry.LLMBifrostErrorCode.String(*bifrostErr.Error.Code))
-	}
-	if provider := string(bifrostErr.ExtraFields.Provider); provider != "" {
-		attrs = append(attrs, telemetry.LLMBifrostErrorProvider.String(provider))
-	}
-	span.SetAttributes(attrs...)
+	return *s
 }
 
 // recordReasoningSent attaches the outbound request's reasoning configuration
 // to the current span. Pass nil when no reasoning block is attached.
 func recordReasoningSent(span trace.Span, reasoning *schemas.ChatReasoning) {
-	if span == nil {
-		return
-	}
 	if reasoning == nil {
-		span.SetAttributes(telemetry.LLMReasoningSent.Bool(false))
+		recordReasoningSentAttrs(span, false, nil, nil)
 		return
 	}
-	attrs := []attribute.KeyValue{telemetry.LLMReasoningSent.Bool(true)}
-	if reasoning.Effort != nil {
-		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*reasoning.Effort))
-	}
-	if reasoning.MaxTokens != nil {
-		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*reasoning.MaxTokens))
-	}
-	span.SetAttributes(attrs...)
+	recordReasoningSentAttrs(span, true, reasoning.Effort, reasoning.MaxTokens)
 }
 
 // recordResponsesReasoningSent is the Responses-API counterpart to
 // recordReasoningSent. The Responses parameter type is distinct from
 // ChatReasoning so we need a sibling overload.
 func recordResponsesReasoningSent(span trace.Span, reasoning *schemas.ResponsesParametersReasoning) {
+	if reasoning == nil {
+		recordReasoningSentAttrs(span, false, nil, nil)
+		return
+	}
+	recordReasoningSentAttrs(span, true, reasoning.Effort, reasoning.MaxTokens)
+}
+
+// recordReasoningSentAttrs is the shared core of recordReasoningSent and
+// recordResponsesReasoningSent; sent is false when no reasoning block is
+// attached to the request.
+func recordReasoningSentAttrs(span trace.Span, sent bool, effort *string, maxTokens *int) {
 	if span == nil {
 		return
 	}
-	if reasoning == nil {
+	if !sent {
 		span.SetAttributes(telemetry.LLMReasoningSent.Bool(false))
 		return
 	}
 	attrs := []attribute.KeyValue{telemetry.LLMReasoningSent.Bool(true)}
-	if reasoning.Effort != nil {
-		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*reasoning.Effort))
+	if effort != nil {
+		attrs = append(attrs, telemetry.LLMReasoningEffort.String(*effort))
 	}
-	if reasoning.MaxTokens != nil {
-		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*reasoning.MaxTokens))
+	if maxTokens != nil {
+		attrs = append(attrs, telemetry.LLMReasoningMaxTokens.Int(*maxTokens))
 	}
 	span.SetAttributes(attrs...)
 }

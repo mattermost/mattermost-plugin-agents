@@ -213,12 +213,11 @@ External callers can't inject one. Don't add a second auth gate in
 your outer `ServeHTTP`, and don't read `X-Mattermost-UserID` directly
 from headers in handlers; always go through `GetUserID`.
 
-**Registration is one-shot per `OnActivate`.** The retry goroutine
-exits on success or after 15 attempts. If the Agents plugin restarts
-later, the in-memory registration is lost. The Agents plugin restores
-admin-persisted entries on its own restart, but a never-saved
-registration only comes back when your plugin is re-activated. Permanent
-non-retriable errors (4xx other than 404/429) log
+**Registration retries are bounded.** The retry goroutine exits on
+success or after 15 attempts. After a successful registration, the
+Agents plugin persists it and restores it across its own restarts while
+your plugin remains enabled. Permanent non-retriable errors (4xx other
+than 404/429) log
 `registration with Agents plugin failed permanently` and stop.
 
 **Tool-count budget.** Each tool costs ~20-200 schema tokens in every

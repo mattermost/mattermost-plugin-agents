@@ -82,7 +82,42 @@ export class MattermostPage {
         // Wait for navigation to complete and channel view to be visible
         // Using a more generous timeout and proper wait strategy for parallel test runs
         await this.page.waitForURL(/.*\/test\/channels\/.*/, { timeout: channelTimeout });
-        await this.page.getByTestId('channel_view').waitFor({ state: 'visible', timeout: channelTimeout });
+        await this.waitForChannelView(channelTimeout);
+    }
+
+    /**
+     * The Mattermost webapp occasionally fails to lazy-load one of its static chunks right after
+     * login (ChunkLoadError / "Loading CSS chunk N failed") and then never renders the channel view.
+     * Reload once in that case instead of waiting out the full timeout.
+     */
+    private async waitForChannelView(timeout: number) {
+        const channelView = this.page.getByTestId('channel_view');
+        let onPageError: (error: Error) => void = () => {};
+        const chunkLoadFailed = new Promise<'chunk-load-failed'>((resolve) => {
+            onPageError = (error: Error) => {
+                if (/Loading (CSS )?chunk \S+ failed/.test(error.message)) {
+                    resolve('chunk-load-failed');
+                }
+            };
+        });
+        this.page.on('pageerror', onPageError);
+
+        const startedAt = Date.now();
+        let outcome: 'visible' | 'chunk-load-failed';
+        try {
+            outcome = await Promise.race([
+                channelView.waitFor({ state: 'visible', timeout }).then(() => 'visible' as const),
+                chunkLoadFailed,
+            ]);
+        } finally {
+            this.page.off('pageerror', onPageError);
+        }
+
+        if (outcome === 'chunk-load-failed') {
+            await this.page.reload({ waitUntil: 'domcontentloaded' });
+            const remaining = Math.max(timeout - (Date.now() - startedAt), 30000);
+            await channelView.waitFor({ state: 'visible', timeout: remaining });
+        }
     }
 
     async sendChannelMessage(message: string) {
@@ -157,6 +192,36 @@ export class MattermostPage {
             }
             await this.page.waitForTimeout(Math.min(pollInterval, remaining));
         }
+    }
+
+    /**
+     * Poll until the bot has posted a reply inside the given thread whose content contains
+     * `expectedText`, and return the matching post. This is a substring match on the post as
+     * fetched, so it proves the text has appeared — not that streaming has finished. Pass text
+     * that only occurs in the completed reply, or the returned post may still be streaming.
+     */
+    async expectBotThreadReplyFromApi(
+        client: Client4,
+        channelId: string,
+        botUserId: string,
+        rootId: string,
+        expectedText: string,
+        options?: { timeoutMs?: number },
+    ): Promise<Post> {
+        const timeout = options?.timeoutMs ?? 45000;
+        let match: Post | undefined;
+        await expect.poll(async () => {
+            const posts = await fetchPostsForChannel(client, channelId);
+            match = posts.find(
+                (p) => p.user_id === botUserId && p.root_id === rootId && p.message.includes(expectedText),
+            );
+            return Boolean(match);
+        }, {
+            message: `Expected bot ${botUserId} to post a fully-streamed reply containing ${JSON.stringify(expectedText)} in thread ${rootId} of channel ${channelId}.`,
+            timeout,
+            intervals: [500, 1000, 2000],
+        }).toBe(true);
+        return match!;
     }
 
     /**

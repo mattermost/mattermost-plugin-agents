@@ -5,7 +5,13 @@ import React, {useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage} from 'react-intl';
 
+import {isValidId} from '@/utils/ids';
+
 import {PostPreview} from './post_preview';
+
+// Mirrors maxMaxResults in api/api_search.go: the server never returns more
+// than this many search results, so anything beyond it is dropped.
+export const MAX_SEARCH_SOURCES = 100;
 
 // Utility for formatting relevance scores
 const formatScore = (score: number): string => {
@@ -46,16 +52,17 @@ const SourceCount = styled.span`
 	line-height: 16px;
 `;
 
-const CollapseIcon = styled.i<{isOpen: boolean}>`
+// Transient ($-prefixed) props so styled-components doesn't forward them to the DOM.
+const CollapseIcon = styled.i<{$isOpen: boolean}>`
     font-size: 18px;
     color: rgba(var(--center-channel-color-rgb), 0.56);
     margin-left: auto;
-    transform: ${(props) => (props.isOpen ? 'rotate(180deg)' : 'rotate(0deg)')};
+    transform: ${(props) => (props.$isOpen ? 'rotate(180deg)' : 'rotate(0deg)')};
     transition: transform 0.15s ease-in-out;
 `;
 
-const SourcesList = styled.div<{isOpen: boolean}>`
-    display: ${(props) => (props.isOpen ? 'flex' : 'none')};
+const SourcesList = styled.div<{$isOpen: boolean}>`
+    display: ${(props) => (props.$isOpen ? 'flex' : 'none')};
     flex-direction: column;
     margin-top: 8px;
 `;
@@ -96,12 +103,64 @@ const SourceItem = styled.div`
     }
 `;
 
-interface Source {
+export interface Source {
     postId: string;
     channelId: string;
     userId: string;
     content: string;
     score: number;
+}
+
+// toSource accepts an entry only when it is an object referencing well-formed
+// ids; the remaining display fields are coerced to safe defaults.
+function toSource(entry: unknown): Source | null {
+    if (typeof entry !== 'object' || entry === null) {
+        return null;
+    }
+    const {postId, channelId, userId, content, score} = entry as Record<string, unknown>;
+    if (!isValidId(postId) || !isValidId(channelId) || !isValidId(userId)) {
+        return null;
+    }
+    return {
+        postId,
+        channelId,
+        userId,
+        content: typeof content === 'string' ? content : '',
+        score: typeof score === 'number' && Number.isFinite(score) ? score : 0,
+    };
+}
+
+// parseSearchSources decodes the search_results post prop. Post props are
+// free-form JSON, so the value may be missing, not a string, not valid JSON,
+// not an array, or hold entries without well-formed ids. Anything unusable is
+// dropped rather than thrown so a bad prop can never break the post render,
+// and the result is bounded to the server's maximum result count.
+export function parseSearchSources(raw: unknown): Source[] {
+    if (typeof raw !== 'string' || raw === '') {
+        return [];
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return [];
+    }
+    if (!Array.isArray(parsed)) {
+        return [];
+    }
+
+    const sources: Source[] = [];
+    for (const entry of parsed) {
+        if (sources.length >= MAX_SEARCH_SOURCES) {
+            break;
+        }
+        const source = toSource(entry);
+        if (source) {
+            sources.push(source);
+        }
+    }
+    return sources;
 }
 
 interface SourceItemProps {
@@ -148,10 +207,10 @@ export const SearchSources = ({sources}: Props) => {
                 </SourcesTitle>
                 <CollapseIcon
                     className='icon-chevron-down'
-                    isOpen={isOpen}
+                    $isOpen={isOpen}
                 />
             </SourcesHeader>
-            <SourcesList isOpen={isOpen}>
+            <SourcesList $isOpen={isOpen}>
                 {sources.map((source, index) => (
                     <SearchSource
                         key={source.postId}

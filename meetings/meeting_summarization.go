@@ -11,12 +11,11 @@ import (
 	"os/exec"
 	"strings"
 
-	sq "github.com/Masterminds/squirrel"
-
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -40,13 +39,13 @@ func GetCaptionsFileIDFromProps(post *model.Post) (fileID string, err error) {
 		}
 	}()
 
-	captions, ok := post.GetProp("captions").([]interface{})
+	captions, ok := post.GetProp("captions").([]any)
 	if !ok || len(captions) == 0 {
 		return "", errors.New("no captions on post")
 	}
 
 	// Calls will only ever have one for now.
-	return captions[0].(map[string]interface{})["file_id"].(string), nil
+	return captions[0].(map[string]any)["file_id"].(string), nil
 }
 
 // GetCaptionsFileIDFromProps is a wrapper method to make the function available via the Service
@@ -54,17 +53,17 @@ func (s *Service) GetCaptionsFileIDFromProps(post *model.Post) (fileID string, e
 	return GetCaptionsFileIDFromProps(post)
 }
 
-func (s *Service) createTranscription(recordingFileID string) (*subtitles.Subtitles, error) {
+func (s *Service) createTranscription(mm mmapi.Client, recordingFileID string) (*subtitles.Subtitles, error) {
 	if s.ffmpegPath == "" {
 		return nil, errors.New("ffmpeg not installed")
 	}
 
-	recordingFileInfo, err := s.pluginAPI.File.GetInfo(recordingFileID)
+	recordingFileInfo, err := mm.GetFileInfo(recordingFileID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get calls file info: %w", err)
 	}
 
-	fileReader, err := s.pluginAPI.File.Get(recordingFileID)
+	fileReader, err := mm.GetFile(recordingFileID)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read calls file: %w", err)
 	}
@@ -112,7 +111,7 @@ func (s *Service) createTranscription(recordingFileID string) (*subtitles.Subtit
 	return transcription, nil
 }
 
-func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string) (*model.Post, error) {
+func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string, mm mmapi.Client) (*model.Post, error) {
 	siteURL := s.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 	surePost := &model.Post{
@@ -123,14 +122,14 @@ func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.Us
 		return nil, err
 	}
 
-	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel); err != nil {
+	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel, mm); err != nil {
 		return nil, err
 	}
 
 	return surePost, nil
 }
 
-func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel) (*model.Post, error) {
+func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel, mm mmapi.Client) (*model.Post, error) {
 	if len(transcriptionPost.FileIds) != 1 {
 		return nil, errors.New("unexpected number of files in calls post")
 	}
@@ -157,12 +156,17 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing transcription: %v", r)
+			}
+		}()
 
 		transcriptionFileID, err := GetCaptionsFileIDFromProps(transcriptionPost)
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file id: %w", err)
 		}
-		transcriptionFileInfo, err := s.pluginAPI.File.GetInfo(transcriptionFileID)
+		transcriptionFileInfo, err := mm.GetFileInfo(transcriptionFileID)
 		if err != nil {
 			return fmt.Errorf("unable to get transcription file info: %w", err)
 		}
@@ -173,7 +177,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		if transcriptionFilePost.ChannelId != channel.Id {
 			return errors.New("strange configuration of calls transcription file")
 		}
-		transcriptionFileReader, err := s.pluginAPI.File.Get(transcriptionFileID)
+		transcriptionFileReader, err := mm.GetFile(transcriptionFileID)
 		if err != nil {
 			return fmt.Errorf("unable to read calls file: %w", err)
 		}
@@ -218,7 +222,11 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 	return surePost, nil
 }
 
-func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel) error {
+func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client) error {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return err
+	}
+
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 
 	transcriptPost := &model.Post{
@@ -241,8 +249,13 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
+		defer func() {
+			if r := recover(); r != nil {
+				reterr = fmt.Errorf("panic summarizing call recording: %v", r)
+			}
+		}()
 
-		transcription, err := s.createTranscription(recordingFileID)
+		transcription, err := s.createTranscription(mm, recordingFileID)
 		if err != nil {
 			return fmt.Errorf("failed to create transcription: %w", err)
 		}
@@ -282,6 +295,10 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 }
 
 func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
+	if err := s.checkMeetingsLicense(); err != nil {
+		return nil, err
+	}
+
 	llmFormattedTranscription := transcription.FormatForLLM()
 	tokens := llm.EstimateTokens(llmFormattedTranscription)
 	inputLimit := bot.LLM().InputTokenLimit()
@@ -369,17 +386,8 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 }
 
 func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
-	if _, err := s.db.ExecBuilder(s.db.Builder().
-		Update("FileInfo").
-		Set("PostId", post.Id).
-		Set("ChannelId", post.ChannelId).
-		Where(sq.And{
-			sq.Eq{"Id": fileinfo.Id},
-			sq.Eq{"PostId": ""},
-		})); err != nil {
-		return fmt.Errorf("unable to update file info: %w", err)
-	}
-
+	// The server's UpdatePost attaches the still-unattached file (uploaded
+	// via the plugin API, CreatorId "nouser") when it appears in FileIds.
 	post.FileIds = []string{fileinfo.Id}
 	post.Message = ""
 	if err := s.pluginAPI.Post.UpdatePost(post); err != nil {

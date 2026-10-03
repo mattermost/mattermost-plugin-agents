@@ -263,13 +263,8 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 		expectedSubType   string
 	}{
 		{
-			name: "agent non-stream request",
-			service: llm.ServiceConfig{
-				ID:           "svc-agent",
-				Name:         "svc-agent",
-				Type:         "openai",
-				DefaultModel: "gpt-4.1",
-			},
+			name:    "agent non-stream request",
+			service: bridgeServiceConfig("svc-agent", "svc-agent", llm.ServiceTypeOpenAI, "gpt-4.1"),
 			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
 				_, err := client.AgentCompletion(testBotUserID, req)
 				return err
@@ -278,13 +273,8 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 			expectedSubType:   llm.SubTypeNoStream,
 		},
 		{
-			name: "service stream request",
-			service: llm.ServiceConfig{
-				ID:           "svc-service",
-				Name:         "svc-service",
-				Type:         "anthropic",
-				DefaultModel: "claude-3-7-sonnet",
-			},
+			name:    "service stream request",
+			service: bridgeServiceConfig("svc-service", "svc-service", llm.ServiceTypeAnthropic, "claude-sonnet-4-5"),
 			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
 				streamResult, err := client.ServiceCompletionStream("svc-service", req)
 				if err != nil {
@@ -297,13 +287,8 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 			expectedSubType:   llm.SubTypeStreaming,
 		},
 		{
-			name: "agent non-stream request with caller operation override",
-			service: llm.ServiceConfig{
-				ID:           "svc-custom-operation",
-				Name:         "svc-custom-operation",
-				Type:         "openai",
-				DefaultModel: "gpt-4.1",
-			},
+			name:    "agent non-stream request with caller operation override",
+			service: bridgeServiceConfig("svc-custom-operation", "svc-custom-operation", llm.ServiceTypeOpenAI, "gpt-4.1"),
 			call: func(client *bridgeclient.Client, req bridgeclient.CompletionRequest) error {
 				req.Operation = "playbooks_summary"
 				req.OperationSubType = "incident_report"
@@ -334,6 +319,11 @@ func TestBridgeClientContextEnrichment(t *testing.T) {
 				bot.SetServiceForTest(tc.service)
 				bot.SetLLMForTest(fakeLLM)
 			}
+
+			// The service path reads stored configuration and leases its own
+			// model; the agent path goes through the bot above.
+			e.config.services = []llm.ServiceConfig{tc.service}
+			e.installServiceLLM(fakeLLM)
 
 			// Service path resolves channel/team; agent path does not.
 			e.mockAPI.On("GetChannel", testChannelID).Return(&model.Channel{
@@ -466,238 +456,6 @@ func TestBridgeClientAgentCompletionStream(t *testing.T) {
 			// Create bridge client and make streaming request
 			client := e.CreateBridgeClient()
 			result, err := client.AgentCompletionStream(tc.agent, tc.request)
-
-			if tc.expectError {
-				require.Error(t, err)
-				if tc.errorMsg != "" {
-					require.Contains(t, err.Error(), tc.errorMsg)
-				}
-			} else {
-				require.NoError(t, err)
-				if tc.validateRes != nil {
-					tc.validateRes(t, result)
-				}
-			}
-		})
-	}
-}
-
-func TestBridgeClientServiceCompletion(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	tests := []struct {
-		name          string
-		service       string
-		request       bridgeclient.CompletionRequest
-		serviceConfig llm.ServiceConfig
-		fakeLLM       *FakeLLM
-		expectError   bool
-		errorMsg      string
-		validateRes   func(t *testing.T, result string)
-	}{
-		{
-			name:    "successful service completion by ID",
-			service: "test-service-id",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-			},
-			serviceConfig: llm.ServiceConfig{
-				ID:   "test-service-id",
-				Name: "Test Service",
-			},
-			fakeLLM:     NewFakeLLM("Service response"),
-			expectError: false,
-			validateRes: func(t *testing.T, result string) {
-				require.Equal(t, "Service response", result)
-			},
-		},
-		{
-			name:    "successful service completion by name",
-			service: "TestService",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-			},
-			serviceConfig: llm.ServiceConfig{
-				ID:   "test-service-id",
-				Name: "TestService",
-			},
-			fakeLLM:     NewFakeLLM("Service response by name"),
-			expectError: false,
-			validateRes: func(t *testing.T, result string) {
-				require.Equal(t, "Service response by name", result)
-			},
-		},
-		{
-			name:    "service not found",
-			service: "nonexistent-service",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-			},
-			serviceConfig: llm.ServiceConfig{ID: "other-service", Name: "Other"},
-			fakeLLM:       NewFakeLLM("test"),
-			expectError:   true,
-			errorMsg:      "no bot found for service",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			// Setup bot with service
-			botConfig := llm.BotConfig{
-				Name:            "testbot",
-				DisplayName:     "Test Bot",
-				UserAccessLevel: llm.UserAccessLevelAll,
-			}
-			e.setupTestBot(botConfig)
-
-			// Set service and LLM
-			for _, bot := range e.bots.GetAllBots() {
-				bot.SetServiceForTest(tc.serviceConfig)
-				if tc.fakeLLM != nil {
-					bot.SetLLMForTest(tc.fakeLLM)
-				}
-			}
-
-			// Allow error logging
-			e.mockAPI.On("LogError", mock.Anything).Maybe()
-
-			// Create bridge client and make request
-			client := e.CreateBridgeClient()
-			result, err := client.ServiceCompletion(tc.service, tc.request)
-
-			if tc.expectError {
-				require.Error(t, err)
-				if tc.errorMsg != "" {
-					require.Contains(t, err.Error(), tc.errorMsg)
-				}
-			} else {
-				require.NoError(t, err)
-				if tc.validateRes != nil {
-					tc.validateRes(t, result)
-				}
-			}
-		})
-	}
-}
-
-func TestBridgeClientServiceCompletionStream(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	tests := []struct {
-		name          string
-		service       string
-		request       bridgeclient.CompletionRequest
-		serviceConfig llm.ServiceConfig
-		fakeLLM       *FakeLLM
-		expectError   bool
-		errorMsg      string
-		validateRes   func(t *testing.T, result *llm.TextStreamResult)
-	}{
-		{
-			name:    "successful service streaming",
-			service: "openai-service",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Stream test"},
-				},
-			},
-			serviceConfig: llm.ServiceConfig{
-				ID:   "openai-service",
-				Name: "OpenAI",
-			},
-			fakeLLM: NewFakeLLMWithStreamEvents([]llm.TextStreamEvent{
-				{Type: llm.EventTypeText, Value: "OpenAI "},
-				{Type: llm.EventTypeText, Value: "stream"},
-				{Type: llm.EventTypeEnd, Value: nil},
-			}),
-			expectError: false,
-			validateRes: func(t *testing.T, result *llm.TextStreamResult) {
-				require.NotNil(t, result)
-
-				var text strings.Builder
-				for event := range result.Stream {
-					if event.Type == llm.EventTypeText {
-						if textValue, ok := event.Value.(string); ok {
-							text.WriteString(textValue)
-						}
-					} else if event.Type == llm.EventTypeEnd {
-						break
-					}
-				}
-
-				require.Equal(t, "OpenAI stream", text.String())
-			},
-		},
-		{
-			name:    "service not found",
-			service: "nonexistent",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-			},
-			serviceConfig: llm.ServiceConfig{ID: "other", Name: "Other"},
-			fakeLLM:       NewFakeLLM("test"),
-			expectError:   true,
-			errorMsg:      "no bot found for service",
-		},
-		{
-			name:    "allowed tools not supported on service stream endpoint",
-			service: "openai-service",
-			request: bridgeclient.CompletionRequest{
-				Posts: []bridgeclient.Post{
-					{Role: "user", Message: "Hello"},
-				},
-				AllowedTools: []string{"eligible_tool"},
-			},
-			serviceConfig: llm.ServiceConfig{
-				ID:   "openai-service",
-				Name: "OpenAI",
-			},
-			fakeLLM:     NewFakeLLM("test"),
-			expectError: true,
-			errorMsg:    "allowed_tools is only supported for agent completion endpoints",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			// Setup bot with service
-			botConfig := llm.BotConfig{
-				Name:            "testbot",
-				DisplayName:     "Test Bot",
-				UserAccessLevel: llm.UserAccessLevelAll,
-			}
-			e.setupTestBot(botConfig)
-
-			// Set service and LLM
-			for _, bot := range e.bots.GetAllBots() {
-				bot.SetServiceForTest(tc.serviceConfig)
-				if tc.fakeLLM != nil {
-					bot.SetLLMForTest(tc.fakeLLM)
-				}
-			}
-
-			// Allow error logging
-			e.mockAPI.On("LogError", mock.Anything).Maybe()
-
-			// Create bridge client and make streaming request
-			client := e.CreateBridgeClient()
-			result, err := client.ServiceCompletionStream(tc.service, tc.request)
 
 			if tc.expectError {
 				require.Error(t, err)
@@ -950,9 +708,7 @@ func TestBridgeCompletionEndpointsRejectInvalidPrincipalIDs(t *testing.T) {
 	}
 
 	for _, invoker := range invokers {
-		invoker := invoker
 		for _, scenario := range scenarios {
-			scenario := scenario
 			t.Run(invoker.name+"/"+scenario.name, func(t *testing.T) {
 				e := SetupTestEnvironment(t)
 				defer e.Cleanup(t)
@@ -964,9 +720,15 @@ func TestBridgeCompletionEndpointsRejectInvalidPrincipalIDs(t *testing.T) {
 				}
 				e.setupTestBot(botConfig)
 				for _, bot := range e.bots.GetAllBots() {
-					bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
 					bot.SetLLMForTest(NewFakeLLM("unused"))
 				}
+
+				// The named service exists and is callable, so the rejection
+				// can only come from the malformed principal ID.
+				e.config.services = []llm.ServiceConfig{
+					bridgeServiceConfig("service-id", "service-name", llm.ServiceTypeOpenAI, "gpt-4o"),
+				}
+				e.installServiceLLM(NewFakeLLM("unused"))
 
 				client := e.CreateBridgeClient()
 				_, err := invoker.call(client, scenario.req)
@@ -1112,161 +874,6 @@ func TestBridgeGetBots(t *testing.T) {
 	}
 }
 
-func TestBridgeGetServices(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	tests := []struct {
-		name           string
-		userID         string
-		botConfigs     []llm.BotConfig
-		expectServices int
-		validateRes    func(t *testing.T, services []bridgeclient.BridgeServiceInfo)
-	}{
-		{
-			name:   "get all services without user_id",
-			userID: "",
-			botConfigs: []llm.BotConfig{
-				{
-					Name:            "bot1",
-					DisplayName:     "Bot One",
-					ServiceID:       "service1",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-				{
-					Name:            "bot2",
-					DisplayName:     "Bot Two",
-					ServiceID:       "service2",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-			},
-			expectServices: 2,
-			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
-				require.Len(t, services, 2)
-				// Verify service fields are populated
-				for _, svc := range services {
-					require.NotEmpty(t, svc.ID)
-					require.NotEmpty(t, svc.Name)
-					require.NotEmpty(t, svc.Type)
-				}
-			},
-		},
-		{
-			name:   "deduplicate services from multiple bots",
-			userID: "",
-			botConfigs: []llm.BotConfig{
-				{
-					Name:            "bot1",
-					DisplayName:     "Bot One",
-					ServiceID:       "service1",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-				{
-					Name:            "bot2",
-					DisplayName:     "Bot Two",
-					ServiceID:       "service1",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-			},
-			expectServices: 1,
-			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
-				require.Len(t, services, 1)
-			},
-		},
-		{
-			name:   "filter services by user permissions",
-			userID: testUserID,
-			botConfigs: []llm.BotConfig{
-				{
-					Name:            "bot1",
-					DisplayName:     "Bot One",
-					ServiceID:       "service1",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-				{
-					Name:            "bot2",
-					DisplayName:     "Bot Two",
-					ServiceID:       "service2",
-					UserAccessLevel: llm.UserAccessLevelAllow,
-					UserIDs:         []string{testOtherUserID},
-				},
-			},
-			expectServices: 1,
-			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
-				require.Len(t, services, 1)
-				require.Equal(t, "service1", services[0].ID)
-			},
-		},
-		{
-			name:           "no services configured",
-			userID:         "",
-			botConfigs:     []llm.BotConfig{},
-			expectServices: 0,
-			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
-				require.Empty(t, services)
-			},
-		},
-		{
-			name:   "services are sorted by name",
-			userID: "",
-			botConfigs: []llm.BotConfig{
-				{
-					Name:            "bot-zulu",
-					DisplayName:     "Zulu Bot",
-					ServiceID:       "service-zulu",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-				{
-					Name:            "bot-alpha",
-					DisplayName:     "Alpha Bot",
-					ServiceID:       "service-alpha",
-					UserAccessLevel: llm.UserAccessLevelAll,
-				},
-			},
-			expectServices: 2,
-			validateRes: func(t *testing.T, services []bridgeclient.BridgeServiceInfo) {
-				require.Len(t, services, 2)
-				require.Equal(t, "service-alpha", services[0].Name)
-				require.Equal(t, "service-zulu", services[1].Name)
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			// Setup bots - create all at once
-			allBots := make([]*bots.Bot, 0, len(tc.botConfigs))
-			for i, config := range tc.botConfigs {
-				mmBot := &model.Bot{
-					UserId:      fmt.Sprintf("%s%02d", testBotUserID[:24], i),
-					Username:    config.Name,
-					DisplayName: config.DisplayName,
-				}
-				bot := bots.NewBot(config, llm.ServiceConfig{
-					ID:   config.ServiceID,
-					Name: config.ServiceID,
-					Type: "test",
-				}, mmBot, nil)
-				allBots = append(allBots, bot)
-			}
-			e.bots.SetBotsForTesting(allBots)
-
-			// Create bridge client and make request
-			client := e.CreateBridgeClient()
-			services, err := client.GetServices(tc.userID)
-			require.NoError(t, err)
-
-			require.Len(t, services, tc.expectServices)
-			if tc.validateRes != nil {
-				tc.validateRes(t, services)
-			}
-		})
-	}
-}
-
 func setupBridgeEligibleMCPServer(t *testing.T, toolNames []string) *httptest.Server {
 	t.Helper()
 
@@ -1316,7 +923,7 @@ func (e *TestEnvironment) setupMCPWithEligibleTools(t *testing.T, toolNames []st
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},
@@ -1348,36 +955,6 @@ func (e *TestEnvironment) setupMCPWithEligibleTools(t *testing.T, toolNames []st
 	return server
 }
 
-func TestBridgeClientServiceCompletionRejectsAllowedTools(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	for _, bot := range e.bots.GetAllBots() {
-		bot.SetServiceForTest(llm.ServiceConfig{ID: "service-id", Name: "service-name"})
-		bot.SetLLMForTest(NewFakeLLM("ignored"))
-	}
-
-	client := e.CreateBridgeClient()
-	_, err := client.ServiceCompletion("service-id", bridgeclient.CompletionRequest{
-		Posts: []bridgeclient.Post{
-			{Role: "user", Message: "Hi"},
-		},
-		AllowedTools: []string{"eligible_tool"},
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "allowed_tools is only supported for agent completion endpoints")
-}
-
 func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
 	gin.DefaultWriter = io.Discard
@@ -1392,7 +969,7 @@ func TestBridgeGetAgentToolsReturnsEligibleOnly(t *testing.T) {
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},
@@ -1708,28 +1285,45 @@ func TestBridgeClientAgentCompletionAllowedToolsEnablesAutoRun(t *testing.T) {
 	require.Len(t, fakeLLM.LastConversation.Context.Tools.GetTools(), 1)
 }
 
-// fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider that returns
-// a fixed set of (namespaced) MCP tools regardless of user. Unlike
+// fakeBridgeMCPToolProvider is a minimal llmcontext.MCPToolProvider with
+// separate user-mode and service-account catalogs. Unlike
 // testLLMContextToolProvider (which feeds the built-in tool path), this exercises
 // the real MCP path: per-agent allowlist filtering and namespacing.
 type fakeBridgeMCPToolProvider struct {
-	tools []llm.Tool
+	tools   []llm.Tool // user-mode catalog
+	saTools []llm.Tool // service-account catalog (fail-closed subset)
+
+	userCalls      []string
+	saCalls        []string
+	saInvokerCalls []string
 }
 
-func (p *fakeBridgeMCPToolProvider) GetToolsForUser(_ context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (p *fakeBridgeMCPToolProvider) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	if req.ServiceAccount {
+		p.saCalls = append(p.saCalls, req.RemoteOwnerID)
+		p.saInvokerCalls = append(p.saInvokerCalls, req.InvokingUserID)
+		return p.saTools, nil
+	}
+	p.userCalls = append(p.userCalls, req.InvokingUserID)
 	return p.tools, nil
 }
 
 // setupBridgeMCPProvider wires the context builder with a real MCP tool provider
 // returning the given namespaced tools, so bridge discovery and completion run
 // through getToolsStoreForUser (namespacing + EnabledMCPTools filtering).
-func (e *TestEnvironment) setupBridgeMCPProvider(tools []llm.Tool) {
+func (e *TestEnvironment) setupBridgeMCPProvider(tools []llm.Tool) *fakeBridgeMCPToolProvider {
+	return e.setupBridgeMCPProviderSA(tools, nil)
+}
+
+func (e *TestEnvironment) setupBridgeMCPProviderSA(userTools, saTools []llm.Tool) *fakeBridgeMCPToolProvider {
+	provider := &fakeBridgeMCPToolProvider{tools: userTools, saTools: saTools}
 	e.api.contextBuilder = llmcontext.NewLLMContextBuilder(
 		e.client,
 		&testLLMContextToolProvider{},
-		&fakeBridgeMCPToolProvider{tools: tools},
+		provider,
 		&testLLMContextConfigProvider{},
 	)
+	return provider
 }
 
 // bridgeMCPTool builds a namespaced MCP tool (slug__bare) with the given origin.
@@ -1968,7 +1562,7 @@ func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
 	e := SetupTestEnvironment(t)
 	defer e.Cleanup(t)
 
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
+	_, statusCode, err := e.api.prepareAgentBridgeCompletion(
 		context.Background(),
 		testBotUserID,
 		bridgeclient.CompletionRequest{
@@ -1977,354 +1571,12 @@ func TestPrepareAgentBridgeCompletionAllowedToolsRequiresUserID(t *testing.T) {
 			},
 			AllowedTools: []string{"eligible_tool"},
 		},
-		"",
 		llm.OperationBridgeAgent,
 		llm.SubTypeNoStream,
 	)
 	require.Error(t, err)
 	require.Equal(t, http.StatusBadRequest, statusCode)
 	require.Contains(t, err.Error(), "allowed_tools requires user_id")
-}
-
-func TestPrepareAgentBridgeCompletionToolHooksRequiresPluginID(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
-		context.Background(),
-		testBotUserID,
-		bridgeclient.CompletionRequest{
-			Posts: []bridgeclient.Post{
-				{Role: "user", Message: "Hi"},
-			},
-			AllowedTools: []string{"eligible_tool"},
-			UserID:       testUserID,
-			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"eligible_tool": {BeforeCallback: "/hooks/before"},
-			},
-		},
-		"",
-		llm.OperationBridgeAgent,
-		llm.SubTypeNoStream,
-	)
-	require.Error(t, err)
-	require.Equal(t, http.StatusBadRequest, statusCode)
-	require.Contains(t, err.Error(), "tool_hooks requires Mattermost-Plugin-ID header")
-}
-
-func TestPrepareAgentBridgeCompletionStoresToolHookKeysInMCPMetadata(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	var storedKey string
-	var storedEntry mcp.BeforeHookEntry
-	e.mockAPI.On(
-		"KVSetWithOptions",
-		mock.MatchedBy(func(key string) bool {
-			storedKey = key
-			return strings.HasPrefix(key, "beforeHook:")
-		}),
-		mock.MatchedBy(func(data []byte) bool {
-			if err := json.Unmarshal(data, &storedEntry); err != nil {
-				return false
-			}
-			return storedEntry.UserID == testUserID &&
-				storedEntry.ToolName == "eligible_tool" &&
-				storedEntry.CallbackURL == "/plugins/com.example.caller/hooks/before"
-		}),
-		mock.MatchedBy(func(opts model.PluginKVSetOptions) bool {
-			return opts.ExpireInSeconds == int64(mcp.BeforeHookKeyTTL.Seconds())
-		}),
-	).Return(true, (*model.AppError)(nil)).Once()
-
-	_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
-		context.Background(),
-		testBotUserID,
-		bridgeclient.CompletionRequest{
-			Posts: []bridgeclient.Post{
-				{Role: "user", Message: "Hi"},
-			},
-			AllowedTools: []string{"eligible_tool"},
-			UserID:       testUserID,
-			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"eligible_tool": {BeforeCallback: "/hooks/before"},
-			},
-		},
-		" com.example.caller ",
-		llm.OperationBridgeAgent,
-		llm.SubTypeNoStream,
-	)
-	require.NoError(t, err)
-	require.Equal(t, 0, statusCode)
-	require.NotNil(t, llmRequest.Context)
-	require.Equal(t, []string{storedKey}, beforeHookKeys)
-
-	require.NotNil(t, llmRequest.Context.Tools)
-	scopedTool := llmRequest.Context.Tools.GetTool("eligible_tool")
-	require.NotNil(t, scopedTool)
-	require.NotNil(t, scopedTool.CallMetadata)
-	require.NotContains(t, scopedTool.CallMetadata, "hook_plugin_id")
-	hooks, ok := scopedTool.CallMetadata["tool_hooks"].(map[string]any)
-	require.True(t, ok)
-	eligible, ok := hooks["eligible_tool"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, storedKey, eligible["before_hook_key"])
-	require.NotContains(t, eligible, "before_callback")
-	require.Equal(t, testUserID, storedEntry.UserID)
-	require.Equal(t, "eligible_tool", storedEntry.ToolName)
-}
-
-// TestPrepareAgentBridgeCompletionToolHooksNormalizeToBare verifies before-hooks
-// fire whether the caller keys allowed_tools / tool_hooks by the bare or
-// namespaced name: the issued key and the MCP metadata key are always the bare
-// name, matching the embedded server's bare lookup at execution time.
-func TestPrepareAgentBridgeCompletionToolHooksNormalizeToBare(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	const (
-		bare       = "search_posts"
-		namespaced = "mattermost__search_posts"
-	)
-
-	testCases := []struct {
-		name        string
-		allowedTool string
-		hookKey     string
-	}{
-		{name: "bare allowed, bare hook", allowedTool: bare, hookKey: bare},
-		{name: "namespaced allowed, namespaced hook", allowedTool: namespaced, hookKey: namespaced},
-		{name: "namespaced allowed, bare hook", allowedTool: namespaced, hookKey: bare},
-		{name: "bare allowed, namespaced hook", allowedTool: bare, hookKey: namespaced},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			e := SetupTestEnvironment(t)
-			defer e.Cleanup(t)
-
-			e.setupBridgeMCPProvider([]llm.Tool{
-				bridgeMCPTool("mattermost", bare, embeddedOrigin),
-			})
-			e.setupTestBot(llm.BotConfig{
-				Name:                  "testbot",
-				DisplayName:           "Test Bot",
-				UserAccessLevel:       llm.UserAccessLevelAll,
-				MCPDynamicToolLoading: true,
-				EnabledMCPTools: []llm.EnabledMCPTool{
-					{ServerOrigin: embeddedOrigin, ToolName: bare},
-				},
-			})
-
-			var storedKey string
-			var storedEntry mcp.BeforeHookEntry
-			e.mockAPI.On(
-				"KVSetWithOptions",
-				mock.MatchedBy(func(key string) bool {
-					storedKey = key
-					return strings.HasPrefix(key, "beforeHook:")
-				}),
-				mock.MatchedBy(func(data []byte) bool {
-					if err := json.Unmarshal(data, &storedEntry); err != nil {
-						return false
-					}
-					return storedEntry.ToolName == bare
-				}),
-				mock.MatchedBy(func(opts model.PluginKVSetOptions) bool {
-					return opts.ExpireInSeconds == int64(mcp.BeforeHookKeyTTL.Seconds())
-				}),
-			).Return(true, (*model.AppError)(nil)).Once()
-
-			_, llmRequest, _, _, beforeHookKeys, statusCode, err := e.api.prepareAgentBridgeCompletion(
-				context.Background(),
-				testBotUserID,
-				bridgeclient.CompletionRequest{
-					Posts:        []bridgeclient.Post{{Role: "user", Message: "Hi"}},
-					AllowedTools: []string{tc.allowedTool},
-					UserID:       testUserID,
-					ToolHooks: map[string]bridgeclient.ToolHookConfig{
-						tc.hookKey: {BeforeCallback: "/hooks/before"},
-					},
-				},
-				"com.example.caller",
-				llm.OperationBridgeAgent,
-				llm.SubTypeNoStream,
-			)
-			require.NoError(t, err)
-			require.Equal(t, 0, statusCode)
-			require.Equal(t, []string{storedKey}, beforeHookKeys)
-			require.Equal(t, bare, storedEntry.ToolName)
-
-			require.NotNil(t, llmRequest.Context.Tools)
-			scopedTool := llmRequest.Context.Tools.GetTool(namespaced)
-			require.NotNil(t, scopedTool)
-			hooks, ok := scopedTool.CallMetadata["tool_hooks"].(map[string]any)
-			require.True(t, ok)
-			entry, ok := hooks[bare].(map[string]any)
-			require.True(t, ok, "tool_hooks metadata must be keyed by the bare name")
-			require.Equal(t, storedKey, entry["before_hook_key"])
-		})
-	}
-}
-
-// TestPrepareAgentBridgeCompletionToolHooksRejectsConflictingKeys verifies that
-// two tool_hooks keys for the same tool (one bare, one namespaced) that normalize
-// to the same bare name are rejected deterministically rather than silently
-// keeping one.
-func TestPrepareAgentBridgeCompletionToolHooksRejectsConflictingKeys(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	e.setupBridgeMCPProvider([]llm.Tool{
-		bridgeMCPTool("mattermost", "search_posts", embeddedOrigin),
-	})
-	e.setupTestBot(llm.BotConfig{
-		Name:                  "testbot",
-		DisplayName:           "Test Bot",
-		UserAccessLevel:       llm.UserAccessLevelAll,
-		MCPDynamicToolLoading: true,
-		EnabledMCPTools: []llm.EnabledMCPTool{
-			{ServerOrigin: embeddedOrigin, ToolName: "search_posts"},
-		},
-	})
-
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
-		context.Background(),
-		testBotUserID,
-		bridgeclient.CompletionRequest{
-			Posts:        []bridgeclient.Post{{Role: "user", Message: "Hi"}},
-			AllowedTools: []string{"search_posts"},
-			UserID:       testUserID,
-			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"search_posts":             {BeforeCallback: "/hooks/before-a"},
-				"mattermost__search_posts": {BeforeCallback: "/hooks/before-b"},
-			},
-		},
-		"com.example.caller",
-		llm.OperationBridgeAgent,
-		llm.SubTypeNoStream,
-	)
-	require.Error(t, err)
-	require.Equal(t, http.StatusBadRequest, statusCode)
-	require.Contains(t, err.Error(), "conflicting entries")
-}
-
-func TestCleanupBeforeHookKeysDeletesIssuedKeys(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	e.mockAPI.On("KVSetWithOptions", "beforeHook:key-1", []byte(nil), model.PluginKVSetOptions{}).Return(true, (*model.AppError)(nil)).Once()
-	e.mockAPI.On("KVSetWithOptions", "beforeHook:key-2", []byte(nil), model.PluginKVSetOptions{}).Return(true, (*model.AppError)(nil)).Once()
-
-	e.api.cleanupBeforeHookKeys([]string{"beforeHook:key-1", "beforeHook:key-2"})
-}
-
-func TestPrepareAgentBridgeCompletionToolHooksRequiresUserID(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
-		context.Background(),
-		testBotUserID,
-		bridgeclient.CompletionRequest{
-			Posts: []bridgeclient.Post{
-				{Role: "user", Message: "Hi"},
-			},
-			AllowedTools: []string{"eligible_tool"},
-			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"eligible_tool": {BeforeCallback: "/hooks/before"},
-			},
-		},
-		"com.example.caller",
-		llm.OperationBridgeAgent,
-		llm.SubTypeNoStream,
-	)
-	require.Error(t, err)
-	require.Equal(t, http.StatusBadRequest, statusCode)
-	require.Contains(t, err.Error(), "tool_hooks requires user_id")
-}
-
-func TestPrepareAgentBridgeCompletionToolHooksRequiresAllowedTools(t *testing.T) {
-	gin.SetMode(gin.ReleaseMode)
-	gin.DefaultWriter = io.Discard
-
-	e := SetupTestEnvironment(t)
-	defer e.Cleanup(t)
-
-	server := e.setupMCPWithEligibleTools(t, []string{"eligible_tool"})
-	defer server.Close()
-
-	botConfig := llm.BotConfig{
-		Name:            "testbot",
-		DisplayName:     "Test Bot",
-		UserAccessLevel: llm.UserAccessLevelAll,
-	}
-	e.setupTestBot(botConfig)
-
-	_, _, _, _, _, statusCode, err := e.api.prepareAgentBridgeCompletion(
-		context.Background(),
-		testBotUserID,
-		bridgeclient.CompletionRequest{
-			Posts: []bridgeclient.Post{
-				{Role: "user", Message: "Hi"},
-			},
-			UserID: testUserID,
-			ToolHooks: map[string]bridgeclient.ToolHookConfig{
-				"eligible_tool": {BeforeCallback: "/hooks/before"},
-			},
-		},
-		"com.example.caller",
-		llm.OperationBridgeAgent,
-		llm.SubTypeNoStream,
-	)
-	require.Error(t, err)
-	require.Equal(t, http.StatusBadRequest, statusCode)
-	require.Contains(t, err.Error(), "tool_hooks requires allowed_tools")
 }
 
 func TestBridgeClientAgentCompletionAllowedToolsDeduplicatesList(t *testing.T) {
@@ -2415,7 +1667,7 @@ func TestBridgeClientAgentCompletionRejectsBuiltinToolInAllowedTools(t *testing.
 		Enabled: true,
 		Servers: []mcp.ServerConfig{
 			{
-				Name:    "service-account-server",
+				Name:    "static-header-server",
 				Enabled: true,
 				BaseURL: server.URL,
 				Headers: map[string]string{"Authorization": "Bearer test-token"},

@@ -18,6 +18,12 @@ jest.mock('react-intl', () => {
     };
 });
 
+// react-bootstrap is a webpack external, reached here via mcp_servers' license chip.
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 const appsConfig = (overrides: Partial<MCPAppsConfig> = {}): MCPAppsConfig => ({
     ...defaultMCPAppsConfig,
     ...overrides,

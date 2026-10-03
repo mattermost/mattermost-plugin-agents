@@ -295,7 +295,7 @@ func TestHandleGetAIBotsIncludesMCPApps(t *testing.T) {
 			}).Maybe()
 
 			req := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-			req.Header.Add("Mattermost-User-ID", "userid")
+			req.Header.Add("Mattermost-User-ID", testUserID)
 			rec := httptest.NewRecorder()
 			e.api.ServeHTTP(&plugin.Context{}, rec, req)
 			require.Equal(t, http.StatusOK, rec.Code)

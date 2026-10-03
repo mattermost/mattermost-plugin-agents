@@ -34,10 +34,10 @@ type KVStore interface {
 
 // Logger interface for logging operations
 type Logger interface {
-	Debug(msg string, keyValuePairs ...interface{})
-	Info(msg string, keyValuePairs ...interface{})
-	Warn(msg string, keyValuePairs ...interface{})
-	Error(msg string, keyValuePairs ...interface{})
+	Debug(msg string, keyValuePairs ...any)
+	Info(msg string, keyValuePairs ...any)
+	Warn(msg string, keyValuePairs ...any)
+	Error(msg string, keyValuePairs ...any)
 }
 
 // ToolsCache manages the global cache of MCP tools across all users

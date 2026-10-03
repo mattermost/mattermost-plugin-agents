@@ -13,13 +13,13 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@mattermost/client": "11.4.0",
-    "@mattermost/types": "11.4.0",
-    "@playwright/test": "1.58.2",
-    "@testcontainers/postgresql": "11.13.0",
-    "@types/node": "25.5.0",
-    "pg": "8.20.0",
-    "playwright": "1.58.2",
-    "testcontainers": "11.13.0"
+    "@mattermost/client": "11.9.0",
+    "@mattermost/types": "11.9.0",
+    "@playwright/test": "1.62.1",
+    "@testcontainers/postgresql": "12.1.0",
+    "@types/node": "26.1.2",
+    "pg": "8.22.0",
+    "playwright": "1.62.1",
+    "testcontainers": "12.1.0"
   }
 }

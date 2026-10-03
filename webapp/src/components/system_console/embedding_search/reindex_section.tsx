@@ -3,7 +3,7 @@
 
 import React from 'react';
 import {FormattedMessage} from 'react-intl';
-import styled from 'styled-components';
+import styled, {keyframes} from 'styled-components';
 
 import {PrimaryButton, SecondaryButton, TertiaryButton} from '../../assets/buttons';
 
@@ -43,11 +43,27 @@ const ProgressContainer = styled.div`
     overflow: hidden;
 `;
 
-const ProgressBar = styled.div<{progress: number}>`
+const ProgressBar = styled.div<{$progress: number}>`
     height: 100%;
-    width: ${(props) => props.progress}%;
+    width: ${(props) => props.$progress}%;
     background-color: var(--button-bg);
     transition: width 0.3s ease-in-out;
+`;
+
+const indeterminateSlide = keyframes`
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(250%);
+    }
+`;
+
+const IndeterminateProgressBar = styled.div`
+    height: 100%;
+    width: 40%;
+    background-color: var(--button-bg);
+    animation: ${indeterminateSlide} 1.5s ease-in-out infinite;
 `;
 
 const ProgressText = styled(HelpText)`
@@ -82,6 +98,22 @@ const WarningText = styled.div`
     font-size: 14px;
 `;
 
+const NoteBanner = styled.div`
+    background-color: rgba(var(--center-channel-color-rgb), 0.04);
+    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+`;
+
+const NoteText = styled.div`
+    color: rgba(var(--center-channel-color-rgb), 0.88);
+    font-size: 14px;
+`;
+
 const HealthCheckCard = styled.div`
     background-color: rgba(var(--center-channel-color-rgb), 0.04);
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
@@ -108,7 +140,7 @@ const HealthCheckValue = styled.span`
     font-weight: 500;
 `;
 
-const StatusBadge = styled.span<{status: string}>`
+const StatusBadge = styled.span<{$status: string}>`
     display: inline-block;
     padding: 2px 8px;
     border-radius: 10px;
@@ -116,7 +148,7 @@ const StatusBadge = styled.span<{status: string}>`
     font-weight: 600;
     text-transform: uppercase;
     background-color: ${(props) => {
-        switch (props.status) {
+        switch (props.$status) {
         case 'healthy':
             return 'rgba(var(--online-indicator-rgb), 0.16)';
         case 'mismatch':
@@ -129,7 +161,7 @@ const StatusBadge = styled.span<{status: string}>`
         }
     }};
     color: ${(props) => {
-        switch (props.status) {
+        switch (props.$status) {
         case 'healthy':
             return 'var(--online-indicator)';
         case 'mismatch':
@@ -216,10 +248,15 @@ interface ReindexSectionProps {
     healthCheckLoading: boolean;
     hasLocalModelMismatch: boolean;
     localMismatchReason: string;
+    hasLocalHNSWMismatch: boolean;
+    hasLocalRetentionWiden: boolean;
+    hasUnsavedRetentionWiden: boolean;
+    hasLocalRetentionTighten: boolean;
     isJobStale: boolean;
     onReindexClick: () => void;
     onCancelJob: () => void;
     onCatchUpClick: () => void;
+    onRebuildVectorIndexClick: () => void;
     onHealthCheck: () => void;
     onResumeClick: () => void;
 }
@@ -231,10 +268,15 @@ export const ReindexSection = ({
     healthCheckLoading,
     hasLocalModelMismatch,
     localMismatchReason,
+    hasLocalHNSWMismatch,
+    hasLocalRetentionWiden,
+    hasUnsavedRetentionWiden,
+    hasLocalRetentionTighten,
     isJobStale,
     onReindexClick,
     onCancelJob,
     onCatchUpClick,
+    onRebuildVectorIndexClick,
     onHealthCheck,
     onResumeClick,
 }: ReindexSectionProps) => {
@@ -243,17 +285,22 @@ export const ReindexSection = ({
     const isReindexing = jobStatus?.status === 'running' || jobStatus?.status === 'cancel_requested';
 
     const hasProgress = (jobStatus?.processed_rows ?? 0) > 0;
+    const isRebuildJob = jobStatus?.operation === 'rebuild_vector_index';
+    const embeddingIdentityMismatch = hasLocalModelMismatch || healthCheckResult?.model_compatible === false;
 
-    // Check if job can be resumed (failed or canceled with progress)
-    const canResume = (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
-        jobStatus?.processed_rows > 0;
+    // Resume is for embed reindex jobs with progress. Rebuilds are not resumable.
+    const canResume = !isRebuildJob &&
+        (jobStatus?.status === 'failed' || jobStatus?.status === 'canceled') &&
+        (jobStatus?.processed_rows ?? 0) > 0;
 
-    // Check if catch-up is relevant (only show when there's an existing index that needs updating)
-    const showCatchUp = healthCheckResult &&
+    const retentionCatchUpNeeded = (!hasUnsavedRetentionWiden && hasLocalRetentionWiden) ||
+        Boolean(healthCheckResult?.needs_catch_up);
+    const indexHoles = Boolean(healthCheckResult &&
         healthCheckResult.indexed_post_count > 0 &&
         (healthCheckResult.missing_posts > 0 ||
          healthCheckResult.status === 'mismatch' ||
-         healthCheckResult.status === 'needs_reindex');
+         healthCheckResult.status === 'needs_reindex'));
+    const showCatchUp = retentionCatchUpNeeded || indexHoles;
 
     const formatTimestamp = (timestamp: string | undefined) => {
         if (!timestamp) {
@@ -292,9 +339,17 @@ export const ReindexSection = ({
                             values={{nodeId: jobStatus?.node_id || 'unknown'}}
                         />
                         <StaleActions>
-                            {hasProgress && (
+                            {!isRebuildJob && hasProgress && (
                                 <SecondaryButton onClick={onResumeClick}>
                                     <FormattedMessage defaultMessage='Resume from checkpoint'/>
+                                </SecondaryButton>
+                            )}
+                            {isRebuildJob && (
+                                <SecondaryButton
+                                    onClick={onRebuildVectorIndexClick}
+                                    disabled={embeddingIdentityMismatch}
+                                >
+                                    <FormattedMessage defaultMessage='Rebuild vector index'/>
                                 </SecondaryButton>
                             )}
                             <SecondaryButton onClick={onReindexClick}>
@@ -318,6 +373,47 @@ export const ReindexSection = ({
                         />
                     </WarningText>
                 </WarningBanner>
+            )}
+
+            {hasLocalHNSWMismatch && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='HNSW M Changed'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='HNSW M has changed. Use Rebuild vector index to apply it — not Full Reindex. Search keeps working until you rebuild; the new M takes effect after the rebuild.'/>
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasUnsavedRetentionWiden && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='Index retention increased'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='Save the configuration before running Catch Up. Catch Up uses the saved retention window, not this unsaved value.'/>
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasLocalRetentionWiden && !hasUnsavedRetentionWiden && !hasLocalModelMismatch && (
+                <WarningBanner>
+                    <WarningIcon>{'⚠️'}</WarningIcon>
+                    <WarningText>
+                        <strong><FormattedMessage defaultMessage='Index retention increased'/></strong>
+                        <br/>
+                        <FormattedMessage defaultMessage='The index now looks further back. Run Catch Up to embed older posts that are not already in the index. Search stays available — do not Full Reindex unless you also changed the embedding model or vector precision.'/>
+                    </WarningText>
+                </WarningBanner>
+            )}
+
+            {hasLocalRetentionTighten && !hasLocalModelMismatch && !hasLocalRetentionWiden && (
+                <NoteBanner>
+                    <NoteText>
+                        <FormattedMessage defaultMessage='Lowering this does not remove already-indexed posts. Search still returns whatever is in the index. The new window applies to live indexing and the next Full Reindex or Catch Up.'/>
+                    </NoteText>
+                </NoteBanner>
             )}
 
             {/* Reindex Section */}
@@ -344,20 +440,30 @@ export const ReindexSection = ({
 
                             {jobStatus && (
                                 <>
-                                    <ProgressText>
-                                        <FormattedMessage
-                                            defaultMessage='Processing: {processed} of {total} posts ({percent}%)'
-                                            values={{
-                                                processed: jobStatus.processed_rows.toLocaleString(),
-                                                total: jobStatus.total_rows.toLocaleString(),
-                                                percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
-                                            }}
-                                        />
-                                    </ProgressText>
+                                    {jobStatus.phase === 'building_index' ? (
+                                        <ProgressText>
+                                            <FormattedMessage defaultMessage='Bulk load complete — building the vector index. This can take a while on large workspaces; search stays unavailable until it finishes.'/>
+                                        </ProgressText>
+                                    ) : (
+                                        <ProgressText>
+                                            <FormattedMessage
+                                                defaultMessage='Processing: {processed} of {total} posts ({percent}%)'
+                                                values={{
+                                                    processed: jobStatus.processed_rows.toLocaleString(),
+                                                    total: jobStatus.total_rows.toLocaleString(),
+                                                    percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
+                                                }}
+                                            />
+                                        </ProgressText>
+                                    )}
                                     <ProgressContainer>
-                                        <ProgressBar
-                                            progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
-                                        />
+                                        {jobStatus.phase === 'building_index' ? (
+                                            <IndeterminateProgressBar/>
+                                        ) : (
+                                            <ProgressBar
+                                                $progress={jobStatus.total_rows ? Math.min((jobStatus.processed_rows / jobStatus.total_rows) * 100, 100) : 0}
+                                            />
+                                        )}
                                     </ProgressContainer>
                                     <JobInfoCard>
                                         {jobStatus.node_id && (
@@ -399,24 +505,33 @@ export const ReindexSection = ({
                                     values={{
                                         processed: jobStatus.processed_rows.toLocaleString(),
                                         total: jobStatus.total_rows.toLocaleString(),
-                                        percent: jobStatus.total_rows ? Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100) : 0,
+                                        percent: jobStatus.total_rows ? Math.min(Math.floor((jobStatus.processed_rows / jobStatus.total_rows) * 100), 100) : 0,
                                     }}
                                 />
                             </ProgressText>
                         </>
                     )}
 
-                    {/* Show default buttons when no job running and not resumable */}
+                    {/* Show default buttons when no job is running and resume is not available */}
                     {!isReindexing && !canResume && (
                         <ButtonGroup>
                             <PrimaryButton onClick={onReindexClick}>
                                 <FormattedMessage defaultMessage='Full Reindex'/>
                             </PrimaryButton>
                             {showCatchUp && (
-                                <TertiaryButton onClick={onCatchUpClick}>
+                                <TertiaryButton
+                                    onClick={onCatchUpClick}
+                                    disabled={embeddingIdentityMismatch}
+                                >
                                     <FormattedMessage defaultMessage='Catch Up'/>
                                 </TertiaryButton>
                             )}
+                            <TertiaryButton
+                                onClick={onRebuildVectorIndexClick}
+                                disabled={embeddingIdentityMismatch}
+                            >
+                                <FormattedMessage defaultMessage='Rebuild vector index'/>
+                            </TertiaryButton>
                         </ButtonGroup>
                     )}
 
@@ -433,7 +548,7 @@ export const ReindexSection = ({
                     )}
 
                     <HelpText>
-                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up indexes only posts created since the last successful index.'/>
+                        <FormattedMessage defaultMessage='Full Reindex clears the index and rebuilds from scratch. Catch Up fills holes in the current retention window (posts not already in the index) without disabling search. Rebuild vector index rebuilds the HNSW graph without re-embedding posts. Changing the retention window while a job is running does not change the running job window; abort and start a new job if you want the new bounds.'/>
                     </HelpText>
                 </div>
             </ActionContainer>
@@ -462,7 +577,7 @@ export const ReindexSection = ({
                                     <HealthCheckLabel>
                                         <FormattedMessage defaultMessage='Status'/>
                                     </HealthCheckLabel>
-                                    <StatusBadge status={healthCheckResult.status}>
+                                    <StatusBadge $status={healthCheckResult.status}>
                                         {getStatusLabel(healthCheckResult.status)}
                                     </StatusBadge>
                                 </HealthCheckRow>

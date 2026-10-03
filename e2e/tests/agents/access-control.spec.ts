@@ -1,3 +1,15 @@
+// Deferred ABAC e2e coverage (blocked on a testcontainers enterprise image with
+// the attribute-based access control plugin APIs + an Enterprise Advanced
+// license). Follow-up specs, to be sharded in ci-test-groups.mjs when added:
+//   - abac-agent-access.spec.ts: attribute-based agent + table policy; matching
+//     user can DM, non-matching user loses the bot and gets 403; switching back
+//     to "Allow for all" with policy deletion restores access.
+//   - abac-service-mcp.spec.ts: service policy denial fails completions with a
+//     usage restriction; MCP server policy denial silently shrinks /mcp/tools
+//     and the tool catalog (meta-tools omitted when it was the only server).
+//   - abac-authoring-authz.spec.ts: per-agent admin can author the agent policy
+//     (CEL autocomplete via ?agent_id=) but not service/MCP policies.
+
 import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -16,10 +28,11 @@ let openAIMock: OpenAIMockContainer;
 
 test.describe('Agent Access Control', () => {
     test.beforeAll(async () => {
+        test.setTimeout(180000);
         mattermost = await RunAgentContainer();
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await openAIMock.addCompletionMock(responseTest);
-    }, { timeout: 180000 });
+    });
 
     test.afterAll(async () => {
         await Promise.allSettled([

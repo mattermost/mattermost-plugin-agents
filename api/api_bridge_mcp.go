@@ -4,12 +4,17 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // externalServerRebuilder rebuilds the external MCP aggregate after plugin changes.
@@ -33,6 +38,18 @@ func (a *API) resolveExternalServerRebuilder() externalServerRebuilder {
 // handleMCPRegister handles POST /bridge/v1/mcp/register using the authenticated
 // Mattermost-Plugin-ID header.
 func (a *API) handleMCPRegister(c *gin.Context) {
+	// Attribute the caller before anything can fail, so every audit fail
+	// path carries it. The header is set by the Mattermost server for
+	// inter-plugin requests and is the registered PluginID too, so one
+	// parameter covers both the actor and the affected server.
+	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
+
+	if err := a.licenseChecker.Check(enterprise.CapRemoteMCP); err != nil {
+		abortNotLicensed(c, err)
+		return
+	}
+
 	var req struct {
 		PluginID       string           `json:"plugin_id"`
 		Name           string           `json:"name"`
@@ -48,7 +65,13 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 		return
 	}
 
-	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	// Name and path are unvalidated caller text; clamp them. Whether tool
+	// configs were sent is recorded — never the configs themselves.
+	audit.AddParam(auditRec(c), "server_name", audit.TruncateID(req.Name))
+	audit.AddParam(auditRec(c), "path", audit.TruncateID(req.Path))
+	audit.AddParam(auditRec(c), "expose_external", req.ExposeExternal)
+	audit.AddParam(auditRec(c), "tool_configs_provided", req.ToolConfigs != nil)
+
 	cfg := mcp.PluginServerConfig{
 		PluginID:       trustedPluginID,
 		Name:           req.Name,
@@ -84,16 +107,35 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	// Snapshot effective external exposure so we rebuild when it turns on or off.
 	prevEffectiveExternal := a.pluginServerExternallyExposed(trustedPluginID)
 
-	// Preserve Enabled and ToolConfigs across re-registration, even after unregister.
-	// A first-time registration with no explicit enabled flag defaults to enabled.
-	persisted, hasPersisted := a.findPersistedPluginServer(trustedPluginID)
+	// Overlay admin-owned fields (Enabled, ToolConfigs, ID). Live entry first,
+	// then persisted config — so a re-register after unregister recovers from
+	// config, while a live-only ID is not rotated when the config row is absent.
 	if existing, found := a.mcpClientManager.GetPluginServer(trustedPluginID); found {
-		cfg.Enabled = existing.Enabled
-		cfg.ToolConfigs = existing.ToolConfigs
-	} else if hasPersisted {
-		cfg.Enabled = persisted.Enabled
-		cfg.ToolConfigs = persisted.ToolConfigs
+		cfg = mcp.ApplyPersistedPluginServerFields(cfg, existing)
 	}
+	persisted, hasPersisted := a.findPersistedPluginServer(trustedPluginID)
+	if hasPersisted {
+		cfg = mcp.ApplyPersistedPluginServerFields(cfg, persisted)
+	}
+
+	// Mint only when neither live nor persisted carried an ID. Persist when the
+	// config row is missing or ID-less so a live-only identity is written.
+	if cfg.ID == "" {
+		cfg.ID = model.NewId()
+	}
+	if !hasPersisted || persisted.ID == "" {
+		if err := a.persistPluginServerID(trustedPluginID, &cfg); err != nil {
+			c.JSON(http.StatusInternalServerError, bridgeclient.ErrorResponse{
+				Error: fmt.Sprintf("failed to persist plugin server ID: %v", err),
+			})
+			return
+		}
+	}
+
+	// Effective final value after the preserve-on-reregister merge, not the
+	// raw request flag.
+	audit.AddParam(auditRec(c), "enabled", cfg.Enabled)
+
 	a.mcpClientManager.RegisterPluginServer(cfg)
 
 	newEffectiveExternal := cfg.Enabled && cfg.ExposeExternal
@@ -104,6 +146,66 @@ func (a *API) handleMCPRegister(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
+}
+
+// persistPluginServerID ensures cfg.MCP.PluginServers holds a stable ID for
+// pluginID. Only mints when the entry is missing or ID-less; concurrent
+// writers that already assigned an ID win (their ID is adopted onto
+// registration).
+func (a *API) persistPluginServerID(pluginID string, registration *mcp.PluginServerConfig) error {
+	if a.configStore == nil || registration == nil {
+		return nil
+	}
+	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
+		if prev == nil {
+			return config.Config{}, errors.New("no plugin configuration available")
+		}
+		cfg := prev.Clone()
+		id := registration.ID
+		if id == "" {
+			id = model.NewId()
+		}
+		for i := range cfg.MCP.PluginServers {
+			if cfg.MCP.PluginServers[i].PluginID != pluginID {
+				continue
+			}
+			if cfg.MCP.PluginServers[i].ID == "" {
+				cfg.MCP.PluginServers[i].ID = id
+			}
+			return *cfg, nil
+		}
+		cfg.MCP.PluginServers = append(cfg.MCP.PluginServers, config.PluginServerConfig{
+			ID:             id,
+			PluginID:       registration.PluginID,
+			Name:           registration.Name,
+			Path:           registration.Path,
+			Enabled:        registration.Enabled,
+			ExposeExternal: registration.ExposeExternal,
+			ToolConfigs:    registration.ToolConfigs,
+		})
+		return *cfg, nil
+	})
+	if err != nil {
+		return err
+	}
+	// Adopt the persisted ID in case another writer raced and minted first.
+	for i := range saved.MCP.PluginServers {
+		if saved.MCP.PluginServers[i].PluginID == pluginID && saved.MCP.PluginServers[i].ID != "" {
+			registration.ID = saved.MCP.PluginServers[i].ID
+			break
+		}
+	}
+	if a.configUpdater != nil {
+		a.configUpdater.Update(&saved)
+	}
+	// Propagation is best-effort; the ID is already persisted, so a failed
+	// notification must not abort this registration.
+	if a.clusterNotifier != nil {
+		if notifyErr := a.clusterNotifier.PublishConfigUpdate(); notifyErr != nil {
+			a.pluginAPI.Log.Warn("Failed to notify cluster of plugin-server ID", "error", notifyErr)
+		}
+	}
+	return nil
 }
 
 // pluginServerExternallyExposed reports whether the plugin should appear on the
@@ -121,6 +223,11 @@ func (a *API) pluginServerExternallyExposed(pluginID string) bool {
 // handleMCPUnregister handles POST /bridge/v1/mcp/unregister using the
 // authenticated Mattermost-Plugin-ID header.
 func (a *API) handleMCPUnregister(c *gin.Context) {
+	// Attribute the caller before anything can fail; the trusted header is
+	// also the PluginID being unregistered.
+	trustedPluginID := c.GetHeader("Mattermost-Plugin-ID")
+	audit.AddParam(auditRec(c), audit.KeyCallerPluginID, audit.TruncateID(trustedPluginID))
+
 	var req struct{}
 	if err := c.BindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, bridgeclient.ErrorResponse{
@@ -129,7 +236,7 @@ func (a *API) handleMCPUnregister(c *gin.Context) {
 		return
 	}
 
-	a.mcpClientManager.UnregisterPluginServer(c.GetHeader("Mattermost-Plugin-ID"))
+	a.mcpClientManager.UnregisterPluginServer(trustedPluginID)
 
 	// Always rebuild on unregister so stale proxy tools disappear.
 	if rb := a.resolveExternalServerRebuilder(); rb != nil {

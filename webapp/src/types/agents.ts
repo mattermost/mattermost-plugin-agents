@@ -3,6 +3,18 @@
 
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 
+// Mirrors llm.MaxCustomInstructionsRunes on the backend.
+export const MaxCustomInstructionsRunes = 100000;
+
+// Mirrors llm.DefaultMaxToolTurns on the backend.
+export const DefaultMaxToolTurns = 30;
+
+// Mirrors llm.MaxAllowedMaxToolTurns on the backend.
+export const MaxAllowedMaxToolTurns = 250;
+
+// Counts Unicode code points to match Go's utf8.RuneCountInString.
+export const codePointLength = (s: string): number => Array.from(s).length;
+
 // EnabledTool matches llm.EnabledMCPTool (persisted agents and config bots).
 // Inner field names stay snake_case to match the backend's json:"server_origin"
 // / json:"tool_name" tags; see .planning/phase-1/PLAN.md pitfall P2.
@@ -10,6 +22,9 @@ export type EnabledTool = {
     server_origin: string; // MCP server origin URL
     tool_name: string; // tool identifier on that server
 }
+
+// Mirrors config.AgentInactiveReason on the backend.
+export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
 
 // UserAgent matches the JSON serialization of *llm.BotConfig from the backend.
 // The backend API (GET /agents, GET /agents/:id, POST /agents, PUT /agents/:id)
@@ -50,11 +65,21 @@ export type UserAgent = {
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
+    useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
-    structuredOutputEnabled: boolean;
     maxToolTurns: number;
+
+    /**
+     * @deprecated Structured output is configured per service
+     * (LLMService.structuredOutputPolicy), not per agent. The backend still
+     * returns this field for older clients; the UI ignores it.
+     */
+    structuredOutputEnabled?: boolean;
+
+    // Only on GET /agents; absent when the agent is running.
+    inactiveReason?: AgentInactiveReason;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -91,6 +116,9 @@ export type CreateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -98,7 +126,6 @@ export type CreateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 
@@ -121,6 +148,7 @@ export type UpdateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -128,7 +156,6 @@ export type UpdateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 

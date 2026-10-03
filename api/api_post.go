@@ -10,8 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
+	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/react"
@@ -51,7 +55,7 @@ func (a *API) postAuthorizationRequired(c *gin.Context) {
 	}
 
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-	if err := a.bots.CheckUsageRestrictions(userID, bot, channel); err != nil {
+	if err := a.bots.CheckUsageRestrictions(c.Request.Context(), userID, bot, channel); err != nil {
 		c.AbortWithError(http.StatusForbidden, err)
 		return
 	}
@@ -107,8 +111,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
+	if !a.requireCapability(c, enterprise.CapThreadSummarization) {
 		return
 	}
 
@@ -169,7 +172,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	}
 
 	// Create analysis post with conversation ID
-	analysisPost := a.makeAnalysisPost(user.Locale, post.Id, data.AnalysisType, analyzeResult.ConversationID)
+	analysisPost := makeAnalysisPost(post.Id, data.AnalysisType, analyzeResult.ConversationID)
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
@@ -205,8 +208,17 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID)
+	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -225,10 +237,15 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel)
+	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
-		if err.Error() == "not a calls or zoom bot post" {
-			c.AbortWithError(http.StatusBadRequest, errors.New("not a calls or zoom bot post"))
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, meetings.ErrNotMeetingBotPost) {
+			c.AbortWithError(http.StatusBadRequest, err)
 			return
 		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to summarize transcription: %w", err))
@@ -292,6 +309,15 @@ func (a *API) handleRegenerate(c *gin.Context) {
 
 	err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel)
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, mmapi.ErrFileActionForbidden) {
+			c.AbortWithError(http.StatusForbidden, err)
+			return
+		}
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to regenerate post: %w", err))
 		return
 	}
@@ -304,10 +330,11 @@ func (a *API) handleToolCall(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
+	// Enrich the audit record as soon as the objects are bound so the
+	// permission fail paths below still carry post and channel.
+	rec := auditRec(c)
+	audit.AddParam(rec, audit.KeyPostID, post.Id)
+	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
@@ -333,6 +360,9 @@ func (a *API) handleToolCall(c *gin.Context) {
 		return
 	}
 
+	// Opaque block IDs only — never the tool answers carried alongside them.
+	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
+
 	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
 		return
@@ -343,15 +373,16 @@ func (a *API) handleToolCall(c *gin.Context) {
 
 // toolApprovalHTTPStatus maps errors from HandleToolCall/HandleToolResult to
 // HTTP statuses. Stale-click and missing-conversation cases are client-side
-// issues (400); requester-mismatch is a permission denial (403); everything
-// else falls through to 500.
+// issues (400); requester-mismatch and unlicensed remote MCP use are
+// permission denials (403); everything else falls through to 500.
 func toolApprovalHTTPStatus(err error) int {
 	switch {
 	case errors.Is(err, conversations.ErrStaleToolClick),
 		errors.Is(err, conversations.ErrPostMissingConversationID),
 		errors.Is(err, conversations.ErrInvalidToolAnswer):
 		return http.StatusBadRequest
-	case errors.Is(err, conversations.ErrNotRequester):
+	case errors.Is(err, conversations.ErrNotRequester),
+		errors.Is(err, conversations.ErrRemoteMCPNotLicensed):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -363,10 +394,11 @@ func (a *API) handleToolResult(c *gin.Context) {
 	post := c.MustGet(ContextPostKey).(*model.Post)
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
-		return
-	}
+	// Enrich the audit record as soon as the objects are bound so the
+	// permission fail paths below still carry post and channel.
+	rec := auditRec(c)
+	audit.AddParam(rec, audit.KeyPostID, post.Id)
+	audit.AddParam(rec, audit.KeyChannelID, channel.Id)
 
 	isDM := mmapi.IsDMWith(post.UserId, channel)
 	if !isDM && !a.config.EnableChannelMentionToolCalling() {
@@ -387,6 +419,8 @@ func (a *API) handleToolResult(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
+
+	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
 	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		c.AbortWithError(toolApprovalHTTPStatus(err), err)
@@ -431,6 +465,11 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
 
+	// Meeting transcription summaries are available at Enterprise and above.
+	if !a.requireCapability(c, enterprise.CapMeetings) {
+		return
+	}
+
 	if err := a.enforceEmptyBody(c); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
@@ -438,7 +477,12 @@ func (a *API) handlePostbackSummary(c *gin.Context) {
 
 	result, err := a.meetingsService.HandlePostbackSummary(userID, post)
 	if err != nil {
-		if err.Error() == "post missing reference to transcription post ID" {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
+		if errors.Is(err, meetings.ErrNoTranscriptionPostReference) {
 			c.AbortWithError(http.StatusBadRequest, err)
 		} else {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("unable to post back summary: %w", err))
@@ -462,7 +506,16 @@ func (a *API) handleLoopInAgent(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleLoopInAgent(telemetry.DetachContext(c.Request.Context()), userID, bot, post, channel); err != nil {
+	detachedCtx := auth.WithSessionID(
+		telemetry.DetachContext(c.Request.Context()),
+		auth.SessionIDFromContext(c.Request.Context()),
+	)
+	if err := a.conversationsService.HandleLoopInAgent(detachedCtx, userID, bot, post, channel); err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		c.AbortWithError(loopInAgentHTTPStatus(err), err)
 		return
 	}
@@ -486,7 +539,7 @@ func loopInAgentHTTPStatus(err error) int {
 }
 
 // makeAnalysisPost creates a post for thread analysis results
-func (a *API) makeAnalysisPost(locale string, postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
+func makeAnalysisPost(postIDToAnalyze string, analysisType string, conversationID string) *model.Post {
 	post := &model.Post{}
 	post.AddProp(conversations.ThreadIDProp, postIDToAnalyze)
 	post.AddProp(conversations.AnalysisTypeProp, analysisType)

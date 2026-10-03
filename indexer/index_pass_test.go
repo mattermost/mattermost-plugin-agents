@@ -119,24 +119,24 @@ func TestStoreBatchWithRetry(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			idx, _ := newPassTestIndexer(t)
 
-			var calls int32
+			var calls atomic.Int32
 			mockSearch := embeddingsmocks.NewMockEmbeddingSearch(t)
 			mockSearch.On("Store", mock.Anything, mock.Anything).
 				Return(func(ctx context.Context, docs []embeddings.PostDocument) error {
-					if atomic.AddInt32(&calls, 1) <= tt.failuresFirst {
+					if calls.Add(1) <= tt.failuresFirst {
 						return errors.New("transient store failure")
 					}
 					return nil
 				}).Maybe()
 
-			err := idx.storeBatchWithRetry(context.Background(), mockSearch, tt.posts)
+			err := idx.storeBatchWithRetry(context.Background(), mockSearch, tt.posts, 0)
 
 			if tt.wantErr {
 				require.Error(t, err)
 			} else {
 				require.NoError(t, err)
 			}
-			assert.Equal(t, tt.wantCalls, atomic.LoadInt32(&calls))
+			assert.Equal(t, tt.wantCalls, calls.Load())
 		})
 	}
 }
