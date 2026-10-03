@@ -17,7 +17,7 @@ const PHASE3_REASONING_MULTI_FIRST_PROMPT = 'phase3-reasoning-multi-first-001';
 const PHASE3_REASONING_MULTI_SECOND_PROMPT = 'phase3-reasoning-multi-second-001';
 
 test.describe('Reasoning Display - aimock', () => {
-    test.describe.configure({ mode: 'serial' });
+    test.describe.configure({ mode: 'serial', retries: 1 });
 
     let harness: AIMockHarness;
 

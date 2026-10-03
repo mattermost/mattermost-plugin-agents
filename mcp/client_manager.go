@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,28 +14,57 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
+// Only PluginID, Name, Path, and ExposeExternal are authoritative here; Enabled and ToolConfigs come from admin config.
+const pluginRegistrationsKVKey = "mcp_plugin_registrations_v1"
+
 var ErrOAuthNotConfigured = errors.New("oauth not configured")
 
-func cacheableContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return context.WithoutCancel(ctx)
+// ServerAccessChecker gates per-user visibility of MCP servers by stable ID.
+type ServerAccessChecker interface {
+	CanUseMCPServer(ctx context.Context, userID, serverID string) error
 }
 
-// ClientManager manages MCP clients for multiple users
+// clientKind is the structural role of a pooled bag. Remote bags cannot
+// share sessions across user and service-account authentication modes.
+type clientKind int
+
+const (
+	clientKindUserRemote clientKind = iota
+	clientKindSARemote
+	clientKindLocal
+)
+
+// clientKey identifies one pooled client bag.
+type clientKey struct {
+	userID string
+	kind   clientKind
+}
+
+// ClientManager manages MCP clients for multiple users.
+//
+// Nested locks are always taken in the order lifecycleMu -> clientsMu ->
+// pluginServersMu -> UserClients.clientsMu.
 type ClientManager struct {
+	// lifecycleMu is held exclusively by ReInit, Close, and the plugin
+	// registry mutations, which publish new connection identities and detach
+	// the sessions those identities invalidate. It is held shared while a
+	// request snapshots the runtime, builds its connect tasks, and plans them,
+	// so no plan can straddle an identity change. Client.Close and MCP network
+	// work always happen after it is released.
+	lifecycleMu    sync.RWMutex
 	config         Config
 	log            pluginapi.LogService
 	pluginAPI      *pluginapi.Client
 	clientsMu      sync.RWMutex
-	clients        map[string]*UserClients // userID to UserClients
-	activity       map[string]time.Time    // userID to last activity time
+	clients        map[clientKey]*UserClients
+	activity       map[clientKey]time.Time
 	cleanupTicker  *time.Ticker
 	closeChan      chan struct{}
 	clientTimeout  time.Duration
@@ -46,17 +76,40 @@ type ClientManager struct {
 	// pluginServersMu must not be held across PluginHTTP round trips.
 	pluginServersMu sync.RWMutex
 	pluginServers   map[string]PluginServerConfig // keyed by PluginID
-	// pluginRegistered marks entries with a live RegisterPluginServer call;
-	// orphan entries hydrated only from persisted config are absent.
+	// pluginRegistered marks entries backed by a source-plugin registration;
+	// config-only orphan entries are absent.
 	pluginRegistered map[string]bool
 	// sourcePluginAPI is the agents-plugin mmapi.Client; used by
 	// PluginHTTPRoundTripper to dispatch to source plugins.
 	sourcePluginAPI mmapi.Client
+
+	// admission caps overlapping remote/plugin connection sequences on this
+	// manager instance. It outlives ReInit and is closed only by Close.
+	admission *connectionAdmission
+	// accessChecker filters servers for the invoking user (nil = no filtering).
+	accessChecker ServerAccessChecker
+	// remoteAllowed reports whether remote and plugin MCP servers may be
+	// connected. Nil fails closed. The embedded Mattermost server is always
+	// connected when configured.
+	remoteAllowed func() bool
+	// closed is set by Close and makes ReInit a no-op so shutdown stays permanent.
+	closed bool
 }
 
+// RemoteMCPAlwaysAllowed is the remoteAllowed predicate for callers that have
+// no license information (tests and standalone tooling); the plugin passes a
+// license-backed predicate instead.
+var RemoteMCPAlwaysAllowed = func() bool { return true }
+
 // NewClientManager creates a new MCP client manager. embeddedServer may be nil.
-// sourcePluginAPI routes PluginHTTP to source plugins; may be nil.
-func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client) *ClientManager {
+// sourcePluginAPI routes PluginHTTP to source plugins; may be nil. remoteAllowed
+// reports whether remote and plugin MCP servers may be connected; nil fails
+// closed so only the embedded Mattermost server is ever connected.
+func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *pluginapi.Client, oauthManager *OAuthManager, embeddedServer EmbeddedMCPServer, httpClient *http.Client, sourcePluginAPI mmapi.Client, remoteAllowed func() bool, accessCheckers ...ServerAccessChecker) *ClientManager {
+	var accessChecker ServerAccessChecker
+	if len(accessCheckers) > 0 {
+		accessChecker = accessCheckers[0]
+	}
 	manager := &ClientManager{
 		log:              log,
 		pluginAPI:        pluginAPI,
@@ -66,9 +119,22 @@ func NewClientManager(config Config, log pluginapi.LogService, pluginAPI *plugin
 		pluginServers:    make(map[string]PluginServerConfig),
 		pluginRegistered: make(map[string]bool),
 		sourcePluginAPI:  sourcePluginAPI,
+		admission:        newConnectionAdmission(maxNodeConnections),
+		accessChecker:    accessChecker,
+		remoteAllowed:    remoteAllowed,
 	}
+	manager.hydratePluginRegistrations()
+	// PluginMCPHandlers is constructed later and builds the external aggregate
+	// from this hydrated registry.
 	manager.ReInit(config, embeddedServer)
 	return manager
+}
+
+func (m *ClientManager) remoteMCPAllowed() bool {
+	if m == nil || m.remoteAllowed == nil {
+		return false
+	}
+	return m.remoteAllowed()
 }
 
 // EnsureMCPSessionID ensures there is a valid MCP session for the user
@@ -86,14 +152,19 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 		case <-ticker.C:
 			m.clientsMu.Lock()
 			now := time.Now()
-			for userID, client := range m.clients {
-				if now.Sub(m.activity[userID]) > m.clientTimeout {
-					m.log.Debug("Closing inactive MCP client", "userID", userID)
-					client.Close()
-					delete(m.clients, userID)
+			idle := make([]*UserClients, 0)
+			for key, client := range m.clients {
+				if now.Sub(m.activity[key]) > m.clientTimeout {
+					m.log.Debug("Closing inactive MCP client", "userID", key.userID, "kind", key.kind)
+					idle = append(idle, client)
+					delete(m.clients, key)
+					delete(m.activity, key)
 				}
 			}
 			m.clientsMu.Unlock()
+			for _, client := range idle {
+				client.Close()
+			}
 		case <-closeChan:
 			ticker.Stop()
 			return
@@ -101,171 +172,459 @@ func (m *ClientManager) cleanupInactiveClients(closeChan <-chan struct{}, ticker
 	}
 }
 
-// ReInit re-initializes the client manager with a new configuration and embedded server
+// ReInit applies a new configuration and embedded server without discarding
+// sessions whose connection identity is unchanged. Close is the only path that
+// tears down every user client.
 func (m *ClientManager) ReInit(config Config, embeddedServer EmbeddedMCPServer) {
-	m.Close()
-
 	if config.IdleTimeoutMinutes <= 0 {
 		config.IdleTimeoutMinutes = 30
 	}
 
-	// Update embedded server client
+	var newEmbedded *EmbeddedServerClient
 	if embeddedServer != nil {
-		m.embeddedClient = NewEmbeddedServerClientWithCache(embeddedServer, m.log, m.pluginAPI, m.toolsCache)
-	} else {
-		m.embeddedClient = nil
+		newEmbedded = NewEmbeddedServerClientWithCache(embeddedServer, m.log, m.pluginAPI, m.toolsCache)
+	}
+
+	m.lifecycleMu.Lock()
+	m.clientsMu.Lock()
+	if m.closed {
+		m.clientsMu.Unlock()
+		m.lifecycleMu.Unlock()
+		return
 	}
 
 	m.config = config
-	m.clients = make(map[string]*UserClients)
+	m.embeddedClient = newEmbedded
 	m.clientTimeout = time.Duration(config.IdleTimeoutMinutes) * time.Minute
-	m.closeChan = make(chan struct{})
-	m.activity = make(map[string]time.Time)
 
-	m.cleanupTicker = time.NewTicker(5 * time.Minute)
-	go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
+	if m.clients == nil {
+		m.clients = make(map[clientKey]*UserClients)
+	}
+	if m.activity == nil {
+		m.activity = make(map[clientKey]time.Time)
+	}
 
-	// Must happen after m.config = config so the persisted view drives the merge.
-	m.syncPluginServersFromConfig(config)
-}
-
-// Close closes the client manager and all managed clients
-// The client manger should not be used after Close is called
-func (m *ClientManager) Close() {
-	// If already closed, do nothing
 	if m.closeChan == nil {
-		return
-	}
-	// Stop the cleanup goroutine
-	close(m.closeChan)
-	m.closeChan = nil
-	m.cleanupTicker.Stop()
-
-	// Close all client connections
-	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-
-	for _, client := range m.clients {
-		client.Close()
-	}
-
-	// Clear the clients map
-	m.clients = make(map[string]*UserClients)
-}
-
-// createAndStoreUserClient creates a new UserClients instance and stores it in the manager.
-// When forceRefresh is true the remote connect bypasses the shared tools cache and any
-// existing cached client is replaced.
-func (m *ClientManager) createAndStoreUserClient(ctx context.Context, userID string, forceRefresh bool) (*UserClients, *Errors) {
-	// Unless forcing a refresh, reuse an already-cached client so we skip a
-	// redundant remote connect when another goroutine cached one first.
-	if !forceRefresh {
-		m.clientsMu.Lock()
-		if client, exists := m.clients[userID]; exists {
-			m.activity[userID] = time.Now()
-			m.clientsMu.Unlock()
-			return client, client.InitialRemoteConnectErrors()
-		}
-		m.clientsMu.Unlock()
-	}
-
-	userClients := NewUserClients(userID, m.log, m.oauthManager, m.httpClient, m.toolsCache)
-
-	// Connect outside the manager lock so remote MCP handshakes do not block other users.
-	// Cacheable client creation must not inherit request cancellation; a canceled
-	// popover/tab close would otherwise poison initialRemoteConnectErrors until TTL.
-	mcpErrors := userClients.ConnectToRemoteServers(cacheableContext(ctx), m.config.Servers, forceRefresh)
-	userClients.setInitialRemoteConnectErrors(mcpErrors)
-
-	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-
-	// Check again in case another goroutine created the client while we were connecting.
-	// On a forced refresh we intentionally replace (and close) any existing client.
-	if client, exists := m.clients[userID]; exists {
-		if !forceRefresh {
-			userClients.Close()
-			m.activity[userID] = time.Now()
-			return client, client.InitialRemoteConnectErrors()
-		}
-		client.Close()
-	}
-
-	// Store the client even if some servers failed to connect
-	// This allows partial success - user gets tools from working servers
-	m.clients[userID] = userClients
-	m.activity[userID] = time.Now()
-
-	return userClients, mcpErrors
-}
-
-// getClientForUser gets or creates an MCP client for a specific user.
-func (m *ClientManager) getClientForUser(ctx context.Context, userID string) (*UserClients, *Errors) {
-	m.clientsMu.Lock()
-	client, exists := m.clients[userID]
-	if exists {
-		m.activity[userID] = time.Now()
-		m.clientsMu.Unlock()
-		return client, client.InitialRemoteConnectErrors()
+		m.closeChan = make(chan struct{})
+		m.cleanupTicker = time.NewTicker(5 * time.Minute)
+		go m.cleanupInactiveClients(m.closeChan, m.cleanupTicker)
 	}
 	m.clientsMu.Unlock()
 
-	return m.createAndStoreUserClient(ctx, userID, false)
+	m.syncPluginServersFromConfig(config)
+
+	if !m.remoteMCPAllowed() && mcpConfigHasRemoteOrPlugin(config) {
+		m.log.Info("Remote and plugin MCP servers are available at Enterprise and above; only the embedded Mattermost MCP server is connected")
+	}
+
+	var discarded []*Client
+	for _, userClients := range m.snapshotUserClients() {
+		valid := m.liveOriginIdentities(config, newEmbedded, userClients.serviceAccount())
+		discarded = append(discarded, userClients.detachInvalidIdentities(valid)...)
+	}
+	m.lifecycleMu.Unlock()
+	closeDetachedClients(m.log, discarded)
 }
 
-// GetToolsForUser returns the tools available for a specific user, connecting to embedded server if session ID provided.
-func (m *ClientManager) GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors) {
-	// Get or create client for this user (connects to remote servers only)
-	userClient, initialErrors := m.getClientForUser(ctx, userID)
-	mcpErrors := cloneMCPErrors(initialErrors)
+func mcpConfigHasRemoteOrPlugin(cfg Config) bool {
+	if len(cfg.Servers) > 0 || len(cfg.PluginServers) > 0 {
+		return true
+	}
+	return false
+}
 
-	// Embedded and plugin connects intentionally receive the raw cancelable ctx:
-	// they run per-request and are not cached, so a canceled request should abort
-	// them. Only the remote connect uses cacheableContext(ctx) (in
-	// createAndStoreUserClient) because its result is cached across requests.
-	if m.embeddedClient != nil {
-		ensuredSessionID, _, ensureErr := m.ensureEmbeddedSessionID(userID)
-		if ensureErr != nil {
-			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available", "userID", userID, "error", ensureErr)
-		} else if ensuredSessionID != "" {
-			if embeddedErr := userClient.ConnectToEmbeddedServerIfAvailable(ctx, ensuredSessionID, m.embeddedClient, m.config.EmbeddedServer); embeddedErr != nil {
-				m.log.Debug("Failed to connect to embedded server for user - embedded MCP tools will not be available", "userID", userID, "sessionID", ensuredSessionID, "error", embeddedErr)
-			}
+// Close closes the client manager and all managed clients.
+// The client manager should not be used after Close is called.
+func (m *ClientManager) Close() {
+	if m == nil {
+		return
+	}
+
+	m.lifecycleMu.Lock()
+	m.clientsMu.Lock()
+	if m.closed {
+		m.clientsMu.Unlock()
+		m.lifecycleMu.Unlock()
+		return
+	}
+	m.closed = true
+	closeChan := m.closeChan
+	ticker := m.cleanupTicker
+	clients := m.clients
+	m.closeChan = nil
+	m.clients = make(map[clientKey]*UserClients)
+	m.activity = make(map[clientKey]time.Time)
+	m.clientsMu.Unlock()
+
+	if closeChan != nil {
+		close(closeChan)
+	}
+	if ticker != nil {
+		ticker.Stop()
+	}
+	m.admission.close()
+	m.lifecycleMu.Unlock()
+
+	for _, client := range clients {
+		client.Close()
+	}
+}
+
+// getOrCreateUserClients returns the cached per-user client, creating and
+// registering an empty one when this is the user's first request. Registration
+// happens before any dialing so concurrent cold requests share one instance and
+// therefore one session per server.
+func (m *ClientManager) getOrCreateClient(key clientKey) *UserClients {
+	m.clientsMu.Lock()
+	defer m.clientsMu.Unlock()
+
+	if m.closed {
+		return nil
+	}
+
+	if m.clients == nil {
+		m.clients = make(map[clientKey]*UserClients)
+	}
+	if m.activity == nil {
+		m.activity = make(map[clientKey]time.Time)
+	}
+
+	userClients, exists := m.clients[key]
+	if !exists {
+		switch key.kind {
+		case clientKindLocal:
+			userClients = newLocalClients(key.userID, m.log, m.httpClient, m.toolsCache)
+		default:
+			userClients = newRemoteClients(key.userID, key.kind, m.log, m.oauthManager, m.httpClient, m.toolsCache)
+		}
+		userClients.admission = m.admission
+		m.clients[key] = userClients
+	}
+	m.activity[key] = time.Now()
+
+	return userClients
+}
+
+func (m *ClientManager) getOrCreateUserClients(userID string) *UserClients {
+	return m.getOrCreateClient(clientKey{userID: userID, kind: clientKindUserRemote})
+}
+
+// eligibleServers is the per-request view of which MCP servers a user's tool
+// construction may reach: admin-enabled servers intersected with the caller's
+// selection, minus configuration conflicts that make a server ambiguous.
+type eligibleServers struct {
+	remote   []ServerConfig
+	plugins  []PluginServerConfig
+	embedded bool
+	// origins holds every eligible origin, so discovered tools from a server
+	// that is cached but no longer eligible are never handed to the LLM.
+	origins map[string]bool
+}
+
+// snapshotRuntime returns the published config and embedded client. The Config
+// is a shallow copy: its slices and maps belong to the configuration store and
+// must be treated as read-only.
+func (m *ClientManager) snapshotRuntime() (Config, *EmbeddedServerClient) {
+	m.lifecycleMu.RLock()
+	defer m.lifecycleMu.RUnlock()
+	return m.config, m.embeddedClient
+}
+
+func (m *ClientManager) resolveEligibleServers(cfg Config, embeddedClient *EmbeddedServerClient, plugins []PluginServerConfig, selection ToolSelection, deniedOrigins map[string]bool, serviceAccount bool) eligibleServers {
+	resolved := eligibleServers{origins: make(map[string]bool)}
+
+	// A duplicated name or endpoint makes every member of the group ambiguous:
+	// they share a client-map key or a tools-cache entry, so none of them can
+	// be safely picked. They stay out of the runtime until an admin fixes the
+	// configuration; admin discovery reports the conflict.
+	conflicting := make(map[int]bool)
+	for _, conflict := range cfg.ServerConflicts() {
+		conflicting[conflict.Index] = true
+	}
+
+	remoteAllowed := m.remoteMCPAllowed()
+
+	for i, server := range cfg.Servers {
+		switch {
+		case !remoteAllowed:
+			continue
+		case !server.Enabled || server.BaseURL == "":
+			continue
+		case conflicting[i]:
+			m.log.Warn("Skipping MCP server with a duplicate name or URL; fix the MCP configuration to enable it",
+				"serverID", server.Name, "serverOrigin", server.BaseURL)
+			continue
+		case serviceAccount && !server.HasServiceAccountAuth():
+			m.log.Debug("Skipping MCP server without service account headers in service account mode",
+				"serverID", server.Name, "serverOrigin", server.BaseURL)
+			continue
+		case deniedOrigins[llm.NormalizeMCPServerOrigin(server.BaseURL)]:
+			continue
+		case !selection.Allows(server.BaseURL):
+			continue
+		}
+		resolved.remote = append(resolved.remote, server)
+		resolved.origins[llm.NormalizeMCPServerOrigin(server.BaseURL)] = true
+	}
+
+	if embeddedClient != nil && cfg.EmbeddedServer.Enabled && !deniedOrigins[EmbeddedClientKey] && selection.Allows(EmbeddedClientKey) {
+		resolved.embedded = true
+		resolved.origins[EmbeddedClientKey] = true
+	}
+
+	for _, pluginCfg := range plugins {
+		if !remoteAllowed {
+			continue
+		}
+		origin := pluginServerOriginKey(pluginCfg.PluginID)
+		if deniedOrigins[origin] || !selection.Allows(origin) {
+			continue
+		}
+		resolved.plugins = append(resolved.plugins, pluginCfg)
+		resolved.origins[origin] = true
+	}
+
+	return resolved
+}
+
+// buildConnectTasks assembles one flat task list covering remote, embedded, and
+// plugin servers. Keeping them in a single batch is the point: they dial
+// concurrently instead of one category waiting on the previous one.
+func (m *ClientManager) buildConnectTasks(ctx context.Context, userClients *UserClients, servers eligibleServers, embeddedClient *EmbeddedServerClient, forceRefresh bool, sessionID string, sessionErr error) []connectTask {
+	tasks := make([]connectTask, 0, len(servers.remote)+len(servers.plugins)+1)
+
+	// Remote dials outlive the request that starts them because they warm a
+	// shared session cache; embedded and plugin dials keep the request context.
+	for _, server := range servers.remote {
+		tasks = append(tasks, userClients.remoteConnectTask(ctx, server, RemoteConnectTimeout, forceRefresh))
+	}
+
+	if servers.embedded {
+		switch {
+		case sessionErr != nil:
+			m.log.Debug("Failed to ensure embedded session for user - embedded MCP tools will not be available",
+				"userID", userClients.userID, "error", sessionErr)
+		case userClients.needsEmbeddedReconnect(sessionID):
+			tasks = append(tasks, userClients.embeddedConnectTask(ctx, sessionID, embeddedClient))
 		}
 	}
 
-	// Snapshot under RLock, then release before PluginHTTP work.
-	pluginSnap := m.snapshotEnabledPluginServers()
-	for _, cfg := range pluginSnap {
-		if connectErr := userClient.ConnectToPluginServer(ctx, cfg, m.sourcePluginAPI); connectErr != nil {
-			m.log.Error("Failed to connect to plugin MCP server", "userID", userID, "pluginID", cfg.PluginID, "error", connectErr)
-			mcpErrors = appendMCPError(mcpErrors, connectErr)
-		}
+	for _, cfg := range servers.plugins {
+		tasks = append(tasks, userClients.pluginConnectTask(ctx, cfg, pluginConnectTimeout, m.sourcePluginAPI))
 	}
 
-	rawTools := userClient.GetTools(ctx)
-	filtered := filterToolsByConfig(rawTools, m.config, m.embeddedClient, pluginSnap)
-	return filtered, mcpErrors
+	return tasks
 }
 
-// RefreshToolsForUser drops cached user clients and shared server tool lists,
-// pre-warms a fresh user client, then delegates to GetToolsForUser for the
-// embedded/plugin connect + filtering it shares with the normal lookup path.
+// GetTools returns the MCP tools available to a user or service-account agent,
+// narrowed by the request's selection before any server is contacted.
+//
+// Eligible servers this user has not connected yet are dialed now, in one
+// concurrent batch, so a cold request costs roughly the slowest server rather
+// than the sum of all of them. Servers outside the selection are never
+// contacted and never contribute tools, even if an earlier request cached a
+// session for one.
+func (m *ClientManager) GetTools(ctx context.Context, req CatalogRequest) ([]llm.Tool, *Errors) {
+	access := m.GetCatalogAccess(ctx, req)
+	return access.Tools, access.Errors
+}
+
+// GetToolsWithSelection is GetTools with request-scoped server eligibility.
+// Callers that enforce licensing or agent-specific origin selection must use
+// this entry point so excluded servers are never contacted.
+func (m *ClientManager) GetToolsWithSelection(ctx context.Context, req CatalogRequest, selection ToolSelection) ([]llm.Tool, *Errors) {
+	access := m.GetCatalogAccessWithSelection(ctx, req, selection)
+	return access.Tools, access.Errors
+}
+
+// GetCatalogAccess returns the catalog and the policy/plugin snapshots used to
+// build it in one atomic result.
+func (m *ClientManager) GetCatalogAccess(ctx context.Context, req CatalogRequest) CatalogAccess {
+	return m.getCatalogAccess(ctx, req, ToolSelection{}, false)
+}
+
+// GetCatalogAccessWithSelection is GetCatalogAccess with request-scoped server
+// eligibility.
+func (m *ClientManager) GetCatalogAccessWithSelection(ctx context.Context, req CatalogRequest, selection ToolSelection) CatalogAccess {
+	return m.getCatalogAccess(ctx, req, selection, false)
+}
+
+func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) CatalogAccess {
+	if err := req.validate(); err != nil {
+		return CatalogAccess{Errors: &Errors{Errors: []error{err}}}
+	}
+
+	remoteClients := m.getOrCreateClient(req.remoteKey())
+	if remoteClients == nil {
+		return CatalogAccess{}
+	}
+
+	m.lifecycleMu.RLock()
+	if m.closed {
+		m.lifecycleMu.RUnlock()
+		return CatalogAccess{}
+	}
+	cfg := m.config
+	embeddedClient := m.embeddedClient
+	plugins := m.snapshotEnabledPluginServers()
+	// Service-account remotes are pooled by the bot identity, but authorization
+	// and local MCP connections belong to the human invoking this request.
+	deniedOrigins := m.deniedMCPServerOrigins(ctx, req.InvokingUserID, cfg, embeddedClient, plugins)
+	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection, deniedOrigins, req.ServiceAccount)
+
+	var localClients *UserClients
+	if servers.embedded || len(servers.plugins) > 0 {
+		localClients = m.getOrCreateClient(clientKey{userID: req.InvokingUserID, kind: clientKindLocal})
+	}
+
+	var sessionID string
+	var sessionErr error
+	if servers.embedded {
+		// Mattermost session lookup, not an MCP dial. Kept inside the
+		// lifecycle read lock so task construction stays atomic with plan.
+		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(req.InvokingUserID)
+	}
+
+	remoteOnly := servers
+	remoteOnly.plugins = nil
+	remoteOnly.embedded = false
+	remotePlans, discarded := remoteClients.planConnections(
+		m.buildConnectTasks(ctx, remoteClients, remoteOnly, embeddedClient, forceRefresh, "", nil),
+	)
+
+	var localPlans []connectPlan
+	if localClients != nil {
+		localOnly := servers
+		localOnly.remote = nil
+		var localDiscarded []*Client
+		localPlans, localDiscarded = localClients.planConnections(
+			m.buildConnectTasks(ctx, localClients, localOnly, embeddedClient, false, sessionID, sessionErr),
+		)
+		discarded = append(discarded, localDiscarded...)
+	}
+	m.lifecycleMu.RUnlock()
+
+	closeDetachedClients(m.log, discarded)
+
+	slots := make(chan struct{}, maxConcurrentConnections)
+	var remoteErrors, localErrors *Errors
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		remoteErrors = remoteClients.executeConnectionsWithSlots(ctx, remotePlans, slots)
+	})
+	if localClients != nil {
+		wg.Go(func() {
+			localErrors = localClients.executeConnectionsWithSlots(ctx, localPlans, slots)
+		})
+	}
+	wg.Wait()
+
+	var localSnapshot []userClientSnapshot
+	if localClients != nil {
+		localSnapshot = localClients.snapshotClients()
+	}
+	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
+	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, plugins)
+	return CatalogAccess{
+		Tools:         retainToolsFromOrigins(filtered, servers.origins),
+		Errors:        joinMCPErrors(remoteErrors, localErrors),
+		DeniedOrigins: deniedOrigins,
+		PluginServers: plugins,
+	}
+}
+
+// deniedMCPServerOrigins evaluates each configured stable identity once before
+// connection planning. ID-less resources remain available until migration
+// assigns their durable IDs.
+func (m *ClientManager) deniedMCPServerOrigins(ctx context.Context, userID string, cfg Config, embeddedClient *EmbeddedServerClient, plugins []PluginServerConfig) map[string]bool {
+	if m.accessChecker == nil {
+		return nil
+	}
+
+	var denied map[string]bool
+	check := func(origin, serverID string) {
+		if serverID == "" {
+			return
+		}
+		if err := m.accessChecker.CanUseMCPServer(ctx, userID, serverID); err == nil {
+			return
+		}
+		if denied == nil {
+			denied = make(map[string]bool)
+		}
+		denied[llm.NormalizeMCPServerOrigin(origin)] = true
+		m.log.Debug("Omitting MCP server for user by access policy", "userID", userID, "serverID", serverID)
+	}
+
+	for _, server := range cfg.Servers {
+		if server.Enabled && server.BaseURL != "" {
+			check(server.BaseURL, server.ID)
+		}
+	}
+	if embeddedClient != nil {
+		check(EmbeddedClientKey, cfg.EmbeddedServer.ID)
+	}
+	for _, server := range plugins {
+		check(pluginServerOriginKey(server.PluginID), server.ID)
+	}
+	return denied
+}
+
+func joinMCPErrors(groups ...*Errors) *Errors {
+	var joined *Errors
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		if joined == nil {
+			joined = &Errors{}
+		}
+		joined.ToolAuthErrors = append(joined.ToolAuthErrors, group.ToolAuthErrors...)
+		joined.Errors = append(joined.Errors, group.Errors...)
+	}
+	return joined
+}
+
+// retainToolsFromOrigins drops tools whose server is not part of this
+// operation's selection. A user client is a long-lived cache, so it can hold
+// sessions for servers an agent switch has since made ineligible.
+func retainToolsFromOrigins(tools []llm.Tool, origins map[string]bool) []llm.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	retained := make([]llm.Tool, 0, len(tools))
+	for _, tool := range tools {
+		if origins[llm.NormalizeMCPServerOrigin(tool.ServerOrigin)] {
+			retained = append(retained, tool)
+		}
+	}
+	return retained
+}
+
+// RefreshToolsForUser drops the cached user client and shared server tool
+// lists, then rediscovers every eligible server from scratch.
 func (m *ClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *Errors, error) {
-	if userID == "" {
-		return nil, nil, errors.New("userID is required")
+	access, err := m.RefreshCatalogAccess(ctx, UserCatalogRequest(userID))
+	if err != nil {
+		return nil, nil, err
 	}
+	return access.Tools, access.Errors, nil
+}
 
+// RefreshCatalogAccess drops the request's cached client bags and shared
+// server tool lists, then returns the refreshed atomic catalog result.
+func (m *ClientManager) RefreshCatalogAccess(ctx context.Context, req CatalogRequest) (CatalogAccess, error) {
+	if err := req.validate(); err != nil {
+		return CatalogAccess{}, err
+	}
 	if refreshErr := m.invalidateSharedToolsCacheForRefresh(); refreshErr != nil {
-		m.log.Warn("Failed to invalidate shared MCP tools cache during user refresh; bypassing cache for rediscovery", "userID", userID, "error", refreshErr)
+		m.log.Warn("Failed to invalidate shared MCP tools cache during catalog refresh; bypassing cache for rediscovery",
+			"remoteOwnerID", req.RemoteOwnerID, "invokingUserID", req.InvokingUserID, "error", refreshErr)
 	}
-	m.InvalidateUserClients(userID)
-	// Pre-warm the user client with a forced remote rediscovery; GetToolsForUser
-	// then reuses this cached client rather than rebuilding it.
-	m.createAndStoreUserClient(ctx, userID, true)
+	m.invalidateCatalogClients(req)
 
-	tools, mcpErrors := m.GetToolsForUser(ctx, userID)
-	return tools, mcpErrors, nil
+	return m.getCatalogAccess(ctx, req, ToolSelection{}, true), nil
 }
 
 func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
@@ -273,37 +632,27 @@ func (m *ClientManager) invalidateSharedToolsCacheForRefresh() error {
 		return nil
 	}
 
+	cfg, _ := m.snapshotRuntime()
 	var refreshErr error
-	for _, serverConfig := range m.config.Servers {
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" || !shouldUseSharedToolsCache(serverConfig) {
+	invalidate := func(cacheID string) {
+		if err := m.toolsCache.InvalidateServer(cacheID); err != nil {
+			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", cacheID, err))
+		}
+	}
+
+	for _, serverConfig := range cfg.Servers {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
 			continue
 		}
-		if err := m.toolsCache.InvalidateServer(serverConfig.Name); err != nil {
-			refreshErr = errors.Join(refreshErr, fmt.Errorf("failed to invalidate tools cache for server %s: %w", serverConfig.Name, err))
+		if sharedToolsCacheAllowedForServer(serverConfig) {
+			invalidate(serverConfig.Name)
+		}
+		// Service-account entries are always shared-cached, even for static-OAuth servers.
+		if serverConfig.HasServiceAccountAuth() {
+			invalidate(serviceAccountToolsCacheID(serverConfig.Name))
 		}
 	}
 	return refreshErr
-}
-
-func cloneMCPErrors(src *Errors) *Errors {
-	if src == nil || (len(src.ToolAuthErrors) == 0 && len(src.Errors) == 0) {
-		return nil
-	}
-	return &Errors{
-		ToolAuthErrors: append([]llm.ToolAuthError(nil), src.ToolAuthErrors...),
-		Errors:         append([]error(nil), src.Errors...),
-	}
-}
-
-func appendMCPError(mcpErrors *Errors, err error) *Errors {
-	if err == nil {
-		return mcpErrors
-	}
-	if mcpErrors == nil {
-		mcpErrors = &Errors{}
-	}
-	mcpErrors.Errors = append(mcpErrors.Errors, err)
-	return mcpErrors
 }
 
 func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOverride {
@@ -325,7 +674,8 @@ func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOver
 		}
 	}
 
-	for _, server := range m.config.Servers {
+	cfg, _ := m.snapshotRuntime()
+	for _, server := range cfg.Servers {
 		if !server.Enabled {
 			continue
 		}
@@ -334,12 +684,20 @@ func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOver
 		}
 	}
 
-	for _, toolConfig := range m.config.EmbeddedServer.ToolConfigs {
+	for _, toolConfig := range cfg.EmbeddedServer.ToolConfigs {
 		addOverride(EmbeddedClientKey, toolConfig)
 	}
 
-	for _, server := range m.config.PluginServers {
+	for _, server := range cfg.PluginServers {
 		if !server.Enabled || server.PluginID == "" {
+			continue
+		}
+		for _, toolConfig := range server.ToolConfigs {
+			addOverride(pluginServerOriginKey(server.PluginID), toolConfig)
+		}
+	}
+	for _, server := range m.ListPluginServers() {
+		if !m.IsPluginRegistered(server.PluginID) || !server.Enabled {
 			continue
 		}
 		for _, toolConfig := range server.ToolConfigs {
@@ -350,26 +708,28 @@ func (m *ClientManager) GetToolRetrievalOverrides() map[string]ToolRetrievalOver
 	return overrides
 }
 
-// snapshotEnabledPluginServers returns a copy of enabled plugin configs so
-// callers can iterate (and do HTTP work) without holding pluginServersMu.
 func (m *ClientManager) snapshotEnabledPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
-	out := make([]PluginServerConfig, 0, len(m.pluginServers))
+
+	enabled := make([]PluginServerConfig, 0, len(m.pluginServers))
 	for _, cfg := range m.pluginServers {
-		if cfg.Enabled {
-			out = append(out, cfg)
+		if cfg.Enabled && m.pluginRegistered[cfg.PluginID] {
+			enabled = append(enabled, cfg)
 		}
 	}
-	return out
+	sort.Slice(enabled, func(i, j int) bool {
+		return enabled[i].PluginID < enabled[j].PluginID
+	})
+	return enabled
 }
 
 // TouchUserActivity refreshes the idle-cleanup timestamp for a user's cached
 // MCP clients. Long-running in-process tool executions (e.g. an ask_agent
 // delegation waiting on the initiator) call this periodically so the idle
 // sweep cannot close the user's embedded session — and thereby sever the
-// in-flight tool call — while work is still ongoing. No-op when the user has
-// no cached clients.
+// in-flight tool call — while work is still ongoing. No-op for pools the user
+// has no cached clients in.
 func (m *ClientManager) TouchUserActivity(userID string) {
 	if userID == "" {
 		return
@@ -378,34 +738,73 @@ func (m *ClientManager) TouchUserActivity(userID string) {
 	m.clientsMu.Lock()
 	defer m.clientsMu.Unlock()
 
-	if _, ok := m.clients[userID]; ok {
-		m.activity[userID] = time.Now()
+	now := time.Now()
+	for _, kind := range []clientKind{clientKindUserRemote, clientKindSARemote, clientKindLocal} {
+		key := clientKey{userID: userID, kind: kind}
+		if _, ok := m.clients[key]; ok {
+			m.activity[key] = now
+		}
 	}
 }
 
-// InvalidateUserClients closes and removes cached MCP clients for a user.
+// invalidateCatalogClients removes only the remote pool and invoking-user
+// local pool used by req. In service-account mode this preserves the bot-owned
+// remote pool's separation from the human invoker's local connections.
+func (m *ClientManager) invalidateCatalogClients(req CatalogRequest) {
+	keys := []clientKey{
+		req.remoteKey(),
+		{userID: req.InvokingUserID, kind: clientKindLocal},
+	}
+
+	m.clientsMu.Lock()
+	discarded := make([]*UserClients, 0, len(keys))
+	seen := make(map[*UserClients]bool, len(keys))
+	for _, key := range keys {
+		if userClients := m.clients[key]; userClients != nil && !seen[userClients] {
+			discarded = append(discarded, userClients)
+			seen[userClients] = true
+		}
+		delete(m.clients, key)
+		delete(m.activity, key)
+	}
+	m.clientsMu.Unlock()
+
+	for _, userClients := range discarded {
+		userClients.Close()
+	}
+}
+
+// InvalidateUserClients closes and removes cached MCP clients for a user, in both auth modes.
 func (m *ClientManager) InvalidateUserClients(userID string) {
 	if userID == "" {
 		return
 	}
 
 	m.clientsMu.Lock()
-	defer m.clientsMu.Unlock()
-
-	if uc, ok := m.clients[userID]; ok {
-		uc.Close()
-		delete(m.clients, userID)
+	var discarded []*UserClients
+	for _, kind := range []clientKind{clientKindUserRemote, clientKindSARemote, clientKindLocal} {
+		key := clientKey{userID: userID, kind: kind}
+		if uc := m.clients[key]; uc != nil {
+			discarded = append(discarded, uc)
+			delete(m.clients, key)
+		}
+		delete(m.activity, key)
 	}
-	delete(m.activity, userID)
+	m.clientsMu.Unlock()
+
+	for _, uc := range discarded {
+		uc.Close()
+	}
 }
 
-// ProcessOAuthCallback processes the OAuth callback for a user
-func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code string) (*OAuthSession, error) {
+// ProcessOAuthCallback processes the OAuth callback for a user. iss is the
+// RFC 9207 issuer identifier from the authorization response, if any.
+func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state, code, iss string) (*OAuthSession, error) {
 	if m.oauthManager == nil {
 		return nil, ErrOAuthNotConfigured
 	}
 
-	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code)
+	session, err := m.oauthManager.ProcessCallback(ctx, userID, state, code, iss)
 	if err != nil {
 		return nil, err
 	}
@@ -418,13 +817,14 @@ func (m *ClientManager) ProcessOAuthCallback(ctx context.Context, userID, state,
 
 // DisconnectUserOAuth removes the stored OAuth token for a user and server,
 // and invalidates the cached MCP client so a fresh connection is established
-// on the next request.
-func (m *ClientManager) DisconnectUserOAuth(userID, serverName string) error {
+// on the next request. The stored grant is also best-effort revoked at the
+// authorization server (RFC 7009) before deletion.
+func (m *ClientManager) DisconnectUserOAuth(ctx context.Context, userID, serverName string) error {
 	if m.oauthManager == nil {
 		return ErrOAuthNotConfigured
 	}
 
-	if err := m.oauthManager.DeleteUserToken(userID, serverName); err != nil {
+	if err := m.oauthManager.DeleteUserToken(ctx, userID, serverName); err != nil {
 		return err
 	}
 
@@ -459,10 +859,11 @@ func (m *ClientManager) GetToolsCache() *ToolsCache {
 // GetEmbeddedServer returns the embedded MCP server instance (may be nil)
 // This method is kept for API compatibility
 func (m *ClientManager) GetEmbeddedServer() EmbeddedMCPServer {
-	if m.embeddedClient == nil {
+	_, embeddedClient := m.snapshotRuntime()
+	if embeddedClient == nil {
 		return nil
 	}
-	return m.embeddedClient.server
+	return embeddedClient.server
 }
 
 // GetHTTPClient returns the HTTP client for upstream requests
@@ -472,32 +873,184 @@ func (m *ClientManager) GetHTTPClient() *http.Client {
 
 // GetConfig returns a snapshot of the current MCP configuration.
 func (m *ClientManager) GetConfig() Config {
-	return m.config
+	cfg, _ := m.snapshotRuntime()
+	return cfg
+}
+
+// liveOriginIdentities is the connection-identity map ReInit uses to decide
+// which cached sessions remain valid. Tool policies are not part of identity.
+func (m *ClientManager) liveOriginIdentities(cfg Config, embeddedClient *EmbeddedServerClient, serviceAccount bool) map[string]originIdentity {
+	identities := make(map[string]originIdentity)
+	if m.remoteMCPAllowed() {
+		identities = remoteOriginIdentities(cfg)
+		if serviceAccount {
+			for _, server := range cfg.Servers {
+				if !server.HasServiceAccountAuth() {
+					delete(identities, server.BaseURL)
+					continue
+				}
+				base := identities[server.BaseURL]
+				identities[server.BaseURL] = remoteOriginIdentityForMode(server, !base.usable, true)
+			}
+		}
+	}
+
+	var embeddedServer EmbeddedMCPServer
+	if embeddedClient != nil {
+		embeddedServer = embeddedClient.server
+	}
+	identities[EmbeddedClientKey] = embeddedOriginIdentity(embeddedServer, cfg.EmbeddedServer.Enabled)
+
+	if !m.remoteMCPAllowed() {
+		return identities
+	}
+
+	m.pluginServersMu.RLock()
+	defer m.pluginServersMu.RUnlock()
+	for pluginID := range m.pluginServers {
+		if pluginID == "" {
+			continue
+		}
+		identities[pluginServerOriginKey(pluginID)] = m.pluginIdentityLocked(pluginID)
+	}
+	return identities
+}
+
+// pluginIdentityLocked reports the live identity of one plugin origin. A
+// config-only row is never contacted, so it has the same zero identity as an
+// absent one: no cached session can match it. Callers hold pluginServersMu.
+func (m *ClientManager) pluginIdentityLocked(pluginID string) originIdentity {
+	if !m.pluginRegistered[pluginID] {
+		return originIdentity{}
+	}
+	return pluginOriginIdentity(m.pluginServers[pluginID])
+}
+
+// MCPServerIDByOrigin is config.MCPConfig.ServerIDByOrigin over the current config.
+func (m *ClientManager) MCPServerIDByOrigin() map[string]string {
+	cfg, _ := m.snapshotRuntime()
+	return cfg.ServerIDByOrigin()
 }
 
 // RegisterPluginServer stores or overwrites a plugin-server registration.
-// Callers must ensure cfg.PluginID is non-empty.
+// Callers must ensure cfg.PluginID is non-empty. Identity-affecting changes
+// (name, path, enabled, registration) invalidate that origin immediately;
+// ToolConfigs and ExposeExternal alone do not.
 func (m *ClientManager) RegisterPluginServer(cfg PluginServerConfig) {
-	m.pluginServersMu.Lock()
-	defer m.pluginServersMu.Unlock()
-	m.pluginServers[cfg.PluginID] = cfg
-	m.pluginRegistered[cfg.PluginID] = true
+	m.updatePluginRegistry(cfg.PluginID, func() {
+		m.pluginServers[cfg.PluginID] = cfg
+		m.pluginRegistered[cfg.PluginID] = true
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			registrations[cfg.PluginID] = cfg
+		})
+	})
+}
+
+// UpdatePluginServerAdminFields applies admin-owned fields without replacing
+// plugin-owned registration identity. It reports false for a non-live entry.
+func (m *ClientManager) UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []ToolConfig) (PluginServerConfig, bool) {
+	var (
+		updated PluginServerConfig
+		found   bool
+	)
+	m.updatePluginRegistry(pluginID, func() {
+		updated, found = m.pluginServers[pluginID]
+		if !found || !m.pluginRegistered[pluginID] {
+			found = false
+			return
+		}
+		updated.Enabled = enabled
+		updated.ToolConfigs = toolConfigs
+		m.pluginServers[pluginID] = updated
+	})
+	return updated, found
+}
+
+// UpdatePluginServer replaces a live registration and preserves the
+// identity-change invalidation used by existing registry callers.
+func (m *ClientManager) UpdatePluginServer(cfg PluginServerConfig) {
+	m.updatePluginRegistry(cfg.PluginID, func() {
+		m.pluginServers[cfg.PluginID] = cfg
+	})
 }
 
 func (m *ClientManager) UnregisterPluginServer(pluginID string) {
-	m.pluginServersMu.Lock()
-	defer m.pluginServersMu.Unlock()
-	delete(m.pluginServers, pluginID)
-	delete(m.pluginRegistered, pluginID)
+	m.updatePluginRegistry(pluginID, func() {
+		delete(m.pluginServers, pluginID)
+		delete(m.pluginRegistered, pluginID)
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			delete(registrations, pluginID)
+		})
+	})
 }
 
+// updatePluginRegistry applies mutate to the plugin registry and drops every
+// cached session for that origin when the change altered its connection
+// identity. mutate runs under pluginServersMu and must not do network work;
+// the detached sessions are closed after every lock is released.
+func (m *ClientManager) updatePluginRegistry(pluginID string, mutate func()) {
+	if m == nil || pluginID == "" {
+		return
+	}
+
+	m.lifecycleMu.Lock()
+	if m.closed {
+		m.lifecycleMu.Unlock()
+		return
+	}
+
+	m.pluginServersMu.Lock()
+	if m.pluginServers == nil {
+		m.pluginServers = make(map[string]PluginServerConfig)
+	}
+	if m.pluginRegistered == nil {
+		m.pluginRegistered = make(map[string]bool)
+	}
+	before := m.pluginIdentityLocked(pluginID)
+	mutate()
+	after := m.pluginIdentityLocked(pluginID)
+	m.pluginServersMu.Unlock()
+
+	var discarded []*Client
+	if before != after {
+		origin := pluginServerOriginKey(pluginID)
+		for _, userClients := range m.snapshotUserClients() {
+			discarded = append(discarded, userClients.detachOrigins(origin)...)
+		}
+	}
+	m.lifecycleMu.Unlock()
+	closeDetachedClients(m.log, discarded)
+}
+
+func (m *ClientManager) snapshotUserClients() []*UserClients {
+	m.clientsMu.RLock()
+	defer m.clientsMu.RUnlock()
+	if len(m.clients) == 0 {
+		return nil
+	}
+	users := make([]*UserClients, 0, len(m.clients))
+	for _, userClients := range m.clients {
+		users = append(users, userClients)
+	}
+	return users
+}
+
+// ListPluginServers returns a stable snapshot of live-registered plugin MCP
+// servers without holding the registry lock during caller work.
 func (m *ClientManager) ListPluginServers() []PluginServerConfig {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
+
 	out := make([]PluginServerConfig, 0, len(m.pluginServers))
 	for _, cfg := range m.pluginServers {
+		if !m.pluginRegistered[cfg.PluginID] {
+			continue
+		}
 		out = append(out, cfg)
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].PluginID < out[j].PluginID
+	})
 	return out
 }
 
@@ -509,17 +1062,112 @@ func (m *ClientManager) GetPluginServer(pluginID string) (PluginServerConfig, bo
 	return cfg, ok
 }
 
-// IsPluginRegistered reports whether the source plugin currently has a live
-// in-process registration. Returns false for entries hydrated only from
-// persisted config.
+// IsPluginRegistered reports whether an entry is backed by a source-plugin
+// registration, including one restored from the KV store.
 func (m *ClientManager) IsPluginRegistered(pluginID string) bool {
 	m.pluginServersMu.RLock()
 	defer m.pluginServersMu.RUnlock()
 	return m.pluginRegistered[pluginID]
 }
 
+func (m *ClientManager) hydratePluginRegistrations() {
+	m.pluginServersMu.Lock()
+	defer m.pluginServersMu.Unlock()
+
+	registrations, ok := m.loadPersistedPluginRegistrationsLocked()
+	if !ok {
+		return
+	}
+
+	verifyPluginStates := len(registrations) > 0
+	var pluginStates map[string]*model.PluginState
+	if verifyPluginStates {
+		serverConfig := m.pluginAPI.Configuration.GetConfig()
+		if serverConfig == nil {
+			m.log.Warn("Unable to verify plugin states while restoring MCP registrations; keeping all registrations")
+			verifyPluginStates = false
+		} else {
+			pluginStates = serverConfig.PluginSettings.PluginStates
+		}
+	}
+
+	prunedPluginIDs := make([]string, 0)
+	restored := 0
+	for pluginID, cfg := range registrations {
+		if verifyPluginStates {
+			state := pluginStates[pluginID]
+			if state == nil || !state.Enable {
+				prunedPluginIDs = append(prunedPluginIDs, pluginID)
+				continue
+			}
+		}
+
+		m.pluginServers[pluginID] = cfg
+		m.pluginRegistered[pluginID] = true
+		restored++
+	}
+
+	if len(prunedPluginIDs) > 0 {
+		m.mutatePersistedPluginRegistrations(func(registrations map[string]PluginServerConfig) {
+			for _, pluginID := range prunedPluginIDs {
+				delete(registrations, pluginID)
+			}
+		})
+	}
+	m.log.Debug("Restored plugin MCP registrations from KV store", "count", restored, "pruned", len(prunedPluginIDs))
+}
+
+func (m *ClientManager) mutatePersistedPluginRegistrations(update func(map[string]PluginServerConfig)) {
+	if m.pluginAPI == nil {
+		return
+	}
+	err := m.pluginAPI.KV.SetAtomicWithRetries(pluginRegistrationsKVKey, func(oldValue []byte) (any, error) {
+		registrations := make(map[string]PluginServerConfig)
+		if len(oldValue) > 0 {
+			if err := json.Unmarshal(oldValue, &registrations); err != nil {
+				return nil, fmt.Errorf("unmarshal plugin MCP registrations: %w", err)
+			}
+		}
+		if registrations == nil {
+			registrations = make(map[string]PluginServerConfig)
+		}
+		update(registrations)
+		return registrations, nil
+	})
+	if err != nil {
+		m.log.Error("Failed to persist plugin MCP registrations to KV store", "error", err)
+	}
+}
+
+func (m *ClientManager) loadPersistedPluginRegistrationsLocked() (map[string]PluginServerConfig, bool) {
+	var registrations map[string]PluginServerConfig
+	if err := m.pluginAPI.KV.Get(pluginRegistrationsKVKey, &registrations); err != nil {
+		m.log.Error("Failed to load plugin MCP registrations from KV store", "error", err)
+		return nil, false
+	}
+	if registrations == nil {
+		registrations = make(map[string]PluginServerConfig)
+	}
+	return registrations, true
+}
+
+// ApplyPersistedPluginServerFields overlays admin-owned persisted fields
+// (Enabled, ToolConfigs, ID) onto a live registration. Name/Path/ExposeExternal
+// remain plugin-owned.
+func ApplyPersistedPluginServerFields(live, persisted PluginServerConfig) PluginServerConfig {
+	live.Enabled = persisted.Enabled
+	live.ToolConfigs = persisted.ToolConfigs
+	if persisted.ID != "" {
+		live.ID = persisted.ID
+	}
+	return live
+}
+
 // syncPluginServersFromConfig merges persisted admin-owned plugin-server fields
-// onto live plugin registrations. Callers must not hold pluginServersMu.
+// onto live-registered entries only. Config-only orphan rows keep their
+// identity/policy in config but never become runtime registry members —
+// hydratePluginRegistrations (KV) and RegisterPluginServer own membership.
+// Callers must not hold pluginServersMu.
 func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 	m.pluginServersMu.Lock()
 	defer m.pluginServersMu.Unlock()
@@ -528,15 +1176,11 @@ func (m *ClientManager) syncPluginServersFromConfig(cfg Config) {
 		if persisted.PluginID == "" {
 			continue
 		}
-		if existing, ok := m.pluginServers[persisted.PluginID]; ok {
-			// Merge admin-owned fields onto the live entry; keep runtime identity
-			// and the plugin-controlled external exposure flag.
-			existing.Enabled = persisted.Enabled
-			existing.ToolConfigs = persisted.ToolConfigs
-			m.pluginServers[persisted.PluginID] = existing
+		existing, ok := m.pluginServers[persisted.PluginID]
+		if !ok || !m.pluginRegistered[persisted.PluginID] {
 			continue
 		}
-		m.pluginServers[persisted.PluginID] = persisted
+		m.pluginServers[persisted.PluginID] = ApplyPersistedPluginServerFields(existing, persisted)
 	}
 }
 
@@ -582,7 +1226,7 @@ func filterToolsByConfig(rawTools []llm.Tool, cfg Config, embeddedClient *Embedd
 		if !ps.Enabled {
 			continue
 		}
-		origin := "plugin://" + ps.PluginID
+		origin := config.PluginServerOrigin(ps.PluginID)
 		serverByOrigin[origin] = &ServerConfig{
 			Name:        ps.Name,
 			Enabled:     true,

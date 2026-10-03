@@ -450,6 +450,53 @@ func (_c *MockClient_GetFile_Call) RunAndReturn(run func(fileID string) (io.Read
 	return _c
 }
 
+// HasPermissionToFileAction provides a mock function for the type MockClient
+func (_mock *MockClient) HasPermissionToFileAction(sessionID string, fileID string, action string) bool {
+	ret := _mock.Called(sessionID, fileID, action)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasPermissionToFileAction")
+	}
+
+	var r0 bool
+	if returnFunc, ok := ret.Get(0).(func(string, string, string) bool); ok {
+		r0 = returnFunc(sessionID, fileID, action)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	return r0
+}
+
+// MockClient_HasPermissionToFileAction_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HasPermissionToFileAction'
+type MockClient_HasPermissionToFileAction_Call struct {
+	*mock.Call
+}
+
+// HasPermissionToFileAction is a helper method to define mock.On call
+//   - sessionID
+//   - fileID
+//   - action
+func (_e *MockClient_Expecter) HasPermissionToFileAction(sessionID interface{}, fileID interface{}, action interface{}) *MockClient_HasPermissionToFileAction_Call {
+	return &MockClient_HasPermissionToFileAction_Call{Call: _e.mock.On("HasPermissionToFileAction", sessionID, fileID, action)}
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Run(run func(sessionID string, fileID string, action string)) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(string), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) Return(b bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(b)
+	return _c
+}
+
+func (_c *MockClient_HasPermissionToFileAction_Call) RunAndReturn(run func(sessionID string, fileID string, action string) bool) *MockClient_HasPermissionToFileAction_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetFileInfo provides a mock function for the type MockClient
 func (_mock *MockClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	ret := _mock.Called(fileID)
@@ -1159,6 +1206,63 @@ func (_c *MockClient_KVCompareAndSet_Call) Return(b bool, err error) *MockClient
 }
 
 func (_c *MockClient_KVCompareAndSet_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}) (bool, error)) *MockClient_KVCompareAndSet_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// KVCompareAndSetWithExpiry provides a mock function for the type MockClient
+func (_mock *MockClient) KVCompareAndSetWithExpiry(key string, oldValue interface{}, newValue interface{}, ttl time.Duration) (bool, error) {
+	ret := _mock.Called(key, oldValue, newValue, ttl)
+
+	if len(ret) == 0 {
+		panic("no return value specified for KVCompareAndSetWithExpiry")
+	}
+
+	var r0 bool
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}, time.Duration) (bool, error)); ok {
+		return returnFunc(key, oldValue, newValue, ttl)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, interface{}, interface{}, time.Duration) bool); ok {
+		r0 = returnFunc(key, oldValue, newValue, ttl)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string, interface{}, interface{}, time.Duration) error); ok {
+		r1 = returnFunc(key, oldValue, newValue, ttl)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockClient_KVCompareAndSetWithExpiry_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'KVCompareAndSetWithExpiry'
+type MockClient_KVCompareAndSetWithExpiry_Call struct {
+	*mock.Call
+}
+
+// KVCompareAndSetWithExpiry is a helper method to define mock.On call
+//   - key
+//   - oldValue
+//   - newValue
+//   - ttl
+func (_e *MockClient_Expecter) KVCompareAndSetWithExpiry(key interface{}, oldValue interface{}, newValue interface{}, ttl interface{}) *MockClient_KVCompareAndSetWithExpiry_Call {
+	return &MockClient_KVCompareAndSetWithExpiry_Call{Call: _e.mock.On("KVCompareAndSetWithExpiry", key, oldValue, newValue, ttl)}
+}
+
+func (_c *MockClient_KVCompareAndSetWithExpiry_Call) Run(run func(key string, oldValue interface{}, newValue interface{}, ttl time.Duration)) *MockClient_KVCompareAndSetWithExpiry_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(interface{}), args[2].(interface{}), args[3].(time.Duration))
+	})
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSetWithExpiry_Call) Return(b bool, err error) *MockClient_KVCompareAndSetWithExpiry_Call {
+	_c.Call.Return(b, err)
+	return _c
+}
+
+func (_c *MockClient_KVCompareAndSetWithExpiry_Call) RunAndReturn(run func(key string, oldValue interface{}, newValue interface{}, ttl time.Duration) (bool, error)) *MockClient_KVCompareAndSetWithExpiry_Call {
 	_c.Call.Return(run)
 	return _c
 }

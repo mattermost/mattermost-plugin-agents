@@ -196,7 +196,7 @@ func (s *Service) Delegate(ctx context.Context, req Request) (string, error) {
 		return "", failErr
 	}
 
-	sourceBot, targetBot, initiator, err := s.validate(req)
+	sourceBot, targetBot, initiator, err := s.validate(ctx, req)
 	if err != nil {
 		return fail(botUsername(sourceBot), req.TargetAgent, "failed", err)
 	}
@@ -283,7 +283,7 @@ func botUsername(bot *bots.Bot) string {
 }
 
 // validate resolves and authorizes the delegation participants.
-func (s *Service) validate(req Request) (sourceBot *bots.Bot, targetBot *bots.Bot, initiator *model.User, err error) {
+func (s *Service) validate(ctx context.Context, req Request) (sourceBot *bots.Bot, targetBot *bots.Bot, initiator *model.User, err error) {
 	if req.InitiatorUserID == "" {
 		return nil, nil, nil, fmt.Errorf("%w: no authenticated user for this delegation", ErrAccessDenied)
 	}
@@ -313,7 +313,7 @@ func (s *Service) validate(req Request) (sourceBot *bots.Bot, targetBot *bots.Bo
 		return nil, nil, nil, fmt.Errorf("%w: no agent named %q. Use list_agents to discover available agents", ErrUnknownAgent, req.TargetAgent)
 	}
 
-	if restrictionErr := s.bots.CheckUsageRestrictionsForUser(targetBot, initiator.Id); restrictionErr != nil {
+	if restrictionErr := s.bots.CheckUsageRestrictionsForUser(ctx, targetBot, initiator.Id); restrictionErr != nil {
 		return nil, nil, nil, fmt.Errorf("%w: @%s cannot be used by this user", ErrAccessDenied, targetBot.GetConfig().Name)
 	}
 

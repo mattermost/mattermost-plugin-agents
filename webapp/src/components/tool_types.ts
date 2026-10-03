@@ -34,6 +34,15 @@ export interface ToolCall {
     name: string;
     description: string;
     server_origin?: string; // omitempty on the server; present only for MCP tools
+
+    // Display name resolved server-side from MCP metadata; absent for
+    // built-in tools and MCP tools without a declared title.
+    title?: string;
+
+    // Unprefixed MCP tool name (e.g. "create_post" for
+    // "mattermost__create_post"). Redacted for non-requesters.
+    mcp_bare_name?: string;
+
     arguments?: JSONValue;
     result?: string;
     status: ToolCallStatus;

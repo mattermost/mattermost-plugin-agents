@@ -97,7 +97,6 @@ func TestDiscoveryEndpointsSuccess(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			client := &Client{}
 			client.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -162,7 +161,6 @@ func TestDiscoveryValidation(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			client := &Client{}
 

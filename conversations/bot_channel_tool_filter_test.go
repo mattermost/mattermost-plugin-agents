@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -52,8 +53,17 @@ type channelFollowUpTestMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
-	return p.tools, nil
+func (p *channelFollowUpTestMCPToolProvider) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	// Mirror the real client manager's contract: servers outside the selection
+	// (for example remote servers on an unlicensed installation) are never
+	// contacted, so their tools never appear in the result.
+	var tools []llm.Tool
+	for _, tool := range p.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools, nil
 }
 
 type channelFollowUpTestConfig struct {
@@ -155,7 +165,7 @@ func buildChannelFollowUpStrictContext(t *testing.T, builder *llmcontext.Builder
 
 	allOpts := append([]llm.ContextOption{}, opts...)
 	bot := channelFollowUpTestBot()
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(context.Background(), bot))
 
 	return builder.BuildLLMContextUserRequest(
 		bot,
@@ -515,6 +525,58 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 				require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
 			} else {
 				require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
+			}
+		})
+	}
+}
+
+// A channel mention with tool calling off sends no tool definitions to the
+// provider, so the system prompt must not tell the model to call the dynamic
+// MCP meta-tools; models otherwise write the call out as plain text.
+func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
+	const workflowInstruction = "call search_tools"
+	const dmOnlyNotice = "can only be used in a Direct Message (DM) or via the Agents tab"
+
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                string
+		channelType         model.ChannelType
+		allowToolsInChannel bool
+		wantToolsDisabled   bool
+	}{
+		{name: "channel with tool calling disabled", channelType: model.ChannelTypeOpen, wantToolsDisabled: true},
+		{name: "channel with tool calling enabled", channelType: model.ChannelTypeOpen, allowToolsInChannel: true},
+		{name: "direct message", channelType: model.ChannelTypeDirect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
+				channelFollowUpTestMCPTool("fusion__create_geojson", "https://fusion.example.com", "Build a GeoJSON document"),
+			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
+			bot := channelFollowUpTestBot()
+			llmContext := builder.BuildLLMContextUserRequest(
+				bot,
+				&model.User{Id: "user-id", Username: "user", Locale: "en"},
+				&model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
+				builder.WithLLMContextTools(context.Background(), bot),
+			)
+			require.NotNil(t, llmContext.Tools.GetTool(mcp.SearchToolsName))
+
+			toolsDisabled := applyToolAvailability(llmContext, tt.channelType == model.ChannelTypeDirect, tt.allowToolsInChannel)
+			require.Equal(t, tt.wantToolsDisabled, toolsDisabled)
+
+			systemPrompt, err := promptsEngine.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
+			require.NoError(t, err)
+
+			if tt.wantToolsDisabled {
+				require.NotContains(t, systemPrompt, workflowInstruction)
+				require.Contains(t, systemPrompt, dmOnlyNotice)
+			} else {
+				require.Contains(t, systemPrompt, workflowInstruction)
+				require.NotContains(t, systemPrompt, dmOnlyNotice)
 			}
 		})
 	}

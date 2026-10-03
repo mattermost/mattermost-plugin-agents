@@ -129,17 +129,22 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			},
 		},
 		{
-			name:           "prior-config read failure still saves and audits, omitting changed_keys",
+			// Atomic UpdateConfig must read the prior config to reconcile
+			// stable service/MCP server IDs. A blind save would risk rotating
+			// identities and detaching ABAC policies, so fail closed.
+			name:           "prior-config read failure records a 500 fail, omitting changed_keys",
 			userID:         "userid",
 			isAdmin:        true,
 			body:           requestBody,
 			getErr:         errors.New("kv read exploded"),
-			expectedStatus: http.StatusOK,
+			expectedStatus: http.StatusInternalServerError,
 			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
-				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
 				assert.NotContains(t, rec.EventData.Parameters, "changed_keys",
-					"best-effort diff must be omitted, not fabricated, when the prior config is unreadable")
-				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
+					"diff must be omitted when the prior config is unreadable")
+				assert.NotContains(t, rec.EventData.Parameters, "persisted",
+					"a save that never landed must not claim persistence")
 			},
 		},
 		{
@@ -232,6 +237,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventReindexPosts, method: http.MethodPost, path: "/admin/reindex"},
 		{event: AuditEventCancelReindexJob, method: http.MethodPost, path: "/admin/reindex/cancel"},
 		{event: AuditEventCatchUpReindex, method: http.MethodPost, path: "/admin/reindex/catchup"},
+		{event: AuditEventRebuildVectorIndex, method: http.MethodPost, path: "/admin/reindex/rebuild-vector-index"},
 		{event: AuditEventClearMCPToolsCache, method: http.MethodPost, path: "/admin/mcp/tools/cache/clear"},
 		{event: AuditEventUpdateMCPPluginServer, method: http.MethodPut, path: "/admin/mcp/plugin-servers/some.plugin"},
 		{event: AuditEventCreateAgent, method: http.MethodPost, path: "/agents"},
@@ -241,6 +247,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventCreateCustomPrompt, method: http.MethodPost, path: "/custom-prompts"},
 		{event: AuditEventUpdateCustomPrompt, method: http.MethodPut, path: "/custom-prompts/promptid"},
 		{event: AuditEventDeleteCustomPrompt, method: http.MethodDelete, path: "/custom-prompts/promptid"},
+		{event: AuditEventUpdateChannelAutoReply, method: http.MethodPut, path: "/channel/channelid/autoreply"},
 		{event: AuditEventMCPOAuthCallback, method: http.MethodGet, path: "/oauth/callback"},
 		{event: AuditEventMCPOAuthStart, method: http.MethodGet, path: "/mcp/oauth/someserver/start"},
 		{event: AuditEventMCPOAuthDisconnect, method: http.MethodDelete, path: "/mcp/oauth/someserver"},
@@ -249,6 +256,12 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 		{event: AuditEventUnregisterMCPPluginServer, method: http.MethodPost, path: "/bridge/v1/mcp/unregister", bridge: true},
 		{event: AuditEventToolCallApproval, method: http.MethodPost, path: "/post/postid/tool_call"},
 		{event: AuditEventToolResultApproval, method: http.MethodPost, path: "/post/postid/tool_result"},
+		{event: AuditEventPutAgentPolicy, method: http.MethodPut, path: "/agents/agentid/access_policy"},
+		{event: AuditEventDeleteAgentPolicy, method: http.MethodDelete, path: "/agents/agentid/access_policy"},
+		{event: AuditEventPutServicePolicy, method: http.MethodPut, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventDeleteServicePolicy, method: http.MethodDelete, path: "/admin/services/serviceid/access_policy"},
+		{event: AuditEventPutMCPPolicy, method: http.MethodPut, path: "/admin/mcp/serverid/access_policy"},
+		{event: AuditEventDeleteMCPPolicy, method: http.MethodDelete, path: "/admin/mcp/serverid/access_policy"},
 	}
 
 	// One case per registry row, no more and no fewer (the session grant is
@@ -266,6 +279,7 @@ func TestAuditRegistryAllRoutesEmit(t *testing.T) {
 			e.mockAPI.On("HasPermissionTo", mock.Anything, mock.Anything).Return(false).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(([]byte)(nil), (*model.AppError)(nil)).Maybe()
 			e.mockAPI.On("KVSetWithOptions", mock.Anything, mock.Anything, mock.Anything).Return(true, (*model.AppError)(nil)).Maybe()
+			e.mockAPI.On("GetChannel", mock.Anything).Return((*model.Channel)(nil), &model.AppError{Message: "not found"}).Maybe()
 
 			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader("{}"))
 			if tt.bridge {

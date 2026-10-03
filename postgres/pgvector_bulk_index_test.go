@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jmoiron/sqlx"
@@ -171,9 +172,13 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		addTestPosts(t, db, []string{"dup"}, []int64{now})
 		docs := []embeddings.PostDocument{
 			{PostID: "dup", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 0",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 0, TotalChunks: 2}},
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk: true, ChunkIndex: 0, TotalChunks: 2},
+			},
 			{PostID: "dup", CreateAt: now, TeamID: "team1", ChannelID: "ch1", UserID: "user1", Content: "chunk 1",
-				ChunkInfo: chunking.ChunkInfo{IsChunk: true, ChunkIndex: 1, TotalChunks: 2}},
+				ChunkInfo: chunking.ChunkInfo{
+					IsChunk: true, ChunkIndex: 1, TotalChunks: 2},
+			},
 		}
 		require.NoError(t, pgVector.Store(ctx, docs, [][]float32{{0.1, 0.2, 0.3}, {0.4, 0.5, 0.6}}))
 
@@ -261,6 +266,67 @@ func TestFinalizeBulkIndex(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, indexExists)
 	})
+
+	t.Run("replaces a same-named valid HNSW index with the wrong m", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
+
+		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m = 16)")
+		require.NoError(t, err)
+
+		indexExists, err := pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, indexExists, "an HNSW index with the wrong m must not count as the ANN index")
+
+		require.NoError(t, pgVector.FinalizeBulkIndex(ctx))
+
+		var indexdef string
+		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+		require.NoError(t, err)
+		m, ok := parseHNSWMFromIndexDef(indexdef)
+		require.True(t, ok, "rebuilt index def must include m: %s", indexdef)
+		assert.Equal(t, embeddings.DefaultHNSWM, m)
+
+		indexExists, err = pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, indexExists)
+	})
+
+	t.Run("rejects a same-named partial HNSW index", func(t *testing.T) {
+		db := testDB(t)
+		defer cleanupDB(t, db)
+
+		pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+		require.NoError(t, err)
+
+		ctx := context.Background()
+		require.NoError(t, pgVector.PrepareBulkIndex(ctx))
+
+		_, err = db.Exec("CREATE INDEX " + vectorIndexName + " ON llm_posts_embeddings USING hnsw (embedding vector_l2_ops) WITH (m = 8) WHERE (NOT is_chunk)")
+		require.NoError(t, err)
+
+		indexExists, err := pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.False(t, indexExists, "a partial HNSW index must not count as the ANN index")
+
+		require.NoError(t, pgVector.FinalizeBulkIndex(ctx))
+
+		var indexdef string
+		err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+		require.NoError(t, err)
+		assert.NotContains(t, strings.ToUpper(indexdef), " WHERE ")
+		assert.Contains(t, indexdef, "vector_l2_ops")
+
+		indexExists, err = pgVector.VectorIndexExists(ctx)
+		require.NoError(t, err)
+		assert.True(t, indexExists)
+	})
 }
 
 func TestNewPGVectorSkipVectorIndex(t *testing.T) {
@@ -287,4 +353,24 @@ func TestNewPGVectorSkipVectorIndex(t *testing.T) {
 
 	require.NoError(t, pgVector.FinalizeBulkIndex(context.Background()))
 	assert.Contains(t, embeddingsTableIndexes(t, db), vectorIndexName)
+}
+
+func TestNewPGVectorCreatesIndexWithConfiguredM(t *testing.T) {
+	db := testDB(t)
+	defer cleanupDB(t, db)
+
+	pgVector, err := NewPGVector(db, PGVectorConfig{Dimensions: 3, HNSWM: embeddings.DefaultHNSWM})
+	require.NoError(t, err)
+
+	var indexdef string
+	err = db.Get(&indexdef, "SELECT indexdef FROM pg_indexes WHERE indexname = $1", vectorIndexName)
+	require.NoError(t, err)
+	assert.Contains(t, indexdef, "hnsw")
+	m, ok := parseHNSWMFromIndexDef(indexdef)
+	require.True(t, ok, "created index def must include m: %s", indexdef)
+	assert.Equal(t, embeddings.DefaultHNSWM, m)
+
+	exists, err := pgVector.VectorIndexExists(context.Background())
+	require.NoError(t, err)
+	assert.True(t, exists)
 }

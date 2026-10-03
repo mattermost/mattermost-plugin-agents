@@ -9,6 +9,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -24,9 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// testInitiatorUserID is a well-formed user ID: access checks deny malformed IDs.
+var testInitiatorUserID = model.NewId()
+
 func newTestBots(t *testing.T) *bots.MMBots {
 	t.Helper()
-	mmBots := bots.New(nil, nil, nil, nil, nil, nil, nil)
+	mmBots := bots.New(nil, nil, nil, nil, nil, accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil), nil, nil)
 	mmBots.SetBotsForTesting([]*bots.Bot{
 		bots.NewBot(
 			llm.BotConfig{ID: "matty-cfg", Name: "matty", DisplayName: "Matty", UserAccessLevel: llm.UserAccessLevelAll},
@@ -85,38 +89,38 @@ func TestValidate(t *testing.T) {
 	}{
 		{
 			name:       "valid delegation by username",
-			req:        Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects"},
-			user:       &model.User{Id: "user-1", Username: "alice"},
+			req:        Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects"},
+			user:       &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantTarget: "projects-bot-id",
 		},
 		{
 			name:       "valid delegation with @ prefix",
-			req:        Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "@projects"},
-			user:       &model.User{Id: "user-1", Username: "alice"},
+			req:        Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "@projects"},
+			user:       &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantTarget: "projects-bot-id",
 		},
 		{
 			name:       "valid delegation by bot user ID",
-			req:        Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects-bot-id"},
-			user:       &model.User{Id: "user-1", Username: "alice"},
+			req:        Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects-bot-id"},
+			user:       &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantTarget: "projects-bot-id",
 		},
 		{
 			name:    "unknown agent",
-			req:     Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "nonexistent"},
-			user:    &model.User{Id: "user-1", Username: "alice"},
+			req:     Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "nonexistent"},
+			user:    &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantErr: ErrUnknownAgent,
 		},
 		{
 			name:       "self delegation",
-			req:        Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "matty"},
-			user:       &model.User{Id: "user-1", Username: "alice"},
+			req:        Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "matty"},
+			user:       &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantTarget: "matty-bot-id",
 		},
 		{
 			name:    "access denied by target agent restrictions",
-			req:     Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "locked"},
-			user:    &model.User{Id: "user-1", Username: "alice"},
+			req:     Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "locked"},
+			user:    &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantErr: ErrAccessDenied,
 		},
 		{
@@ -126,8 +130,8 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "delegating bot is not a known agent",
-			req:     Request{InitiatorUserID: "user-1", DelegatingBotUserID: "stranger-id", TargetAgent: "projects"},
-			user:    &model.User{Id: "user-1", Username: "alice"},
+			req:     Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "stranger-id", TargetAgent: "projects"},
+			user:    &model.User{Id: testInitiatorUserID, Username: "alice"},
 			wantErr: ErrAccessDenied,
 		},
 		{
@@ -138,7 +142,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			name:    "initiator lookup failure",
-			req:     Request{InitiatorUserID: "user-1", DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects"},
+			req:     Request{InitiatorUserID: testInitiatorUserID, DelegatingBotUserID: "matty-bot-id", TargetAgent: "projects"},
 			userErr: errors.New("boom"),
 			wantErr: ErrAccessDenied,
 		},
@@ -152,7 +156,7 @@ func TestValidate(t *testing.T) {
 			}
 
 			svc := New(client, newTestBots(t), nil, nil, nil, nil)
-			_, target, initiator, err := svc.validate(tc.req)
+			_, target, initiator, err := svc.validate(context.Background(), tc.req)
 
 			if tc.wantErr != nil {
 				require.Error(t, err)
@@ -169,7 +173,7 @@ func TestValidate(t *testing.T) {
 func TestDelegateNotConfigured(t *testing.T) {
 	svc := New(mocks.NewMockClient(t), newTestBots(t), nil, nil, nil, nil)
 	_, err := svc.Delegate(context.Background(), Request{
-		InitiatorUserID:     "user-1",
+		InitiatorUserID:     testInitiatorUserID,
 		DelegatingBotUserID: "matty-bot-id",
 		TargetAgent:         "projects",
 	})

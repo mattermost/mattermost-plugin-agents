@@ -11,7 +11,6 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
 // Per-request limits for embedding APIs, matching the documented OpenAI and
@@ -75,18 +74,18 @@ func (p *EmbeddingProvider) CreateEmbedding(ctx context.Context, text string) ([
 		Provider: p.provider,
 		Model:    p.model,
 		Input: &schemas.EmbeddingInput{
-			Text: Ptr(text),
+			Text: new(text),
 		},
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost embedding error: %s", bifrostErrorString(bifrostErr)), p.apiKey)
+		return nil, providerError(nil, "bifrost embedding error", bifrostErr, p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {
@@ -130,13 +129,13 @@ func (p *EmbeddingProvider) batchCreateEmbeddings(ctx context.Context, texts []s
 	}
 	if p.dimensions > 0 {
 		req.Params = &schemas.EmbeddingParameters{
-			Dimensions: Ptr(p.dimensions),
+			Dimensions: new(p.dimensions),
 		}
 	}
 
 	resp, bifrostErr := p.client.EmbeddingRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost batch embedding error: %s", bifrostErrorString(bifrostErr)), p.apiKey)
+		return nil, providerError(nil, "bifrost batch embedding error", bifrostErr, p.apiKey)
 	}
 
 	if resp == nil || len(resp.Data) == 0 {

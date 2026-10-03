@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -17,6 +18,65 @@ import (
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"go.opentelemetry.io/otel/trace"
 )
+
+const (
+	// mcpRequestMaxLifetime bounds every request delegated to the plugin MCP
+	// handler. The Mattermost plugin RPC layer reconstructs HTTP requests
+	// without their original context, so a client that disconnects (for
+	// example after opening a long-lived subscriptions/listen stream) never
+	// cancels the handler; without a bound, the handler goroutine, SDK
+	// session, and host RPC resources would be retained indefinitely. The
+	// limit is deliberately generous — far beyond any real tool call — and
+	// long-lived streams that hit it are simply re-opened by spec-compliant
+	// clients (MCP streams may end at any time).
+	mcpRequestMaxLifetime = 30 * time.Minute
+
+	// mcpMaxConcurrentRequestsPerUser caps how many delegated MCP requests a
+	// single user may have in flight, bounding resource retention from
+	// reconnect churn within the request lifetime window. It must absorb a
+	// user running several MCP clients at once (each holding a listen stream
+	// plus parallel tool calls) AND the orphaned streams left by client
+	// restarts, which count against the cap until the lifetime expires — so
+	// it is sized well above any legitimate steady state. The cap is
+	// deliberately per-user only: total load then scales with the number of
+	// distinct authenticated users — the same trust boundary the rest of
+	// Mattermost applies — whereas a fixed global cap would both reject
+	// legitimate traffic on large deployments and let a handful of abusive
+	// accounts lock every other user out.
+	mcpMaxConcurrentRequestsPerUser = 32
+)
+
+// mcpRequestLimiter tracks in-flight delegated MCP requests per user.
+type mcpRequestLimiter struct {
+	mu      sync.Mutex
+	perUser map[string]int
+}
+
+func newMCPRequestLimiter() *mcpRequestLimiter {
+	return &mcpRequestLimiter{perUser: map[string]int{}}
+}
+
+// acquire reserves a slot for the user's request. It returns false when the
+// user's concurrency cap is reached.
+func (l *mcpRequestLimiter) acquire(userID string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perUser[userID] >= mcpMaxConcurrentRequestsPerUser {
+		return false
+	}
+	l.perUser[userID]++
+	return true
+}
+
+func (l *mcpRequestLimiter) release(userID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.perUser[userID] <= 1 {
+		delete(l.perUser, userID)
+	} else {
+		l.perUser[userID]--
+	}
+}
 
 // pluginContextGinKey is the gin context key under which the per-request
 // *plugin.Context is stored for the /mcp-server route group (set in ServeHTTP).
@@ -90,6 +150,14 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 		return
 	}
 
+	if !a.mcpRequestLimiter.acquire(userID) {
+		a.pluginAPI.Log.Warn("MCP request concurrency limit reached", "userId", userID)
+		c.Header("Retry-After", "10")
+		c.AbortWithStatus(http.StatusTooManyRequests)
+		return
+	}
+	defer a.mcpRequestLimiter.release(userID)
+
 	// Get or create dedicated MCP session for this user
 	sessionID, created, err := a.mcpClientManager.EnsureMCPSessionID(userID)
 	if err != nil {
@@ -131,8 +199,11 @@ func (a *API) delegateToMCPHandler(c *gin.Context, handler http.Handler) {
 	}
 
 	// Add session ID + token resolver to request context
-	// Uses the same context keys as the embedded server for consistency
-	ctx := c.Request.Context()
+	// Uses the same context keys as the embedded server for consistency.
+	// The lifetime cap substitutes for client-disconnect cancellation, which
+	// the plugin RPC layer does not propagate (see mcpRequestMaxLifetime).
+	ctx, cancel := context.WithTimeout(c.Request.Context(), mcpRequestMaxLifetime)
+	defer cancel()
 	ctx = context.WithValue(ctx, auth.SessionIDContextKey, sessionID)
 	ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(tokenResolver))
 	// Propagate authenticated user ID so proxy MCP tool handlers can inject

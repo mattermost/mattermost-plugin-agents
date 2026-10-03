@@ -6,21 +6,18 @@ import {act, fireEvent, render, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import type {ConversationResponse} from '@/types/conversation';
-import type {DelegationStatus} from '@/types/delegation';
 
 import ToolApprovalSet from './tool_approval_set';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 const mockDoToolCall = jest.fn();
 const mockInvalidateConversation = jest.fn();
-const getDelegationStatusMock = jest.fn<Promise<DelegationStatus>, [string]>();
 const useConversationMock = jest.fn();
 
 jest.mock('@/client', () => ({
     doToolCall: (postID: string, toolIDs: string[], toolAnswers: Record<string, unknown>) =>
         mockDoToolCall(postID, toolIDs, toolAnswers),
     doToolResult: jest.fn(),
-    getDelegationStatus: (id: string) => getDelegationStatusMock(id),
 }));
 
 jest.mock('@/hooks/use_conversation', () => ({
@@ -28,20 +25,21 @@ jest.mock('@/hooks/use_conversation', () => ({
     useConversation: (id: string) => useConversationMock(id),
 }));
 
-type MockToolCardProps = {
+type MockRenderContext = {
     tool: ToolCall;
     onApprove?: () => void;
     onReject?: () => void;
     isAutoApproved?: boolean;
+    renderDelegatedApprovals?: (delegationID: string) => React.ReactNode;
 };
 
-const mockToolCard = jest.fn<null, [MockToolCardProps]>(() => null);
+// Mock the registry so these tests cover ToolApprovalSet's decision logic
+// only; routing is covered by registry.test.tsx.
+const mockRenderToolCall = jest.fn<null, [MockRenderContext]>(() => null);
 
-jest.mock('./tool_card', () => ({
+jest.mock('./tool_renderers/registry', () => ({
     __esModule: true,
-    default: (props: MockToolCardProps) => {
-        return mockToolCard(props);
-    },
+    renderToolCall: (ctx: MockRenderContext) => mockRenderToolCall(ctx),
 }));
 
 function makeTool(overrides: Partial<ToolCall>): ToolCall {
@@ -64,26 +62,22 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 approvalStage={approvalStage}
                 canApprove={canApprove}
                 canExpand={true}
-                showArguments={true}
-                showResults={true}
             />
         </IntlProvider>,
     );
 }
 
-function getToolCardProps(toolID: string): MockToolCardProps {
-    const match = mockToolCard.mock.calls.find(([props]) => props.tool.id === toolID);
+function getToolCardProps(toolID: string): MockRenderContext {
+    const match = mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === toolID);
     expect(match).toBeDefined();
-    return match![0] as MockToolCardProps;
+    return match![0] as MockRenderContext;
 }
 
 beforeEach(() => {
-    mockToolCard.mockClear();
+    mockRenderToolCall.mockClear();
     mockDoToolCall.mockReset();
     mockDoToolCall.mockImplementation(() => Promise.resolve());
     mockInvalidateConversation.mockClear();
-    getDelegationStatusMock.mockReset();
-    getDelegationStatusMock.mockRejectedValue(new Error('not found'));
     useConversationMock.mockReset();
     useConversationMock.mockReturnValue({conversation: null, loading: false, error: null});
 });
@@ -120,7 +114,7 @@ describe('ToolApprovalSet', () => {
             makeTool({id: 'tool_manual'}),
         ]);
 
-        expect(mockToolCard.mock.calls.find(([props]) => props.tool.id === 'tool_marked')).toBeUndefined();
+        expect(mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === 'tool_marked')).toBeUndefined();
 
         const manualTool = getToolCardProps('tool_manual');
         expect(manualTool.onApprove).toEqual(expect.any(Function));
@@ -217,25 +211,25 @@ describe('ToolApprovalSet', () => {
             }],
         };
         useConversationMock.mockReturnValue({conversation: delegatedConversation, loading: false, error: null});
-        getDelegationStatusMock.mockResolvedValue({
-            delegation_id: 'delegation_conv',
-            parent_tool_call_id: 'parent_tool',
-            phase: 'waiting_on_you',
-            task_post_id: 'task_post',
-            permalink: '/_redirect/pl/task_post',
-            target_agent_id: 'subagent_bot',
-            target_agent_username: 'subagent',
-            target_agent_displayname: 'Sub Agent',
-            created_at: Date.now(),
-        });
 
-        const {getByTestId} = renderComponent([makeTool({
+        renderComponent([makeTool({
             id: 'parent_tool',
             name: 'mattermost__ask_agent',
             server_origin: 'embedded://mattermost',
             arguments: {agent: 'subagent', task: 'Inspect the channel'},
             status: ToolCallStatus.Accepted,
         })]);
+
+        // The registry hands this hook to the delegation card, which renders
+        // it once the sub-agent is waiting on the user.
+        const {renderDelegatedApprovals} = getToolCardProps('parent_tool');
+        expect(renderDelegatedApprovals).toBeDefined();
+
+        const {getByTestId} = render(
+            <IntlProvider locale='en'>
+                {renderDelegatedApprovals!('delegation_conv')}
+            </IntlProvider>,
+        );
 
         await waitFor(() => {
             getByTestId('delegation-embedded-approvals');
@@ -250,5 +244,16 @@ describe('ToolApprovalSet', () => {
         await waitFor(() => {
             expect(mockDoToolCall).toHaveBeenCalledWith('delegated_response_post', ['nested_tool'], {});
         });
+    });
+
+    test('omits delegated approvals for viewers who cannot approve', () => {
+        renderComponent([makeTool({
+            id: 'parent_tool',
+            name: 'mattermost__ask_agent',
+            server_origin: 'embedded://mattermost',
+            status: ToolCallStatus.Accepted,
+        })], 'call', false);
+
+        expect(getToolCardProps('parent_tool').renderDelegatedApprovals).toBeUndefined();
     });
 });

@@ -86,7 +86,7 @@ func TestCreateTurn(t *testing.T) {
 			},
 			validate: func(t *testing.T, s *Store, convID string) {
 				turn := makeTurn(convID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("post123")
+					tu.PostID = new("post123")
 				})
 				err := s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -452,7 +452,7 @@ func TestGetTurnByPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("target-post-id")
+					tu.PostID = new("target-post-id")
 					tu.Content = json.RawMessage(`[{"type":"text","text":"found me"}]`)
 				})
 				err = s.CreateTurn(turn)
@@ -528,7 +528,7 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("post-anchor")
+					tu.PostID = new("post-anchor")
 				})
 				err = s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -551,7 +551,7 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				turn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("old-post")
+					tu.PostID = new("old-post")
 				})
 				err = s.CreateTurn(turn)
 				require.NoError(t, err)
@@ -580,13 +580,13 @@ func TestUpdateTurnPostID(t *testing.T) {
 				require.NoError(t, err)
 
 				targetTurn := makeTurn(conv.ID, 1, func(tu *Turn) {
-					tu.PostID = stringPtr("target-post")
+					tu.PostID = new("target-post")
 				})
 				err = s.CreateTurn(targetTurn)
 				require.NoError(t, err)
 
 				sibling := makeTurn(conv.ID, 2, func(tu *Turn) {
-					tu.PostID = stringPtr("sibling-post")
+					tu.PostID = new("sibling-post")
 				})
 				err = s.CreateTurn(sibling)
 				require.NoError(t, err)
@@ -658,7 +658,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				anchor := makeTurn(conv.ID, 4, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr(postID)
+					tu.PostID = new(postID)
 				})
 				err = s.CreateTurn(anchor)
 				require.NoError(t, err)
@@ -691,7 +691,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 2, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr("first-post")
+					tu.PostID = new("first-post")
 				}))
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 3, func(tu *Turn) { tu.Role = "user" }))
@@ -703,7 +703,7 @@ func TestDeleteResponseTurns(t *testing.T) {
 				require.NoError(t, err)
 				err = s.CreateTurn(makeTurn(conv.ID, 5, func(tu *Turn) {
 					tu.Role = "assistant"
-					tu.PostID = stringPtr(postID)
+					tu.PostID = new(postID)
 				}))
 				require.NoError(t, err)
 				return conv.ID, postID

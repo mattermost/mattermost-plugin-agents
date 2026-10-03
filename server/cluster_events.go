@@ -17,6 +17,7 @@ const clusterEventAgentUpdate = "agent_update"
 const clusterEventMCPOAuthUserInvalidate = "mcp_oauth_user_invalidate"
 const clusterEventStreamStop = "stream_stop"
 const clusterEventDelegationComplete = "delegation_complete"
+const clusterEventChannelAutoReplyInvalidate = "channel_autoreply_invalidate"
 
 type mcpOAuthUserInvalidateClusterPayload struct {
 	UserID string `json:"userID"`
@@ -30,8 +31,19 @@ type delegationCompleteClusterPayload struct {
 	ConversationID string `json:"conversationID"`
 }
 
-func (p *Plugin) publishClusterEvent(eventID string) error {
-	ev := model.PluginClusterEvent{Id: eventID}
+type channelAutoReplyInvalidateClusterPayload struct {
+	ChannelID string `json:"channelID"`
+}
+
+// channelAutoReplyRefresher is the part of *autoreply.Service the cluster
+// event handler needs. Narrowed to an interface so the handler is testable
+// without a database.
+type channelAutoReplyRefresher interface {
+	RefreshChannel(channelID string) error
+}
+
+func (p *Plugin) publishClusterEvent(eventID string, data []byte) error {
+	ev := model.PluginClusterEvent{Id: eventID, Data: data}
 	opts := model.PluginClusterEventSendOptions{
 		SendType: model.PluginClusterEventSendTypeReliable,
 	}
@@ -42,14 +54,22 @@ func (p *Plugin) publishClusterEvent(eventID string) error {
 	return nil
 }
 
+func (p *Plugin) publishClusterEventWithPayload(eventID string, payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return p.publishClusterEvent(eventID, data)
+}
+
 // PublishConfigUpdate broadcasts a config update event to all other nodes in the cluster.
 func (p *Plugin) PublishConfigUpdate() error {
-	return p.publishClusterEvent(clusterEventConfigUpdate)
+	return p.publishClusterEvent(clusterEventConfigUpdate, nil)
 }
 
 // PublishAgentUpdate broadcasts an agent update event to all other nodes in the cluster.
 func (p *Plugin) PublishAgentUpdate() error {
-	return p.publishClusterEvent(clusterEventAgentUpdate)
+	return p.publishClusterEvent(clusterEventAgentUpdate, nil)
 }
 
 // PublishMCPOAuthUpdate broadcasts a per-user MCP OAuth cache invalidation to all other nodes.
@@ -57,24 +77,7 @@ func (p *Plugin) PublishMCPOAuthUpdate(userID string) error {
 	if userID == "" {
 		return nil
 	}
-
-	payload, err := json.Marshal(mcpOAuthUserInvalidateClusterPayload{UserID: userID})
-	if err != nil {
-		return err
-	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventMCPOAuthUserInvalidate,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventMCPOAuthUserInvalidate, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventMCPOAuthUserInvalidate, mcpOAuthUserInvalidateClusterPayload{UserID: userID})
 }
 
 // PublishStreamStop broadcasts a stop-streaming request to all other nodes so
@@ -87,24 +90,18 @@ func (p *Plugin) PublishStreamStop(postID string) error {
 	if postID == "" {
 		return nil
 	}
+	return p.publishClusterEventWithPayload(clusterEventStreamStop, streamStopClusterPayload{PostID: postID})
+}
 
-	payload, err := json.Marshal(streamStopClusterPayload{PostID: postID})
-	if err != nil {
-		return err
+// PublishChannelAutoReplyInvalidate broadcasts a per-channel auto-reply cache
+// invalidation to all other nodes in the cluster. The originating node has
+// already updated its own cache; receivers re-read the channel's row from the
+// database, so a duplicated or reordered event still converges.
+func (p *Plugin) PublishChannelAutoReplyInvalidate(channelID string) error {
+	if channelID == "" {
+		return nil
 	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventStreamStop,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventStreamStop, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventChannelAutoReplyInvalidate, channelAutoReplyInvalidateClusterPayload{ChannelID: channelID})
 }
 
 // PublishDelegationComplete broadcasts a delegated sub-turn completion to all
@@ -117,23 +114,7 @@ func (p *Plugin) PublishDelegationComplete(conversationID string) error {
 		return nil
 	}
 
-	payload, err := json.Marshal(delegationCompleteClusterPayload{ConversationID: conversationID})
-	if err != nil {
-		return err
-	}
-
-	ev := model.PluginClusterEvent{
-		Id:   clusterEventDelegationComplete,
-		Data: payload,
-	}
-	opts := model.PluginClusterEventSendOptions{
-		SendType: model.PluginClusterEventSendTypeReliable,
-	}
-	if err := p.API.PublishPluginClusterEvent(ev, opts); err != nil {
-		p.pluginAPI.Log.Error("Failed to publish cluster event", "event", clusterEventDelegationComplete, "error", err.Error())
-		return err
-	}
-	return nil
+	return p.publishClusterEventWithPayload(clusterEventDelegationComplete, delegationCompleteClusterPayload{ConversationID: conversationID})
 }
 
 // OnPluginClusterEvent handles cluster events from other nodes.
@@ -156,7 +137,7 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 			p.pluginAPI.Log.Error("Failed to re-ensure bots after agent update cluster event", "error", err.Error())
 		}
 		// Clients connected to this node need the same RHS cache invalidation as on the originating node.
-		mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]interface{}{}, &model.WebsocketBroadcast{})
+		mmapi.NewClient(p.pluginAPI).PublishWebSocketEvent(api.WebsocketEventBotsInvalidate, map[string]any{}, &model.WebsocketBroadcast{})
 
 	case clusterEventMCPOAuthUserInvalidate:
 		var payload mcpOAuthUserInvalidateClusterPayload
@@ -184,6 +165,22 @@ func (p *Plugin) OnPluginClusterEvent(_ *plugin.Context, ev model.PluginClusterE
 		}
 		if p.streamingService != nil {
 			p.streamingService.StopStreaming(payload.PostID)
+		}
+
+	case clusterEventChannelAutoReplyInvalidate:
+		var payload channelAutoReplyInvalidateClusterPayload
+		if err := json.Unmarshal(ev.Data, &payload); err != nil {
+			p.pluginAPI.Log.Error("Failed to unmarshal channel auto-reply cluster invalidation payload", "error", err.Error())
+			return
+		}
+		if payload.ChannelID == "" {
+			p.pluginAPI.Log.Error("Received channel auto-reply cluster invalidation with empty channelID")
+			return
+		}
+		if p.autoreplyService != nil {
+			if err := p.autoreplyService.RefreshChannel(payload.ChannelID); err != nil {
+				p.pluginAPI.Log.Error("Failed to refresh channel auto-reply cache on cluster event", "channel_id", payload.ChannelID, "error", err.Error())
+			}
 		}
 
 	case clusterEventDelegationComplete:

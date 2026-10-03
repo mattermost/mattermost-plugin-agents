@@ -25,21 +25,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.streamableHandler().ServeHTTP(w, r)
 }
 
-// streamableHandler lazily constructs the go-sdk HTTP handler. JSON responses
+// buildStreamableHandler constructs the go-sdk HTTP handler. JSON responses
 // are required because PluginHTTP buffers the full response.
-func (s *Server) streamableHandler() http.Handler {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.handlerBuiltOK {
-		return s.handler
-	}
-	s.handler = mcp.NewStreamableHTTPHandler(
+func (s *Server) buildStreamableHandler() http.Handler {
+	return mcp.NewStreamableHTTPHandler(
 		func(_ *http.Request) *mcp.Server { return s.server },
 		&mcp.StreamableHTTPOptions{
 			Stateless:    true,
 			JSONResponse: true,
+			// Explicitly the SDK default (introduced in go-sdk v1.7.0,
+			// previously unlimited): requests are LLM-generated tool calls,
+			// so 4 MiB is ample.
+			MaxRequestBodyBytes: mcp.DefaultMaxRequestBodyBytes,
 		},
 	)
-	s.handlerBuiltOK = true
-	return s.handler
 }

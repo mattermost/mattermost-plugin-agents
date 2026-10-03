@@ -63,20 +63,17 @@ The task must be fully self-contained: the target agent cannot see this conversa
 // getAgentTools returns agent discovery and delegation tools.
 func (p *MattermostToolProvider) getAgentTools() []MCPTool {
 	return []MCPTool{
-		{
-			Name:        "list_agents",
-			Description: `List all available AI agents (bots). Returns each agent's ID, display name, and username.`,
-			Schema:      NewJSONSchemaForAccessMode[ListAgentsArgs](string(p.accessMode)),
-			Resolver:    typed("list_agents", p.toolListAgents),
-		},
-		{
-			Name:        "ask_agent",
-			Description: askAgentDescription,
-			Schema:      NewJSONSchemaForAccessMode[AskAgentArgs](string(p.accessMode)),
-			Resolver:    typed("ask_agent", p.toolAskAgent),
-			Available:   p.delegationAvailable,
-		},
+		mcpReadTool(p, "list_agents", `List all available AI agents (bots). Returns each agent's ID, display name, and username.`, p.toolListAgents),
+		p.askAgentTool(),
 	}
+}
+
+// askAgentTool builds the ask_agent tool. It is state-changing: the delegated
+// turn posts in the requesting user's DM with the target agent.
+func (p *MattermostToolProvider) askAgentTool() MCPTool {
+	tool := mcpTool(p, "ask_agent", askAgentDescription, p.toolAskAgent)
+	tool.Available = p.delegationAvailable
+	return tool
 }
 
 // delegationAvailable gates ask_agent visibility on a wired delegation service.

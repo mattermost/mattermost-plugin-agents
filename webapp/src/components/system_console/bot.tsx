@@ -13,12 +13,14 @@ import {DangerPill} from '../pill';
 import {ButtonIcon} from '../assets/buttons';
 
 import {fetchModels} from '../../client';
+import {useIsLicensedFor} from '@/license';
 
 import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
 import ReasoningConfigItem from './reasoning_config';
+import {LicenseChip} from './enterprise_chip';
 
 export enum ChannelAccessLevel {
     All = 0,
@@ -32,6 +34,10 @@ export enum UserAccessLevel {
     Allow,
     Block,
     None,
+
+    // AttributeBased makes the ABAC resource policy the sole user-access
+    // gate; user/team lists are ignored in this mode. Wire value 4.
+    AttributeBased,
 }
 
 export type LLMBotConfig = {
@@ -54,7 +60,6 @@ export type LLMBotConfig = {
     reasoningEnabled?: boolean
     reasoningEffort?: string
     thinkingBudget?: number
-    structuredOutputEnabled?: boolean
 }
 
 // Component for configuring native tools (OpenAI / Anthropic / Google).
@@ -62,12 +67,13 @@ export type NativeToolsItemProps = {
     enabledTools: string[]
     onChange: (tools: string[]) => void
     provider?: 'openai' | 'anthropic' | 'google'
+    disabled?: boolean
 }
 
 const nativeToolsWebSearchHelpText = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): string => {
     switch (provider) {
     case 'anthropic':
-        return intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability'});
+        return intl.formatMessage({defaultMessage: 'Enable Claude\'s built-in web search capability. See Anthropic\'s web search tool documentation for capabilities and pricing.'});
     case 'google':
         return intl.formatMessage({defaultMessage: 'Enable Google Search grounding via the Gemini / Vertex AI provider'});
     default:
@@ -86,18 +92,63 @@ const nativeToolsTitle = (provider: 'openai' | 'anthropic' | 'google', intl: Ret
     }
 };
 
+type NativeToolOption = {
+    id: string;
+    label: string;
+    helpText: string;
+};
+
+// Per-provider native tool checklists. Must stay in sync with the server-side
+// support matrix (bifrost.SupportedNativeToolsForServiceType); the server
+// filters unsupported ids at request time regardless of what is persisted.
+// Help text describes what each toggle does in Mattermost and defers to the
+// provider's own documentation for capabilities, pricing and data handling —
+// those specifics change with provider tool versions.
+const nativeToolOptions = (provider: 'openai' | 'anthropic' | 'google', intl: ReturnType<typeof useIntl>): NativeToolOption[] => {
+    const webSearch: NativeToolOption = {
+        id: 'web_search',
+        label: intl.formatMessage({defaultMessage: 'Web Search'}),
+        helpText: nativeToolsWebSearchHelpText(provider, intl),
+    };
+
+    switch (provider) {
+    case 'anthropic':
+        return [
+            webSearch,
+            {
+                id: 'web_fetch',
+                label: intl.formatMessage({defaultMessage: 'Web Fetch'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent retrieve the full content of specific web pages and PDFs. See Anthropic\'s web fetch tool documentation for capabilities and pricing.'}),
+            },
+            {
+                id: 'code_interpreter',
+                label: intl.formatMessage({defaultMessage: 'Code Execution'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent run code in Anthropic\'s managed sandbox. Enabling this also lets web search and web fetch filter results in the sandbox. Conversation content may be processed and retained in the sandbox; see Anthropic\'s code execution tool documentation for details and pricing.'}),
+            },
+        ];
+    case 'google':
+        return [webSearch];
+    default:
+        // file_search is intentionally absent: OpenAI requires vector_store_ids
+        // on the tool and the plugin has no vector-store configuration yet, so
+        // enabling it would break every completion for the agent.
+        return [
+            webSearch,
+            {
+                id: 'code_interpreter',
+                label: intl.formatMessage({defaultMessage: 'Code Interpreter'}),
+                helpText: intl.formatMessage({defaultMessage: 'Let the agent run code in OpenAI\'s managed sandbox. See OpenAI\'s code interpreter documentation for details and pricing.'}),
+            },
+        ];
+    }
+};
+
 export const NativeToolsItem = (props: NativeToolsItemProps) => {
     const intl = useIntl();
     const provider = props.provider || 'openai';
+    const webSearchLicensed = useIsLicensedFor('provider_web_search');
 
-    const availableNativeTools = [
-        {
-            id: 'web_search',
-            label: intl.formatMessage({defaultMessage: 'Web Search'}),
-            helpText: nativeToolsWebSearchHelpText(provider, intl),
-        },
-
-    ];
+    const availableNativeTools = nativeToolOptions(provider, intl);
 
     const setToolEnabled = (toolId: string, enabled: boolean) => {
         const currentTools = props.enabledTools || [];
@@ -118,19 +169,25 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                 {titleMessage}
             </ItemLabel>
             <NativeToolsColumn>
-                {availableNativeTools.map((tool) => (
-                    <NativeToolField key={tool.id}>
-                        <FieldControlRow>
-                            <InlineCheckbox
-                                testId={`native-tool-${tool.id}`}
-                                label={tool.label}
-                                checked={(props.enabledTools || []).includes(tool.id)}
-                                onChange={(checked) => setToolEnabled(tool.id, checked)}
-                            />
-                        </FieldControlRow>
-                        <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                    </NativeToolField>
-                ))}
+                {availableNativeTools.map((tool) => {
+                    const checked = (props.enabledTools || []).includes(tool.id);
+                    const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
+                    return (
+                        <NativeToolField key={tool.id}>
+                            <FieldControlRow>
+                                <InlineCheckbox
+                                    testId={`native-tool-${tool.id}`}
+                                    label={tool.label}
+                                    checked={checked}
+                                    disabled={props.disabled || (webSearchGated && !checked)}
+                                    onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
+                                />
+                                {webSearchGated && <LicenseChip capability='provider_web_search'/>}
+                            </FieldControlRow>
+                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
+                        </NativeToolField>
+                    );
+                })}
             </NativeToolsColumn>
         </FormRow>
     );
@@ -168,7 +225,8 @@ const Bot = (props: Props) => {
          selectedService.type === 'azure' ||
          selectedService.type === 'openaicompatible' ||
          selectedService.type === 'gemini' ||
-         selectedService.type === 'vertex');
+         selectedService.type === 'vertex' ||
+         selectedService.type === 'north');
 
     // Fetch models when the service changes
     useEffect(() => {
@@ -180,12 +238,16 @@ const Bot = (props: Props) => {
 
         // Providers have different credential shapes for model listing:
         // - openaicompatible: API key OR API URL
+        // - north: API key AND API URL
         // - vertex: GCP project ID + region
         // - others: API key
         let hasRequiredCredentials: string | boolean = false;
         switch (selectedService.type) {
         case 'openaicompatible':
             hasRequiredCredentials = selectedService.apiKey || selectedService.apiURL;
+            break;
+        case 'north':
+            hasRequiredCredentials = Boolean(selectedService.apiKey && selectedService.apiURL);
             break;
         case 'vertex':
             hasRequiredCredentials = Boolean(selectedService.vertexProjectID && selectedService.region);
@@ -337,7 +399,7 @@ const Bot = (props: Props) => {
                         {(() => {
                             const selectedService = props.services.find((s) => s.id === props.bot.serviceID);
                             const supportsVisionAndTools = selectedService &&
-                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex'].includes(selectedService.type);
+                                ['openai', 'openaicompatible', 'azure', 'anthropic', 'cohere', 'mistral', 'gemini', 'vertex', 'north'].includes(selectedService.type);
 
                             if (!supportsVisionAndTools) {
                                 return null;
@@ -404,17 +466,6 @@ const Bot = (props: Props) => {
                                         maxTokens={selectedService?.outputTokenLimit || 4096}
                                         onChange={props.onChange}
                                     />
-                                    {(selectedService.type === 'anthropic' || ['openai', 'openaicompatible', 'azure'].includes(selectedService.type)) && (
-                                        <BooleanItem
-                                            label={intl.formatMessage({defaultMessage: 'Structured Output'})}
-                                            value={props.bot.structuredOutputEnabled ?? false}
-                                            onChange={(to: boolean) => props.onChange({...props.bot, structuredOutputEnabled: to})}
-                                            helpText={selectedService.type === 'anthropic' ?
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema. Requires a compatible Anthropic model (Claude 4.5/4.6+). Note: Requests that ask for structured JSON output will skip extended thinking; all other requests keep using it.'}) :
-                                                intl.formatMessage({defaultMessage: 'Enable structured JSON output for this bot. When enabled and a JSON schema is provided in the request, the model will produce valid JSON matching the schema.'})
-                                            }
-                                        />
-                                    )}
                                 </>
                             );
                         })()}

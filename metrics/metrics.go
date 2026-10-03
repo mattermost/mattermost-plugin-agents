@@ -36,9 +36,8 @@ type Metrics interface {
 }
 
 type InstanceInfo struct {
-	InstallationID      string
-	ConnectedUsersLimit int
-	PluginVersion       string
+	InstallationID string
+	PluginVersion  string
 }
 
 // metrics used to instrumentate metrics in prometheus.

@@ -130,7 +130,7 @@ func (s *Indexer) loadVectorIndexState() (*VectorIndexState, error) {
 // (nil old = absent; nil new = delete). Fences stale workers from clobbering
 // a successor's claim.
 func (s *Indexer) casVectorIndexState(old, updated *VectorIndexState) (bool, error) {
-	var oldValue, newValue interface{}
+	var oldValue, newValue any
 	if old != nil {
 		oldValue = *old
 	}
@@ -144,7 +144,7 @@ func (s *Indexer) casVectorIndexState(old, updated *VectorIndexState) (bool, err
 // CAS conflict means ownership was lost — leave the key alone and error.
 func (s *Indexer) clearVectorIndexState(state VectorIndexState) error {
 	var lastErr error
-	for attempt := 0; attempt < clearStateRetries; attempt++ {
+	for range clearStateRetries {
 		ok, err := s.casVectorIndexState(&state, nil)
 		if err != nil {
 			lastErr = err
@@ -326,7 +326,7 @@ func (s *Indexer) finalizeDeferredIndex(ctx context.Context, jobStatus *JobStatu
 			repairingState := buildingState
 			repairingState.Phase = VectorIndexPhaseRepairing
 			var lastErr error
-			for attempt := 0; attempt < clearStateRetries; attempt++ {
+			for range clearStateRetries {
 				applied, transErr := s.casVectorIndexState(&buildingState, &repairingState)
 				if transErr != nil {
 					lastErr = transErr
