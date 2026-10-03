@@ -11,6 +11,7 @@ export const BlockTypeToolResult = 'tool_result' as const;
 export const BlockTypeFile = 'file' as const;
 export const BlockTypeImage = 'image' as const;
 export const BlockTypeAnnotations = 'annotations' as const;
+export const BlockTypeServerToolUse = 'server_tool_use' as const;
 
 export type BlockType =
     | typeof BlockTypeText
@@ -19,7 +20,8 @@ export type BlockType =
     | typeof BlockTypeToolResult
     | typeof BlockTypeFile
     | typeof BlockTypeImage
-    | typeof BlockTypeAnnotations;
+    | typeof BlockTypeAnnotations
+    | typeof BlockTypeServerToolUse;
 
 // Tool call status constants -- must match Go constants in conversation/content_block.go
 export const StatusPending = 'pending' as const;
@@ -51,6 +53,38 @@ export interface WebSearchContext {
     count: number;
 }
 
+// Server tool activity status values -- must match Go constants in llm/stream.go
+export const ServerToolStatusInProgress = 'in_progress' as const;
+export const ServerToolStatusSuccess = 'success' as const;
+export const ServerToolStatusError = 'error' as const;
+
+export type ServerToolStatus =
+    | typeof ServerToolStatusInProgress
+    | typeof ServerToolStatusSuccess
+    | typeof ServerToolStatusError;
+
+// Server tool ids -- must match the Go NativeTool* constants in llm/service_types.go
+export const ServerToolWebSearch = 'web_search' as const;
+export const ServerToolWebFetch = 'web_fetch' as const;
+export const ServerToolCodeInterpreter = 'code_interpreter' as const;
+
+// ServerToolUse mirrors llm.ServerToolUse: one provider-executed tool
+// invocation (Anthropic web search / web fetch / code execution, OpenAI web
+// search / code interpreter). The same shape arrives over the "server_tool"
+// websocket control event and inside persisted server_tool_use blocks.
+export interface ServerToolUse {
+    id: string;
+    tool: string;
+    status: ServerToolStatus;
+    query?: string;
+    url?: string;
+    title?: string;
+    sub_tool?: string;
+    command?: string;
+    output?: string;
+    error_code?: string;
+}
+
 export interface ContentBlock {
     type: string;
 
@@ -64,11 +98,17 @@ export interface ContentBlock {
     name?: string;
     server_origin?: string;
     input?: Record<string, unknown> | null;
+    mcp_bare_name?: string;
     status?: ToolCallStatus;
     shared?: boolean;
     user_interaction?: string;
     would_auto_execute?: boolean;
     ui_meta?: ToolUIMeta;
+
+    // Tool display name and description from MCP metadata (see llm.ToolCall).
+    // description is not rendered yet.
+    title?: string;
+    description?: string;
 
     // ToolResult fields
     tool_use_id?: string;
@@ -85,6 +125,9 @@ export interface ContentBlock {
 
     // Annotations fields
     web_search_context?: WebSearchContext;
+
+    // ServerToolUse fields
+    server_tool?: ServerToolUse;
 }
 
 export interface Turn {

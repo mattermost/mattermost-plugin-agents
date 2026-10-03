@@ -6,7 +6,20 @@ import type {OptsSignalExt} from '@mattermost/types/client4';
 
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
-import {normalizeConversationResponse, searchAllChannels, updateRead} from './client';
+import manifest from './manifest';
+
+import {
+    doLoopInAgent,
+    doThreadAnalysis,
+    getChannelAutoReply,
+    getConversation,
+    getConversationContext,
+    normalizeConversationResponse,
+    searchAllChannels,
+    setSiteURL,
+    updateChannelAutoReply,
+    updateRead,
+} from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
 
@@ -21,10 +34,30 @@ jest.mock('@mattermost/client', () => {
 
         // client.tsx constructs `new Client4()`; the mocked class exposes instance methods.
         Client4: class Client4 {
+            url = '';
             searchAllChannels = mockSearchAllChannels;
             updateThreadReadForUser = mockUpdateThreadReadForUser;
+
+            setUrl(url: string) {
+                this.url = url;
+            }
+
+            getOptions(options: Record<string, unknown>) {
+                return {...options, headers: {'X-Requested-With': 'XMLHttpRequest'}};
+            }
         },
-        ClientError: class extends Error {},
+
+        // Carries status_code like the real ClientError so callers can assert on it.
+        ClientError: class extends Error {
+            status_code?: number;
+            url?: string;
+
+            constructor(baseUrl: string, data?: {message?: string; status_code?: number; url?: string}) {
+                super(data?.message ?? '');
+                this.status_code = data?.status_code;
+                this.url = data?.url;
+            }
+        },
         mockSearchAllChannels,
         mockUpdateThreadReadForUser,
     };
@@ -41,6 +74,26 @@ const {mockUpdateThreadReadForUser} = jest.requireMock('@mattermost/client') as 
         (userId: string, teamId: string, postId: string, timestamp: number) => Promise<void>
     >;
 };
+
+const mockFetch = jest.fn<Promise<Response>, [string, RequestInit]>();
+global.fetch = mockFetch as unknown as typeof fetch;
+
+const siteURL = 'http://localhost:8065';
+
+function okResponse(): Response {
+    return {ok: true, status: 200, json: () => Promise.resolve({})} as unknown as Response;
+}
+
+// Mattermost IDs are 26 characters of lowercase letters and digits.
+const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
+
+// These ids reach the client straight off free-form post props, so a caller can hand them anything.
+const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
+    {name: 'empty', id: ''},
+    {name: 'relative path segments', id: '../../some/other/route'},
+    {name: 'right length but contains a separator', id: 'abcdefghijklmnopqrstuvwxy/'},
+    {name: 'well-formed id with leading whitespace', id: ` ${WELL_FORMED_ID}`},
+];
 
 function makeTurn(overrides: Partial<Turn> = {}): Turn {
     return {
@@ -68,6 +121,15 @@ function makeConv(overrides: Partial<ConversationResponse> = {}): ConversationRe
         ...overrides,
     };
 }
+
+beforeAll(() => {
+    setSiteURL(siteURL);
+});
+
+beforeEach(() => {
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(okResponse());
+});
 
 describe('normalizeConversationResponse', () => {
     beforeEach(() => {
@@ -153,5 +215,147 @@ describe('updateRead', () => {
         mockUpdateThreadReadForUser.mockRejectedValue(error);
 
         await expect(updateRead('user-id', 'team-id', 'post-id', 123)).rejects.toBe(error);
+    });
+});
+
+describe('doLoopInAgent', () => {
+    test('posts to the loop-in route for a well-formed post id', async () => {
+        await expect(doLoopInAgent(WELL_FORMED_ID, 'matty')).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=matty`);
+        expect(options).toEqual(expect.objectContaining({method: 'POST'}));
+    });
+
+    test('percent-encodes the bot username in the query string', async () => {
+        await doLoopInAgent(WELL_FORMED_ID, 'agent bot&x=1');
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
+        await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('getChannelAutoReply', () => {
+    test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
+        const body = {bot_id: 'bot-1', mode: 'threads'};
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test('percent-encodes the channel id so it occupies a single path segment', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+
+        await getChannelAutoReply('cha/nnel');
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/cha%2Fnnel/autoreply`);
+    });
+
+    test.each([403, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('updateChannelAutoReply', () => {
+    test('issues a PUT with exactly the settings payload and resolves without reading the body', async () => {
+        const json = jest.fn();
+        mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+        }));
+        expect(json).not.toHaveBeenCalled();
+    });
+
+    test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('getConversation', () => {
+    test('requests the conversation route for a well-formed id', async () => {
+        await expect(getConversation(WELL_FORMED_ID)).resolves.toEqual({turns: []});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/conversations/${WELL_FORMED_ID}`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the conversation id is not well-formed: $name', async ({id}) => {
+        await expect(getConversation(id)).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('getConversationContext', () => {
+    test('requests the conversation context route for a well-formed id', async () => {
+        await expect(getConversationContext(WELL_FORMED_ID)).resolves.toEqual({});
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/conversations/${WELL_FORMED_ID}/context`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the conversation id is not well-formed: $name', async ({id}) => {
+        await expect(getConversationContext(id)).rejects.toThrow();
+
+        expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('license denial errors', () => {
+    test('403 responses surface the server error text', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 403,
+            json: () => Promise.resolve({
+                error: 'Thread summarization is available on Professional plans and above.',
+                license_required: 'professional',
+            }),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 403,
+            message: 'Thread summarization is available on Professional plans and above.',
+        });
+    });
+
+    test('non-403 responses keep an empty message', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({error: 'internal'}),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 500,
+            message: '',
+        });
     });
 });

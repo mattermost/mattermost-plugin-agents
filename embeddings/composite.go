@@ -6,6 +6,7 @@ package embeddings
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
 )
@@ -15,15 +16,25 @@ type CompositeSearch struct {
 	store    VectorStore
 	provider EmbeddingProvider
 	options  chunking.Options
+	recency  RecencyBiasSettings
 }
 
 // NewCompositeSearch creates a new CompositeSearch with required chunking options
-func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options chunking.Options) *CompositeSearch {
+func NewCompositeSearch(store VectorStore, provider EmbeddingProvider, options chunking.Options, recency RecencyBiasSettings) *CompositeSearch {
 	return &CompositeSearch{
 		store:    store,
 		provider: provider,
 		options:  options,
+		recency:  recency,
 	}
+}
+
+func (c *CompositeSearch) checkSchema(ctx context.Context) error {
+	checker, ok := c.store.(SchemaChecker)
+	if !ok {
+		return nil
+	}
+	return checker.CheckSchema(ctx)
 }
 
 // Store chunks documents, generates embeddings, and stores them
@@ -46,6 +57,10 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 	// Early return if no documents after chunking (all filtered or empty input)
 	if len(chunkedDocs) == 0 {
 		return nil
+	}
+
+	if err := c.checkSchema(ctx); err != nil {
+		return err
 	}
 
 	// Extract texts for embedding
@@ -71,18 +86,51 @@ func (c *CompositeSearch) Store(ctx context.Context, docs []PostDocument) error 
 
 // Search performs a semantic search and merges results from chunks of the same document
 func (c *CompositeSearch) Search(ctx context.Context, query string, opts SearchOptions) ([]SearchResult, error) {
+	if err := c.checkSchema(ctx); err != nil {
+		return nil, err
+	}
+
 	// Generate embedding for the query
 	embedding, err := c.provider.CreateEmbedding(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 
-	// Search for matching chunks
-	results, err := c.store.Search(ctx, embedding, opts)
+	if !c.recency.Enabled {
+		return c.store.Search(ctx, embedding, opts)
+	}
+
+	// Recency bias: over-fetch candidates by pure similarity (keeps the ANN
+	// index usable), rerank in memory with the time decay, then apply the
+	// caller's offset/limit window to the reranked order.
+	fetchOpts := opts
+	fetchOpts.Offset = 0
+	fetchOpts.Limit = recencyFetchLimit(opts.Limit, opts.Offset)
+
+	// The store caps a single search at MaxSearchResults rows, so a window
+	// that extends past the cap cannot be served from the reranked candidate
+	// pool. Fall back to store-side pagination in raw similarity order rather
+	// than silently truncating deep pages.
+	if fetchOpts.Limit > MaxSearchResults || (fetchOpts.Limit == 0 && opts.Offset > 0) {
+		return c.store.Search(ctx, embedding, opts)
+	}
+
+	results, err := c.store.Search(ctx, embedding, fetchOpts)
 	if err != nil {
 		return nil, err
 	}
 
+	rerankByRecency(results, time.Now().UnixMilli(), c.recency)
+
+	if opts.Offset > 0 {
+		if opts.Offset >= len(results) {
+			return nil, nil
+		}
+		results = results[opts.Offset:]
+	}
+	if opts.Limit > 0 && len(results) > opts.Limit {
+		results = results[:opts.Limit]
+	}
 	return results, nil
 }
 

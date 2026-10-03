@@ -16,7 +16,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -27,23 +31,61 @@ import (
 
 // testConfigStore is a simple in-memory implementation of ConfigStore for testing.
 type testConfigStore struct {
-	mu  sync.Mutex
-	cfg *config.Config
+	mu      sync.Mutex
+	cfg     *config.Config
+	getErr  error
+	saveErr error
+
+	// serviceIDMigrationDone mirrors the store's migration marker driving the
+	// post-migration UUID format rejection in UpdateConfig.
+	serviceIDMigrationDone bool
 }
 
 func (s *testConfigStore) GetConfig() (*config.Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
 	return s.cfg, nil
 }
 
-func (s *testConfigStore) SaveConfig(cfg config.Config) (*config.Config, error) {
+func (s *testConfigStore) SaveConfig(cfg config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prev := s.cfg
+	return s.saveLocked(cfg)
+}
+
+func (s *testConfigStore) saveLocked(cfg config.Config) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	clone := cfg
 	s.cfg = &clone
-	return prev, nil
+	return nil
+}
+
+func (s *testConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+	next, err := transform(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if s.serviceIDMigrationDone {
+		for i := range next.Services {
+			if len(next.Services[i].ID) == 36 {
+				return next, store.ErrLegacyUUIDServiceID
+			}
+		}
+	}
+	if err := s.saveLocked(next); err != nil {
+		return next, err
+	}
+	return next, nil
 }
 
 // testConfigUpdater tracks whether Update was called and with what config.
@@ -74,10 +116,14 @@ func (n *testClusterNotifier) PublishConfigUpdate() error {
 	return n.err
 }
 
-func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) (*gin.Engine, *plugintest.API) {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
+func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) *gin.Engine {
+	router, _ := setupTestRouterWithMockAPI(store, updater, notifier)
+	return router
+}
 
+// newConfigTestMockAPI returns a plugin API mock that tolerates logging and
+// serves a Site URL, which the save handler reads for MCP Apps validation.
+func newConfigTestMockAPI() *plugintest.API {
 	mockAPI := &plugintest.API{}
 	for i := 1; i <= 20; i++ {
 		args := make([]interface{}, i)
@@ -93,12 +139,20 @@ func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterN
 	mockAPI.On("GetConfig").Return(&model.Config{
 		ServiceSettings: model.ServiceSettings{SiteURL: &siteURL},
 	}).Maybe()
+	return mockAPI
+}
 
+func setupTestRouterWithMockAPI(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) (*gin.Engine, *plugintest.API) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+
+	mockAPI := newConfigTestMockAPI()
 	a := &API{
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
 		pluginAPI:       pluginapi.NewClient(mockAPI, nil),
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
 	}
 
 	adminRouter := router.Group("/admin")
@@ -156,6 +210,31 @@ func TestHandleGetConfig(t *testing.T) {
 				assert.Empty(t, cfg.DefaultBotName)
 				assert.True(t, cfg.MCP.Enabled)
 				assert.True(t, cfg.MCP.EmbeddedServer.Enabled)
+				assert.Empty(t, cfg.MCP.EmbeddedServer.ID, "GET must not mint unpersisted IDs")
+			},
+		},
+		{
+			name: "does not mint IDs for ID-less stored rows",
+			storedConfig: &config.Config{
+				Services: []llm.ServiceConfig{
+					{Name: "OpenAI", Type: "openai"},
+				},
+				MCP: config.MCPConfig{
+					Servers: []config.MCPServerConfig{
+						{Name: "Jira", BaseURL: "https://jira.example.com"},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateBody: func(t *testing.T, body []byte) {
+				var cfg config.Config
+				err := json.Unmarshal(body, &cfg)
+				require.NoError(t, err)
+				require.Len(t, cfg.Services, 1)
+				assert.Empty(t, cfg.Services[0].ID)
+				require.Len(t, cfg.MCP.Servers, 1)
+				assert.Empty(t, cfg.MCP.Servers[0].ID)
+				assert.Empty(t, cfg.MCP.EmbeddedServer.ID)
 			},
 		},
 		{
@@ -199,7 +278,7 @@ func TestHandleGetConfig(t *testing.T) {
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{}
 
-			router, _ := setupTestRouter(store, updater, notifier)
+			router := setupTestRouter(store, updater, notifier)
 
 			req := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
 			w := httptest.NewRecorder()
@@ -222,7 +301,7 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 		},
 	}
 	store := &testConfigStore{cfg: stored}
-	router, _ := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
 	w := httptest.NewRecorder()
@@ -240,6 +319,7 @@ func TestHandleGetConfigDoesNotMutateStoredServices(t *testing.T) {
 func TestHandleSaveConfig(t *testing.T) {
 	tests := []struct {
 		name                  string
+		storedCfg             *config.Config
 		requestBody           any
 		clusterErr            error
 		expectedStatus        int
@@ -249,6 +329,11 @@ func TestHandleSaveConfig(t *testing.T) {
 	}{
 		{
 			name: "returns error when cluster notify fails after successful save",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -275,6 +360,11 @@ func TestHandleSaveConfig(t *testing.T) {
 		},
 		{
 			name: "saves valid config",
+			storedCfg: &config.Config{
+				Services: []llm.ServiceConfig{
+					{ID: "svc-1", Name: "OpenAI", Type: "openai"},
+				},
+			},
 			requestBody: config.Config{
 				DefaultBotName: "ai",
 				Services: []llm.ServiceConfig{
@@ -334,6 +424,48 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name: "saves an explicit structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicyNative,
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				require.Len(t, store.cfg.Services, 1)
+				assert.Equal(t, llm.StructuredOutputPolicyNative, store.cfg.Services[0].StructuredOutputPolicy)
+			},
+		},
+		{
+			name: "rejects an unrecognized structured output policy",
+			requestBody: config.Config{
+				Services: []llm.ServiceConfig{
+					{
+						ID:                     "svc-1",
+						Name:                   "OpenAI",
+						Type:                   "openai",
+						StructuredOutputPolicy: llm.StructuredOutputPolicy("sometimes"),
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "an unusable policy must not be persisted")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount, "the in-memory config must not be updated")
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
 			name:           "rejects invalid JSON",
 			requestBody:    "not-json",
 			expectedStatus: http.StatusBadRequest,
@@ -347,15 +479,81 @@ func TestHandleSaveConfig(t *testing.T) {
 				assert.Equal(t, 0, notifier.callCount, "cluster notify should not be called on bad request")
 			},
 		},
+		{
+			// Server names key the per-user client map, the shared tools cache,
+			// and stored OAuth grants, so a duplicate silently shadows a server.
+			name: "rejects duplicate MCP server names",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Jira", BaseURL: "https://a.example.com/mcp", Enabled: true},
+						{Name: "Jira", BaseURL: "https://b.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg, "duplicate MCP servers must be rejected before persistence")
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "rejects canonically equivalent MCP server URLs",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://MCP.Example.com:443/mcp/", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/mcp", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Nil(t, store.cfg)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
+			name: "accepts distinct MCP servers on the same host",
+			requestBody: config.Config{
+				MCP: mcp.Config{
+					Servers: []mcp.ServerConfig{
+						{Name: "Alpha", BaseURL: "https://mcp.example.com/alpha", Enabled: true},
+						{Name: "Beta", BaseURL: "https://mcp.example.com/beta?tenant=b", Enabled: true},
+					},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Len(t, store.cfg.MCP.Servers, 2)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 1, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store := &testConfigStore{}
+			store := &testConfigStore{cfg: tt.storedCfg}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{err: tt.clusterErr}
 
-			router, _ := setupTestRouter(store, updater, notifier)
+			router := setupTestRouter(store, updater, notifier)
 
 			var body []byte
 			var err error
@@ -387,11 +585,47 @@ func TestHandleSaveConfig(t *testing.T) {
 	}
 }
 
+// TestHandleSaveConfigReturnsNormalizedConfig verifies the PUT response body
+// carries the normalized saved config, so the webapp can adopt server-minted
+// service and MCP server IDs immediately instead of waiting for a reload.
+func TestHandleSaveConfigReturnsNormalizedConfig(t *testing.T) {
+	store := &testConfigStore{}
+	router := setupTestRouter(store, &testConfigUpdater{}, &testClusterNotifier{})
+
+	payload := config.Config{
+		Services: []llm.ServiceConfig{{Name: "OpenAI", Type: "openai"}},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{{Name: "Jira", BaseURL: "https://jira.example.com"}},
+		},
+	}
+	body, err := json.Marshal(payload)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp config.Config
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	require.Len(t, resp.Services, 1)
+	assert.True(t, model.IsValidId(resp.Services[0].ID), "response must carry the server-minted service ID")
+	assert.Equal(t, store.cfg.Services[0].ID, resp.Services[0].ID, "response ID must match the persisted one")
+
+	require.Len(t, resp.MCP.Servers, 1)
+	assert.True(t, model.IsValidId(resp.MCP.Servers[0].ID), "response must carry the server-minted MCP server ID")
+	assert.Equal(t, store.cfg.MCP.Servers[0].ID, resp.MCP.Servers[0].ID, "response ID must match the persisted one")
+
+	assert.True(t, resp.Services[0].UseResponsesAPI, "response must reflect normalization")
+}
+
 func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	store := &testConfigStore{}
 	updater := &testConfigUpdater{}
 	notifier := &testClusterNotifier{}
-	router, _ := setupTestRouter(store, updater, notifier)
+	router := setupTestRouter(store, updater, notifier)
 
 	// Step 1: GET returns empty config
 	req := httptest.NewRequest(http.MethodGet, "/admin/config", nil)
@@ -404,14 +638,26 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, emptyCfg.Services)
 
-	// Step 2: PUT a config
+	// Step 2: PUT a config. The new service arrives ID-less (the backend
+	// mints the stable ID).
 	saveCfg := config.Config{
 		DefaultBotName: "ai",
 		Services: []llm.ServiceConfig{
-			{ID: "svc-1", Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
+			{Name: "OpenAI", Type: "openai", APIKey: "sk-test"},
 		},
 		Bots: []llm.BotConfig{
 			{ID: "bot-1", Name: "ai", ServiceID: "svc-1"},
+		},
+		MCP: config.MCPConfig{
+			Servers: []config.MCPServerConfig{
+				{
+					Name:                  "Jira",
+					Enabled:               true,
+					BaseURL:               "https://jira.example.com",
+					Headers:               map[string]string{"X-Trace": "on"},
+					ServiceAccountHeaders: map[string]string{"Authorization": "Bearer service-pat"},
+				},
+			},
 		},
 	}
 	body, err := json.Marshal(saveCfg)
@@ -440,6 +686,9 @@ func TestSaveAndGetConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, "bot-1", loadedCfg.Bots[0].ID)
 	assert.True(t, loadedCfg.MCP.Enabled)
 	assert.True(t, loadedCfg.MCP.EmbeddedServer.Enabled)
+	require.Len(t, loadedCfg.MCP.Servers, 1)
+	assert.Equal(t, map[string]string{"X-Trace": "on"}, loadedCfg.MCP.Servers[0].Headers)
+	assert.Equal(t, map[string]string{"Authorization": "Bearer service-pat"}, loadedCfg.MCP.Servers[0].ServiceAccountHeaders)
 
 	// Step 4: Verify side effects
 	assert.Equal(t, 1, updater.callCount)
@@ -501,7 +750,7 @@ func TestHandleSaveConfigMCPAppsValidation(t *testing.T) {
 			store := &testConfigStore{}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{}
-			router, _ := setupTestRouter(store, updater, notifier)
+			router := setupTestRouter(store, updater, notifier)
 
 			body, err := json.Marshal(config.Config{MCP: config.MCPConfig{Apps: tt.apps}})
 			require.NoError(t, err)
@@ -570,7 +819,7 @@ func TestHandleSaveConfigInsecureSandboxAuditLog(t *testing.T) {
 			store := &testConfigStore{cfg: tt.prevStored}
 			updater := &testConfigUpdater{}
 			notifier := &testClusterNotifier{}
-			router, mockAPI := setupTestRouter(store, updater, notifier)
+			router, mockAPI := setupTestRouterWithMockAPI(store, updater, notifier)
 
 			body, err := json.Marshal(config.Config{
 				MCP: config.MCPConfig{
@@ -644,6 +893,7 @@ func TestHandleSaveConfigInsecureSandboxAuditLogConcurrent(t *testing.T) {
 		configUpdater:   updater,
 		clusterNotifier: notifier,
 		pluginAPI:       pluginapi.NewClient(mockAPI, nil),
+		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
 	}
 	adminRouter := router.Group("/admin")
 	adminRouter.PUT("/config", a.handleSaveConfig)
@@ -678,7 +928,7 @@ func TestAdminConfigRoundTripsMCPRetrievalOverride(t *testing.T) {
 	store := &testConfigStore{}
 	updater := &testConfigUpdater{}
 	notifier := &testClusterNotifier{}
-	router, _ := setupTestRouter(store, updater, notifier)
+	router := setupTestRouter(store, updater, notifier)
 
 	saveCfg := config.Config{
 		MCP: config.MCPConfig{

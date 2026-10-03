@@ -6,33 +6,18 @@ package mcp
 import (
 	"net/url"
 	"strings"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
 
-// IsVettedHost returns true when the baseURL host matches one of the
-// Mattermost-curated vetted MCP server hosts.
-//
-// Matching semantics intentionally preserve the previous approved-server behavior:
-// - host-only matching
-// - path/query/fragment/port ignored
-// - exact host or subdomain match
-// - supports embedded://mattermost
-func IsVettedHost(baseURL string) bool {
-	if baseURL == EmbeddedClientKey {
-		return true
-	}
-
-	host, ok := vettedHostFromBaseURL(baseURL)
-	if !ok {
-		return false
-	}
-
-	for _, pattern := range vettedHostPatterns() {
-		if host == pattern || strings.HasSuffix(host, "."+pattern) {
-			return true
-		}
-	}
-
-	return false
+// IsRemoteServerOrigin reports whether an MCP server origin points at a
+// remote/external server. Built-in tools carry an empty origin and the
+// embedded Mattermost server uses EmbeddedClientKey; neither counts as
+// remote. Every other origin — remote HTTP servers and plugin-registered
+// servers — belongs to the licensed "MCP Support" feature.
+func IsRemoteServerOrigin(origin string) bool {
+	origin = llm.NormalizeMCPServerOrigin(origin)
+	return origin != "" && origin != EmbeddedClientKey
 }
 
 // SeedVettedToolConfigs returns one-time seed tool configs for vetted MCP hosts.
@@ -80,14 +65,6 @@ func vettedHostFromBaseURL(baseURL string) (string, bool) {
 	}
 
 	return host, true
-}
-
-func vettedHostPatterns() []string {
-	return []string{
-		"mcp.atlassian.com",
-		"api.githubcopilot.com",
-		"mcp.figma.com",
-	}
 }
 
 func cloneToolConfigs(src []ToolConfig) []ToolConfig {
@@ -284,7 +261,6 @@ var mattermostVettedToolConfigs = autoRunInDMToolConfigs([]string{
 
 	// Reactions & emoji
 	"get_post_reactions",
-	"get_bulk_reactions",
 	"list_custom_emoji",
 	"search_custom_emoji",
 

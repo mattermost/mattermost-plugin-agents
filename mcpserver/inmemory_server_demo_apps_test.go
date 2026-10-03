@@ -37,10 +37,10 @@ func TestInMemoryServerDemoApps(t *testing.T) {
 			server, err := NewInMemoryServer(InMemoryConfig{
 				BaseConfig:     BaseConfig{MMServerURL: "http://mm"},
 				EnableDemoApps: tt.enabled,
-			}, noopLogger{}, nil, nil)
+			}, noopLogger{}, nil, nil, nil)
 			require.NoError(t, err)
 
-			clientTransport, err := server.CreateConnectionForUser("user1", "", nil, nil)
+			clientTransport, err := server.CreateConnectionForUser("user1", "", nil)
 			require.NoError(t, err)
 
 			client := mcp.NewClient(&mcp.Implementation{Name: "demo-apps-test", Version: "1.0"}, nil)

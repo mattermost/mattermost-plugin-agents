@@ -50,3 +50,7 @@ specs/
 opencode.json
 
 .planning
+
+# Locally built binaries
+cmd/evalviewer/evalviewer
+.pat

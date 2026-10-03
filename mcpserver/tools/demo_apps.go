@@ -31,15 +31,11 @@ type PreviewPostArgs struct {
 }
 
 func (p *MattermostToolProvider) getDemoAppTools() []MCPTool {
-	return []MCPTool{{
-		Name:        "preview_post",
-		Description: previewPostDescription,
-		Schema:      NewJSONSchemaForAccessMode[PreviewPostArgs](string(p.accessMode)),
-		Resolver:    typed("preview_post", p.toolPreviewPost),
-		Meta: mcp.Meta{"ui": map[string]any{
-			"resourceUri": previewPostResourceURI,
-		}},
+	previewPost := mcpReadTool(p, "preview_post", previewPostDescription, p.toolPreviewPost)
+	previewPost.Meta = mcp.Meta{"ui": map[string]any{
+		"resourceUri": previewPostResourceURI,
 	}}
+	return []MCPTool{previewPost}
 }
 
 // registerDemoAppResources registers the ui:// resources for demo tools once.

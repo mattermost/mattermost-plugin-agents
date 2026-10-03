@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	localmcp "github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -26,8 +25,11 @@ type EmbeddedMCPServer struct {
 
 // NewEmbeddedMCPServer creates a new embedded MCP server instance
 // searchService and fileContentService are optional and can be nil when the
-// corresponding capability is unavailable
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, enableDemoApps bool) (*EmbeddedMCPServer, error) {
+// corresponding capability is unavailable.
+// allowStateChangingTools is a runtime predicate evaluated per request; a nil
+// predicate means state-changing tools are not available. enableDemoApps
+// registers the demo MCP Apps tools and resources.
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool, enableDemoApps bool) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -61,7 +63,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 	mcpLogger := NewPluginAPILoggerAdapter(logger)
 
 	// Create the in-memory MCP server
-	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService)
+	server, err := mcpserver.NewInMemoryServer(config, mcpLogger, searchService, fileContentService, allowStateChangingTools)
 	if err != nil {
 		return nil, err
 	}
@@ -92,17 +94,9 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		}
 		return session.Token, nil
 	}
-	hookStore := localmcp.NewBeforeHookStore(&pluginAPI.KV)
-	beforeHookResolver := func(userID, toolName, hookKey string) (string, error) {
-		entry, err := hookStore.Resolve(userID, toolName, hookKey)
-		if err != nil {
-			return "", err
-		}
-		return entry.CallbackURL, nil
-	}
 
 	// Create the connection through the server with resolver
-	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver, beforeHookResolver)
+	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
 	if err != nil {
 		return nil, err
 	}

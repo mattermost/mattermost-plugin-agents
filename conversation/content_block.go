@@ -18,6 +18,9 @@ const (
 	BlockTypeFile        = "file"
 	BlockTypeImage       = "image"
 	BlockTypeAnnotations = "annotations"
+	// BlockTypeServerToolUse is provider-executed activity. Payload matches
+	// the live websocket event so persisted rounds render the same way.
+	BlockTypeServerToolUse = "server_tool_use"
 )
 
 // Tool call status string constants for JSON/JSONB representation.
@@ -50,15 +53,21 @@ type ContentBlock struct {
 	Status       string          `json:"status,omitempty"`
 	Shared       *bool           `json:"shared,omitempty"` // pointer to distinguish unset from false
 
+	// Title and Description mirror llm.ToolCall so a reloaded conversation
+	// renders the same tool identity the live websocket event showed. Both
+	// are visible to non-requesters like Name. Description is not rendered
+	// anywhere yet.
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+
 	// UIMeta is the persisted MCP Apps tool metadata (tool_use blocks only).
 	UIMeta *llm.ToolUIMeta `json:"ui_meta,omitempty"`
 
 	// UserInteraction is the persisted form of llm.Tool.UserInteraction.
 	UserInteraction string `json:"user_interaction,omitempty"`
 
-	// WouldAutoExecute marks a pending tool_use block that passed the
-	// auto-execution policy but was paused with the rest of its batch.
-	// Display-only (see llm.ToolCall.WouldAutoExecute).
+	// WouldAutoExecute marks any pending tool_use block that passed the
+	// auto-execution policy (see llm.ToolCall.WouldAutoExecute).
 	WouldAutoExecute bool `json:"would_auto_execute,omitempty"`
 
 	// DecidedAt (tool_result blocks) records when the share/keep-private
@@ -82,6 +91,10 @@ type ContentBlock struct {
 
 	// Annotations fields
 	WebSearchContext *WebSearchContext `json:"web_search_context,omitempty"`
+
+	// ServerTool is streamed activity. No approval flow; shares post-text
+	// visibility, so FilterForNonRequester does not redact it.
+	ServerTool *llm.ServerToolUse `json:"server_tool,omitempty"`
 }
 
 // Citation represents an inline citation in a text block.
@@ -100,19 +113,13 @@ type WebSearchContext struct {
 	Count           int             `json:"count"`
 }
 
-// BoolPtr returns a pointer to the given bool value.
-func BoolPtr(b bool) *bool { return &b }
-
-// Int64Ptr returns a pointer to the given int64 value.
-func Int64Ptr(v int64) *int64 { return &v }
-
 // FilterForNonRequester returns a new slice of content blocks with private
-// tool data redacted. Tool use blocks with shared != true have their Input,
-// MCPBareName, and UIMeta cleared. Tool result blocks with shared != true
-// have their Content field set to empty string. Shared tool_use blocks keep
-// UIMeta so onlookers can detect an app after a share. All other block types
-// pass through unchanged. The original slice and its elements are never
-// mutated. Returns nil if the input is nil.
+// tool data redacted. Tool use blocks with shared != true have Input,
+// MCPBareName, and UIMeta cleared; tool result blocks with shared != true have
+// Content cleared. Tool identity (Name, Title, Description, ServerOrigin) stays
+// visible, mirroring redactToolCalls on the live path so both paths render
+// identically. Shared tool_use blocks keep UIMeta so onlookers can detect an
+// app after a share. The original slice is never mutated; nil in, nil out.
 func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -138,10 +145,11 @@ func FilterForNonRequester(blocks []ContentBlock) []ContentBlock {
 }
 
 // SanitizeForDisplay returns a new slice of content blocks with LLM-generated
-// string fields sanitized against Unicode bidi/spoofing attacks. Tool use
-// blocks have their Input field sanitized, and tool result blocks have their
-// Content field sanitized. The original slice is never mutated.
-// Returns nil if the input is nil.
+// and MCP-server-supplied string fields sanitized against Unicode bidi/spoofing
+// attacks: Input, Title, and Description on tool_use blocks, Content on
+// tool_result blocks. Title/Description are already sanitized at capture; this
+// is defense in depth that also covers older persisted turns. The original
+// slice is never mutated; nil in, nil out.
 func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 	if blocks == nil {
 		return nil
@@ -155,9 +163,22 @@ func SanitizeForDisplay(blocks []ContentBlock) []ContentBlock {
 			if len(block.Input) > 0 {
 				result[i].Input = json.RawMessage(llm.SanitizeNonPrintableChars(string(block.Input)))
 			}
+			if block.Title != "" {
+				result[i].Title = llm.SanitizeNonPrintableChars(block.Title)
+			}
+			if block.Description != "" {
+				result[i].Description = llm.SanitizeNonPrintableChars(block.Description)
+			}
 		case BlockTypeToolResult:
 			if block.Content != "" {
 				result[i].Content = llm.SanitizeNonPrintableChars(block.Content)
+			}
+		case BlockTypeServerToolUse:
+			if block.ServerTool != nil {
+				st := block.ServerTool.Clone()
+				st.ProviderRoute = ""
+				st.Sanitize()
+				result[i].ServerTool = &st
 			}
 		}
 	}

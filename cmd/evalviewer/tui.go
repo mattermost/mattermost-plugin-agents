@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type viewMode int
@@ -58,17 +58,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			footerHeight := 1 // footer
 			verticalMarginHeight := headerHeight + footerHeight
 
-			m.viewport = viewport.New(msg.Width, msg.Height-verticalMarginHeight)
+			m.viewport = viewport.New(
+				viewport.WithWidth(msg.Width),
+				viewport.WithHeight(msg.Height-verticalMarginHeight),
+			)
 			m.viewport.YPosition = headerHeight
 			m.ready = true
 		} else {
-			m.viewport.Width = msg.Width
-			m.viewport.Height = msg.Height - 3 // header + footer + spacing
+			m.viewport.SetWidth(msg.Width)
+			m.viewport.SetHeight(msg.Height - 3) // header + footer + spacing
 		}
 
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -138,11 +141,16 @@ func (m model) filterResults() []EvalLogLine {
 	return filtered
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
+	content := m.renderListView()
 	if m.mode == detailView {
-		return m.renderDetailViewWithViewport()
+		content = m.renderDetailViewWithViewport()
 	}
-	return m.renderListView()
+
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
 }
 
 func (m model) buildDetailContent() string {
@@ -436,7 +444,7 @@ func runTUI(results []EvalLogLine) error {
 	}
 
 	m := initialModel(results)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m)
 	_, err := p.Run()
 	return err
 }

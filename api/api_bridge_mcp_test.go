@@ -6,16 +6,21 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -98,7 +103,10 @@ func TestHandleMCPRegister(t *testing.T) {
 			wantStatus: http.StatusOK,
 			assertMock: func(t *testing.T, m *mockMCPClientManager) {
 				require.Len(t, m.registerCalls, 1)
-				require.Equal(t, validCfg, m.registerCalls[0])
+				got := m.registerCalls[0]
+				require.True(t, model.IsValidId(got.ID), "register must mint a stable Mattermost ID")
+				got.ID = ""
+				require.Equal(t, validCfg, got)
 				require.Empty(t, m.unregisterCalls)
 			},
 		},
@@ -837,5 +845,319 @@ func TestHandleMCPRegister_PreservesAdminFieldsAfterUnregister(t *testing.T) {
 		saved := e.mcp.registerCalls[0]
 		require.Equal(t, true, saved.Enabled, "nil configStore: plugin payload preserved")
 		require.Equal(t, false, saved.ExposeExternal, "nil configStore: plugin payload preserved")
+		require.True(t, model.IsValidId(saved.ID), "nil configStore: in-memory registration still receives a minted ID")
 	})
+}
+
+func TestHandleMCPRegister_MintsStableIDAcrossReregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	store := &testConfigStore{cfg: &config.Config{}}
+	e.api.configStore = store
+	e.api.configUpdater = &testConfigUpdater{}
+	e.api.clusterNotifier = &testClusterNotifier{}
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+	firstID := e.mcp.registerCalls[0].ID
+	require.True(t, model.IsValidId(firstID))
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID)
+
+	// Unregister clears the in-memory registry but must leave the persisted ID.
+	unreg := mcpUnregisterRequest(t, struct{}{})
+	unreg.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	require.Equal(t, http.StatusOK, serveAndReturn(e, unreg).StatusCode)
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID, "unregister must not remove the persisted ID")
+
+	// Re-register with a different path: ID must be stable.
+	body.Path = "/mcp/v2"
+	req2 := mcpRegisterRequest(t, body)
+	req2.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp2 := serveAndReturn(e, req2)
+	require.Equal(t, http.StatusOK, resp2.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 2)
+	require.Equal(t, firstID, e.mcp.registerCalls[1].ID, "re-register must reuse the persisted ID")
+	require.Equal(t, firstID, store.cfg.MCP.PluginServers[0].ID)
+	require.Len(t, store.cfg.MCP.PluginServers, 1, "re-register must not create a duplicate config entry")
+}
+
+func TestHandleMCPRegister_ClusterNotifyFailureStillRegisters(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	store := &testConfigStore{cfg: &config.Config{}}
+	updater := &testConfigUpdater{}
+	notifier := &testClusterNotifier{err: errors.New("cluster down")}
+	e.api.configStore = store
+	e.api.configUpdater = updater
+	e.api.clusterNotifier = notifier
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1, "registration must complete even when cluster notify fails")
+	require.True(t, model.IsValidId(e.mcp.registerCalls[0].ID))
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, 1, notifier.callCount)
+	require.Equal(t, 1, updater.callCount, "in-memory config must still be updated")
+}
+
+// Live registry ID must win when the persisted PluginServers row is missing,
+// and that ID must be written into config (not rotated).
+func TestHandleMCPRegister_PreservesLiveIDWhenPersistedRowAbsent(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	const liveID = "abcdefghijklmnopqrstuvwx0l"
+	store := &testConfigStore{cfg: &config.Config{}}
+	e.api.configStore = store
+	e.api.configUpdater = &testConfigUpdater{}
+	e.api.clusterNotifier = &testClusterNotifier{}
+
+	e.mcp.pluginServers = []mcp.PluginServerConfig{{
+		ID: liveID, PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp",
+		Enabled: true, ExposeExternal: false,
+	}}
+
+	e.mockAPI.On("LogError", mock.Anything).Maybe()
+	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+	body := mcp.PluginServerConfig{
+		PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp/v2",
+		Enabled: false, ExposeExternal: true,
+	}
+	req := mcpRegisterRequest(t, body)
+	req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+	resp := serveAndReturn(e, req)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, e.mcp.registerCalls, 1)
+
+	saved := e.mcp.registerCalls[0]
+	require.Equal(t, liveID, saved.ID, "live registry ID must not be rotated")
+	require.True(t, saved.Enabled, "Enabled preserved from live entry")
+	require.True(t, saved.ExposeExternal, "ExposeExternal comes from plugin payload")
+	require.Equal(t, "/mcp/v2", saved.Path)
+
+	require.Len(t, store.cfg.MCP.PluginServers, 1)
+	require.Equal(t, liveID, store.cfg.MCP.PluginServers[0].ID, "live ID must be persisted")
+	require.Equal(t, testCallerPluginID, store.cfg.MCP.PluginServers[0].PluginID)
+}
+
+func TestAuditMCPRegister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	// Planted tool config content that must never leak into the audit record.
+	const plantedToolName = "planted-secret-tool-name"
+	longName := strings.Repeat("n", 200)
+
+	tests := []struct {
+		name            string
+		body            string
+		existingServers []mcp.PluginServerConfig
+		persistedCfg    *config.Config
+		expectedStatus  int
+		validateRecord  func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "successful registration records identifiers but never tool configs",
+			body: `{"name":"Playbooks MCP","path":"/mcp","expose_external":true,` +
+				`"tool_configs":[{"name":"` + plantedToolName + `","policy":"ask","enabled":false}]}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "Playbooks MCP", rec.EventData.Parameters["server_name"])
+				assert.Equal(t, "/mcp", rec.EventData.Parameters["path"])
+				assert.Equal(t, true, rec.EventData.Parameters["expose_external"])
+				// Omitted enabled defaults to true on first registration.
+				assert.Equal(t, true, rec.EventData.Parameters["enabled"])
+				assert.Equal(t, true, rec.EventData.Parameters["tool_configs_provided"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedToolName, "audit record must never carry tool config content")
+			},
+		},
+		{
+			name:           "missing name records a 400 fail still carrying the caller id",
+			body:           `{"path":"/mcp"}`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+			},
+		},
+		{
+			name:           "relative path records a 400 fail still carrying the caller id",
+			body:           `{"name":"Playbooks MCP","path":"mcp"}`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+			},
+		},
+		{
+			name: "re-register records the preserved live enabled=false, not the request's true",
+			body: `{"name":"Playbooks MCP","path":"/mcp","enabled":true}`,
+			existingServers: []mcp.PluginServerConfig{{
+				PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp", Enabled: false,
+			}},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"],
+					"the effective merged value must be recorded, not the request flag")
+			},
+		},
+		{
+			name: "re-register after unregister records the persisted enabled=false, not the request's true",
+			body: `{"name":"Playbooks MCP","path":"/mcp","enabled":true}`,
+			persistedCfg: &config.Config{
+				MCP: config.MCPConfig{
+					PluginServers: []config.PluginServerConfig{{
+						PluginID: testCallerPluginID, Name: "Playbooks MCP", Path: "/mcp", Enabled: false,
+					}},
+				},
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"],
+					"the effective persisted value must be recorded, not the request flag")
+			},
+		},
+		{
+			name:           "oversized name is clamped before recording",
+			body:           `{"name":"` + longName + `","path":"/mcp"}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				// Literal expectation, not recomputed via TruncateID, so a
+				// gutted clamp fails this test.
+				assert.Equal(t, strings.Repeat("n", 128)+"…(truncated)",
+					rec.EventData.Parameters["server_name"])
+			},
+		},
+		{
+			name:           "malformed body records a 400 fail still carrying the caller id",
+			body:           `{not-json`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			if tt.existingServers != nil {
+				e.mcp.pluginServers = tt.existingServers
+			}
+			if tt.persistedCfg != nil {
+				e.api.configStore = &testConfigStore{cfg: tt.persistedCfg}
+			}
+
+			records := e.CaptureAuditRecords()
+
+			req := httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/register", strings.NewReader(tt.body))
+			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+			resp := serveAndReturn(e, req)
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventRegisterMCPPluginServer, rec.EventName)
+			assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
+			assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditMCPUnregister(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	tests := []struct {
+		name           string
+		buildRequest   func(t *testing.T) *http.Request
+		expectedStatus int
+		expectedRecord string
+	}{
+		{
+			name: "success records the calling plugin",
+			buildRequest: func(t *testing.T) *http.Request {
+				return mcpUnregisterRequest(t, map[string]string{})
+			},
+			expectedStatus: http.StatusOK,
+			expectedRecord: model.AuditStatusSuccess,
+		},
+		{
+			name: "malformed body records a 400 fail still carrying the caller id",
+			buildRequest: func(t *testing.T) *http.Request {
+				return httptest.NewRequest(http.MethodPost, "/bridge/v1/mcp/unregister", strings.NewReader(`{bad`))
+			},
+			expectedStatus: http.StatusBadRequest,
+			expectedRecord: model.AuditStatusFail,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything).Maybe()
+
+			records := e.CaptureAuditRecords()
+
+			req := tt.buildRequest(t)
+			req.Header.Set("Mattermost-Plugin-ID", testCallerPluginID)
+
+			resp := serveAndReturn(e, req)
+			require.Equal(t, tt.expectedStatus, resp.StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventUnregisterMCPPluginServer, rec.EventName)
+			assert.Equal(t, tt.expectedRecord, rec.Status)
+			assert.Empty(t, rec.Actor.UserId, "bridge calls have no acting user")
+			assert.Equal(t, testCallerPluginID, rec.EventData.Parameters[audit.KeyCallerPluginID])
+		})
+	}
 }

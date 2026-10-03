@@ -36,7 +36,7 @@ const (
 // restated explicitly to keep the wire behavior unchanged.
 func uiClientCapabilities() *mcp.ClientCapabilities {
 	caps := &mcp.ClientCapabilities{
-		RootsV2: &mcp.RootCapabilities{ListChanged: true},
+		RootsV2: &mcp.RootCapabilities{ListChanged: true}, //nolint:staticcheck // SA1019: matches the SDK's own default
 	}
 	caps.AddExtension(UIExtensionID, map[string]any{
 		"mimeTypes": []any{UIResourceMIMEType},

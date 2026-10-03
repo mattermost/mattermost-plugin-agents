@@ -19,24 +19,34 @@ type Subtitles struct {
 
 func readZoomChat(chat io.Reader) (*astisub.Subtitles, error) {
 	storage := astisub.NewSubtitles()
+	zeroTime, err := time.Parse("15:04:05", "00:00:00")
+	if err != nil {
+		return nil, err
+	}
 
 	scanner := bufio.NewScanner(chat)
 	for scanner.Scan() {
 		line := scanner.Text()
-		text := line[9:]
-		item := &astisub.Item{}
-		startAt, err := time.Parse("15:04:05", line[:8])
-		if err != nil {
-			return nil, err
+		// Timestamped Zoom lines are "HH:MM:SS <text>" (space or tab separator).
+		if len(line) >= 9 && (line[8] == ' ' || line[8] == '\t') {
+			if startAt, parseErr := time.Parse("15:04:05", line[:8]); parseErr == nil {
+				item := &astisub.Item{
+					StartAt: startAt.Sub(zeroTime),
+					EndAt:   startAt.Add(5 * time.Second).Sub(zeroTime),
+					Lines:   []astisub.Line{{Items: []astisub.LineItem{{Text: line[9:]}}}},
+				}
+				storage.Items = append(storage.Items, item)
+				continue
+			}
 		}
-		zeroTime, err := time.Parse("15:04:05", "00:00:00")
-		if err != nil {
-			return nil, err
+		if len(storage.Items) == 0 {
+			continue
 		}
-		item.StartAt = startAt.Sub(zeroTime)
-		item.EndAt = startAt.Add(5 * time.Second).Sub(zeroTime)
-		item.Lines = append(item.Lines, astisub.Line{Items: []astisub.LineItem{{Text: text}}})
-		storage.Items = append(storage.Items, item)
+		last := storage.Items[len(storage.Items)-1]
+		last.Lines = append(last.Lines, astisub.Line{Items: []astisub.LineItem{{Text: line}}})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
 	}
 	return storage, nil
 }

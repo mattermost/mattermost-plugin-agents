@@ -8,13 +8,9 @@ import styled from 'styled-components';
 import {Pill} from '../pill';
 
 import {BooleanItem, ItemList, TextItem} from './item';
+import type {MCPAppsConfig} from './mcp_types';
 
-export type MCPAppsConfig = {
-    enabled: boolean;
-    sandboxURL: string;
-    sandboxListenAddress: string;
-    allowInsecureSameOriginSandbox: boolean;
-};
+export type {MCPAppsConfig};
 
 export const defaultMCPAppsConfig: MCPAppsConfig = {
     enabled: false,

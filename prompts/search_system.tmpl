@@ -8,6 +8,7 @@ Follow these guidelines:
 {{template "citation_format.tmpl" .}}
 5. If the question is ambiguous, interpret it reasonably based on the context.
 6. Do not hallucinate information not present in the context.
+7. When available, each message has a time attribute with its creation timestamp. If a message has no timestamp, do not infer its recency. When messages contain conflicting or outdated information, prefer the more recent messages, and mention when relevant information may be outdated.
 
 <context>
 {{template "search_results.tmpl" .}}

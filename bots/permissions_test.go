@@ -4,15 +4,27 @@
 package bots
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/require"
+)
+
+// Well-formed 26-char IDs: the agent access gate denies a user ID no policy can
+// be evaluated against, so these tests need real-shaped IDs to reach the
+// restriction logic they cover.
+const (
+	testUserID      = "user12345678901234567890ab"
+	testOtherUserID = "othe12345678901234567890ab"
 )
 
 type TestEnvironment struct {
@@ -26,7 +38,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	client := pluginapi.NewClient(mockAPI, nil)
 
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	mmBots := New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	mmBots := New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 
 	e := &TestEnvironment{
 		bots:    mmBots,
@@ -59,7 +71,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -70,7 +82,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -78,10 +90,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -92,7 +104,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -100,10 +112,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -114,7 +126,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -122,10 +134,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -135,7 +147,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -145,7 +157,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelNone,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -156,7 +168,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -164,10 +176,10 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -176,10 +188,10 @@ func TestUsageRestrictions(t *testing.T) {
 				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 				ChannelIDs:         []string{"channel1"},
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -188,10 +200,10 @@ func TestUsageRestrictions(t *testing.T) {
 				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
 				ChannelIDs:         []string{"channel1"},
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user2"},
+				UserIDs:            []string{testOtherUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -202,7 +214,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -213,7 +225,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -224,7 +236,7 @@ func TestUsageRestrictions(t *testing.T) {
 				TeamIDs:            []string{"team2"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -232,11 +244,11 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelAllow,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 				TeamIDs:            []string{"team2"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -244,11 +256,11 @@ func TestUsageRestrictions(t *testing.T) {
 			bot: &Bot{cfg: llm.BotConfig{
 				ChannelAccessLevel: llm.ChannelAccessLevelAll,
 				UserAccessLevel:    llm.UserAccessLevelBlock,
-				UserIDs:            []string{"user1"},
+				UserIDs:            []string{testUserID},
 				TeamIDs:            []string{"team1"},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		// DB-backed agent test cases: build llm.BotConfig directly to confirm
@@ -261,10 +273,10 @@ func TestUsageRestrictions(t *testing.T) {
 				DisplayName:     "DB Agent",
 				ServiceID:       "svc-1",
 				UserAccessLevel: llm.UserAccessLevelAllow,
-				UserIDs:         []string{"user1"},
+				UserIDs:         []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 		{
@@ -275,10 +287,10 @@ func TestUsageRestrictions(t *testing.T) {
 				DisplayName:     "DB Agent 2",
 				ServiceID:       "svc-1",
 				UserAccessLevel: llm.UserAccessLevelBlock,
-				UserIDs:         []string{"blocked_user"},
+				UserIDs:         []string{testUserID},
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "channel1"},
-			requestingUser: "blocked_user",
+			requestingUser: testUserID,
 			expectedError:  ErrUsageRestriction,
 		},
 		{
@@ -293,7 +305,7 @@ func TestUsageRestrictions(t *testing.T) {
 				UserAccessLevel:    llm.UserAccessLevelAll,
 			}, mmBot: nil},
 			channel:        &model.Channel{Id: "allowed_channel"},
-			requestingUser: "user1",
+			requestingUser: testUserID,
 			expectedError:  nil,
 		},
 	}
@@ -304,16 +316,121 @@ func TestUsageRestrictions(t *testing.T) {
 			if len(tc.bot.GetConfig().TeamIDs) > 0 {
 				member := &model.TeamMember{
 					TeamId: "team1",
-					UserId: "user1",
+					UserId: testUserID,
 				}
-				e.mockAPI.On("GetTeamMember", "team1", "user1").Return(member, nil).Maybe()
-				e.mockAPI.On("GetTeamMember", "team2", "user1").Return(nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound}).Maybe()
+				e.mockAPI.On("GetTeamMember", "team1", testUserID).Return(member, nil).Maybe()
+				e.mockAPI.On("GetTeamMember", "team2", testUserID).Return(nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound}).Maybe()
 			}
 
-			err := e.bots.CheckUsageRestrictions(tc.requestingUser, tc.bot, tc.channel)
+			err := e.bots.CheckUsageRestrictions(context.Background(), tc.requestingUser, tc.bot, tc.channel)
 			if tc.expectedError != nil {
 				require.ErrorIs(t, err, tc.expectedError)
+
+				// The composite gate relabels ABAC denials as ErrUsageRestriction,
+				// so that sentinel alone cannot tell a legacy restriction from a
+				// denial that never reached the legacy check. Every row here
+				// expects the legacy channel/user switch to do the rejecting.
+				require.NotErrorIs(t, err, accesscontrol.ErrAccessDenied)
 			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCheckUsageRestrictionsForChannel(t *testing.T) {
+	e := SetupTestEnvironment(t)
+	defer e.Cleanup(t)
+
+	testCases := []struct {
+		name          string
+		bot           *Bot
+		channel       *model.Channel
+		expectedError error
+		// expectAnyError pins fail-closed behavior for errors that do not
+		// wrap ErrUsageRestriction (e.g. a corrupt access level).
+		expectAnyError bool
+	}{
+		{
+			name: "access level all allows any channel",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "allow list containing the channel allows it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
+				ChannelIDs:         []string{"channel1"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "allow list missing the channel blocks it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAllow,
+				ChannelIDs:         []string{"channel2"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "block list containing the channel blocks it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
+				ChannelIDs:         []string{"channel1"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "block list missing the channel allows it",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelBlock,
+				ChannelIDs:         []string{"channel2"},
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "access level none blocks every channel",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelNone,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: ErrUsageRestriction,
+		},
+		{
+			name: "user-scope restrictions are ignored: every user blocked but channel allowed",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelAll,
+				UserAccessLevel:    llm.UserAccessLevelNone,
+			}, mmBot: nil},
+			channel:       &model.Channel{Id: "channel1"},
+			expectedError: nil,
+		},
+		{
+			name: "out-of-range access level fails closed",
+			bot: &Bot{cfg: llm.BotConfig{
+				ChannelAccessLevel: llm.ChannelAccessLevelNone + 1,
+			}, mmBot: nil},
+			channel:        &model.Channel{Id: "channel1"},
+			expectAnyError: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := e.bots.CheckUsageRestrictionsForChannel(tc.bot, tc.channel)
+			switch {
+			case tc.expectAnyError:
+				require.Error(t, err)
+			case tc.expectedError != nil:
+				require.ErrorIs(t, err, tc.expectedError)
+			default:
 				require.NoError(t, err)
 			}
 		})
@@ -325,9 +442,9 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 	defer e.Cleanup(t)
 
 	// Only team-membership branches need API mocks.
-	member := &model.TeamMember{TeamId: "team1", UserId: "user1"}
-	e.mockAPI.On("GetTeamMember", "team1", "user1").Return(member, nil).Maybe()
-	e.mockAPI.On("GetTeamMember", "team2", "user1").Return(
+	member := &model.TeamMember{TeamId: "team1", UserId: testUserID}
+	e.mockAPI.On("GetTeamMember", "team1", testUserID).Return(member, nil).Maybe()
+	e.mockAPI.On("GetTeamMember", "team2", testUserID).Return(
 		nil, &model.AppError{Message: "not found", StatusCode: http.StatusNotFound},
 	).Maybe()
 
@@ -337,39 +454,39 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 		user    string
 		wantErr bool
 	}{
-		{"all allowed", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAll}, "user1", false},
+		{"all allowed", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelAll}, testUserID, false},
 		{"allow in userIDs", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
-			UserIDs:         []string{"user1"},
-		}, "user1", false},
+			UserIDs:         []string{testUserID},
+		}, testUserID, false},
 		{"allow via team", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
 			TeamIDs:         []string{"team1"},
-		}, "user1", false},
+		}, testUserID, false},
 		{"allow not listed", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelAllow,
 			UserIDs:         []string{"other"},
-		}, "user1", true},
+		}, testUserID, true},
 		{"block in userIDs", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
-			UserIDs:         []string{"user1"},
-		}, "user1", true},
+			UserIDs:         []string{testUserID},
+		}, testUserID, true},
 		{"block via team", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
 			TeamIDs:         []string{"team1"},
-		}, "user1", true},
+		}, testUserID, true},
 		{"block not listed", llm.BotConfig{
 			UserAccessLevel: llm.UserAccessLevelBlock,
 			UserIDs:         []string{"other"},
-		}, "user1", false},
-		{"none", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelNone}, "user1", true},
+		}, testUserID, false},
+		{"none", llm.BotConfig{UserAccessLevel: llm.UserAccessLevelNone}, testUserID, true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			errDirect := UsageRestrictionsForUserConfig(e.client, tc.cfg, tc.user)
-			errConfig := e.bots.CheckUsageRestrictionsForUserConfig(tc.cfg, tc.user)
-			errBot := e.bots.CheckUsageRestrictionsForUser(&Bot{cfg: tc.cfg}, tc.user)
+			errConfig := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, tc.user)
+			errBot := e.bots.CheckUsageRestrictionsForUser(context.Background(), &Bot{cfg: tc.cfg}, tc.user)
 			if tc.wantErr {
 				require.ErrorIs(t, errDirect, ErrUsageRestriction)
 				require.ErrorIs(t, errConfig, ErrUsageRestriction)
@@ -379,6 +496,330 @@ func TestCheckUsageRestrictionsForUserConfigParity(t *testing.T) {
 				require.NoError(t, errConfig)
 				require.NoError(t, errBot)
 			}
+		})
+	}
+}
+
+// abacStubClient answers decision calls per resource type; unlisted types
+// evaluate as no_policy (legacy behavior). A type listed in perTypeErr fails
+// evaluation instead, which the checker denies.
+type abacStubClient struct {
+	perType    map[string]*model.AccessDecision
+	perTypeErr map[string]error
+	perID      map[string]*model.AccessDecision
+}
+
+func (s abacStubClient) EvaluateAccessRequest(_ context.Context, _, resourceType, resourceID, _ string) (*model.AccessDecision, error) {
+	if err, ok := s.perTypeErr[resourceType]; ok {
+		return nil, err
+	}
+	if decision, ok := s.perID[resourceID]; ok {
+		return decision, nil
+	}
+	if decision, ok := s.perType[resourceType]; ok {
+		return decision, nil
+	}
+	noPolicy := model.NewNoPolicyAccessDecision()
+	return &noPolicy, nil
+}
+
+func abacAllow() *model.AccessDecision { return &model.AccessDecision{Decision: true} }
+func abacDeny() *model.AccessDecision  { return &model.AccessDecision{Decision: false} }
+
+func setupABACTestEnvironment(t *testing.T, stub abacStubClient) *TestEnvironment {
+	t.Helper()
+	mockAPI := &plugintest.API{}
+	enterprisetest.StubLicense(mockAPI, enterprise.LevelEnterpriseAdvanced)
+	client := pluginapi.NewClient(mockAPI, nil)
+	checker := accesscontrol.New(stub, nil, accesscontrol.NoMCPServerIDs, nil)
+	mmBots := New(mockAPI, client, enterprise.NewLicenseChecker(client), nil, nil, checker, &http.Client{}, nil)
+	return &TestEnvironment{bots: mmBots, client: client, mockAPI: mockAPI}
+}
+
+func TestCheckUsageRestrictionsForUserConfigComposite(t *testing.T) {
+	userID := model.NewId()
+	agentID := model.NewId()
+	serviceID := model.NewId()
+
+	tests := []struct {
+		name       string
+		perType    map[string]*model.AccessDecision
+		perTypeErr map[string]error
+		cfg        llm.BotConfig
+		wantDenied bool
+	}{
+		{
+			name:    "agent policy deny masks legacy allow",
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacDeny()},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name: "service deny after agent allow",
+			perType: map[string]*model.AccessDecision{
+				accesscontrol.ResourceTypeAgent:   abacAllow(),
+				accesscontrol.ResourceTypeService: abacDeny(),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name: "agent and service allow",
+			perType: map[string]*model.AccessDecision{
+				accesscontrol.ResourceTypeAgent:   abacAllow(),
+				accesscontrol.ResourceTypeService: abacAllow(),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name:    "attribute-based agent ignores legacy user lists",
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacAllow()},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+				UserIDs:         []string{"someone-else"}, // would deny under Allow mode
+			},
+		},
+		{
+			name:    "attribute-based agent denied by policy",
+			perType: map[string]*model.AccessDecision{accesscontrol.ResourceTypeAgent: abacDeny()},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			},
+			wantDenied: true,
+		},
+		{
+			name: "attribute-based agent with no policy denies",
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAttributeBased,
+			},
+			wantDenied: true,
+		},
+		{
+			// A failed evaluation leaves policy existence unknowable, so even
+			// a legacy-mode agent whose user lists would allow fails closed at
+			// the enforcement point.
+			name:       "legacy-mode agent denied on evaluation error",
+			perTypeErr: map[string]error{accesscontrol.ResourceTypeAgent: errors.New("pdp unavailable")},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: serviceID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perType: tc.perType, perTypeErr: tc.perTypeErr})
+			defer e.Cleanup(t)
+
+			err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, userID)
+			if tc.wantDenied {
+				// ABAC denials satisfy both sentinels so existing callers keep
+				// branching on ErrUsageRestriction while new code can detect
+				// policy denials specifically.
+				require.ErrorIs(t, err, ErrUsageRestriction)
+				require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func openAIService(id, fallbackID string) llm.ServiceConfig {
+	return llm.ServiceConfig{
+		ID:                id,
+		Type:              llm.ServiceTypeOpenAI,
+		APIKey:            "sk-test",
+		FallbackServiceID: fallbackID,
+	}
+}
+
+func TestCheckUsageRestrictionsForUserConfigServiceChain(t *testing.T) {
+	userID := model.NewId()
+	agentID := model.NewId()
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+	fallback2ID := model.NewId()
+
+	tests := []struct {
+		name       string
+		perID      map[string]*model.AccessDecision
+		services   []llm.ServiceConfig
+		cfg        llm.BotConfig
+		wantDenied bool
+	}{
+		{
+			name:     "primary allow, no fallbacks",
+			services: []llm.ServiceConfig{openAIService(primaryID, "")},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name: "primary allow, fallback deny",
+			perID: map[string]*model.AccessDecision{
+				fallbackID: abacDeny(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+		{
+			name: "primary deny, fallback allow",
+			perID: map[string]*model.AccessDecision{
+				primaryID:  abacDeny(),
+				fallbackID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+			wantDenied: true,
+		},
+		{
+			name: "primary allow, all fallbacks allow",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			cfg: llm.BotConfig{
+				ID: agentID, ServiceID: primaryID,
+				UserAccessLevel: llm.UserAccessLevelAll,
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perID: tc.perID})
+			defer e.Cleanup(t)
+			e.bots.config = &mockConfig{services: tc.services}
+
+			err := e.bots.CheckUsageRestrictionsForUserConfig(context.Background(), tc.cfg, userID)
+			if tc.wantDenied {
+				require.ErrorIs(t, err, ErrUsageRestriction)
+				require.ErrorIs(t, err, accesscontrol.ErrAccessDenied)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAllowedFallbackServiceIDs(t *testing.T) {
+	userID := model.NewId()
+	primaryID := model.NewId()
+	fallbackID := model.NewId()
+	fallback2ID := model.NewId()
+	fallback3ID := model.NewId()
+
+	tests := []struct {
+		name     string
+		perID    map[string]*model.AccessDecision
+		services []llm.ServiceConfig
+		want     []string
+		wantErr  bool
+	}{
+		{
+			name:     "no fallbacks",
+			services: []llm.ServiceConfig{openAIService(primaryID, "")},
+		},
+		{
+			name: "first fallback allowed, second denied",
+			perID: map[string]*model.AccessDecision{
+				fallback2ID: abacDeny(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			want: []string{fallbackID},
+		},
+		{
+			name: "first fallback denied drops later hops",
+			perID: map[string]*model.AccessDecision{
+				fallbackID:  abacDeny(),
+				fallback2ID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+		},
+		{
+			name: "all fallbacks allowed",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, ""),
+			},
+			want: []string{fallbackID, fallback2ID},
+		},
+		{
+			name: "middle hop denied truncates rather than skips",
+			perID: map[string]*model.AccessDecision{
+				fallback2ID: abacDeny(),
+				fallback3ID: abacAllow(),
+			},
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				openAIService(fallbackID, fallback2ID),
+				openAIService(fallback2ID, fallback3ID),
+				openAIService(fallback3ID, ""),
+			},
+			want: []string{fallbackID},
+		},
+		{
+			name: "cycle fails closed",
+			services: []llm.ServiceConfig{
+				openAIService(primaryID, fallbackID),
+				{ID: fallbackID, Type: llm.ServiceTypeOpenAI, APIKey: "sk-test", FallbackServiceID: primaryID},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupABACTestEnvironment(t, abacStubClient{perID: tc.perID})
+			defer e.Cleanup(t)
+			e.bots.config = &mockConfig{services: tc.services}
+
+			got, err := e.bots.allowedFallbackServiceIDs(context.Background(), userID, primaryID)
+			if tc.wantErr {
+				require.Error(t, err)
+				require.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
 		})
 	}
 }

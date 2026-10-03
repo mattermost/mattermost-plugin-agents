@@ -95,10 +95,12 @@ func TestEmbeddedDemoAppsUIMetaAndResourceRead(t *testing.T) {
 		&demoEmbeddedServer{ctx: ctx, server: newDemoAppsMCPServer()},
 		nil,
 		nil,
+		RemoteMCPAlwaysAllowed,
+		nil,
 	)
 	t.Cleanup(manager.Close)
 
-	tools, mcpErrors := manager.GetToolsForUser(context.Background(), userID)
+	tools, mcpErrors := manager.GetToolsForUser(context.Background(), userID, ToolSelection{})
 	require.Nil(t, mcpErrors)
 
 	var found bool

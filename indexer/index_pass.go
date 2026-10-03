@@ -135,11 +135,9 @@ func (s *Indexer) runIndexPass(
 
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for b := range workCh {
-				if err := s.safeStoreBatch(ctx, search, b.posts); err != nil {
+				if err := s.safeStoreBatch(ctx, search, b.posts, jobStatus.RetentionFloor); err != nil {
 					b.result <- err
 					// Exit so this worker cannot store any batch after a
 					// failed one: with a single worker this guarantees
@@ -149,7 +147,7 @@ func (s *Indexer) runIndexPass(
 				}
 				b.result <- nil
 			}
-		}()
+		})
 	}
 
 	// Committer: consume batches in fetch order, advancing the watermark one
@@ -284,20 +282,20 @@ func (s *Indexer) heartbeatTick(jobStatus *JobStatus) (cancelRequested bool) {
 
 // safeStoreBatch guards a worker against panics in filtering, embedding, or
 // storage so one bad batch fails the job instead of crashing the plugin.
-func (s *Indexer) safeStoreBatch(ctx context.Context, search embeddings.EmbeddingSearch, posts []PostRecord) (err error) {
+func (s *Indexer) safeStoreBatch(ctx context.Context, search embeddings.EmbeddingSearch, posts []PostRecord, floor int64) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("batch store panicked: %v", r)
 		}
 	}()
-	return s.storeBatchWithRetry(ctx, search, posts)
+	return s.storeBatchWithRetry(ctx, search, posts, floor)
 }
 
 // storeBatchWithRetry filters a batch into documents and stores them,
 // retrying failures (rate limits, network blips) with exponential backoff and
 // jitter so a transient error doesn't fail a long-running job.
-func (s *Indexer) storeBatchWithRetry(ctx context.Context, search embeddings.EmbeddingSearch, posts []PostRecord) error {
-	docs := s.filterAndCreateDocs(posts)
+func (s *Indexer) storeBatchWithRetry(ctx context.Context, search embeddings.EmbeddingSearch, posts []PostRecord, floor int64) error {
+	docs := s.filterAndCreateDocsWithFloor(posts, floor)
 	if len(docs) == 0 {
 		return nil
 	}
@@ -354,6 +352,7 @@ func (s *Indexer) acknowledgeCancel(jobStatus *JobStatus) {
 	canceledStatus.Status = JobStatusCanceled
 	canceledStatus.CompletedAt = time.Now()
 	canceledStatus.ProcessedRows = jobStatus.ProcessedRows
+	canceledStatus.Phase = "" // phase is live-only; do not leave building_index on a terminal row
 	if jobStatus.Error != "" {
 		canceledStatus.Error = jobStatus.Error
 	}

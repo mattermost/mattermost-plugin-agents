@@ -13,11 +13,16 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -273,4 +278,236 @@ func TestHandleStopLogsClusterPublishErrors(t *testing.T) {
 		}
 	}
 	require.True(t, foundLog, "cluster publish failures must be logged so operators can diagnose dropped peer-cancels")
+}
+
+// TestToolApprovalAuditRecords proves the tool approval endpoints enrich the
+// middleware-created audit record with the objects of the human decision: the
+// approval post, its channel, the accepted tool-use block IDs, and — once the
+// service layer is reached — the agent whose tool calls are being resolved.
+// Without these parameters an auditor cannot link the authorization to the
+// server-level records the approved tools produce afterwards.
+func TestToolApprovalAuditRecords(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID         = "post12345678901234567890ab"
+		channelID      = "chan12345678901234567890ab"
+		conversationID = "conv12345678901234567890ab"
+	)
+
+	tests := []struct {
+		name     string
+		endpoint string
+		event    string
+		// conversationOwner seeds a conversation entity owned by that user.
+		// When empty, ownership passes via the legacy requester prop and the
+		// service rejects the missing conversation_id with a controlled 400
+		// after the handler and service enrichment already ran.
+		conversationOwner   string
+		body                string
+		expectedStatus      int
+		expectedAcceptedIDs []string // nil asserts the parameter is absent
+		expectAgentID       bool
+	}{
+		{
+			name:                "tool_call reaching the service records the decision objects",
+			endpoint:            "/post/" + postID + "/tool_call",
+			event:               AuditEventToolCallApproval,
+			body:                `{"accepted_tool_ids":["tool-use-1","tool-use-2"]}`,
+			expectedStatus:      http.StatusBadRequest,
+			expectedAcceptedIDs: []string{"tool-use-1", "tool-use-2"},
+			expectAgentID:       true,
+		},
+		{
+			name:              "tool_call requester mismatch records post and channel on the 403 fail",
+			endpoint:          "/post/" + postID + "/tool_call",
+			event:             AuditEventToolCallApproval,
+			conversationOwner: testOtherUserID,
+			body:              `{"accepted_tool_ids":["tool-use-1"]}`,
+			expectedStatus:    http.StatusForbidden,
+		},
+		{
+			name:                "tool_result reaching the service records the decision objects",
+			endpoint:            "/post/" + postID + "/tool_result",
+			event:               AuditEventToolResultApproval,
+			body:                `{"accepted_tool_ids":["tool-use-1"]}`,
+			expectedStatus:      http.StatusBadRequest,
+			expectedAcceptedIDs: []string{"tool-use-1"},
+			expectAgentID:       true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			records := e.CaptureAuditRecords()
+
+			e.setupTestBot(llm.BotConfig{Name: "permtest", DisplayName: "Permission Bot"})
+			e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
+
+			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
+			if test.conversationOwner == "" {
+				post.AddProp(streaming.LLMRequesterUserIDProp, testUserID)
+			} else {
+				post.AddProp(streaming.ConversationIDProp, conversationID)
+				e.conversationStore.conversations[conversationID] = &store.Conversation{
+					ID:     conversationID,
+					UserID: test.conversationOwner,
+					BotID:  testBotUserID,
+				}
+			}
+
+			e.mockAPI.On("GetPost", postID).Return(post, nil)
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+				Id:   channelID,
+				Name: testBotUserID + "__" + testUserID,
+				Type: model.ChannelTypeDirect,
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+
+			req := httptest.NewRequest(http.MethodPost, test.endpoint, strings.NewReader(test.body))
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, test.expectedStatus, recorder.Result().StatusCode)
+
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, test.event, rec.EventName)
+			assert.Equal(t, testUserID, rec.Actor.UserId)
+			assert.Equal(t, postID, rec.EventData.Parameters[audit.KeyPostID])
+			assert.Equal(t, channelID, rec.EventData.Parameters[audit.KeyChannelID])
+
+			if test.expectedAcceptedIDs != nil {
+				assert.Equal(t, test.expectedAcceptedIDs, rec.EventData.Parameters["accepted_tool_ids"])
+			} else {
+				assert.NotContains(t, rec.EventData.Parameters, "accepted_tool_ids",
+					"a request denied before body binding must not claim accepted tool IDs")
+			}
+
+			if test.expectAgentID {
+				assert.Equal(t, testBotUserID, rec.EventData.Parameters[audit.KeyAgentID],
+					"service-layer enrichment must reach the same record via the request context")
+			}
+
+			assert.Equal(t, model.AuditStatusFail, rec.Status)
+			assert.Equal(t, test.expectedStatus, rec.Error.Code)
+		})
+	}
+}
+
+// TestHandleTranscribeFileDeniedByFilePolicy proves a session-scoped file
+// policy denial is returned as HTTP 403 rather than a generic 500. The
+// meetings service surfaces mmapi.ErrFileActionForbidden unchanged from the
+// policy-gated GetFileInfo; collapsing that sentinel into 500 would hide an
+// authorization failure as a server error. Unrelated lookup failures must
+// still be 500 so a blanket 403 mapping cannot hide real backend problems.
+func TestHandleTranscribeFileDeniedByFilePolicy(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		postID    = "post12345678901234567890ab"
+		channelID = "chan12345678901234567890ab"
+	)
+
+	tests := []struct {
+		name           string
+		allowed        bool
+		getFileInfoErr error
+		wantStatus     int
+		wantAdminRead  bool
+	}{
+		{
+			name:          "file policy denial is forbidden and does not read file metadata",
+			allowed:       false,
+			wantStatus:    http.StatusForbidden,
+			wantAdminRead: false,
+		},
+		{
+			name:           "unrelated file lookup failure stays an internal error",
+			allowed:        true,
+			getFileInfoErr: errors.New("file store down"),
+			wantStatus:     http.StatusInternalServerError,
+			wantAdminRead:  true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			fileID := model.NewId()
+			sessionID := model.NewId()
+
+			e.setupTestBot(llm.BotConfig{Name: "thebot", DisplayName: "The Bot"})
+
+			e.mockAPI.On("GetPost", postID).Return(&model.Post{
+				Id:        postID,
+				UserId:    testUserID,
+				ChannelId: channelID,
+				FileIds:   []string{fileID},
+			}, nil)
+			e.mockAPI.On("GetChannel", channelID).Return(&model.Channel{
+				Id:     channelID,
+				Type:   model.ChannelTypeOpen,
+				TeamId: "teamid",
+			}, nil)
+			e.mockAPI.On("HasPermissionToChannel", testUserID, channelID, model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("GetUser", testUserID).Return(&model.User{Id: testUserID}, nil)
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.On(
+				"HasPermissionToFileAction",
+				sessionID,
+				fileID,
+				model.AccessControlPolicyActionDownloadFileAttachment,
+			).Return(test.allowed)
+
+			adminReadCalled := false
+			if test.allowed {
+				mmClient.EXPECT().GetFileInfo(fileID).
+					Run(func(string) { adminReadCalled = true }).
+					Return((*model.FileInfo)(nil), test.getFileInfoErr)
+			} else {
+				mmClient.EXPECT().GetFileInfo(fileID).
+					Run(func(string) { adminReadCalled = true }).
+					Return(&model.FileInfo{Id: fileID, ChannelId: channelID}, nil).
+					Maybe()
+			}
+			mmClient.EXPECT().GetFile(fileID).
+				Run(func(string) { adminReadCalled = true }).
+				Return(io.NopCloser(strings.NewReader("sensitive recording contents")), nil).
+				Maybe()
+
+			e.api.meetingsService = meetings.NewService(
+				e.client,
+				mmClient,
+				nil,
+				nil,
+				e.bots,
+				nil,
+				nil,
+				nil,
+				nil,
+				enterprise.NewLicenseChecker(e.client),
+			)
+
+			req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/transcribe/file/"+fileID, nil)
+			req.Header.Add("Mattermost-User-Id", testUserID)
+			rec := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, rec, req)
+
+			require.Equal(t, test.wantStatus, rec.Result().StatusCode)
+			require.Equal(t, test.wantAdminRead, adminReadCalled,
+				"admin GetFileInfo/GetFile must run only after the caller's file policy allows access")
+			assert.NotContains(t, rec.Body.String(), "sensitive recording contents")
+		})
+	}
 }

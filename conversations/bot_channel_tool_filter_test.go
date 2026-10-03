@@ -14,6 +14,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -52,8 +53,17 @@ type channelFollowUpTestMCPToolProvider struct {
 	tools []llm.Tool
 }
 
-func (p *channelFollowUpTestMCPToolProvider) GetToolsForUser(context.Context, string) ([]llm.Tool, *mcp.Errors) {
-	return p.tools, nil
+func (p *channelFollowUpTestMCPToolProvider) GetToolsWithSelection(_ context.Context, _ mcp.CatalogRequest, selection mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	// Mirror the real client manager's contract: servers outside the selection
+	// (for example remote servers on an unlicensed installation) are never
+	// contacted, so their tools never appear in the result.
+	var tools []llm.Tool
+	for _, tool := range p.tools {
+		if selection.Allows(tool.ServerOrigin) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools, nil
 }
 
 type channelFollowUpTestConfig struct {
@@ -89,11 +99,17 @@ func channelFollowUpTestMCPTool(name, origin, description string) llm.Tool {
 }
 
 func newChannelFollowUpTestBuilder(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig) *llmcontext.Builder {
+	return newChannelFollowUpTestBuilderWithLicense(t, mcpTools, config, true)
+}
+
+// newChannelFollowUpTestBuilderWithLicense builds a context builder whose
+// license state controls remote MCP tool supply: unlicensed builders drop
+// remote-origin tools before they reach the LLM context.
+func newChannelFollowUpTestBuilderWithLicense(t *testing.T, mcpTools []llm.Tool, config *channelFollowUpTestConfig, licensed bool) *llmcontext.Builder {
 	t.Helper()
 
 	mockAPI := &plugintest.API{}
-	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockLicenseState(mockAPI, licensed)
 	mockAPI.On("GetTeam", "team-id").Return(&model.Team{Id: "team-id", Name: "team"}, nil).Maybe()
 
 	return llmcontext.NewLLMContextBuilder(
@@ -149,7 +165,7 @@ func buildChannelFollowUpStrictContext(t *testing.T, builder *llmcontext.Builder
 
 	allOpts := append([]llm.ContextOption{}, opts...)
 	bot := channelFollowUpTestBot()
-	allOpts = append(allOpts, builder.WithLLMContextDefaultTools(context.Background(), bot))
+	allOpts = append(allOpts, builder.WithLLMContextTools(context.Background(), bot))
 
 	return builder.BuildLLMContextUserRequest(
 		bot,
@@ -332,6 +348,54 @@ func TestBotChannelAutoEverywhereFilterKeepsMetaToolsWithNilChecker(t *testing.T
 	require.ElementsMatch(t, []string{"builtin", "ask_tool"}, disabledNames)
 }
 
+// TestBotChannelAutoEverywhereKeepToolAutoExecuteBuiltIn pins that
+// auto-execute built-ins survive the strict bot-channel filter like
+// meta-tools do, while a plain built-in and an MCP tool carrying the flag are
+// still removed.
+func TestBotChannelAutoEverywhereKeepToolAutoExecuteBuiltIn(t *testing.T) {
+	cases := []struct {
+		name string
+		tool llm.Tool
+		want bool
+	}{
+		{name: "auto-execute built-in kept", tool: llm.Tool{Name: "CreateFile", AutoExecute: true}, want: true},
+		{name: "plain built-in removed", tool: llm.Tool{Name: "builtin"}, want: false},
+		{name: "MCP tool with flag not kept by the flag", tool: llm.Tool{Name: "mcp_tool", ServerOrigin: "https://mcp.example.com", AutoExecute: true}, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, botChannelAutoEverywhereKeepTool(nil, tc.tool))
+		})
+	}
+}
+
+func TestBotChannelAutoEverywhereFilterKeepsAutoExecuteBuiltInWithNilChecker(t *testing.T) {
+	c := &Conversations{toolPolicyChecker: nil}
+
+	llmContext := &llm.Context{
+		Tools: llm.NewToolStore(),
+	}
+	llmContext.Tools.AddTools([]llm.Tool{
+		{Name: "CreateFile", AutoExecute: true, Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil }},
+		{Name: "builtin", Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) { return "", nil }},
+	})
+
+	c.applyBotChannelAutoEverywhereToolFilter(llmContext)
+
+	toolNames := make([]string, 0, len(llmContext.Tools.GetTools()))
+	for _, tool := range llmContext.Tools.GetTools() {
+		toolNames = append(toolNames, tool.Name)
+	}
+	require.ElementsMatch(t, []string{"CreateFile"}, toolNames)
+
+	disabledNames := make([]string, 0, len(llmContext.DisabledToolsInfo))
+	for _, info := range llmContext.DisabledToolsInfo {
+		disabledNames = append(disabledNames, info.Name)
+	}
+	require.ElementsMatch(t, []string{"builtin"}, disabledNames)
+}
+
 func TestBotChannelAutoEverywhereFilterDenormalizesNamespacedTool(t *testing.T) {
 	origin := "https://mcp.atlassian.com"
 	c := &Conversations{
@@ -461,6 +525,58 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 				require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
 			} else {
 				require.NotContains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "approval-only"), "jira__ask_tool")
+			}
+		})
+	}
+}
+
+// A channel mention with tool calling off sends no tool definitions to the
+// provider, so the system prompt must not tell the model to call the dynamic
+// MCP meta-tools; models otherwise write the call out as plain text.
+func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
+	const workflowInstruction = "call search_tools"
+	const dmOnlyNotice = "can only be used in a Direct Message (DM) or via the Agents tab"
+
+	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name                string
+		channelType         model.ChannelType
+		allowToolsInChannel bool
+		wantToolsDisabled   bool
+	}{
+		{name: "channel with tool calling disabled", channelType: model.ChannelTypeOpen, wantToolsDisabled: true},
+		{name: "channel with tool calling enabled", channelType: model.ChannelTypeOpen, allowToolsInChannel: true},
+		{name: "direct message", channelType: model.ChannelTypeDirect},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
+				channelFollowUpTestMCPTool("fusion__create_geojson", "https://fusion.example.com", "Build a GeoJSON document"),
+			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
+			bot := channelFollowUpTestBot()
+			llmContext := builder.BuildLLMContextUserRequest(
+				bot,
+				&model.User{Id: "user-id", Username: "user", Locale: "en"},
+				&model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
+				builder.WithLLMContextTools(context.Background(), bot),
+			)
+			require.NotNil(t, llmContext.Tools.GetTool(mcp.SearchToolsName))
+
+			toolsDisabled := applyToolAvailability(llmContext, tt.channelType == model.ChannelTypeDirect, tt.allowToolsInChannel)
+			require.Equal(t, tt.wantToolsDisabled, toolsDisabled)
+
+			systemPrompt, err := promptsEngine.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
+			require.NoError(t, err)
+
+			if tt.wantToolsDisabled {
+				require.NotContains(t, systemPrompt, workflowInstruction)
+				require.Contains(t, systemPrompt, dmOnlyNotice)
+			} else {
+				require.Contains(t, systemPrompt, workflowInstruction)
+				require.NotContains(t, systemPrompt, dmOnlyNotice)
 			}
 		})
 	}

@@ -13,50 +13,46 @@ import {getMCPTools, getVettedToolSeed} from '../../client';
 
 import manifest from '@/manifest';
 
+import {useIsLicensedFor} from '@/license';
+
+import ConsolePolicySection from '../access_control/console_policy_section';
+
 import {CopyableTextItem} from './copyable_text_item';
-import MCPAppsSection, {defaultMCPAppsConfig, MCPAppsConfig} from './mcp_apps';
-import MCPToolsViewer, {MCPToolsResponse} from './mcp_tools_viewer';
+import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
+import MCPAppsSection, {defaultMCPAppsConfig} from './mcp_apps';
+import MCPToolsViewer from './mcp_tools_viewer';
+import type {
+    MCPConfig as BaseMCPConfig,
+    MCPEmbeddedServerConfig as BaseMCPEmbeddedServerConfig,
+    MCPServerConfig as BaseMCPServerConfig,
+    MCPToolConfig as BaseMCPToolConfig,
+    MCPToolsResponse,
+} from './mcp_types';
+
+import {LicenseChip} from './enterprise_chip';
 
 import {BooleanItem, ItemList, TextItem} from './item';
 
-export type MCPToolConfig = {
-    name: string;
-    policy: 'auto_run_in_dm' | 'auto_run_everywhere' | 'ask';
-    enabled: boolean;
-    retrieval_description_override?: string;
+export type MCPToolConfig = BaseMCPToolConfig;
+export type MCPEmbeddedServerConfig = BaseMCPEmbeddedServerConfig;
+
+export type MCPServerConfig = BaseMCPServerConfig & {
+
+    // Optional: the backend tag has omitempty, so pre-feature servers omit the key entirely.
+    serviceAccountHeaders?: {[key: string]: string};
 };
 
-export type MCPServerConfig = {
-    name: string;
-    enabled: boolean;
-    baseURL: string;
-    headers: {[key: string]: string};
-    tool_configs?: MCPToolConfig[];
-    clientID?: string;
-    clientSecret?: string;
-};
-
-export type MCPEmbeddedServerConfig = {
-    enabled: boolean;
-    tool_configs?: MCPToolConfig[];
-    enableDemoApps?: boolean;
-};
-
-export type MCPConfig = {
-    enabled: boolean;
-    enablePluginServer: boolean;
-    servers: MCPServerConfig[] | null; // server sends nil Go slice as JSON null
-    embeddedServer: MCPEmbeddedServerConfig;
-    apps?: MCPAppsConfig;
-    idleTimeoutMinutes?: number;
+export type MCPConfig = Omit<BaseMCPConfig, 'servers'> & {
+    servers: MCPServerConfig[] | null;
 };
 
 // normalizeMCPConfig rebuilds the MCP config literal used by System Console
-// edits. Every field must be restated here — omitted fields are silently
-// dropped on the next onChange/save.
+// edits. It spreads mcpConfig so fields like plugin_servers and
+// embeddedServer.id survive rebuilds that only override a subset of keys.
 export const normalizeMCPConfig = (mcpConfig?: MCPConfig): MCPConfig => {
     const normalizedServers = Array.isArray(mcpConfig?.servers) ? mcpConfig.servers : [];
     return {
+        ...mcpConfig,
         enabled: true,
         enablePluginServer: mcpConfig?.enablePluginServer ?? false,
         servers: normalizedServers,
@@ -88,8 +84,88 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    serviceAccountHeaders: {},
     clientID: '',
     clientSecret: '',
+};
+
+// Renaming a key deletes the old entry; blank rows are legal (the backend ignores them).
+const HeaderMapEditor = ({
+    headers,
+    onChange,
+    namePlaceholder,
+    valuePlaceholder,
+    disableAdd,
+    disableEdit,
+}: {
+    headers: {[key: string]: string};
+    onChange: (headers: {[key: string]: string}) => void;
+    namePlaceholder?: string;
+    valuePlaceholder?: string;
+    disableAdd?: boolean;
+    disableEdit?: boolean;
+}) => {
+    const intl = useIntl();
+    const headerNamePlaceholder = namePlaceholder ?? intl.formatMessage({defaultMessage: 'Header name'});
+    const headerValuePlaceholder = valuePlaceholder ?? intl.formatMessage({defaultMessage: 'Value'});
+
+    const addHeader = () => {
+        onChange({...headers, '': ''});
+    };
+
+    // Rebuild in place: appending the renamed entry would reorder rows rendered by index.
+    const updateHeader = (oldKey: string, newKey: string, value: string) => {
+        const updated: {[key: string]: string} = {};
+        for (const [k, v] of Object.entries(headers)) {
+            if (k === oldKey) {
+                updated[newKey] = value;
+            } else {
+                updated[k] = v;
+            }
+        }
+        onChange(updated);
+    };
+
+    const removeHeader = (key: string) => {
+        const updated = {...headers};
+        delete updated[key];
+        onChange(updated);
+    };
+
+    return (
+        <>
+            <HeadersList>
+                {Object.entries(headers).map(([key, value], index) => (
+                    <HeaderRow key={index}>
+                        <HeaderInput
+                            placeholder={headerNamePlaceholder}
+                            value={key}
+                            disabled={disableEdit}
+                            onChange={(e) => updateHeader(key, e.target.value, value)}
+                        />
+                        <HeaderInput
+                            placeholder={headerValuePlaceholder}
+                            value={value}
+                            disabled={disableEdit}
+                            onChange={(e) => updateHeader(key, key, e.target.value)}
+                        />
+                        <RemoveHeaderButton
+                            aria-label={intl.formatMessage({defaultMessage: 'Remove header'})}
+                            onClick={() => removeHeader(key)}
+                        >
+                            <TrashCanOutlineIcon size={14}/>
+                        </RemoveHeaderButton>
+                    </HeaderRow>
+                ))}
+            </HeadersList>
+            {!disableAdd && (
+                <AddHeaderButton onClick={addHeader}>
+                    <PlusIcon size={14}/>
+                    <FormattedMessage defaultMessage='Add Header'/>
+                </AddHeaderButton>
+            )}
+        </>
+    );
 };
 
 // Component for a single MCP server configuration
@@ -105,16 +181,26 @@ const MCPServer = ({
     onDelete: () => void;
 }) => {
     const intl = useIntl();
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
+    const serviceAccountLicensed = useIsLicensedFor('mcp_service_account');
     const [isEditingName, setIsEditingName] = useState(false);
     const [serverName, setServerName] = useState(serverConfig.name);
     const [isOAuthExpanded, setIsOAuthExpanded] = useState(Boolean(serverConfig.clientID));
+    const unnamedServerLabel = intl.formatMessage(
+        {defaultMessage: 'Server {number}'},
+        {number: serverIndex + 1},
+    );
 
-    // Ensure server config has all required properties
+    // Ensure server config has all required properties.
+    // id must be carried through: dropping it here would rotate the server's
+    // stable ID on every edit (the server backstop mints a new one per save).
     const config = {
+        id: serverConfig.id,
         name: serverConfig.name || '',
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        serviceAccountHeaders: serverConfig.serviceAccountHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
         clientSecret: serverConfig.clientSecret || '',
@@ -174,47 +260,6 @@ const MCPServer = ({
         });
     };
 
-    // Add a new header
-    const addHeader = () => {
-        const headers = config.headers || {};
-        onChange(serverIndex, {
-            ...config,
-            headers: {
-                ...headers,
-                '': '',
-            },
-        });
-    };
-
-    // Update a header's key or value
-    const updateHeader = (oldKey: string, newKey: string, value: string) => {
-        const headers = {...(config.headers || {})};
-
-        // If the key has changed, remove the old one
-        if (oldKey !== newKey) {
-            delete headers[oldKey];
-        }
-
-        // Set the new key-value pair
-        headers[newKey] = value;
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
-        });
-    };
-
-    // Remove a header
-    const removeHeader = (key: string) => {
-        const headers = {...(config.headers || {})};
-        delete headers[key];
-
-        onChange(serverIndex, {
-            ...config,
-            headers,
-        });
-    };
-
     // Handle renaming the server
     const handleRename = () => {
         const newName = serverName.trim();
@@ -252,7 +297,7 @@ const MCPServer = ({
                     </ServerNameEditContainer>
                 ) : (
                     <ServerTitle onClick={() => setIsEditingName(true)}>
-                        {config.name || `Server ${serverIndex + 1}`}
+                        {config.name || unnamedServerLabel}
                     </ServerTitle>
                 )}
                 <DeleteButton onClick={onDelete}>
@@ -264,7 +309,13 @@ const MCPServer = ({
             <BooleanItem
                 label={intl.formatMessage({defaultMessage: 'Enable Server'})}
                 value={config.enabled}
-                onChange={updateServerEnabled}
+                disableTrue={!remoteMcpLicensed}
+                extra={!remoteMcpLicensed && (
+                    <LicenseChip capability='remote_mcp'/>
+                )}
+                onChange={(enabled) => {
+                    updateServerEnabled(enabled);
+                }}
                 helpText={intl.formatMessage({defaultMessage: 'Enable or disable this MCP server.'})}
             />
 
@@ -281,35 +332,30 @@ const MCPServer = ({
                 <HeadersSectionTitle>
                     {intl.formatMessage({defaultMessage: 'Headers'})}
                 </HeadersSectionTitle>
+                <HeaderMapEditor
+                    headers={config.headers}
+                    onChange={(headers) => onChange(serverIndex, {...config, headers})}
+                />
+            </HeadersSection>
 
-                <HeadersList>
-                    {Object.entries(config.headers || {}).map(([key, value], index) => (
-                        <HeaderRow key={index}>
-                            <HeaderInput
-                                placeholder={intl.formatMessage({defaultMessage: 'Header name'})}
-                                value={key}
-                                onChange={(e) => updateHeader(key, e.target.value, value)}
-                            />
-                            <HeaderInput
-                                placeholder={intl.formatMessage({defaultMessage: 'Value'})}
-                                value={value}
-                                onChange={(e) => updateHeader(key, key, e.target.value)}
-                            />
-                            <RemoveHeaderButton
-                                onClick={() => removeHeader(key)}
-                            >
-                                <TrashCanOutlineIcon size={14}/>
-                            </RemoveHeaderButton>
-                        </HeaderRow>
-                    ))}
-                </HeadersList>
-
-                <AddHeaderButton
-                    onClick={addHeader}
-                >
-                    <PlusIcon size={14}/>
-                    <FormattedMessage defaultMessage='Add Header'/>
-                </AddHeaderButton>
+            <HeadersSection>
+                <HeadersSectionTitle>
+                    {intl.formatMessage({defaultMessage: 'Service Account Authentication'})}
+                </HeadersSectionTitle>
+                <SectionHelpText>
+                    {intl.formatMessage({defaultMessage: 'Sent only when an agent uses service account authentication. Put the header name and value in separate fields — for example name Authorization and value Bearer token or Basic credentials, or a custom name like X-API-KEY. Do not repeat the header name in the value. Agents using service accounts can only access servers with at least one header configured here.'})}
+                </SectionHelpText>
+                {!serviceAccountLicensed && (
+                    <LicenseChip capability='mcp_service_account'/>
+                )}
+                <HeaderMapEditor
+                    headers={config.serviceAccountHeaders}
+                    onChange={(serviceAccountHeaders) => onChange(serverIndex, {...config, serviceAccountHeaders})}
+                    namePlaceholder={intl.formatMessage({defaultMessage: 'Header name (e.g. Authorization)'})}
+                    valuePlaceholder={intl.formatMessage({defaultMessage: 'Header value (e.g. Bearer token)'})}
+                    disableAdd={!serviceAccountLicensed}
+                    disableEdit={!serviceAccountLicensed}
+                />
             </HeadersSection>
 
             <OAuthSection>
@@ -340,9 +386,9 @@ const MCPServer = ({
                 </OAuthSectionHeader>
                 {isOAuthExpanded && (
                     <OAuthSectionContent id={`oauth-section-content-${serverIndex}`}>
-                        <OAuthHelpText>
+                        <SectionHelpText>
                             {intl.formatMessage({defaultMessage: 'For MCP servers that require a pre-registered OAuth application (e.g. GitHub). Leave empty if the server supports automatic registration.'})}
-                        </OAuthHelpText>
+                        </SectionHelpText>
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'Client ID'})}
                             value={config.clientID}
@@ -365,6 +411,16 @@ const MCPServer = ({
                     </OAuthSectionContent>
                 )}
             </OAuthSection>
+
+            {/* IDs are minted server-side on save, so any id-bearing entry is
+                persisted and policy authoring is safe. */}
+            {config.id && (
+                <ConsolePolicySection
+                    resourceType='mcp'
+                    resourceId={config.id}
+                    resourceDisplayName={config.name || unnamedServerLabel}
+                />
+            )}
         </ServerContainer>
     );
 };
@@ -372,6 +428,7 @@ const MCPServer = ({
 // Main component for MCP servers configuration
 const MCPServers = ({mcpConfig, onChange}: Props) => {
     const intl = useIntl();
+    const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
     const [activeTab, setActiveTab] = useState<'config' | 'tools'>('config');
     const [preloadedToolsData, setPreloadedToolsData] = useState<MCPToolsResponse | null>(null);
     const [idleTimeoutInputValue, setIdleTimeoutInputValue] = useState<string>(() => getIdleTimeoutInputValue(mcpConfig?.idleTimeoutMinutes));
@@ -442,6 +499,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
     // disable individual tools but cannot turn off MCP entirely.
     const config: MCPConfig = normalizeMCPConfig(mcpConfig);
 
+    const pluginServers = (preloadedToolsData?.servers ?? []).filter(
+        (server) => server.serverType === 'plugin',
+    );
+
     // Generate a server name
     const generateServerName = () => {
         const prefix = 'MCP Server ';
@@ -457,7 +518,9 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         return `${prefix}${counter}`;
     };
 
-    // Add a new server
+    // Add a new server. No id is assigned client-side: the server treats
+    // ID-less entries with no identity match as new and mints the stable ID
+    // on save (client-invented IDs are rejected as fabricated).
     const addServer = () => {
         // Use the auto-generated name
         const serverName = generateServerName();
@@ -499,13 +562,13 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
         <div>
             <TabsContainer>
                 <TabButton
-                    active={activeTab === 'config'}
+                    $active={activeTab === 'config'}
                     onClick={() => setActiveTab('config')}
                 >
                     <FormattedMessage defaultMessage='Configuration'/>
                 </TabButton>
                 <TabButton
-                    active={activeTab === 'tools'}
+                    $active={activeTab === 'tools'}
                     onClick={() => setActiveTab('tools')}
                 >
                     <FormattedMessage defaultMessage='Tools'/>
@@ -519,6 +582,10 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                             <BooleanItem
                                 label={intl.formatMessage({defaultMessage: 'Enable Mattermost MCP Server (HTTP)'})}
                                 value={config.enablePluginServer}
+                                disableTrue={!remoteMcpLicensed}
+                                extra={!remoteMcpLicensed && (
+                                    <LicenseChip capability='remote_mcp'/>
+                                )}
                                 onChange={(enablePluginServer) => onChange({...config, enablePluginServer})}
                                 helpText={intl.formatMessage({defaultMessage: 'Enable the Mattermost MCP server over HTTP to allow external MCP clients to access Mattermost channels, users, and posts through the MCP protocol. Note: Streaming support requires Mattermost v11.2+.'})}
                             />
@@ -560,15 +627,21 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                 }}
                                 helptext={intl.formatMessage({defaultMessage: 'How long to keep an inactive user connection open before closing it automatically. Lower values save resources, higher values improve response times. Default: 30 minutes'})}
                             />
-                            <CopyableTextItem
-                                label={intl.formatMessage({defaultMessage: 'MCP OAuth Callback URL'})}
-                                value={oauthCallbackURL}
-                                helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
-                            />
+                            {(remoteMcpLicensed || normalizedServers.length > 0) && (
+                                <CopyableTextItem
+                                    label={intl.formatMessage({defaultMessage: 'MCP OAuth Callback URL'})}
+                                    value={oauthCallbackURL}
+                                    helptext={intl.formatMessage({defaultMessage: 'Register this redirect URI in the remote MCP server\u2019s OAuth application so authorization callbacks return to this Mattermost instance.'})}
+                                />
+                            )}
                         </ItemList>
                         <MCPAppsSection
                             value={config.apps ?? defaultMCPAppsConfig}
                             onChange={(apps) => onChange({...config, apps})}
+                        />
+                        <BuiltInPluginServersSection
+                            embeddedServerId={config.embeddedServer.id}
+                            pluginServers={pluginServers}
                         />
                         <ServersList>
                             {!Array.isArray(normalizedServers) || normalizedServers.length < 1 ? (
@@ -591,10 +664,14 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                         <AddServerContainer>
                             <TertiaryButton
                                 onClick={addServer}
+                                disabled={!remoteMcpLicensed}
                             >
                                 <PlusServerIcon/>
                                 <FormattedMessage defaultMessage='Add Remote MCP Server'/>
                             </TertiaryButton>
+                            {!remoteMcpLicensed && (
+                                <LicenseChip capability='remote_mcp'/>
+                            )}
                         </AddServerContainer>
                     </>
                 )}
@@ -743,7 +820,7 @@ const OAuthSectionContent = styled.div`
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
-const OAuthHelpText = styled.div`
+const SectionHelpText = styled.div`
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     margin-bottom: 4px;
@@ -863,19 +940,19 @@ const TabsContainer = styled.div`
     margin-bottom: 24px;
 `;
 
-const TabButton = styled.button<{active: boolean}>`
+const TabButton = styled.button<{$active: boolean}>`
     padding: 12px 16px;
     border: none;
     background: none;
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
-    color: ${(props) => (props.active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    border-bottom: 2px solid ${(props) => (props.active ? 'var(--button-bg)' : 'transparent')};
+    color: ${(props) => (props.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
+    border-bottom: 2px solid ${(props) => (props.$active ? 'var(--button-bg)' : 'transparent')};
     transition: color 0.2s ease, border-color 0.2s ease;
 
     &:hover {
-        color: ${(props) => (props.active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
+        color: ${(props) => (props.$active ? 'var(--button-bg)' : 'var(--center-channel-color)')};
     }
 
     &:first-child {

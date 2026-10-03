@@ -102,6 +102,57 @@ func TestShouldAutoExecuteTool_NamespacedToolUsesBarePolicy(t *testing.T) {
 	assert.True(t, got)
 }
 
+// TestShouldAutoExecuteTool_ConfigPolicyChecker runs the production
+// config-backed checker against runtime tool names as the MCP client builds
+// them. Plugin tools carry a "{pluginID}__" prefix from pluginmcp, so their
+// configured names contain the namespace separator themselves.
+func TestShouldAutoExecuteTool_ConfigPolicyChecker(t *testing.T) {
+	const (
+		pluginOrigin = "plugin://com.example.demo"
+		remoteOrigin = "https://mcp.example.com/mcp"
+	)
+
+	cases := []struct {
+		name           string
+		origin         string
+		serverSlug     string
+		configuredName string
+		policy         string
+		unlicensed     bool
+		wantDM         bool
+		wantChannel    bool
+	}{
+		{name: "plugin tool auto_run_everywhere without policy license falls back to ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, unlicensed: true, wantDM: false, wantChannel: false},
+		{name: "plugin tool auto_run_everywhere", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+		{name: "plugin tool auto_run_in_dm", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAutoRunInDM, wantDM: true, wantChannel: false},
+		{name: "plugin tool ask", origin: pluginOrigin, serverSlug: "demo_plugin", configuredName: "com_example_demo__add", policy: mcp.ToolPolicyAsk, wantDM: false, wantChannel: false},
+		{name: "remote tool name containing separator", origin: remoteOrigin, serverSlug: "remote", configuredName: "issues__create", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+		{name: "remote tool plain name", origin: remoteOrigin, serverSlug: "remote", configuredName: "get_issue", policy: mcp.ToolPolicyAutoRunEverywhere, wantDM: true, wantChannel: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			toolConfigs := []mcp.ToolConfig{{Name: tc.configuredName, Policy: tc.policy, Enabled: true}}
+			cfg := mcp.Config{}
+			if tc.origin == pluginOrigin {
+				cfg.PluginServers = []mcp.PluginServerConfig{{PluginID: "com.example.demo", Name: "Demo Plugin", Enabled: true, ToolConfigs: toolConfigs}}
+			} else {
+				cfg.Servers = []mcp.ServerConfig{{Name: "Remote", Enabled: true, BaseURL: remoteOrigin, ToolConfigs: toolConfigs}}
+			}
+
+			checker := mcp.NewConfigToolPolicyChecker(func() mcp.Config { return cfg }, func() bool { return !tc.unlicensed })
+			c := &Conversations{toolPolicyChecker: checker}
+			runtimeName := llm.NamespaceMCPToolName(tc.serverSlug, tc.configuredName)
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: runtimeName, ServerOrigin: tc.origin}})
+			call := llm.ToolCall{Name: runtimeName, ServerOrigin: tc.origin}
+
+			assert.Equal(t, tc.wantDM, c.shouldAutoExecuteTool(llmCtx, true)(call), "DM")
+			assert.Equal(t, tc.wantChannel, c.shouldAutoExecuteTool(llmCtx, false)(call), "channel")
+		})
+	}
+}
+
 func TestShouldAutoExecuteToolMetaToolsBypassPolicy(t *testing.T) {
 	c := &Conversations{toolPolicyChecker: nil}
 
@@ -113,6 +164,50 @@ func TestShouldAutoExecuteToolMetaToolDoesNotAuthorizeBusinessTool(t *testing.T)
 	c := &Conversations{toolPolicyChecker: nil}
 
 	assert.False(t, c.shouldAutoExecuteTool(nil, true)(llm.ToolCall{Name: "jira__get_issue"}))
+}
+
+// TestShouldAutoExecuteTool_AutoExecuteBuiltIn pins that auto-execute
+// built-ins (e.g. CreateFile) bypass approval in both DMs and channels — even
+// with no policy checker wired up — while an MCP tool carrying the flag must
+// still go through policy and therefore fails closed here.
+func TestShouldAutoExecuteTool_AutoExecuteBuiltIn(t *testing.T) {
+	const mcpOrigin = "https://mcp.example.com/mcp"
+
+	cases := []struct {
+		name   string
+		isDM   bool
+		origin string
+		want   bool
+	}{
+		{name: "DM built-in auto-executes", isDM: true, want: true},
+		{name: "channel built-in auto-executes", isDM: false, want: true},
+		{name: "DM MCP tool with flag follows policy", isDM: true, origin: mcpOrigin, want: false},
+		{name: "channel MCP tool with flag follows policy", isDM: false, origin: mcpOrigin, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{toolPolicyChecker: nil}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", ServerOrigin: tc.origin, AutoExecute: true}})
+
+			got := c.shouldAutoExecuteTool(llmCtx, tc.isDM)(llm.ToolCall{Name: "CreateFile", ServerOrigin: tc.origin})
+
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestShouldAutoExecuteTool_AutoExecuteBuiltInSkipsPolicyLookup(t *testing.T) {
+	checker := &countingPolicyChecker{policy: mcp.ToolPolicyAsk, enabled: true}
+	c := &Conversations{toolPolicyChecker: checker}
+	llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+	llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", AutoExecute: true}})
+
+	got := c.shouldAutoExecuteTool(llmCtx, false)(llm.ToolCall{Name: "CreateFile"})
+
+	assert.True(t, got)
+	assert.Zero(t, checker.calls)
 }
 
 // TestShouldAutoExecuteTool_UserInteractionNeverAutoExecutes pins the contract
@@ -311,6 +406,36 @@ func TestAllToolsAutoRunEverywhereMetaOnlyBypassesPolicy(t *testing.T) {
 	}}
 
 	assert.True(t, c.allToolsAutoRunEverywhere(turns, nil))
+}
+
+// TestAllToolsAutoRunEverywhere_AutoExecuteBuiltIn pins that a round made up
+// only of auto-execute built-ins (e.g. CreateFile) is written shared=true even
+// with no policy checker, while an MCP tool carrying the flag still requires
+// an auto_run_everywhere policy and so fails closed here.
+func TestAllToolsAutoRunEverywhere_AutoExecuteBuiltIn(t *testing.T) {
+	const mcpOrigin = "https://mcp.example.com/mcp"
+
+	cases := []struct {
+		name   string
+		origin string
+		want   bool
+	}{
+		{name: "built-in only round is shared", origin: "", want: true},
+		{name: "MCP tool with flag still requires policy", origin: mcpOrigin, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Conversations{toolPolicyChecker: nil}
+			llmCtx := &llm.Context{Tools: llm.NewToolStore()}
+			llmCtx.Tools.AddTools([]llm.Tool{{Name: "CreateFile", ServerOrigin: tc.origin, AutoExecute: true}})
+			turns := []toolrunner.ToolTurn{{
+				AssistantToolCalls: []llm.ToolCall{{Name: "CreateFile", ServerOrigin: tc.origin}},
+			}}
+
+			assert.Equal(t, tc.want, c.allToolsAutoRunEverywhere(turns, llmCtx))
+		})
+	}
 }
 
 func TestAllToolsAutoRunEverywhereMixedMetaAndAutoRunBusinessTool(t *testing.T) {

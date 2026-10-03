@@ -43,6 +43,7 @@ type SelectProps<T extends Option> = {
     loadOptions: (inputValue: string) => Promise<T[]>;
     formatOptionLabel: (option: T) => React.ReactNode;
     placeholder: string;
+    disabled?: boolean;
 };
 
 const LabelContainer = styled.div`
@@ -175,6 +176,7 @@ function SelectComponent<T extends Option>(props: SelectProps<T>) {
         <AsyncSelect<T, true>
             isMulti={true}
             isClearable={false}
+            isDisabled={props.disabled}
             value={props.value}
             onChange={props.onChange}
             loadOptions={loadOptions}
@@ -192,6 +194,7 @@ type SelectUserProps = {
     userIDs: string[];
     teamIDs: string[];
     onChangeIDs: (userIds: string[], teamIds: string[]) => void;
+    disabled?: boolean;
 };
 
 export const SelectUser = (props: SelectUserProps) => {
@@ -307,6 +310,7 @@ export const SelectUser = (props: SelectUserProps) => {
             loadOptions={loadOptions}
             formatOptionLabel={formatOptionLabel}
             placeholder='Search for people or teams'
+            disabled={props.disabled}
         />
     );
 };
@@ -314,6 +318,7 @@ export const SelectUser = (props: SelectUserProps) => {
 type SelectChannelProps = {
     channelIDs: string[];
     onChangeChannelIDs: (channelIds: string[]) => void;
+    disabled?: boolean;
 };
 
 export const SelectChannel = (props: SelectChannelProps) => {
@@ -366,6 +371,7 @@ export const SelectChannel = (props: SelectChannelProps) => {
             loadOptions={loadOptions}
             formatOptionLabel={formatOptionLabel}
             placeholder='Search for channels'
+            disabled={props.disabled}
         />
     );
 };

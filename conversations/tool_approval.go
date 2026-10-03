@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -47,6 +50,130 @@ var ErrNotRequester = errors.New("only the original requester can approve/reject
 // 400 Bad Request.
 var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool call")
 
+// ErrRemoteMCPNotLicensed is returned when a tool decision would execute, or
+// share the output of, a tool served by a remote/external MCP server.
+// Remote and plugin MCP servers are available at Enterprise and above.
+// Built-in tools (empty ServerOrigin) and embedded Mattermost MCP tools
+// (mcp.EmbeddedClientKey) are available at every license level. The HTTP
+// layer maps this to 403 Forbidden.
+//
+// This gate is the decision-time backstop for pending remote tool calls
+// persisted before a license change; the primary enforcement is at supply
+// time, where llmcontext.Builder drops remote MCP tools from the LLM context
+// when CapRemoteMCP is not available.
+var ErrRemoteMCPNotLicensed = errors.New("tools from remote MCP servers are available at Enterprise and above")
+
+// Canned tool_result content for non-executing resolutions. These are shown
+// to the LLM (and, when terminal, in channels); they must not include tool
+// arguments or blame the user for an administrative policy/license change.
+const (
+	toolCallRejectedByUserResult = "Tool call rejected by user"
+	toolCallPolicyDeniedResult   = "Tool call was not executed because it is no longer permitted by policy or license"
+)
+
+// toolRejectionGuidance is appended as a final user message to follow-ups
+// after a user rejection. It must not include tool arguments.
+const toolRejectionGuidance = "The user rejected one or more of your tool calls; their results read \"" +
+	toolCallRejectedByUserResult + "\". Do not repeat a rejected call with the same arguments. " +
+	"Ask the user for clarification or take a different approach."
+
+// isUserRejectedToolUse reports whether block was rejected by the user, as
+// opposed to a skipped question (UserInteraction) or a policy/license denial
+// of a deferred auto-run (WouldAutoExecute).
+func isUserRejectedToolUse(block conversation.ContentBlock) bool {
+	return block.Type == conversation.BlockTypeToolUse &&
+		block.Status == conversation.StatusRejected &&
+		block.UserInteraction == "" &&
+		!block.WouldAutoExecute
+}
+
+// isRemoteMCPLicensed reports whether remote and plugin MCP servers are
+// available at the current license level. A nil license checker fails closed.
+func (c *Conversations) isRemoteMCPLicensed() bool {
+	return c.licenseChecker.Allows(enterprise.CapRemoteMCP)
+}
+
+// toolDecision carries the shared state resolved by beginToolDecision for a
+// tool-approval handler: the resumed trace context and its open span, the bot
+// and conversation behind the clicked post, the request's audit record, and
+// the loaded conversation turns.
+type toolDecision struct {
+	ctx      context.Context
+	span     trace.Span
+	bot      *bots.Bot
+	auditRec *model.AuditRecord
+	convID   string
+	conv     *store.Conversation
+	turns    []store.Turn
+}
+
+// beginToolDecision performs the preamble shared by HandleToolCall and
+// HandleToolResult: resume into the originating run's trace (falling back to a
+// fresh trace when the post or its assistant turn is missing), open a new-root
+// span named spanName, resolve the bot and conversation for the clicked post,
+// tag the request's audit record with the agent ID, verify the caller is the
+// conversation requester, and load the turns. On error the span is ended
+// before returning; on success the caller must defer span.End().
+func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg, userID string, post *model.Post, acceptedCount int) (*toolDecision, error) {
+	ctx = c.rehydrateRunTrace(ctx, post)
+
+	ctx, span := telemetry.Tracer().Start(ctx, spanName,
+		trace.WithNewRoot(),
+		trace.WithAttributes(telemetry.PostID.String(post.Id)),
+	)
+	fail := func(err error) (*toolDecision, error) {
+		span.End()
+		return nil, err
+	}
+
+	bot := c.bots.GetBotByID(post.UserId)
+	if bot == nil {
+		return fail(fmt.Errorf("unable to get bot"))
+	}
+
+	// Enrich the request's audit record (nil outside an audited request) with
+	// which agent's tool calls this human decision concerns. Tool names are
+	// added by the handler once the resolution is known; arguments, results,
+	// and answers never enter the record.
+	auditRec := audit.RecordFromContext(ctx)
+	audit.AddParam(auditRec, audit.KeyAgentID, bot.GetMMBot().UserId)
+
+	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
+	if !ok || convID == "" {
+		return fail(ErrPostMissingConversationID)
+	}
+
+	c.mmClient.LogDebug(logMsg,
+		"post_id", post.Id,
+		"conv_id", convID,
+		"accepted_count", acceptedCount,
+	)
+
+	conv, err := c.convService.GetConversation(convID)
+	if err != nil {
+		return fail(fmt.Errorf("failed to get conversation: %w", err))
+	}
+
+	if conv.UserID != userID {
+		return fail(ErrNotRequester)
+	}
+
+	turns, err := c.convService.GetTurns(convID)
+	if err != nil {
+		return fail(fmt.Errorf("failed to get turns: %w", err))
+	}
+
+	return &toolDecision{
+		ctx:      ctx,
+		span:     span,
+		bot:      bot,
+		auditRec: auditRec,
+		convID:   convID,
+		conv:     conv,
+		turns:    turns,
+	}, nil
+}
+
 // HandleToolCall handles user approval/rejection of pending tool calls via conversation entities.
 // It looks up pending tool_use blocks in the conversation turns, executes approved tools,
 // writes results back as turns, and streams a follow-up LLM response.
@@ -55,49 +182,37 @@ var ErrInvalidToolAnswer = errors.New("invalid answer for user interaction tool 
 // calls (e.g. AskUserQuestion), keyed by tool_use block ID. Those blocks are
 // not executed; the validated answer becomes the tool result.
 func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) error {
-	// Resume: chain into the originating run's trace if we can find it. If
-	// the post or its assistant turn is missing, fall back to a fresh trace.
-	ctx = c.rehydrateRunTrace(ctx, post)
-
-	ctx, span := telemetry.Tracer().Start(ctx, "handle tool call",
-		trace.WithNewRoot(),
-		trace.WithAttributes(telemetry.PostID.String(post.Id)),
-	)
-	defer span.End()
-
-	bot := c.bots.GetBotByID(post.UserId)
-	if bot == nil {
-		return fmt.Errorf("unable to get bot")
-	}
-
-	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
-	if !ok || convID == "" {
-		return ErrPostMissingConversationID
-	}
-
-	c.mmClient.LogDebug("HandleToolCall",
-		"post_id", post.Id,
-		"conv_id", convID,
-		"accepted_count", len(acceptedToolIDs),
-	)
-
-	conv, err := c.convService.GetConversation(convID)
+	d, err := c.beginToolDecision(ctx, "handle tool call", "HandleToolCall", userID, post, len(acceptedToolIDs))
 	if err != nil {
-		return fmt.Errorf("failed to get conversation: %w", err)
+		return err
 	}
-
-	if conv.UserID != userID {
-		return ErrNotRequester
-	}
-
-	turns, err := c.convService.GetTurns(convID)
-	if err != nil {
-		return fmt.Errorf("failed to get turns: %w", err)
-	}
+	defer d.span.End()
+	ctx = d.ctx
+	bot, auditRec, convID, conv, turns := d.bot, d.auditRec, d.convID, d.conv, d.turns
 
 	pendingTurn, pendingBlocks, err := findPendingToolTurn(turns, post.Id)
 	if err != nil {
 		return err
+	}
+
+	// Accepting tools from remote/external MCP servers is available at
+	// Enterprise and above. Built-in and embedded Mattermost MCP tools are
+	// available at every license level. Rejections are always allowed —
+	// they execute nothing. Blocks marked WouldAutoExecute are not gated
+	// here: their resume re-checks the policy via shouldAutoExecuteTool,
+	// which already refuses remote tools when CapRemoteMCP is not
+	// available, so they resolve to a rejection instead of blocking the
+	// whole submission on a possibly stale marker.
+	for _, b := range pendingBlocks {
+		if b.Type != conversation.BlockTypeToolUse || !mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+			continue
+		}
+		if b.Status != conversation.StatusPending && b.Status != conversation.StatusAccepted {
+			continue
+		}
+		if slices.Contains(acceptedToolIDs, b.ID) && !c.isRemoteMCPLicensed() {
+			return ErrRemoteMCPNotLicensed
+		}
 	}
 
 	user, err := c.mmClient.GetUser(userID)
@@ -108,13 +223,18 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
 
 	// Build the execution context bound to this conversation. A tool-approval
-	// click is by definition an interactive user action.
+	// click is by definition an interactive user action. ResponseFiles keeps
+	// CreateFile in the catalog so approved/auto-resumed CreateFile blocks
+	// can resolve and record their created files.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
 		bot, user, channel,
 		"Failed to load user tool preferences for tool approval",
 		c.contextBuilder.WithLLMContextInteractive(),
+		c.contextBuilder.WithLLMContextResponseFiles(),
 	)
+	// The clicked post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
 	conversation.RestoreLoadedMCPToolsFromTurns(llmContext.Tools, turns)
 
@@ -126,10 +246,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return err
 	}
 
-	// Execute approved tools and build results.
+	// Execute approved tools and build results. Blocks resolved in a prior
+	// call keep their status and are not part of this decision, so they enter
+	// neither audit list; anything auto-executed this call counts as accepted.
 	autoExec := c.shouldAutoExecuteTool(llmContext, isDM)
 	autoExecutedNow := make(map[string]bool)
-	executedAny := false
+	userRejected := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
 	var toolResults []toolrunner.ToolResult
 	for i := range pendingBlocks {
 		block := &pendingBlocks[i]
@@ -143,10 +267,10 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 
 		switch {
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
 			block.Status = conversation.StatusSuccess
-			block.Shared = conversation.BoolPtr(true)
-			executedAny = true
+			block.Shared = new(true)
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -154,8 +278,8 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    false,
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
-			executedAny = true
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -174,13 +298,14 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				})
 			}
 		case block.UserInteraction != "":
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			// Skipped question: record the decline as the result and stream a
 			// follow-up so the model can proceed without the answer, per the
 			// tool contract. Shared because the decline is user-authored, not
-			// private tool output.
+			// private tool output. UserInteraction stays on the block so the
+			// follow-up can distinguish this from a regular tool rejection.
 			block.Status = conversation.StatusRejected
-			block.Shared = conversation.BoolPtr(true)
-			executedAny = true
+			block.Shared = new(true)
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
@@ -188,6 +313,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				IsError:    true,
 			})
 		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
+			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Runs on resume without a click. Requiring both the marker and a
 			// fresh policy check means a mid-turn policy flip can neither
 			// auto-run a tool the user was asked to approve (or rejected) nor
@@ -195,8 +321,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			// any auto-run round.
 			result, resolveErr := resolveApprovedToolUseBlock(ctx, llmContext, *block)
 			autoExecutedNow[block.ID] = true
-			executedAny = true
-			block.Shared = conversation.BoolPtr(true)
+			block.Shared = new(true)
 			if resolveErr != nil {
 				block.Status = conversation.StatusError
 				toolResults = append(toolResults, toolrunner.ToolResult{
@@ -214,16 +339,38 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 					IsError:    false,
 				})
 			}
-		default:
+		case block.WouldAutoExecute:
+			// Fresh policy/license check failed. Keep the WouldAutoExecute
+			// marker so isUserRejectedToolUse does not treat this as a user
+			// rejection, and record a result that does not blame the user
+			// for an admin change.
+			rejectedToolNames = append(rejectedToolNames, block.Name)
 			block.Status = conversation.StatusRejected
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "Tool call rejected by user",
+				Result:     toolCallPolicyDeniedResult,
+				IsError:    true,
+			})
+		default:
+			rejectedToolNames = append(rejectedToolNames, block.Name)
+			block.Status = conversation.StatusRejected
+			userRejected = true
+			toolResults = append(toolResults, toolrunner.ToolResult{
+				ToolCallID: block.ID,
+				Name:       block.Name,
+				Result:     toolCallRejectedByUserResult,
 				IsError:    true,
 			})
 		}
 	}
+
+	// Unlike HandleToolResult (which defers these until after its idempotency
+	// gate), the names here describe tools that already executed above — real
+	// side effects, not persisted state — so they stay on the record even if
+	// persisting the resolved turn below fails.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
 
 	// Update the assistant turn with resolved statuses.
 	updatedContent, err := json.Marshal(pendingBlocks)
@@ -255,16 +402,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		}
 		// Interaction results (answered or skipped) are user-authored, so they
 		// are terminal and shared with no separate share/keep-private step.
-		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID]
+		// Rejected results (user rejection or policy/license denial) share only
+		// the canned reason; tool_use arguments stay unshared so they are not
+		// paraphrased into a channel reply.
+		rejected := toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected
+		terminal := isDM || interactionByID[tr.ToolCallID] || autoExecutedNow[tr.ToolCallID] || rejected
 		rb := conversation.ContentBlock{
 			Type:      conversation.BlockTypeToolResult,
 			ToolUseID: tr.ToolCallID,
 			Content:   tr.Result,
 			Status:    status,
-			Shared:    conversation.BoolPtr(terminal),
+			Shared:    new(terminal),
 		}
-		if terminal || toolUseStatusByID[tr.ToolCallID] == conversation.StatusRejected {
-			rb.DecidedAt = conversation.Int64Ptr(now)
+		if terminal {
+			rb.DecidedAt = new(now)
 		} else {
 			needsShareDecision = true
 		}
@@ -285,20 +436,20 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		return fmt.Errorf("failed to create tool result turn: %w", err)
 	}
 
-	if !executedAny {
+	if len(toolResults) == 0 {
 		return nil
 	}
 
 	// In channels the follow-up is a channel-visible post that may paraphrase tool
 	// output, so it must not stream until the requester approves sharing in
-	// HandleToolResult. When no share decision remains (every executed result
-	// was a user-interaction answer), HandleToolResult will never fire, so
-	// stream the follow-up now.
+	// HandleToolResult. When no share decision remains (every result is
+	// rejected, a user-interaction answer, or otherwise terminal),
+	// HandleToolResult will never fire, so stream the follow-up now.
 	if !isDM && needsShareDecision {
 		return nil
 	}
 
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, llmContext)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, userRejected, llmContext)
 }
 
 // resolveInteractionAnswers validates the user's answers for every accepted
@@ -331,47 +482,27 @@ func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolI
 // follow-up with unshared content redacted so private tool output cannot leak
 // into the channel-visible reply.
 func (c *Conversations) HandleToolResult(ctx context.Context, userID string, post *model.Post, channel *model.Channel, acceptedToolIDs []string) error {
-	ctx = c.rehydrateRunTrace(ctx, post)
-
-	ctx, span := telemetry.Tracer().Start(ctx, "handle tool result",
-		trace.WithNewRoot(),
-		trace.WithAttributes(telemetry.PostID.String(post.Id)),
-	)
-	defer span.End()
-
-	bot := c.bots.GetBotByID(post.UserId)
-	if bot == nil {
-		return fmt.Errorf("unable to get bot")
-	}
-
-	convID, ok := post.GetProp(streaming.ConversationIDProp).(string)
-	if !ok || convID == "" {
-		return ErrPostMissingConversationID
-	}
-
-	c.mmClient.LogDebug("HandleToolResult",
-		"post_id", post.Id,
-		"conv_id", convID,
-		"accepted_count", len(acceptedToolIDs),
-	)
-
-	conv, err := c.convService.GetConversation(convID)
+	d, err := c.beginToolDecision(ctx, "handle tool result", "HandleToolResult", userID, post, len(acceptedToolIDs))
 	if err != nil {
-		return fmt.Errorf("failed to get conversation: %w", err)
+		return err
 	}
-
-	if conv.UserID != userID {
-		return ErrNotRequester
-	}
+	defer d.span.End()
+	ctx = d.ctx
+	bot, auditRec, conv, turns := d.bot, d.auditRec, d.conv, d.turns
 
 	acceptedSet := make(map[string]bool, len(acceptedToolIDs))
 	for _, id := range acceptedToolIDs {
 		acceptedSet[id] = true
 	}
 
-	turns, err := c.convService.GetTurns(conv.ID)
-	if err != nil {
-		return fmt.Errorf("failed to get turns: %w", err)
+	// Decode each turn's blocks once; the classification, idempotency, and
+	// mutation passes below all work over the same decoded slices. A turn
+	// whose content fails to decode is skipped by every pass.
+	decoded := make([][]conversation.ContentBlock, len(turns))
+	for i := range turns {
+		if blocks, unmarshalErr := conversation.UnmarshalBlocks(turns[i].Content); unmarshalErr == nil {
+			decoded[i] = blocks
+		}
 	}
 
 	// Classify the clicked post's tool_use blocks. DecidedAt applies to the
@@ -379,23 +510,34 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// actually executed to decide whether a follow-up stream is warranted.
 	clickedPostToolUseIDs := make(map[string]struct{})
 	clickedPostHasExecutedTool := false
-	for _, turn := range turns {
+	clickedPostUserRejected := false
+	acceptedToolNames := []string{}
+	rejectedToolNames := []string{}
+	acceptedRemoteMCPTool := false
+	for i, turn := range turns {
 		if turn.Role != "assistant" || turn.PostID == nil || *turn.PostID != post.Id {
 			continue
 		}
-		var blocks []conversation.ContentBlock
-		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
-			continue
-		}
-		for _, b := range blocks {
+		for _, b := range decoded[i] {
 			if b.Type != conversation.BlockTypeToolUse || b.ID == "" {
 				continue
 			}
 			clickedPostToolUseIDs[b.ID] = struct{}{}
+			if acceptedSet[b.ID] {
+				acceptedToolNames = append(acceptedToolNames, b.Name)
+			} else {
+				rejectedToolNames = append(rejectedToolNames, b.Name)
+			}
 			if b.Status == conversation.StatusSuccess ||
 				b.Status == conversation.StatusError ||
 				b.Status == conversation.StatusAutoApproved {
 				clickedPostHasExecutedTool = true
+			}
+			if isUserRejectedToolUse(b) {
+				clickedPostUserRejected = true
+			}
+			if acceptedSet[b.ID] && mcp.IsRemoteServerOrigin(b.ServerOrigin) {
+				acceptedRemoteMCPTool = true
 			}
 		}
 	}
@@ -407,12 +549,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 	// should.
 	alreadyDecided := true
 	sawMatchingResult := false
-	for _, turn := range turns {
-		var blocks []conversation.ContentBlock
-		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
-			continue
-		}
-		for _, b := range blocks {
+	for i := range turns {
+		for _, b := range decoded[i] {
 			if b.Type != conversation.BlockTypeToolResult {
 				continue
 			}
@@ -429,32 +567,43 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 		return nil
 	}
 
+	// Audit the decision only after the idempotency gate: a repeat click
+	// changes nothing, so its record must not claim a share resolution. The
+	// license gate below may still deny the share — that record then carries
+	// the attempted names with a fail status, which is the point.
+	audit.AddParam(auditRec, "accepted_tools", acceptedToolNames)
+	audit.AddParam(auditRec, "rejected_tools", rejectedToolNames)
+
+	// Sharing output from remote/external MCP tools is available at
+	// Enterprise and above (see HandleToolCall). Keep-private decisions are
+	// always allowed — they disclose nothing.
+	if acceptedRemoteMCPTool && !c.isRemoteMCPLicensed() {
+		return ErrRemoteMCPNotLicensed
+	}
+
 	now := model.GetMillis()
-	for _, turn := range turns {
-		var blocks []conversation.ContentBlock
-		if unmarshalErr := json.Unmarshal(turn.Content, &blocks); unmarshalErr != nil {
-			continue
-		}
+	for i := range turns {
+		blocks := decoded[i]
 
 		modified := false
-		for i := range blocks {
-			switch blocks[i].Type {
+		for j := range blocks {
+			switch blocks[j].Type {
 			case conversation.BlockTypeToolUse:
-				if acceptedSet[blocks[i].ID] {
-					if _, ok := clickedPostToolUseIDs[blocks[i].ID]; ok {
-						blocks[i].Shared = conversation.BoolPtr(true)
+				if acceptedSet[blocks[j].ID] {
+					if _, ok := clickedPostToolUseIDs[blocks[j].ID]; ok {
+						blocks[j].Shared = new(true)
 						modified = true
 					}
 				}
 			case conversation.BlockTypeToolResult:
-				if acceptedSet[blocks[i].ToolUseID] {
-					if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok {
-						blocks[i].Shared = conversation.BoolPtr(true)
+				if acceptedSet[blocks[j].ToolUseID] {
+					if _, ok := clickedPostToolUseIDs[blocks[j].ToolUseID]; ok {
+						blocks[j].Shared = new(true)
 						modified = true
 					}
 				}
-				if _, ok := clickedPostToolUseIDs[blocks[i].ToolUseID]; ok && blocks[i].DecidedAt == nil {
-					blocks[i].DecidedAt = conversation.Int64Ptr(now)
+				if _, ok := clickedPostToolUseIDs[blocks[j].ToolUseID]; ok && blocks[j].DecidedAt == nil {
+					blocks[j].DecidedAt = new(now)
 					modified = true
 				}
 			}
@@ -465,7 +614,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 			if marshalErr != nil {
 				return fmt.Errorf("failed to marshal updated blocks: %w", marshalErr)
 			}
-			if updateErr := c.convService.UpdateTurnContent(turn.ID, updatedContent); updateErr != nil {
+			if updateErr := c.convService.UpdateTurnContent(turns[i].ID, updatedContent); updateErr != nil {
 				return fmt.Errorf("failed to update turn shared flags: %w", updateErr)
 			}
 		}
@@ -479,7 +628,8 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Only stream a follow-up when there is something to follow up on:
 	// at least one executed tool_result exists on this post. Rejected-only
-	// posts produce no output worth streaming.
+	// posts already streamed their continuation from HandleToolCall (no
+	// share decision remains), so a second-stage click must not stream again.
 	if !clickedPostHasExecutedTool {
 		return nil
 	}
@@ -491,7 +641,7 @@ func (c *Conversations) HandleToolResult(ctx context.Context, userID string, pos
 
 	// Channel second-stage follow-up rebuilds a fresh llmContext without in-request
 	// WebSearch data; citation decoration is DM-only via HandleToolCall's llmContext.
-	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false, nil)
+	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, false, clickedPostUserRejected, nil)
 }
 
 // streamToolFollowUp rebuilds the completion request from the conversation and
@@ -508,6 +658,7 @@ func (c *Conversations) streamToolFollowUp(
 	post *model.Post,
 	conv *store.Conversation,
 	isDM bool,
+	userRejected bool,
 	approvalContext *llm.Context,
 ) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "tool followup completion")
@@ -520,6 +671,7 @@ func (c *Conversations) streamToolFollowUp(
 	if !channelToolsAutoRunEverywhereOnly {
 		channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextInteractive())
 	}
+	channelToolFilterOpts = append(channelToolFilterOpts, c.contextBuilder.WithLLMContextResponseFiles())
 	// Build the execution context bound to this conversation.
 	llmContext := c.buildConversationContextWithTools(
 		ctx,
@@ -527,42 +679,31 @@ func (c *Conversations) streamToolFollowUp(
 		"Failed to load user tool preferences for tool follow-up",
 		channelToolFilterOpts...,
 	)
+	// The continuation post may already carry attachments from an earlier round.
+	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
-	toolsDisabled := !isDM
-	if !isDM && c.configProvider != nil && c.configProvider.EnableChannelMentionToolCalling() {
-		toolsDisabled = false
-	}
-	if toolsDisabled && llmContext.Tools != nil {
-		llmContext.DisabledToolsInfo = llmContext.Tools.GetToolsInfo()
-	}
+	toolsDisabled := applyToolAvailability(llmContext, isDM, c.channelMentionToolCallingEnabled())
 
 	if !isDM && !toolsDisabled && channelToolsAutoRunEverywhereOnly {
 		c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 
 	// Channel thread posts aren't stored as turns, so rebuild with thread context.
-	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM)
+	completionReq, err := c.buildToolFollowUpRequest(conv, llmContext, isDM, auth.SessionIDFromContext(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to build completion request for tool follow-up: %w", err)
+	}
+	if userRejected {
+		completionReq.Posts = append(completionReq.Posts, llm.Post{Role: llm.PostRoleUser, Message: toolRejectionGuidance})
 	}
 	completionReq.Operation = llm.OperationConversationToolFollowup
 	completionReq.OperationSubType = llm.SubTypeToolCall
 
-	var opts []llm.LanguageModelOption
-	if toolsDisabled {
-		opts = append(opts, llm.WithToolsDisabled())
-		if c.configProvider != nil && c.configProvider.AllowNativeWebSearchInChannels() && bot.HasNativeWebSearchEnabled() {
-			opts = append(opts, llm.WithNativeWebSearchAllowed())
-		}
-	}
-
-	runner := toolrunner.New(bot.LLM(), toolrunner.WithMaxRounds(bot.GetConfig().EffectiveMaxToolTurns()))
-	runResult, err := runner.Run(ctx, *completionReq, c.shouldAutoExecuteTool(llmContext, isDM), func(turns []toolrunner.ToolTurn) {
-		shared := isDM || c.allToolsAutoRunEverywhere(turns, llmContext)
-		if writeErr := c.convService.WriteToolTurns(conv.ID, turns, shared); writeErr != nil {
-			c.mmClient.LogError("Failed to write tool turns on follow-up", "error", writeErr)
-		}
-	}, opts...)
+	runResult, err := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+		c.shouldAutoExecuteTool(llmContext, isDM),
+		conv.ID,
+		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },
+		c.toolsDisabledLLMOptions(bot, toolsDisabled), "Failed to write tool turns on follow-up")
 
 	if err != nil {
 		return fmt.Errorf("tool runner failed on tool follow-up: %w", err)
@@ -570,9 +711,17 @@ func (c *Conversations) streamToolFollowUp(
 
 	stream := decorateStreamWithWebSearchAnnotations(runResult.Stream, approvalContext)
 
+	// Recover files created in earlier requests of this run (e.g. an
+	// approved CreateFile whose share decision arrives in a later request,
+	// where the in-memory registry is gone) from the persisted turns.
+	// approvalContext is nil on the HandleToolResult path; the decorator
+	// tolerates nil contexts.
+	extraFileIDs := c.collectCreatedFileIDsFromTurns(conv.ID, post.Id)
+	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, post, extraFileIDs, llmContext, llmContext, approvalContext)
+
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamContinuationToExistingPost(ctx, stream, post, user, channel); err != nil {
+	if err := c.streamToExistingPost(ctx, stream, post, user, channel, true); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
 
@@ -582,7 +731,8 @@ func (c *Conversations) streamToolFollowUp(
 // buildToolFollowUpRequest rebuilds the completion request for a tool follow-up.
 // Channel conversations re-fetch the live thread so non-turn thread posts stay in
 // context (matching the initial mention); DMs persist every post as a turn.
-func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool) (*llm.CompletionRequest, error) {
+func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmContext *llm.Context, isDM bool, sessionID string) (*llm.CompletionRequest, error) {
+	buildOpts := conversation.BuildOptions{SessionID: sessionID}
 	if !isDM && conv.RootPostID != nil {
 		// Best-effort: if the live thread can't be fetched (deleted root,
 		// permissions, API blip), degrade to turns-only context rather than
@@ -591,11 +741,11 @@ func (c *Conversations) buildToolFollowUpRequest(conv *store.Conversation, llmCo
 		threadData, err := mmapi.GetThreadData(c.mmClient, *conv.RootPostID)
 		if err != nil {
 			c.mmClient.LogWarn("Failed to get thread data for tool follow-up, falling back to turns-only context", "error", err)
-			return c.convService.BuildCompletionRequest(conv, llmContext)
+			return c.convService.BuildCompletionRequest(conv, llmContext, buildOpts)
 		}
-		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData)
+		return c.convService.BuildChannelMentionRequest(conv, llmContext, threadData, buildOpts)
 	}
-	return c.convService.BuildCompletionRequest(conv, llmContext)
+	return c.convService.BuildCompletionRequest(conv, llmContext, buildOpts)
 }
 
 func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, block conversation.ContentBlock) (string, error) {
@@ -639,8 +789,8 @@ func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn,
 			continue
 		}
 
-		var blocks []conversation.ContentBlock
-		if err := json.Unmarshal(turns[i].Content, &blocks); err != nil {
+		blocks, err := conversation.UnmarshalBlocks(turns[i].Content)
+		if err != nil {
 			return nil, nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i].ID, err)
 		}
 

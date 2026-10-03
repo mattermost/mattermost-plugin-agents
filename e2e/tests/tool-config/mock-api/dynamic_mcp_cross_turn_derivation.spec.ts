@@ -1,11 +1,14 @@
 import { test, expect, type Page, type Locator } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
+import { expandToolActivity, expectNoToolActivity, expectToolActivityCurrent } from 'helpers/llmbot-post';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
     buildToolCallResponse,
     buildTextResponse,
+    buildChatCompletionMockRule,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithDynamicPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -24,6 +27,7 @@ const businessTool = 'mattermost__get_channel_info';
 const businessToolLabel = 'Get Channel Info';
 const searchToolsLabel = 'Search Tools';
 const loadToolLabel = 'Load Tool';
+const toolBotSystemPrompt = 'You are called Tool Test Bot with the username toolbot';
 
 async function waitForSentPost(page: Page, message: string, timeout: number = 30000): Promise<Locator> {
     const post = page.locator('.post').filter({
@@ -70,6 +74,11 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const businessCallID2 = `call_xtd_business2_${Date.now()}`;
         const finalMarker1 = `XTD_FINAL_TURN1_${Date.now()}`;
         const finalMarker2 = `XTD_FINAL_TURN2_${Date.now()}`;
+        const business2ToolCall = buildToolCallResponse(
+            businessCallID2,
+            businessTool,
+            '{"channel_name":"Town Square"}',
+        );
 
         await openAIMock.addMocks([
             {
@@ -82,7 +91,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                             'Write a short title for the following request. Include only the title and nothing else, no quotations. Request:',
                     },
                 },
-                context: {times: 1},
+                context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
@@ -95,7 +104,7 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'You are called Tool Test Bot with the username toolbot',
+                        value: toolBotSystemPrompt,
                     },
                 },
                 context: {times: 1},
@@ -171,30 +180,10 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: turn2User,
-                    },
-                },
-                context: {times: 1},
-                response: {
-                    status: 200,
-                    headers: {'Content-Type': 'text/event-stream'},
-                    body: buildToolCallResponse(
-                        businessCallID2,
-                        businessTool,
-                        '{"channel_name":"Town Square"}',
-                    ),
-                },
-            },
-            {
-                request: {
-                    method: 'POST',
-                    path: '/v1/chat/completions',
-                    body: {
-                        matcher: 'ShouldContainSubstring',
                         value: businessCallID2,
                     },
                 },
-                context: {times: 1},
+                context: {times: 100},
                 response: {
                     status: 200,
                     headers: {'Content-Type': 'text/event-stream'},
@@ -220,11 +209,18 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         const botPosts = rhs.locator('[data-testid="llm-bot-post"]');
         const firstBotPost = botPosts.last();
 
-        await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
-        await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        // The ask-policy business tool needs a decision, so its approval card
+        // renders without expanding; the meta-tools that auto-ran before it
+        // are folded away, with only the newest naming the collapsed row.
+        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expectToolActivityCurrent(firstBotPost, loadToolLabel);
+        await expect(firstBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
+
+        const firstRounds = await expandToolActivity(firstBotPost);
+        await expect(firstRounds.getByText(searchToolsLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expect(firstRounds.getByText(loadToolLabel, {exact: true})).toBeVisible({timeout: 45000});
         await expect(rhs.getByText('Auto-approved').first()).toBeVisible({timeout: 30000});
 
-        await expect(firstBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
         const acceptButton1 = rhs.getByRole('button', {name: /^accept$/i});
         await expect(acceptButton1).toBeVisible({timeout: 30000});
         await acceptButton1.click();
@@ -232,7 +228,21 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(firstBotPost.getByText(finalMarker1)).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
         await expect(botPosts).toHaveCount(1);
-        await expect(firstBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+        await expect((await expandToolActivity(firstBotPost)).getByText(loadToolLabel, {exact: true})).toHaveCount(1);
+
+        // Turn 2's ChatCompletion often omits the personality system prompt
+        // (and the typed follow-up phrase). Exhausted times:1 prelude rules are
+        // skipped, then Smocker 666s if nothing else matches — empty bot post.
+        // Append a catch-all after the first turn is idle (no reset: resetting
+        // hangs in-flight GenerateTitle). Re-register the title siphon after
+        // the catch-all so an in-flight GenerateTitle is not stolen.
+        // businessCallID2 last so the post-accept completion still returns
+        // finalMarker2.
+        await openAIMock.appendMocks([
+            buildChatCompletionMockRule(business2ToolCall),
+            titleGenerationMockRule('Cross-turn derivation'),
+            buildChatCompletionMockRule(buildTextResponse(finalMarker2), {bodyContains: businessCallID2}),
+        ]);
 
         const replyTextbox = rhs.locator('textarea').first();
         await replyTextbox.waitFor({state: 'visible', timeout: 10000});
@@ -242,7 +252,15 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(botPosts).toHaveCount(2, {timeout: 45000});
         const secondBotPost = botPosts.last();
 
+        // No meta-tool prelude this time. The only round is the one awaiting a
+        // decision, which renders in full below the activity area, so there is
+        // no activity area at all.
         await expect(secondBotPost.getByText(businessToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+        await expectNoToolActivity(secondBotPost);
+
+        // The deriver restored the tool, so the second turn re-runs neither
+        // meta-tool. Nothing is collapsed here, so a post-wide count is the
+        // whole story.
         await expect(secondBotPost.getByText(searchToolsLabel, {exact: true})).toHaveCount(0);
         await expect(secondBotPost.getByText(loadToolLabel, {exact: true})).toHaveCount(0);
 
@@ -256,6 +274,8 @@ test.describe('Dynamic MCP Cross-Turn Derivation (Mocked LLM)', () => {
         await expect(secondBotPost.getByText(finalMarker2)).toBeVisible({timeout: 45000});
         await expect(rhs.getByRole('button', {name: /stop/i})).not.toBeVisible({timeout: 30000});
 
+        await expandToolActivity(firstBotPost);
+        await expandToolActivity(secondBotPost);
         await expect(rhs.getByText(loadToolLabel, {exact: true})).toHaveCount(1);
         await expect(rhs.getByText(searchToolsLabel, {exact: true})).toHaveCount(1);
     });
