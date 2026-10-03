@@ -6,6 +6,8 @@ import {FormattedMessage} from 'react-intl';
 import styled, {css} from 'styled-components';
 import {LightbulbOutlineIcon, ExclamationThickIcon} from '@mattermost/compass-icons/components';
 
+import {PopoverMenuDivider} from '@mattermost/compass-ui/components/popover-menu';
+
 const DropdownMenuItemInfo = styled.div`
 	display: flex;
 	align-items: flex-start;
@@ -39,11 +41,7 @@ const ExclamationThickIconStyled = styled(ExclamationThickIcon)`
 	${iconStyling}
 `;
 
-export const Divider = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    margin-top: 8px;
-    margin-bottom: 8px;
-`;
+export const Divider = PopoverMenuDivider;
 
 export const DropdownInfoOnlyVisibleToYou = () => {
     return (

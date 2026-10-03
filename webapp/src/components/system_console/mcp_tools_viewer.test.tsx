@@ -51,6 +51,8 @@ import {IntlProvider} from 'react-intl';
 
 import {clearMCPToolsCache, getMCPTools, getVettedToolSeed, updatePluginServer} from '../../client';
 
+import {chooseOption} from '../../../tests/compass_select';
+
 import MCPToolsViewer from './mcp_tools_viewer';
 import {MCPConfig, MCPToolsResponse} from './mcp_types';
 /* eslint-enable import/first, import/order */
@@ -128,7 +130,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         const selects = screen.getAllByRole('combobox');
         expect(selects.length).toBeGreaterThanOrEqual(1);
         for (const sel of selects) {
-            expect((sel as HTMLSelectElement).disabled).toBe(false);
+            expect((sel as HTMLButtonElement).disabled).toBe(false);
         }
     });
 
@@ -138,7 +140,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         fireEvent.click(screen.getByText('Demo Plugin'));
 
         const selects = screen.getAllByRole('combobox');
-        fireEvent.change(selects[0], {target: {value: 'auto_run_in_dm'}});
+        chooseOption(selects[0], 'Auto Run (DM)');
 
         await waitFor(() => {
             expect(mockUpdatePluginServer).toHaveBeenCalledTimes(1);
@@ -158,8 +160,8 @@ describe('MCPToolsViewer — plugin branch', () => {
     test('toggling server-level enabled fires updatePluginServer with enabled only', async () => {
         renderViewer(makePluginToolsResponse());
 
-        // ToggleSwitch renders as a native checkbox; row collapsed on mount, so only server toggle is in the DOM.
-        const toggles = screen.getAllByRole('checkbox');
+        // ToggleSwitch renders as role="switch"; row collapsed on mount, so only server toggle is in the DOM.
+        const toggles = screen.getAllByRole('switch');
         expect(toggles.length).toBeGreaterThanOrEqual(1);
         fireEvent.click(toggles[0]);
 
@@ -199,7 +201,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         const {onConfigChange} = renderViewer(remoteResponse, cfg);
         fireEvent.click(screen.getByText('Remote'));
 
-        const toggles = screen.getAllByRole('checkbox');
+        const toggles = screen.getAllByRole('switch');
         fireEvent.click(toggles[0]);
 
         expect(onConfigChange).toHaveBeenCalled();
@@ -253,7 +255,7 @@ describe('MCPToolsViewer — plugin branch', () => {
         renderViewer(makePluginToolsResponse());
 
         // Toggle the server-level enabled switch on the plugin row.
-        const toggles = screen.getAllByRole('checkbox');
+        const toggles = screen.getAllByRole('switch');
         fireEvent.click(toggles[0]);
 
         await waitFor(() => {
@@ -274,7 +276,7 @@ describe('MCPToolsViewer — plugin branch', () => {
 
         renderViewer(makePluginToolsResponse());
 
-        const toggles = screen.getAllByRole('checkbox');
+        const toggles = screen.getAllByRole('switch');
         fireEvent.click(toggles[0]);
 
         await waitFor(() => {

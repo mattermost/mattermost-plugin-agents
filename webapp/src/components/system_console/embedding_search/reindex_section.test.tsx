@@ -114,6 +114,20 @@ describe('ReindexSection resume visibility', () => {
         expect(screen.getByRole('button', {name: 'Reindex from scratch'})).toBeTruthy();
     });
 
+    it.each([
+        {name: 'blocks', hasLocalModelMismatch: true, disabled: true},
+        {name: 'allows', hasLocalModelMismatch: false, disabled: false},
+    ])('$name rebuilding a stale index when the embedding model mismatch is $hasLocalModelMismatch', ({hasLocalModelMismatch, disabled}) => {
+        renderSection({
+            jobStatus: job({status: 'running', operation: 'rebuild_vector_index'}),
+            isJobStale: true,
+            hasLocalModelMismatch,
+        });
+
+        expect((screen.getByRole('button', {name: 'Rebuild vector index'}) as HTMLButtonElement).disabled).toBe(disabled);
+        expect((screen.getByRole('button', {name: 'Reindex from scratch'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+
     it('shows Resume Reindex for a failed full reindex with progress even when resumable is false', () => {
         renderSection({
             jobStatus: job({

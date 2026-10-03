@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import AskChannelButton from './ask_channel_button';
@@ -76,5 +76,26 @@ describe('AskChannelButton license gating', () => {
             </IntlProvider>,
         );
         expect(screen.queryByTestId('ask-channel-button') !== null).toBe(rendered);
+    });
+});
+
+describe('AskChannelButton toggle', () => {
+    test('clicking the button marks it pressed while the popover is open', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        const button = screen.getByRole('button', {name: 'Ask Agents about this channel'});
+        expect(button.getAttribute('aria-pressed')).toBe('false');
+
+        fireEvent.click(button);
+        expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('true');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
+        expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('false');
     });
 });

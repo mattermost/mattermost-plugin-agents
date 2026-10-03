@@ -7,15 +7,16 @@ import {FormattedMessage, useIntl} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, AlertOutlineIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
-import IconAI from '../assets/icon_ai';
-import {DangerPill} from '../pill';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {Tag} from '@mattermost/compass-ui/components/tag';
 
-import {ButtonIcon} from '../assets/buttons';
+import IconAI from '../assets/icon_ai';
 
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
 
-import {BooleanItem, FormRow, FieldControlRow, InlineCheckbox, ItemList, SelectionItem, SelectionItemOption, TextItem, ItemLabel, HelpText, ComboboxItem} from './item';
+import {BooleanItem, FormRow, CompactFieldControlRow, CompactItemLabel, InlineCheckbox, ItemList, SelectionItem, TextItem, HelpText, ComboboxItem, TextFieldContainer} from './item';
 import AvatarItem from './avatar';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from './llm_access';
 import {LLMService} from './service';
@@ -165,16 +166,16 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>
+            <CompactItemLabel>
                 {titleMessage}
-            </ItemLabel>
+            </CompactItemLabel>
             <NativeToolsColumn>
                 {availableNativeTools.map((tool) => {
                     const checked = (props.enabledTools || []).includes(tool.id);
                     const webSearchGated = tool.id === 'web_search' && !webSearchLicensed;
                     return (
-                        <NativeToolField key={tool.id}>
-                            <FieldControlRow>
+                        <TextFieldContainer key={tool.id}>
+                            <CompactFieldControlRow>
                                 <InlineCheckbox
                                     testId={`native-tool-${tool.id}`}
                                     label={tool.label}
@@ -183,9 +184,9 @@ export const NativeToolsItem = (props: NativeToolsItemProps) => {
                                     onChange={(nextChecked) => setToolEnabled(tool.id, nextChecked)}
                                 />
                                 {webSearchGated && <LicenseChip capability='provider_web_search'/>}
-                            </FieldControlRow>
-                            <NativeToolHelpText>{tool.helpText}</NativeToolHelpText>
-                        </NativeToolField>
+                            </CompactFieldControlRow>
+                            <HelpText>{tool.helpText}</HelpText>
+                        </TextFieldContainer>
                     );
                 })}
             </NativeToolsColumn>
@@ -294,7 +295,7 @@ const Bot = (props: Props) => {
     return (
         <BotContainer>
             <HeaderContainer onClick={() => setOpen((o) => !o)}>
-                <IconAI/>
+                <HeaderIconAI/>
                 <Title>
                     <NameText>
                         {props.bot.displayName}
@@ -302,29 +303,48 @@ const Bot = (props: Props) => {
                 </Title>
                 <Spacer/>
                 {missingService && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Service Selected'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Service Selected'/>}
+                    />
                 )}
                 {missingUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='No Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='No Username'/>}
+                    />
                 )}
                 {invalidUsername && (
-                    <DangerPill>
-                        <AlertOutlineIcon/>
-                        <FormattedMessage defaultMessage='Invalid Username'/>
-                    </DangerPill>
+                    <Tag
+                        type='danger'
+                        leadingIcon={<Icon glyph={<AlertOutlineIcon/>}/>}
+                        label={<FormattedMessage defaultMessage='Invalid Username'/>}
+                    />
                 )}
-                <ButtonIcon
-                    onClick={props.onDelete}
-                >
-                    <TrashIcon/>
-                </ButtonIcon>
-                {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
+                <HeaderActions>
+                    <IconButton
+                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Delete bot'})}
+                        size='small'
+                        destructive={true}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            props.onDelete();
+                        }}
+                    />
+                    <IconButton
+                        icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
+                        aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse bot'}) : intl.formatMessage({defaultMessage: 'Expand bot'})}
+                        aria-expanded={open}
+                        size='small'
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setOpen((o) => !o);
+                        }}
+                    />
+                </HeaderActions>
             </HeaderContainer>
             {open && (
                 <ItemListContainer>
@@ -349,20 +369,12 @@ const Bot = (props: Props) => {
                         <SelectionItem
                             label={intl.formatMessage({defaultMessage: 'AI Service'})}
                             value={props.bot.serviceID}
-                            onChange={(e) => props.onChange({...props.bot, serviceID: e.target.value})}
-                        >
-                            <SelectionItemOption value=''>
-                                {intl.formatMessage({defaultMessage: 'Select a service'})}
-                            </SelectionItemOption>
-                            {props.services.map((service) => (
-                                <SelectionItemOption
-                                    key={service.id}
-                                    value={service.id}
-                                >
-                                    {service.name || service.type}
-                                </SelectionItemOption>
-                            ))}
-                        </SelectionItem>
+                            onChange={(serviceID) => props.onChange({...props.bot, serviceID})}
+                            options={[
+                                {value: '', label: intl.formatMessage({defaultMessage: 'Select a service'})},
+                                ...props.services.map((service) => ({value: service.id, label: service.name || service.type})),
+                            ]}
+                        />
                         {supportsModelFetching && availableModels.length > 0 ? (
                             <ComboboxItem
                                 label={intl.formatMessage({defaultMessage: 'Model'})}
@@ -493,7 +505,7 @@ const Bot = (props: Props) => {
 };
 
 const ItemListContainer = styled.div`
-	padding: 24px 20px;
+	padding: var(--spacing-xxl) var(--spacing-xl);
 	padding-right: 76px;
 `;
 
@@ -501,34 +513,33 @@ const Title = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const NameText = styled.div`
-	font-size: 14px;
-	font-weight: 600;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
 `;
 
 const Spacer = styled.div`
 	flex-grow: 1;
 `;
 
-const TrashIcon = styled(TrashCanOutlineIcon)`
-	width: 16px;
-	height: 16px;
-	color: #D24B4E;
-`;
-
 const BotContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 
-	border-radius: 4px;
+	border-radius: var(--radius-s);
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 
 	&:hover {
-		box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--elevation-1);
 	}
+`;
+
+const HeaderIconAI = styled(IconAI)`
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	flex-shrink: 0;
 `;
 
 const HeaderContainer = styled.div`
@@ -536,26 +547,23 @@ const HeaderContainer = styled.div`
 	flex-direction: row;
 	justify-content: space-between;
 	align-items: center;
-	gap: 16px;
-	padding: 12px 16px 12px 20px;
+	gap: var(--spacing-l);
+	padding: var(--spacing-m) var(--spacing-l) var(--spacing-m) var(--spacing-xl);
 	border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 	cursor: pointer;
+`;
+
+const HeaderActions = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--spacing-xxxs);
 `;
 
 const NativeToolsColumn = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-`;
-
-const NativeToolField = styled.div`
-	display: flex;
-	flex-direction: column;
-	gap: 0;
-`;
-
-const NativeToolHelpText = styled(HelpText)`
-	padding-left: 0;
+	gap: var(--spacing-xl);
 `;
 
 export default Bot;

@@ -6,6 +6,8 @@ import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
+import {ProgressBar} from '@mattermost/compass-ui/components/progress-bar';
+
 import {useConversationContext} from '@/hooks/use_conversation_context';
 import type {CompositionSource} from '@/types/conversation';
 
@@ -151,25 +153,30 @@ const ContextUsageIndicator = ({conversationId}: ContextUsageIndicatorProps) => 
                 {/* Go marshals a nil slice to JSON null, so components can
                     arrive null even though the type says array (e.g. a >0
                     counted total with no taggable content). */}
-                {(composition.components ?? []).map((c) => (
-                    <ComponentRow key={c.source}>
-                        <RowHeader>
-                            <RowLabel>{intl.formatMessage(sourceLabels[c.source])}</RowLabel>
-                            <RowTokens>
-                                <FormattedMessage
-                                    defaultMessage='{tokens} ({pct}%)'
-                                    values={{
-                                        tokens: formatTokens(c.tokens),
-                                        pct: Math.round(c.proportion * 100),
-                                    }}
-                                />
-                            </RowTokens>
-                        </RowHeader>
-                        <RowBarTrack>
-                            <RowBarFill $widthPct={Math.max(1, c.proportion * 100)}/>
-                        </RowBarTrack>
-                    </ComponentRow>
-                ))}
+                {(composition.components ?? []).map((c) => {
+                    const label = intl.formatMessage(sourceLabels[c.source]);
+                    return (
+                        <ComponentRow key={c.source}>
+                            <RowHeader>
+                                <RowLabel>{label}</RowLabel>
+                                <RowTokens>
+                                    <FormattedMessage
+                                        defaultMessage='{tokens} ({pct}%)'
+                                        values={{
+                                            tokens: formatTokens(c.tokens),
+                                            pct: Math.round(c.proportion * 100),
+                                        }}
+                                    />
+                                </RowTokens>
+                            </RowHeader>
+                            <ProgressBar
+                                size='small'
+                                value={Math.max(1, c.proportion * 100)}
+                                aria-label={label}
+                            />
+                        </ComponentRow>
+                    );
+                })}
             </ComponentList>
         </DotMenu>
     );
@@ -244,8 +251,10 @@ const OverflowIcon = styled.span`
 `;
 
 const IndicatorDropdown = styled(DropdownMenu)`
-    width: 280px;
-    padding: 12px;
+    && {
+        width: 280px;
+        padding: 12px;
+    }
 `;
 
 const PopoverHeader = styled.div`
@@ -314,22 +323,6 @@ const RowTokens = styled.span`
     font-variant-numeric: tabular-nums;
     flex-shrink: 0;
 `;
-
-const RowBarTrack = styled.div`
-    width: 100%;
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    overflow: hidden;
-`;
-
-const RowBarFill = styled.div<{$widthPct: number}>`
-    width: ${(props) => props.$widthPct}%;
-    height: 100%;
-    background: rgba(var(--button-bg-rgb), 0.72);
-    border-radius: 2px;
-`;
-
 export default ContextUsageIndicator;
 
 // Test-only exports.

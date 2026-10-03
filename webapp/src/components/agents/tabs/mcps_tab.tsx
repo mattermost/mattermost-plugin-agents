@@ -6,8 +6,17 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {ChevronDownIcon, ChevronRightIcon} from '@mattermost/compass-icons/components';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {SearchInput} from '@mattermost/compass-ui/components/search-input';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {getUserMCPTools, type UserMCPServerInfo} from '@/client';
 import MCPUnavailableBadge from '@/components/mcp_unavailable_badge';
+import {ToggleSwitch} from '@/components/toggle_switch';
 import {EnabledTool} from '@/types/agents';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus, type MCPServerStatus} from '@/utils/mcp_availability';
@@ -52,30 +61,19 @@ function serverStatusBadge(status: MCPServerStatus): React.ReactNode {
     switch (status) {
     case 'connected':
         return (
-            <AuthBadge>
-                <FormattedMessage defaultMessage='Connected'/>
-            </AuthBadge>
+            <Tag
+                type='success'
+                label={<FormattedMessage defaultMessage='Connected'/>}
+            />
         );
     case 'no-sa-credentials':
-        return (
-            <NotConnectedBadge>
-                <FormattedMessage defaultMessage='No service account credentials'/>
-            </NotConnectedBadge>
-        );
+        return <Tag label={<FormattedMessage defaultMessage='No service account credentials'/>}/>;
     case 'sa-connect-failed':
-        return (
-            <NotConnectedBadge>
-                <FormattedMessage defaultMessage="Couldn't connect"/>
-            </NotConnectedBadge>
-        );
+        return <Tag label={<FormattedMessage defaultMessage="Couldn't connect"/>}/>;
     case 'sa-only-unavailable':
         return <MCPUnavailableBadge/>;
     case 'not-connected':
-        return (
-            <NotConnectedBadge>
-                <FormattedMessage defaultMessage='Not connected'/>
-            </NotConnectedBadge>
-        );
+        return <Tag label={<FormattedMessage defaultMessage='Not connected'/>}/>;
     case 'none':
         return null;
     default: {
@@ -312,8 +310,7 @@ const McpsTab = (props: Props) => {
     const serviceAccountSection = (!canEditServiceAccountAuth && !useServiceAccountAuth) ? null : (
         <ServiceAccountSection>
             <CheckboxRow>
-                <CheckboxInput
-                    type='checkbox'
+                <Checkbox
                     id='mcp-use-service-accounts'
                     checked={useServiceAccountAuth}
                     disabled={!serviceAccountLicensed && !useServiceAccountAuth}
@@ -323,23 +320,27 @@ const McpsTab = (props: Props) => {
                         }
                         onChange({useServiceAccountAuth: e.target.checked});
                     }}
-                />
-                <CheckboxLabel htmlFor='mcp-use-service-accounts'>
-                    <CheckboxTitle>
-                        <FormattedMessage defaultMessage='Use service accounts for authentication'/>
-                    </CheckboxTitle>
-                    <CheckboxHint>
-                        <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts."/>
-                    </CheckboxHint>
-                </CheckboxLabel>
+                >
+                    <CheckboxText>
+                        <CheckboxTitle>
+                            <FormattedMessage defaultMessage='Use service accounts for authentication'/>
+                        </CheckboxTitle>
+                        <CheckboxHint>
+                            <FormattedMessage defaultMessage="External MCP servers authenticate with shared service-account credentials. Mattermost and plugin tools run with each requesting user's own permissions. Users are never asked to connect their own accounts."/>
+                        </CheckboxHint>
+                    </CheckboxText>
+                </Checkbox>
                 {!serviceAccountLicensed && (
                     <LicenseChip capability='mcp_service_account'/>
                 )}
             </CheckboxRow>
             {useServiceAccountAuth && (
-                <WarningBanner>
-                    <FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>
-                </WarningBanner>
+                <div role='status'>
+                    <SectionNotice
+                        type='warning'
+                        title={<FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>}
+                    />
+                </div>
             )}
         </ServiceAccountSection>
     );
@@ -352,6 +353,7 @@ const McpsTab = (props: Props) => {
             <Container>
                 {serviceAccountSection}
                 <LoadingContainer>
+                    <Spinner size='20'/>
                     <FormattedMessage defaultMessage='Loading MCP tools...'/>
                 </LoadingContainer>
             </Container>
@@ -362,7 +364,10 @@ const McpsTab = (props: Props) => {
         return (
             <Container>
                 {serviceAccountSection}
-                <ErrorContainer>{error}</ErrorContainer>
+                <SectionNotice
+                    type='danger'
+                    title={error}
+                />
             </Container>
         );
     }
@@ -371,9 +376,9 @@ const McpsTab = (props: Props) => {
         return (
             <Container>
                 {serviceAccountSection}
-                <EmptyContainer>
-                    <FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to configure MCP servers in the system console.'/>
-                </EmptyContainer>
+                <EmptyState
+                    title={<FormattedMessage defaultMessage='No MCP servers are configured. Ask your system administrator to configure MCP servers in the system console.'/>}
+                />
             </Container>
         );
     }
@@ -382,53 +387,58 @@ const McpsTab = (props: Props) => {
         <Container>
             {serviceAccountSection}
             <CheckboxRow>
-                <CheckboxInput
-                    type='checkbox'
+                <Checkbox
                     id='mcp-auto-enable'
                     checked={autoEnableNewMCPTools}
                     disabled={serviceAccountFieldsLocked}
                     onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
-                />
-                <CheckboxLabel
-                    htmlFor='mcp-auto-enable'
-                    $disabled={serviceAccountFieldsLocked}
                 >
-                    <CheckboxTitle>
-                        <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
-                    </CheckboxTitle>
-                    <CheckboxHint>
-                        <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
-                    </CheckboxHint>
-                </CheckboxLabel>
+                    <CheckboxText>
+                        <CheckboxTitle>
+                            <FormattedMessage defaultMessage='Automatically enable all MCP tools'/>
+                        </CheckboxTitle>
+                        <CheckboxHint>
+                            <FormattedMessage defaultMessage='Give this agent access to every currently available MCP tool and any added in the future.'/>
+                        </CheckboxHint>
+                    </CheckboxText>
+                </Checkbox>
             </CheckboxRow>
 
             <SearchInput
-                type='text'
                 placeholder={intl.formatMessage({defaultMessage: 'Search servers and tools...'})}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onClear={() => setSearchQuery('')}
+                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
                 disabled={toolGrantsDisabled}
             />
 
             {useServiceAccountAuth && (
-                <AutoEnableBanner>
-                    <FormattedMessage defaultMessage="This list is the agent's service-account catalog, not your personal MCP connections. Servers that only have service account credentials show as connected here when those credentials work."/>
-                </AutoEnableBanner>
+                <SectionNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage="This list is the agent's service-account catalog, not your personal MCP connections. Servers that only have service account credentials show as connected here when those credentials work."/>}
+                />
             )}
 
             {autoEnableNewMCPTools && (
-                <AutoEnableBanner>
-                    <FormattedMessage defaultMessage='Every MCP tool is enabled for this agent. Disable "Automatically enable all MCP tools" above to pick specific tools.'/>
-                </AutoEnableBanner>
+                <SectionNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage='Every MCP tool is enabled for this agent. Disable "Automatically enable all MCP tools" above to pick specific tools.'/>}
+                />
             )}
 
             {orphanedTools.length > 0 && (
-                <WarningBanner>
-                    <FormattedMessage
-                        defaultMessage='{count, plural, one {# tool is} other {# tools are}} from servers that are no longer available. They will be removed on save.'
-                        values={{count: orphanedTools.length}}
+                <div role='status'>
+                    <SectionNotice
+                        type='warning'
+                        title={(
+                            <FormattedMessage
+                                defaultMessage='{count, plural, one {# tool is} other {# tools are}} from servers that are no longer available. They will be removed on save.'
+                                values={{count: orphanedTools.length}}
+                            />
+                        )}
                     />
-                </WarningBanner>
+                </div>
             )}
 
             <ServerList>
@@ -504,7 +514,8 @@ const McpsTab = (props: Props) => {
                                 </ServerHeaderButton>
                                 {canConnect && (
                                     <ConnectButton
-                                        type='button'
+                                        emphasis='secondary'
+                                        size='small'
                                         onClick={() => {
                                             window.open(server.authURL!, '_blank', 'noopener,noreferrer');
                                         }}
@@ -512,16 +523,12 @@ const McpsTab = (props: Props) => {
                                         <FormattedMessage defaultMessage='Connect'/>
                                     </ConnectButton>
                                 )}
-                                <ServerToggle
-                                    type='button'
-                                    aria-label={serverToggleLabel}
-                                    aria-checked={serverEnabled}
-                                    onClick={() => !toolGrantsDisabled && toggleAllServerTools(server)}
+                                <ToggleSwitch
+                                    ariaLabel={serverToggleLabel}
+                                    checked={serverEnabled}
+                                    onChange={() => !toolGrantsDisabled && !unavailable && toggleAllServerTools(server)}
                                     disabled={toolGrantsDisabled || unavailable}
-                                    $enabled={serverEnabled}
-                                >
-                                    <ToggleKnob $enabled={serverEnabled}/>
-                                </ServerToggle>
+                                />
                             </ServerTopRow>
 
                             {isExpanded && (
@@ -551,22 +558,19 @@ const McpsTab = (props: Props) => {
                                                             <ToolDescription>{tool.description}</ToolDescription>
                                                         )}
                                                     </ToolInfo>
-                                                    <ToolToggle
-                                                        type='button'
-                                                        aria-label={toolOn ? intl.formatMessage(
+                                                    <ToggleSwitch
+                                                        size='small'
+                                                        ariaLabel={toolOn ? intl.formatMessage(
                                                             {defaultMessage: 'Disable tool {toolName} on {serverName}'},
                                                             {toolName: displayName, serverName: server.name},
                                                         ) : intl.formatMessage(
                                                             {defaultMessage: 'Enable tool {toolName} on {serverName}'},
                                                             {toolName: displayName, serverName: server.name},
                                                         )}
-                                                        aria-checked={toolOn}
-                                                        onClick={() => !toolsDisabled && toggleTool(server.serverOrigin, tool.name)}
+                                                        checked={toolOn}
+                                                        onChange={() => !toolsDisabled && toggleTool(server.serverOrigin, tool.name)}
                                                         disabled={toolsDisabled}
-                                                        $enabled={toolOn}
-                                                    >
-                                                        <ToolToggleKnob $enabled={toolOn}/>
-                                                    </ToolToggle>
+                                                    />
                                                 </ToolRow>
                                             );
                                         });
@@ -586,14 +590,14 @@ const McpsTab = (props: Props) => {
 const Container = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const ServiceAccountSection = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding-bottom: 16px;
+    gap: var(--spacing-m);
+    padding-bottom: var(--spacing-l);
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -603,77 +607,32 @@ const CheckboxRow = styled.div`
     gap: 10px;
 `;
 
-const CheckboxInput = styled.input`
-    margin-top: 2px;
-    cursor: pointer;
-
-    &:disabled {
-        cursor: not-allowed;
-    }
-`;
-
-const CheckboxLabel = styled.label<{$disabled?: boolean}>`
+const CheckboxText = styled.span`
     display: flex;
     flex-direction: column;
     gap: 2px;
-    cursor: ${(p) => (p.$disabled ? 'not-allowed' : 'pointer')};
-    user-select: none;
-    opacity: ${(p) => (p.$disabled ? 0.6 : 1)};
 `;
 
 const CheckboxTitle = styled.span`
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const CheckboxHint = styled.span`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const AutoEnableBanner = styled.div`
-    padding: 8px 12px;
-    background: rgba(var(--button-bg-rgb), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--button-bg-rgb), 0.24);
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 13px;
-`;
-
-const SearchInput = styled.input`
-    width: 100%;
-    padding: 8px 12px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 14px;
-
-    &:focus {
-        border-color: var(--button-bg);
-        outline: none;
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    &::placeholder {
-        color: rgba(var(--center-channel-color-rgb), 0.48);
-    }
 `;
 
 const ServerList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ServerBlock = styled.div<{$unavailable?: boolean}>`
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    border-radius: 4px;
+    border-radius: var(--radius-s);
     overflow: hidden;
     opacity: ${(p) => (p.$unavailable ? 0.64 : 1)};
 `;
@@ -681,8 +640,8 @@ const ServerBlock = styled.div<{$unavailable?: boolean}>`
 const ServerTopRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px 12px 16px;
+    gap: var(--spacing-m);
+    padding: var(--spacing-m) var(--spacing-l);
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
@@ -692,7 +651,7 @@ const ServerTopRow = styled.div`
 const ServerHeaderButton = styled.button`
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--spacing-m);
     flex: 1;
     min-width: 0;
     cursor: pointer;
@@ -707,7 +666,7 @@ const ServerHeaderButton = styled.button`
     &:focus-visible {
         outline: 2px solid var(--button-bg);
         outline-offset: 2px;
-        border-radius: 4px;
+        border-radius: var(--radius-s);
     }
 `;
 
@@ -726,68 +685,17 @@ const ServerInfo = styled.div`
 `;
 
 const ServerName = styled.div`
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
     color: var(--center-channel-color);
 `;
 
 const ServerMeta = styled.div`
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 12px;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const AuthBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 10px;
-    background: rgba(var(--online-indicator-rgb, 61, 184, 135), 0.12);
-    color: var(--online-indicator, #3DB887);
-    font-size: 11px;
-    font-weight: 600;
-`;
-
-const NotConnectedBadge = styled.span`
-    display: inline-flex;
-    align-items: center;
-    padding: 1px 6px;
-    border-radius: 10px;
-    background: rgba(var(--center-channel-color-rgb), 0.08);
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 11px;
-    font-weight: 600;
-`;
-
-// Toggle switch — styled to match Mattermost toggle patterns
-const ServerToggle = styled.button<{$enabled: boolean}>`
-    width: 40px;
-    height: 22px;
-    border-radius: 11px;
-    border: none;
-    cursor: pointer;
-    position: relative;
-    flex-shrink: 0;
-    transition: background 0.2s ease;
-    background: ${(p) => (p.$enabled ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.24)')};
-
-    &:disabled {
-        cursor: not-allowed;
-        opacity: 0.5;
-    }
-`;
-
-const ToggleKnob = styled.div<{$enabled: boolean}>`
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: white;
-    position: absolute;
-    top: 2px;
-    transition: left 0.2s ease;
-    left: ${(p) => (p.$enabled ? '20px' : '2px')};
 `;
 
 const ToolList = styled.div`
@@ -795,36 +703,13 @@ const ToolList = styled.div`
 `;
 
 const EmptyToolsNotice = styled.div`
-    padding: 12px 16px;
-    font-size: 12px;
+    padding: var(--spacing-m) var(--spacing-l);
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
-const ConnectButton = styled.button`
-    padding: 4px 10px;
-    border-radius: 4px;
-    border: none;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-    cursor: pointer;
+const ConnectButton = styled(Button)`
     flex-shrink: 0;
-    background: var(--button-bg);
-    color: var(--button-color);
-
-    &:hover:not(:disabled) {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-
-    &:disabled {
-        opacity: 0.5;
-        cursor: default;
-    }
-
-    &:focus-visible {
-        outline: 2px solid var(--button-bg);
-        outline-offset: 2px;
-    }
 `;
 
 const ToolRow = styled.div`
@@ -857,56 +742,20 @@ const ToolName = styled.div`
 `;
 
 const ToolDescription = styled.div`
-    font-size: 12px;
+    font-size: var(--font-size-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 `;
 
-const ToolToggle = styled(ServerToggle)`
-    width: 36px;
-    height: 20px;
-    border-radius: 10px;
-`;
-
-const ToolToggleKnob = styled(ToggleKnob)<{$enabled: boolean}>`
-    top: 1px;
-    left: ${(p) => (p.$enabled ? '17px' : '1px')};
-`;
-
-const WarningBanner = styled.div.attrs({role: 'status'})`
-    padding: 8px 12px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.3);
-    color: rgba(var(--center-channel-color-rgb), 0.72);
-    font-size: 13px;
-`;
-
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
-    padding: 40px;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xxxxl);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const ErrorContainer = styled.div`
-    padding: 10px 12px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
-    color: var(--dnd-indicator, #D24B4E);
-    font-size: 14px;
-`;
-
-const EmptyContainer = styled.div`
-    display: flex;
-    justify-content: center;
-    padding: 40px 20px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
-    text-align: center;
 `;
 
 export default McpsTab;

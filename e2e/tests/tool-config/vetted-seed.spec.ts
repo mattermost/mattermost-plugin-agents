@@ -60,7 +60,7 @@ test.describe('Vetted Server Seed', () => {
             // Only check tools that are visible (embedded server may not expose all)
             if (await toolText.isVisible().catch(() => false)) {
                 const dropdown = toolConfig.getToolPolicyDropdown(toolName);
-                await expect(dropdown).toHaveValue('auto_run_in_dm');
+                await expect(dropdown).toHaveText('Auto Run (DM)');
 
                 const toggle = toolConfig.getToolToggle(toolName);
                 await expect(toggle).toBeChecked();

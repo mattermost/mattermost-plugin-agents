@@ -8,6 +8,9 @@ import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+
 import {doPostbackSummary, doRegenerate, doStopGenerating} from '@/client';
 import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
@@ -689,11 +692,9 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         <PostBody
             data-testid='llm-bot-post'
         >
-            {error && <div className='error'>{error}</div>}
+            {error && <ErrorMessage message={error}/>}
             {conversationError && !generating && (
-                <div className='error'>
-                    <FormattedMessage defaultMessage='Failed to load conversation data'/>
-                </div>
+                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to load conversation data'/>}/>
             )}
             {isThreadSummaryPost && permalinkView &&
             <>
@@ -727,9 +728,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 />
             )}
             { showPostbackButton &&
-            <PostSummaryHelpMessage data-testid='llm-bot-post-summary-help'>
-                <FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>
-            </PostSummaryHelpMessage>
+            <PostSummaryHelpMessage
+                data-testid='llm-bot-post-summary-help'
+                type='hint'
+                title={<FormattedMessage defaultMessage='Would you like to post this summary to the original call thread? You can also ask Agents to make changes.'/>}
+            />
             }
             { showControlsBar &&
             <ControlsBarComponent
@@ -756,13 +759,6 @@ const AnswerArea = styled.div<{$afterActivity: boolean}>`
     }
 `;
 
-const PostSummaryHelpMessage = styled.div`
-    font-size: 14px;
-    font-style: italic;
-    font-weight: 400;
-    line-height: 20px;
-    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    padding-top: 8px;
-    padding-bottom: 8px;
+const PostSummaryHelpMessage = styled(SectionNotice)`
     margin-top: 16px;
 `;

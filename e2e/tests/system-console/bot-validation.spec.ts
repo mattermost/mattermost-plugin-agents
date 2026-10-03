@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
+import { chooseCompassOption } from 'helpers/compass-select';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
@@ -76,8 +77,8 @@ test.describe.skip('Bot Validation Badges', () => {
         await expect(noUsernameBadge).toBeVisible();
 
         // 8. Verify the badge includes an alert icon
-        // Badge should have alert/warning icon styling (DangerPill component)
-        const badgeContainer = botCard.locator('[class*="DangerPill"]').filter({ hasText: 'No Username' });
+        // Badge should be visible
+        const badgeContainer = botCard.getByText('No Username', { exact: true });
         await expect(badgeContainer).toBeVisible();
 
         // 9. Click on the bot card to expand it
@@ -159,7 +160,7 @@ test.describe.skip('Bot Validation Badges', () => {
         await expect(invalidUsernameBadge).toBeVisible();
 
         // 7. Verify badge includes alert icon
-        const badgeContainer = botCard.locator('[class*="DangerPill"]').filter({ hasText: 'Invalid Username' });
+        const badgeContainer = botCard.getByText('Invalid Username', { exact: true });
         await expect(badgeContainer).toBeVisible();
 
         // 8. Expand bot card
@@ -392,7 +393,7 @@ test.describe.skip('Bot Validation Badges', () => {
         await expect(noServiceBadge).toBeVisible();
 
         // 7. Verify badge includes alert icon
-        const badgeContainer = botCard.locator('[class*="DangerPill"]').filter({ hasText: 'No Service Selected' });
+        const badgeContainer = botCard.getByText('No Service Selected', { exact: true });
         await expect(badgeContainer).toBeVisible();
 
         // 8. Expand bot card
@@ -403,13 +404,11 @@ test.describe.skip('Bot Validation Badges', () => {
 
         // 9. Locate 'AI Service' dropdown
         // 10. Verify dropdown shows 'Select a service' placeholder
-        const serviceDropdown = botCard.getByLabel(/ai service/i).or(
-            botCard.locator('text=AI Service').locator('..').locator('select')
-        );
+        const serviceDropdown = botCard.getByRole('combobox', { name: 'AI Service', exact: true });
         await serviceDropdown.waitFor({ state: 'visible', timeout: 10000 });
 
         // 11. Select the available service from dropdown
-        await serviceDropdown.selectOption({ label: 'Test Service' });
+        await chooseCompassOption(serviceDropdown, 'Test Service');
 
         // 12. Collapse card
         await systemConsole.getBotsPanel().click();
@@ -421,7 +420,7 @@ test.describe.skip('Bot Validation Badges', () => {
         await botCard.click();
 
         // 15. Change dropdown back to 'Select a service'
-        await serviceDropdown.selectOption({ value: '' });
+        await chooseCompassOption(serviceDropdown, 'Select a service');
 
         // 16. Verify badge reappears
         await systemConsole.getBotsPanel().click();
@@ -483,8 +482,8 @@ test.describe.skip('Bot Validation Badges', () => {
 
         // 7. Verify both badges are red/danger styled
         // 8. Verify both badges have alert icons
-        const noServiceBadgeContainer = botCard.locator('[class*="DangerPill"]').filter({ hasText: 'No Service Selected' });
-        const noUsernameBadgeContainer = botCard.locator('[class*="DangerPill"]').filter({ hasText: 'No Username' });
+        const noServiceBadgeContainer = botCard.getByText('No Service Selected', { exact: true });
+        const noUsernameBadgeContainer = botCard.getByText('No Username', { exact: true });
         await expect(noServiceBadgeContainer).toBeVisible();
         await expect(noUsernameBadgeContainer).toBeVisible();
 
@@ -506,10 +505,8 @@ test.describe.skip('Bot Validation Badges', () => {
 
         // 12. Select a service from dropdown
         await botCard.click();
-        const serviceDropdown = botCard.getByLabel(/ai service/i).or(
-            botCard.locator('text=AI Service').locator('..').locator('select')
-        );
-        await serviceDropdown.selectOption({ label: 'Test Service' });
+        const serviceDropdown = botCard.getByRole('combobox', { name: 'AI Service', exact: true });
+        await chooseCompassOption(serviceDropdown, 'Test Service');
 
         // 13. Verify both badges are now gone
         await systemConsole.getBotsPanel().click();

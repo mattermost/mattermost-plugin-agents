@@ -5,15 +5,22 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import {PlusIcon, MagnifyIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon} from '@mattermost/compass-icons/components';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
 import {GlobalState} from '@mattermost/types/store';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {SearchInput} from '@mattermost/compass-ui/components/search-input';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
+
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
@@ -213,53 +220,45 @@ const AgentsList = () => {
                                     {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
                                     <CreateButtonWrapper>
                                         <CreateButton
+                                            emphasis='primary'
+                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                                             onClick={handleCreateAgent}
                                             disabled={true}
                                         >
-                                            <PlusIcon size={16}/>
                                             <FormattedMessage defaultMessage='Create agent'/>
                                         </CreateButton>
                                     </CreateButtonWrapper>
                                 </OverlayTrigger>
                             ) : (
                                 <CreateButton
+                                    emphasis='primary'
+                                    leadingIcon={<Icon glyph={<PlusIcon/>}/>}
                                     onClick={handleCreateAgent}
                                     disabled={createButtonDisabled}
                                 >
-                                    <PlusIcon size={16}/>
                                     <FormattedMessage defaultMessage='Create agent'/>
                                 </CreateButton>
                             )
                         )}
                     </Header>
 
-                    <TabBar>
-                        <TabButton
-                            $active={activeTab === 'all'}
-                            onClick={() => setActiveTab('all')}
-                        >
-                            <FormattedMessage defaultMessage='All agents'/>
-                        </TabButton>
-                        <TabButton
-                            $active={activeTab === 'yours'}
-                            onClick={() => setActiveTab('yours')}
-                        >
-                            <FormattedMessage defaultMessage='Your agents'/>
-                        </TabButton>
-                    </TabBar>
+                    <TabBar
+                        tabs={[
+                            {key: 'all', label: <FormattedMessage defaultMessage='All agents'/>},
+                            {key: 'yours', label: <FormattedMessage defaultMessage='Your agents'/>},
+                        ]}
+                        activeKey={activeTab}
+                        onChange={(key) => setActiveTab(key as Tab)}
+                    />
 
                     <SearchContainer>
-                        <SearchInputWrapper>
-                            <SearchIconWrapper>
-                                <MagnifyIcon size={18}/>
-                            </SearchIconWrapper>
-                            <SearchInput
-                                type='text'
-                                placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                            />
-                        </SearchInputWrapper>
+                        <SearchInput
+                            placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onClear={() => setSearchQuery('')}
+                            clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
+                        />
                     </SearchContainer>
                 </ContentColumn>
             </FixedChrome>
@@ -268,35 +267,44 @@ const AgentsList = () => {
                 <ListContent>
                     {loading && (
                         <LoadingContainer>
+                            <Spinner size='20'/>
                             <FormattedMessage defaultMessage='Loading agents...'/>
                         </LoadingContainer>
                     )}
 
                     {error && (
-                        <ErrorContainer>{error}</ErrorContainer>
+                        <Notice
+                            type='danger'
+                            title={error}
+                        />
                     )}
 
                     {servicesError && !error && (
-                        <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
+                        <Notice
+                            type='warning'
+                            title={servicesError}
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
-                        <NoResultsMessage>
-                            <FormattedMessage
-                                defaultMessage='No agents match "{query}"'
-                                values={{query: searchQuery}}
-                            />
-                        </NoResultsMessage>
+                        <AgentsEmptyState
+                            title={
+                                <FormattedMessage
+                                    defaultMessage='No agents match "{query}"'
+                                    values={{query: searchQuery}}
+                                />
+                            }
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
-                        <EmptyState>
-                            {activeTab === 'yours' ? (
+                        <AgentsEmptyState
+                            title={activeTab === 'yours' ? (
                                 <FormattedMessage defaultMessage="You haven't created any agents yet."/>
                             ) : (
                                 <FormattedMessage defaultMessage='No agents have been created yet.'/>
                             )}
-                        </EmptyState>
+                        />
                     )}
 
                     {!loading && !error && filteredAgents.length > 0 && (
@@ -317,14 +325,13 @@ const AgentsList = () => {
                 </ListContent>
             </ListViewport>
 
-            {deletingAgent && (
-                <DeleteAgentDialog
-                    agentName={deletingAgent.displayName}
-                    confirmPending={deleteInFlight}
-                    onConfirm={handleDeleteConfirm}
-                    onCancel={handleDeleteCancel}
-                />
-            )}
+            <DeleteAgentDialog
+                show={deletingAgent !== null}
+                agentName={deletingAgent?.displayName}
+                confirmPending={deleteInFlight}
+                onConfirm={handleDeleteConfirm}
+                onCancel={handleDeleteCancel}
+            />
 
             <FixedChrome>
                 <ContentColumn>
@@ -340,7 +347,7 @@ const AgentsList = () => {
 // --- Styled Components ---
 
 const CONTENT_MAX_WIDTH = '960px';
-const CONTENT_HORIZONTAL_PADDING = '32px';
+const CONTENT_HORIZONTAL_PADDING = 'var(--spacing-xxxl)';
 
 const ContentColumn = styled.div<{$fillHeight?: boolean}>`
     width: 100%;
@@ -387,11 +394,11 @@ const listScrollbarStyles = `
     scrollbar-color: transparent transparent;
 
     &::-webkit-scrollbar {
-        width: 8px;
+        width: var(--spacing-xs);
     }
 
     &::-webkit-scrollbar-thumb {
-        border-radius: 4px;
+        border-radius: var(--radius-s);
         background-color: transparent;
     }
 
@@ -418,7 +425,7 @@ const ListContent = styled.div`
     width: 100%;
     max-width: ${CONTENT_MAX_WIDTH};
     margin: 0 auto;
-    padding: 0 ${CONTENT_HORIZONTAL_PADDING} 8px;
+    padding: 0 ${CONTENT_HORIZONTAL_PADDING} var(--spacing-xs);
 `;
 
 const Header = styled.div`
@@ -426,34 +433,34 @@ const Header = styled.div`
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
-    padding: 48px 0 24px;
+    padding: var(--spacing-xxxxxl) 0 var(--spacing-xxl);
     flex-shrink: 0;
-    gap: 16px;
+    gap: var(--spacing-l);
 `;
 
 const TitleRow = styled.div`
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     min-width: 0;
     flex: 1;
 `;
 
 const Title = styled.h1`
-    font-family: 'Metropolis', sans-serif;
-    font-size: 22px;
-    font-weight: 600;
-    line-height: 28px;
+    font-family: var(--font-family-heading, 'Metropolis', sans-serif);
+    font-size: var(--font-size-500);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-500);
     color: var(--center-channel-color);
     margin: 0;
 `;
 
 const Subtitle = styled.p`
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 20px;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     margin: 0;
 `;
@@ -463,136 +470,49 @@ const CreateButtonWrapper = styled.div`
     flex-shrink: 0;
 `;
 
-const CreateButton = styled(PrimaryButton)`
-    gap: 8px;
+const CreateButton = styled(Button)`
     flex-shrink: 0;
 `;
 
-const TabBar = styled.div`
-    display: flex;
-    flex-direction: row;
-    gap: 4px;
-    padding-bottom: 16px;
+const TabBar = styled(Tabs)`
+    margin-bottom: var(--spacing-l);
     flex-shrink: 0;
-`;
-
-const TabButton = styled.button<{$active: boolean}>`
-    padding: 4px 10px;
-    border: none;
-    border-radius: 4px;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    cursor: pointer;
-    background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'transparent')};
-    color: ${(p) => (p.$active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-
-    &:hover {
-        background: ${(p) => (p.$active ? 'rgba(var(--button-bg-rgb, 28, 88, 217), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.08)')};
-    }
 `;
 
 const SearchContainer = styled.div`
-    padding: 0 0 16px 0;
+    padding: 0 0 var(--spacing-l) 0;
     flex-shrink: 0;
-`;
-
-const SearchInputWrapper = styled.div`
-    position: relative;
-    width: 100%;
-    height: 40px;
-`;
-
-const SearchIconWrapper = styled.div`
-    position: absolute;
-    top: 50%;
-    left: 12px;
-    transform: translateY(-50%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    pointer-events: none;
-`;
-
-const SearchInput = styled.input`
-    width: 100%;
-    height: 40px;
-    padding: 0 12px 0 38px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-size: 14px;
-
-    &::placeholder {
-        color: rgba(var(--center-channel-color-rgb), 0.56);
-    }
-
-    &:focus {
-        outline: none;
-        border-color: var(--button-bg);
-        box-shadow: inset 0 0 0 1px var(--button-bg);
-    }
 `;
 
 const AgentListContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+`;
+
+const AgentsEmptyState = styled(EmptyState)`
+	padding-top: var(--spacing-xxl);
 `;
 
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
-    padding: 40px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-`;
-
-const ErrorContainer = styled.div`
-    display: flex;
     align-items: center;
-    padding: 10px 12px;
-    background: rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3);
-    color: var(--dnd-indicator, #D24B4E);
-`;
-
-const ServicesWarningBanner = styled.div`
-    display: flex;
-    align-items: center;
-    padding: 10px 12px;
-    margin-bottom: 8px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
-    color: rgba(var(--center-channel-color-rgb), 0.88);
-    font-size: 14px;
-`;
-
-const NoResultsMessage = styled.div`
-    padding: 24px;
-    text-align: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xxxxl);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
 `;
 
-const EmptyState = styled.div`
-    display: flex;
-    justify-content: center;
-    padding: 60px 20px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
+const Notice = styled(SectionNotice)`
+    margin-bottom: var(--spacing-xs);
 `;
 
 const Footer = styled.div`
-    padding: 24px 0;
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    padding: var(--spacing-xxl) 0;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.75);
     flex-shrink: 0;
 `;

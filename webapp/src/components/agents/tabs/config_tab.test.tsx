@@ -10,6 +10,8 @@ import {ServiceInfo} from '@/types/agents';
 
 import {AgentDraft} from '../agent_config_view';
 
+import {chooseOption, getSelect} from '../../../../tests/compass_select';
+
 import ConfigTab from './config_tab';
 
 jest.mock('react-intl', () => {
@@ -135,7 +137,7 @@ describe('ConfigTab', () => {
 
         expect((screen.getByLabelText('Dynamic tool loading') as HTMLInputElement).disabled).toBe(false);
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
     });
 
@@ -187,11 +189,12 @@ describe('ConfigTab license gating', () => {
     test('notes that only the first service is active when the service cap is in effect', async () => {
         useServiceLimit.mockReturnValue(1);
         const second: ServiceInfo = {...openaiService, id: 'svc_other', name: 'Other'};
+        const onChange = jest.fn();
         render(
             <IntlProvider locale='en'>
                 <ConfigTab
-                    draft={makeDraft()}
-                    onChange={jest.fn()}
+                    draft={makeDraft({serviceId: ''})}
+                    onChange={onChange}
                     onAvatarChange={jest.fn()}
                     services={[openaiService, second]}
                 />
@@ -200,8 +203,12 @@ describe('ConfigTab license gating', () => {
 
         await screen.findByText('AI Service');
         expect(screen.getByText(/Only the first configured service is active/)).not.toBeNull();
-        expect((screen.getByRole('option', {name: openaiService.name}) as HTMLOptionElement).disabled).toBe(false);
-        expect((screen.getByRole('option', {name: 'Other'}) as HTMLOptionElement).disabled).toBe(true);
+
+        chooseOption(getSelect('AI Service'), 'Other');
+        expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({serviceId: second.id}));
+
+        chooseOption(getSelect('AI Service'), openaiService.name);
+        expect(onChange).toHaveBeenCalledWith(expect.objectContaining({serviceId: openaiService.id}));
     });
 
     test('lets an unlicensed admin turn native web search off but not on', async () => {
@@ -221,7 +228,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(false);
     });
 
@@ -242,7 +249,7 @@ describe('ConfigTab license gating', () => {
         await screen.findByText('AI Service');
         fireEvent.click(screen.getByRole('button', {name: /Advanced configuration/}));
         expect(
-            (within(screen.getByTestId('native-tool-web_search')).getByRole('checkbox') as HTMLInputElement).disabled,
+            (screen.getByTestId('native-tool-web_search') as HTMLInputElement).disabled,
         ).toBe(true);
         expect(screen.getByText('Enterprise')).not.toBeNull();
     });

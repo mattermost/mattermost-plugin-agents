@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useRef} from 'react';
+import React, {useEffect, useRef} from 'react';
 import {CSSTransition} from 'react-transition-group';
 import styled, {css} from 'styled-components';
 
@@ -76,7 +76,25 @@ const ShellRoot = styled.div<{$zIndex: number}>`
     align-items: center;
     justify-content: center;
     z-index: ${(p) => p.$zIndex};
+
+    [role='dialog']:focus {
+        outline: none;
+    }
 `;
+
+// Ignores hidden dialogs and ones mid exit animation (bootstrap drops `in`/`show` first).
+const isDialogOpen = (el: HTMLElement) => {
+    if (el.closest('[aria-hidden="true"]') || el.getClientRects().length === 0) {
+        return false;
+    }
+    if (getComputedStyle(el).visibility === 'hidden') {
+        return false;
+    }
+    const modal = el.closest('.modal.fade');
+    return !modal || modal.classList.contains('in') || modal.classList.contains('show');
+};
+
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 type ShellProps = {
     show: boolean;
@@ -91,6 +109,74 @@ type ShellProps = {
  */
 export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 2000}: ShellProps) => {
     const nodeRef = useRef<HTMLDivElement>(null);
+    const returnFocusRef = useRef<HTMLElement | null>(null);
+
+    const onCloseRef = useRef(onBackdropClick);
+    onCloseRef.current = onBackdropClick;
+
+    const handleEnter = () => {
+        returnFocusRef.current = document.activeElement as HTMLElement | null;
+        const dialog = nodeRef.current?.querySelector<HTMLElement>('[role="dialog"]');
+        dialog?.setAttribute('tabindex', '-1');
+        dialog?.focus();
+    };
+
+    // A host menu closing as the modal opens can restore focus to its trigger; reclaim it.
+    const handleEntered = () => {
+        const dialog = nodeRef.current?.querySelector<HTMLElement>('[role="dialog"]');
+        if (dialog && !dialog.contains(document.activeElement)) {
+            dialog.focus();
+        }
+    };
+
+    // Window capture so host handlers (which may swallow Escape) can't pre-empt us;
+    // a dialog stacked outside this shell owns Escape instead.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape' || e.defaultPrevented) {
+                return;
+            }
+            const root = nodeRef.current;
+            const hasOtherDialog = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).
+                some((el) => !root?.contains(el) && isDialogOpen(el));
+            if (hasOtherDialog) {
+                return;
+            }
+            e.stopPropagation();
+            onCloseRef.current?.();
+        };
+        if (show) {
+            window.addEventListener('keydown', onKeyDown, true);
+        }
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+    }, [show]);
+
+    const handleExited = () => {
+        returnFocusRef.current?.focus();
+        returnFocusRef.current = null;
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (e.key !== 'Tab') {
+            return;
+        }
+        const focusable = Array.from(e.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (focusable.length === 0) {
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        const dialog = e.currentTarget.querySelector('[role="dialog"]');
+        if (e.shiftKey && (active === first || active === dialog)) {
+            e.preventDefault();
+            last.focus();
+        } else if (!e.shiftKey && active === last) {
+            e.preventDefault();
+            first.focus();
+        }
+    };
+
     return (
         <CSSTransition
             nodeRef={nodeRef}
@@ -100,10 +186,14 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, zIndex = 20
             unmountOnExit={true}
             mountOnEnter={true}
             appear={true}
+            onEnter={handleEnter}
+            onEntered={handleEntered}
+            onExited={handleExited}
         >
             <ShellRoot
                 ref={nodeRef}
                 $zIndex={zIndex}
+                onKeyDown={handleKeyDown}
                 onClick={(e) => {
                     if (e.target === e.currentTarget) {
                         onBackdropClick?.();

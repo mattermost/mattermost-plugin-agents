@@ -7,6 +7,9 @@ import styled from 'styled-components';
 
 import {ChevronDownIcon} from '@mattermost/compass-icons/components';
 
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+
 import {LLMBot, useBotlistForChannel} from '@/bots';
 import {getProfilePictureUrl} from '@/client';
 import {BotDropdown} from '@/components/bot_selector';
@@ -48,9 +51,7 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
         // default-agent middleware) and the host fell back to schema defaults.
         // Saving in this state PUTs mode 'off'.
         return (
-            <ErrorText>
-                <FormattedMessage defaultMessage='Auto-reply settings could not be loaded. Close the dialog and try again.'/>
-            </ErrorText>
+            <ErrorMessage message={<FormattedMessage defaultMessage='Auto-reply settings could not be loaded. Close the dialog and try again.'/>}/>
         );
     }
 
@@ -75,9 +76,10 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
             >
                 {selectedBot ? (
                     <>
-                        <AgentAvatar
+                        <UserAvatar
                             src={getProfilePictureUrl(selectedBot.id, selectedBot.lastIconUpdate)}
                             alt=''
+                            size='24'
                         />
                         <AgentName>{selectedBot.displayName}</AgentName>
                         <ChevronDownIcon/>
@@ -95,19 +97,13 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
                 <FormattedMessage defaultMessage='This agent posts the automatic replies. The reply runs with the message author’s permissions.'/>
             </HelpText>
             {draft.saveError === 'forbidden' && (
-                <ErrorText>
-                    <FormattedMessage defaultMessage='You don’t have permission to change auto-reply settings for this channel.'/>
-                </ErrorText>
+                <ErrorMessage message={<FormattedMessage defaultMessage='You don’t have permission to change auto-reply settings for this channel.'/>}/>
             )}
             {draft.saveError === 'no_agent' && (
-                <ErrorText>
-                    <FormattedMessage defaultMessage='Select an agent to enable automatic replies.'/>
-                </ErrorText>
+                <ErrorMessage message={<FormattedMessage defaultMessage='Select an agent to enable automatic replies.'/>}/>
             )}
             {draft.saveError === 'generic' && (
-                <ErrorText>
-                    <FormattedMessage defaultMessage='Failed to save auto-reply settings. Please try again.'/>
-                </ErrorText>
+                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to save auto-reply settings. Please try again.'/>}/>
             )}
         </Container>
     );
@@ -130,11 +126,6 @@ const HelpText = styled.div`
     font-size: 12px;
 `;
 
-const ErrorText = styled.div`
-    color: var(--error-text);
-    font-size: 12px;
-`;
-
 // DotMenu passes no aria props through to its trigger, so the association
 // rides on the container component itself.
 const PickerButtonContainer = styled.div.attrs({
@@ -150,12 +141,6 @@ const PickerButtonContainer = styled.div.attrs({
     border-radius: 4px;
     width: fit-content;
     cursor: pointer;
-`;
-
-const AgentAvatar = styled.img`
-    border-radius: 50%;
-    width: 24px;
-    height: 24px;
 `;
 
 const AgentName = styled.span`

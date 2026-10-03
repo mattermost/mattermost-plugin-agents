@@ -5,6 +5,8 @@ import React from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
 import {ChannelAccessLevelItem, UserAccessLevelItem} from '@/components/system_console/llm_access';
 import {FormRow, ItemLabel, ItemList} from '@/components/system_console/item';
@@ -60,15 +62,17 @@ const AccessTab = (props: Props) => {
     if (attributeBasedSelected && !policyEditor) {
         if (abacSupported) {
             attributeBasedContent = (
-                <PolicyNote>
-                    <FormattedMessage defaultMessage='Save the agent first, then define who can use it. Until a policy is defined, all users can use this agent.'/>
-                </PolicyNote>
+                <PolicyNote
+                    type='info'
+                    title={<FormattedMessage defaultMessage='Save the agent first, then define who can use it. Until a policy is defined, all users can use this agent.'/>}
+                />
             );
         } else {
             attributeBasedContent = (
-                <PolicyNote $warning={true}>
-                    <FormattedMessage defaultMessage='Attribute-based access is configured but not available on this server; users are currently denied access.'/>
-                </PolicyNote>
+                <PolicyNote
+                    type='danger'
+                    title={<FormattedMessage defaultMessage='Attribute-based access is configured but not available on this server; users are currently denied access.'/>}
+                />
             );
         }
     }
@@ -84,13 +88,8 @@ const AccessTab = (props: Props) => {
                     channelIDs={draft.channelIds}
                     onChangeChannelIDs={(ids: string[]) => onChange({channelIds: ids})}
                     disabled={serviceAccountFieldsLocked}
+                    helpText={<FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>}
                 />
-                <FormRow>
-                    <span aria-hidden={true}/>
-                    <HelpTextInSecondColumn>
-                        <FormattedMessage defaultMessage='Control which channels this agent can be mentioned in.'/>
-                    </HelpTextInSecondColumn>
-                </FormRow>
             </ItemList>
 
             {/* User Access Section */}
@@ -105,19 +104,15 @@ const AccessTab = (props: Props) => {
                     disabled={serviceAccountFieldsLocked}
                     showAttributeBased={(abacSupported && abacLicensed) || attributeBasedSelected}
                     attributeBasedDescription={attributeBasedContent}
+                    helpText={<FormattedMessage defaultMessage='Control which users can interact with this agent.'/>}
                 />
-                <FormRow>
-                    <span aria-hidden={true}/>
-                    <HelpTextInSecondColumn>
-                        <FormattedMessage defaultMessage='Control which users can interact with this agent.'/>
-                    </HelpTextInSecondColumn>
-                </FormRow>
             </ItemList>
 
             {switchingAwayFromAttributeBased && (
-                <SwitchAwayWarning $warning={true}>
-                    <FormattedMessage defaultMessage="Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above."/>
-                </SwitchAwayWarning>
+                <SwitchAwayWarning
+                    type='warning'
+                    title={<FormattedMessage defaultMessage="Saving will remove this agent's attribute-based access policy. Access will be controlled only by the setting above."/>}
+                />
             )}
 
             {policyEditor && (
@@ -157,51 +152,42 @@ const AccessTab = (props: Props) => {
 const SectionsContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 32px;
-`;
-
-const HelpTextInSecondColumn = styled.div`
-    margin-top: -16px;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.72);
+    gap: var(--spacing-xxxl);
 `;
 
 const AdminsColumn = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const HelpTextInline = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
-const PolicyNote = styled.div<{$warning?: boolean}>`
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-radius: 4px;
-    font-size: 13px;
-    line-height: 18px;
-    background: ${(p) => (p.$warning ? 'rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08)' : 'rgba(var(--center-channel-color-rgb), 0.04)')};
-    color: ${(p) => (p.$warning ? 'var(--dnd-indicator, #D24B4E)' : 'rgba(var(--center-channel-color-rgb), 0.72)')};
+const PolicyNote = styled(SectionNotice)`
+    margin-top: var(--spacing-xs);
 `;
 
-const SwitchAwayWarning = styled(PolicyNote)`
+const SwitchAwayWarning = styled(SectionNotice)`
     width: 90%;
-    margin-top: 12px;
+    margin-top: var(--spacing-m);
 `;
 
 const PolicyEditorWrapper = styled.fieldset`
-    margin-top: 12px;
+    margin-top: var(--spacing-m);
     padding: 0;
     border: 0;
     min-inline-size: 0;
     width: 90%;
+
+    /* PolicyEditor returns null when hidden/empty; don't keep a flex gap slot. */
+    &:empty {
+        display: none;
+    }
 `;
 
 export default AccessTab;

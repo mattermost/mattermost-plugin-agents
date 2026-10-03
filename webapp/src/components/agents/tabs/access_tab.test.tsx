@@ -143,7 +143,7 @@ function formRowForLabel(label: string): HTMLElement {
 }
 
 function agentAdminsCombobox(): HTMLInputElement {
-    // Disabled react-select inputs are omitted from getByRole's accessibility tree.
+    // Disabled picker inputs are omitted from getByRole's accessibility tree.
     const input = formRowForLabel('Agent admins').querySelector('input[role="combobox"]');
     if (!input) {
         throw new Error('Agent admins combobox not found');

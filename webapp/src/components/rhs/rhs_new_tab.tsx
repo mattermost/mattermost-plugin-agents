@@ -7,6 +7,9 @@ import {useIntl, FormattedMessage} from 'react-intl';
 
 import {useDispatch, useSelector} from 'react-redux';
 
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+
 import RHSImage from '../assets/rhs_image';
 
 import {createPost, getBotDirectChannel} from '@/client';
@@ -37,6 +40,14 @@ const ReverseScroll = styled.div`
 	flex-direction: column;
 	flex-grow: 1;
 	justify-content: flex-end;
+`;
+
+const EditorStatus = styled.div`
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
 `;
 
 type Props = {
@@ -102,15 +113,16 @@ const RHSNewTab = ({selectPost, setCurrentTab, activeBot}: Props) => {
     let editorComponent;
     if (channelError) {
         editorComponent = (
-            <div style={{textAlign: 'center', padding: '20px', color: 'var(--error-text)'}}>
-                <FormattedMessage defaultMessage='Failed to create chat channel. Please try again later.'/>
-            </div>
+            <EditorStatus>
+                <ErrorMessage message={<FormattedMessage defaultMessage='Failed to create chat channel. Please try again later.'/>}/>
+            </EditorStatus>
         );
     } else if (creatingChannel || !botChannelId) {
         editorComponent = (
-            <div style={{textAlign: 'center', padding: '20px'}}>
+            <EditorStatus>
+                <Spinner size='16'/>
                 <FormattedMessage defaultMessage='Setting up chat channel...'/>
-            </div>
+            </EditorStatus>
         );
     } else if (AdvancedTextEditor) {
         editorComponent = (

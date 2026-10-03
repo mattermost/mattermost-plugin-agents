@@ -6,7 +6,15 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector, useDispatch} from 'react-redux';
 
-import {CloseIcon, PinOutlineIcon, PinIcon, PlusIcon, MagnifyIcon, ArrowLeftIcon} from '@mattermost/compass-icons/components';
+import {PinOutlineIcon, PinIcon, PlusIcon} from '@mattermost/compass-icons/components';
+
+import {Button} from '@mattermost/compass-ui/components/button';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Modal} from '@mattermost/compass-ui/components/modal';
+import {SearchInput} from '@mattermost/compass-ui/components/search-input';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
 
 import {getCustomPrompts, getPinnedPromptIds, getShowCustomPromptsModal} from '@/selectors';
 import {fetchCustomPrompts, fetchPinnedPromptIds, ShowCustomPromptsModalHandler} from '@/redux';
@@ -14,67 +22,26 @@ import {createCustomPrompt, updateCustomPrompt, deleteCustomPrompt, setCustomPro
 
 import ConfirmationDialog from '../confirmation_dialog';
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
+import {UnderlineTab, UnderlineTabs} from '@/components/underline_tabs';
 
 import CustomPromptForm from './custom_prompt_form';
 
-const ModalContainer = styled.div`
-    background-color: var(--center-channel-bg);
-    border-radius: 12px;
-    overflow: hidden;
-    clip-path: inset(0 round 12px);
-    width: 768px;
-    height: 80vh;
+const Sheet = styled.div`
     display: flex;
-    flex-direction: column;
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
+    max-width: calc(100vw - 32px);
 `;
 
-const ModalHeader = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 24px 32px 16px;
-`;
-
-const ModalHeaderLeading = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-`;
-
-const ModalTitle = styled.h2`
-    font-family: 'Metropolis', sans-serif;
-    font-weight: 600;
-    font-size: 22px;
-    line-height: 28px;
-    color: var(--center-channel-color);
-    margin: 0;
-`;
-
-const ModalIconButton = styled.button`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 10px;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
+const PromptsModal = styled(Modal)`
+    && {
+        height: 80vh;
+        max-width: 100%;
     }
 `;
 
-const CloseButton = ModalIconButton;
-
-const BackButton = styled(ModalIconButton)`
-    margin-left: -12px;
+const SheetContent = styled.div`
+    display: flex;
+    flex-direction: column;
+    height: 100%;
 `;
 
 const ModalBody = styled.div<{$stickyFormFooter?: boolean}>`
@@ -83,29 +50,10 @@ const ModalBody = styled.div<{$stickyFormFooter?: boolean}>`
     flex: 1;
     min-height: 0;
     overflow-y: ${({$stickyFormFooter}) => ($stickyFormFooter ? 'hidden' : 'auto')};
-    background-color: var(--center-channel-bg);
-    border-radius: 0 0 12px 12px;
 `;
 
-const TabBar = styled.div`
-    display: flex;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    padding: 0 32px;
-`;
-
-const Tab = styled.button<{$active: boolean}>`
-    background: none;
-    border: none;
-    border-bottom: 2px solid ${({$active}) => ($active ? 'var(--button-bg)' : 'transparent')};
-    padding: 12px 16px;
-    font-size: 14px;
-    font-weight: 600;
-    color: ${({$active}) => ($active ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.64)')};
-    cursor: pointer;
-
-    &:hover {
-        color: var(--button-bg);
-    }
+const TabBar = styled(UnderlineTabs)`
+    padding: 0 var(--spacing-xxxl);
 `;
 
 const ToolbarRow = styled.div`
@@ -117,84 +65,42 @@ const ToolbarRow = styled.div`
 
 const SearchContainer = styled.div`
     flex: 1;
-    position: relative;
-    display: flex;
-    align-items: center;
-`;
+    min-width: 0;
 
-const SearchIconWrapper = styled.div`
-    position: absolute;
-    left: 10px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    display: flex;
-    align-items: center;
-`;
-
-const SearchInput = styled.input`
-    width: 100%;
-    padding: 8px 12px 8px 34px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-`;
-
-const CreateNewButton = styled.button`
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    background: none;
-    color: var(--button-bg);
-    border: none;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    white-space: nowrap;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.08);
+    /* SearchInput draws its own focus ring; suppress the host a11y ring on the inner input. */
+    input.a11y--focused {
+        box-shadow: none !important;
+        outline: none !important;
     }
 `;
 
 const PromptList = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    padding: 0 32px 16px;
+    margin: 0 32px 16px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const PromptRowContainer = styled.div`
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
+    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
     background: var(--center-channel-bg);
-`;
-
-const PromptRowHeader = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px 16px;
 
     &:hover {
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
 `;
 
+const PromptRowHeader = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding-right: var(--spacing-l);
+`;
+
 const PromptRowMain = styled.div`
     flex: 1;
     min-width: 0;
+    padding: var(--spacing-l) 0 var(--spacing-l) var(--spacing-l);
     cursor: pointer;
 
     &:focus-visible {
@@ -227,46 +133,13 @@ const PromptDescription = styled.div`
     text-overflow: ellipsis;
 `;
 
-const PinButton = styled.button<{$pinned: boolean}>`
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 4px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: ${({$pinned}) => ($pinned ? 'var(--button-bg)' : 'rgba(var(--center-channel-color-rgb), 0.56)')};
-    margin-right: 8px;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: var(--button-bg);
-    }
-`;
-
-const EmptyState = styled.div`
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 48px 32px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 14px;
-    line-height: 20px;
-`;
-
-const ErrorBanner = styled.div`
-    display: flex;
-    align-items: center;
+const PinButton = styled(IconButton)`
     flex-shrink: 0;
-    padding: 12px 20px;
+`;
+
+const ErrorBanner = styled(SectionNotice)`
+    flex-shrink: 0;
     margin: 8px 32px 0;
-    background: rgba(var(--error-text-color-rgb, 210, 75, 78), 0.08);
-    color: var(--error-text);
-    border-radius: 4px;
-    font-size: 14px;
-    line-height: 20px;
 `;
 
 const CustomPromptsManagement = () => {
@@ -397,160 +270,164 @@ const CustomPromptsManagement = () => {
                 onBackdropClick={handleClose}
                 zIndex={2000}
             >
-                <ModalContainer
+                <Sheet
                     className={MODAL_SHEET_CLASS}
                     onClick={handleModalClick}
-                    role='dialog'
-                    aria-modal='true'
-                    aria-label={intl.formatMessage({defaultMessage: 'Custom Prompts'})}
                 >
-                    <ModalHeader>
-                        <ModalHeaderLeading>
-                            {(showCreateForm || editingPrompt) && (
-                                <BackButton
-                                    type='button'
-                                    onClick={handleFormBack}
-                                    aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
-                                >
-                                    <ArrowLeftIcon size={20}/>
-                                </BackButton>
-                            )}
-                            <ModalTitle>{title}</ModalTitle>
-                        </ModalHeaderLeading>
-                        <CloseButton
-                            type='button'
-                            onClick={handleClose}
-                            aria-label={intl.formatMessage({defaultMessage: 'Close'})}
-                        >
-                            <CloseIcon size={20}/>
-                        </CloseButton>
-                    </ModalHeader>
-                    {showCreateForm || editingPrompt ? (
-                        <ModalBody
-                            $stickyFormFooter={Boolean(
-                                showCreateForm ||
+                    <PromptsModal
+                        size='medium'
+                        title={title}
+                        onClose={handleClose}
+                        closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                        showBackButton={Boolean(showCreateForm || editingPrompt)}
+                        onBack={handleFormBack}
+                        backLabel={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                        headerDivider={false}
+                        bodyPadding='none'
+                        scrollable={false}
+                    >
+                        <SheetContent>
+                            {showCreateForm || editingPrompt ? (
+                                <ModalBody
+                                    $stickyFormFooter={Boolean(
+                                        showCreateForm ||
                                 (editingPrompt && editingPrompt.creator_id === currentUserId),
-                            )}
-                        >
-                            {error && <ErrorBanner>{error}</ErrorBanner>}
-                            {showCreateForm ? (
-                                <CustomPromptForm
-                                    stickyFooter={true}
-                                    onSave={handleCreate}
-                                    onDiscard={handleFormBack}
-                                />
-                            ) : (
-                                editingPrompt && (
-                                    <CustomPromptForm
-                                        stickyFooter={editingPrompt.creator_id === currentUserId}
-                                        prompt={editingPrompt}
-                                        readOnly={editingPrompt.creator_id !== currentUserId}
-                                        onSave={(data) => handleUpdate(editingPrompt.id, data)}
-                                        onDiscard={handleFormBack}
-                                        {...(editingPrompt.creator_id === currentUserId ? {onDelete: () => setDeleteConfirmId(editingPrompt.id)} : {})}
-                                    />
-                                )
-                            )}
-                        </ModalBody>
-                    ) : (
-                        <>
-                            <TabBar>
-                                <Tab
-                                    $active={activeTab === 'all'}
-                                    onClick={() => setActiveTab('all')}
-                                >
-                                    <FormattedMessage defaultMessage='All Prompts'/>
-                                </Tab>
-                                <Tab
-                                    $active={activeTab === 'yours'}
-                                    onClick={() => setActiveTab('yours')}
-                                >
-                                    <FormattedMessage defaultMessage='Your Prompts'/>
-                                </Tab>
-                            </TabBar>
-                            <ToolbarRow>
-                                <SearchContainer>
-                                    <SearchIconWrapper>
-                                        <MagnifyIcon size={16}/>
-                                    </SearchIconWrapper>
-                                    <SearchInput
-                                        value={searchQuery}
-                                        onChange={(e) => setSearchQuery(e.target.value)}
-                                        placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                                        aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                                    />
-                                </SearchContainer>
-                                <CreateNewButton
-                                    onClick={() => {
-                                        setShowCreateForm(true);
-                                        setEditingPromptId(null);
-                                    }}
-                                >
-                                    <PlusIcon size={16}/>
-                                    <FormattedMessage defaultMessage='Create new'/>
-                                </CreateNewButton>
-                            </ToolbarRow>
-                            <ModalBody>
-                                {error && <ErrorBanner>{error}</ErrorBanner>}
-                                <PromptList>
-                                    {filteredPrompts.map((prompt) => {
-                                        const isPinned = pinnedIds.includes(prompt.id);
-                                        const openPrompt = () => {
-                                            setEditingPromptId(prompt.id);
-                                            setShowCreateForm(false);
-                                        };
-
-                                        return (
-                                            <PromptRowContainer key={prompt.id}>
-                                                <PromptRowHeader>
-                                                    <PromptRowMain
-                                                        role='button'
-                                                        tabIndex={0}
-                                                        aria-label={intl.formatMessage(
-                                                            {defaultMessage: 'Open prompt {name}'},
-                                                            {name: prompt.name},
-                                                        )}
-                                                        onClick={openPrompt}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter' || e.key === ' ') {
-                                                                e.preventDefault();
-                                                                openPrompt();
-                                                            }
-                                                        }}
-                                                    >
-                                                        <PromptInfo>
-                                                            <PromptName>{prompt.name}</PromptName>
-                                                            {prompt.description && (
-                                                                <PromptDescription>{prompt.description}</PromptDescription>
-                                                            )}
-                                                        </PromptInfo>
-                                                    </PromptRowMain>
-                                                    <PinButton
-                                                        type='button'
-                                                        $pinned={isPinned}
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            handleTogglePin(prompt.id);
-                                                        }}
-                                                        aria-label={isPinned ? intl.formatMessage({defaultMessage: 'Unpin prompt'}) : intl.formatMessage({defaultMessage: 'Pin prompt'})
-                                                        }
-                                                    >
-                                                        {isPinned ? <PinIcon size={18}/> : <PinOutlineIcon size={18}/>}
-                                                    </PinButton>
-                                                </PromptRowHeader>
-                                            </PromptRowContainer>
-                                        );
-                                    })}
-                                    {filteredPrompts.length === 0 && (
-                                        <EmptyState>
-                                            <FormattedMessage defaultMessage='No prompts found'/>
-                                        </EmptyState>
                                     )}
-                                </PromptList>
-                            </ModalBody>
-                        </>
-                    )}
-                </ModalContainer>
+                                >
+                                    {error && (
+                                        <ErrorBanner
+                                            type='danger'
+                                            title={error}
+                                        />
+                                    )}
+                                    {showCreateForm ? (
+                                        <CustomPromptForm
+                                            stickyFooter={true}
+                                            onSave={handleCreate}
+                                            onDiscard={handleFormBack}
+                                        />
+                                    ) : (
+                                        editingPrompt && (
+                                            <CustomPromptForm
+                                                stickyFooter={editingPrompt.creator_id === currentUserId}
+                                                prompt={editingPrompt}
+                                                readOnly={editingPrompt.creator_id !== currentUserId}
+                                                onSave={(data) => handleUpdate(editingPrompt.id, data)}
+                                                onDiscard={handleFormBack}
+                                                {...(editingPrompt.creator_id === currentUserId ? {onDelete: () => setDeleteConfirmId(editingPrompt.id)} : {})}
+                                            />
+                                        )
+                                    )}
+                                </ModalBody>
+                            ) : (
+                                <>
+                                    <TabBar role='tablist'>
+                                        <UnderlineTab
+                                            type='button'
+                                            role='tab'
+                                            $active={activeTab === 'all'}
+                                            aria-selected={activeTab === 'all'}
+                                            tabIndex={activeTab === 'all' ? 0 : -1}
+                                            onClick={() => setActiveTab('all')}
+                                        >
+                                            <FormattedMessage defaultMessage='All Prompts'/>
+                                        </UnderlineTab>
+                                        <UnderlineTab
+                                            type='button'
+                                            role='tab'
+                                            $active={activeTab === 'yours'}
+                                            aria-selected={activeTab === 'yours'}
+                                            tabIndex={activeTab === 'yours' ? 0 : -1}
+                                            onClick={() => setActiveTab('yours')}
+                                        >
+                                            <FormattedMessage defaultMessage='Your Prompts'/>
+                                        </UnderlineTab>
+                                    </TabBar>
+                                    <ToolbarRow>
+                                        <SearchContainer>
+                                            <SearchInput
+                                                value={searchQuery}
+                                                onChange={(e) => setSearchQuery(e.target.value)}
+                                                onClear={() => setSearchQuery('')}
+                                                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
+                                                placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                                                aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                                            />
+                                        </SearchContainer>
+                                        <Button
+                                            emphasis='tertiary'
+                                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+                                            onClick={() => {
+                                                setShowCreateForm(true);
+                                                setEditingPromptId(null);
+                                            }}
+                                        >
+                                            <FormattedMessage defaultMessage='Create new'/>
+                                        </Button>
+                                    </ToolbarRow>
+                                    <ModalBody>
+                                        {error && (
+                                            <ErrorBanner
+                                                type='danger'
+                                                title={error}
+                                            />
+                                        )}
+                                        <PromptList>
+                                            {filteredPrompts.map((prompt) => {
+                                                const isPinned = pinnedIds.includes(prompt.id);
+                                                const openPrompt = () => {
+                                                    setEditingPromptId(prompt.id);
+                                                    setShowCreateForm(false);
+                                                };
+
+                                                return (
+                                                    <PromptRowContainer key={prompt.id}>
+                                                        <PromptRowHeader>
+                                                            <PromptRowMain
+                                                                role='button'
+                                                                tabIndex={0}
+                                                                aria-label={intl.formatMessage(
+                                                                    {defaultMessage: 'Open prompt {name}'},
+                                                                    {name: prompt.name},
+                                                                )}
+                                                                onClick={openPrompt}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' || e.key === ' ') {
+                                                                        e.preventDefault();
+                                                                        openPrompt();
+                                                                    }
+                                                                }}
+                                                            >
+                                                                <PromptInfo>
+                                                                    <PromptName>{prompt.name}</PromptName>
+                                                                    {prompt.description && (
+                                                                        <PromptDescription>{prompt.description}</PromptDescription>
+                                                                    )}
+                                                                </PromptInfo>
+                                                            </PromptRowMain>
+                                                            <PinButton
+                                                                size='small'
+                                                                active={isPinned}
+                                                                aria-pressed={isPinned}
+                                                                icon={<Icon glyph={isPinned ? <PinIcon/> : <PinOutlineIcon/>}/>}
+                                                                onClick={() => handleTogglePin(prompt.id)}
+                                                                aria-label={isPinned ? intl.formatMessage({defaultMessage: 'Unpin prompt'}) : intl.formatMessage({defaultMessage: 'Pin prompt'})
+                                                                }
+                                                            />
+                                                        </PromptRowHeader>
+                                                    </PromptRowContainer>
+                                                );
+                                            })}
+                                            {filteredPrompts.length === 0 && (
+                                                <EmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                            )}
+                                        </PromptList>
+                                    </ModalBody>
+                                </>
+                            )}
+                        </SheetContent>
+                    </PromptsModal>
+                </Sheet>
             </AnimatedModalShell>
             <ConfirmationDialog
                 show={deleteConfirmId !== null}
@@ -560,6 +437,7 @@ const CustomPromptsManagement = () => {
                 onConfirm={() => deleteConfirmId && handleDelete(deleteConfirmId)}
                 onCancel={() => setDeleteConfirmId(null)}
                 isDestructive={true}
+                managedAccessibility={true}
                 zIndex={3000}
             />
         </>

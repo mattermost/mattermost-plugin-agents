@@ -5,15 +5,17 @@ import React, {useCallback, useEffect, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {AdminPanel} from '@mattermost/compass-ui/components/admin-panel';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {Tag} from '@mattermost/compass-ui/components/tag';
+
 import {getPluginConfig, getAIBots, savePluginConfig} from '@/client';
 import {useIsLicensedFor} from '@/license';
 
-import {Pill} from '../pill';
-
-import Panel, {PanelFooterText} from './panel';
 import Services, {firstNewService} from './services';
 import {LLMService} from './service';
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, TextItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 import NoServicesPage from './no_services_page';
 import BotsMovedNotice from './bots_moved_notice';
@@ -29,6 +31,14 @@ type Config = PluginConfig;
 type RuntimeBotOption = {
     username: string;
     displayName: string;
+};
+
+// The server answers with the first bot when the configured default is empty or unknown.
+export const effectiveDefaultBotName = (configured: string, bots: RuntimeBotOption[]) => {
+    if (bots.some((bot) => bot.username === configured)) {
+        return configured;
+    }
+    return bots[0]?.username ?? '';
 };
 
 type Props = {
@@ -47,56 +57,30 @@ type Props = {
     unRegisterSaveAction: (action: () => Promise<{ error?: { message?: string } }>) => void
 }
 
-const MessageContainer = styled.div`
-	display: flex;
-	align-items: center;
-	flex-direction: row;
-	gap: 5px;
-	padding: 10px 12px;
-	background: white;
-	border-radius: 4px;
-	border: 1px solid rgba(63, 67, 80, 0.08);
-`;
-
 const ConfigContainer = styled.div`
 	display: flex;
 	flex-direction: column;
-	gap: 20px;
+	gap: var(--spacing-xl);
+`;
+
+const PanelFooterText = styled.div`
+	margin-top: var(--spacing-xl);
+	color: rgba(var(--center-channel-color-rgb), 0.72);
+	font-size: var(--font-size-100);
 `;
 
 const Horizontal = styled.div`
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xxxs);
 `;
 
 const LoadingContainer = styled.div`
     display: flex;
     justify-content: center;
     align-items: center;
-    padding: 40px;
-`;
-
-const ErrorContainer = styled.div`
-    display: flex;
-    align-items: center;
-    padding: 10px 12px;
-    background: #FFF0F0;
-    border-radius: 4px;
-    border: 1px solid rgba(210, 75, 78, 0.3);
-    color: #D24B4E;
-`;
-
-const RuntimeBotsErrorBanner = styled.div`
-    grid-column: 1 / -1;
-    padding: 10px 12px;
-    margin-bottom: 4px;
-    background: rgba(var(--away-indicator-rgb, 255, 188, 66), 0.12);
-    border-radius: 4px;
-    border: 1px solid rgba(var(--away-indicator-rgb, 255, 188, 66), 0.35);
-    color: rgba(var(--center-channel-color-rgb), 0.88);
-    font-size: 14px;
+    padding: var(--spacing-xxxxl);
 `;
 
 const defaultConfig: Config = {
@@ -168,8 +152,9 @@ const defaultConfig: Config = {
 };
 
 const BetaMessage = () => (
-    <MessageContainer>
-        <span>
+    <SectionNotice
+        type='info'
+        title={(
             <FormattedMessage
                 defaultMessage='To report a bug or to provide feedback, <link>create a new issue in the plugin repository</link>.'
                 values={{
@@ -184,8 +169,8 @@ const BetaMessage = () => (
                     ),
                 }}
             />
-        </span>
-    </MessageContainer>
+        )}
+    />
 );
 
 const Config = (props: Props) => {
@@ -268,7 +253,10 @@ const Config = (props: Props) => {
         return (
             <ConfigContainer>
                 <LoadingContainer>
-                    <FormattedMessage defaultMessage='Loading configuration...'/>
+                    <Spinner
+                        size='32'
+                        aria-label={intl.formatMessage({defaultMessage: 'Loading configuration...'})}
+                    />
                 </LoadingContainer>
             </ConfigContainer>
         );
@@ -277,7 +265,10 @@ const Config = (props: Props) => {
     if (loadError) {
         return (
             <ConfigContainer>
-                <ErrorContainer>{loadError}</ErrorContainer>
+                <SectionNotice
+                    type='danger'
+                    title={loadError}
+                />
             </ConfigContainer>
         );
     }
@@ -301,7 +292,7 @@ const Config = (props: Props) => {
     return (
         <ConfigContainer>
             <BetaMessage/>
-            <Panel
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Services'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Configure AI services to power your bots.'})}
             >
@@ -315,37 +306,32 @@ const Config = (props: Props) => {
                 <PanelFooterText>
                     <FormattedMessage defaultMessage='AI services are third-party services. Mattermost is not responsible for service output.'/>
                 </PanelFooterText>
-            </Panel>
-            <Panel
+            </AdminPanel>
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Bots'})}
                 subtitle={intl.formatMessage({defaultMessage: 'AI agents are managed from the Agents product page.'})}
             >
                 <BotsMovedNotice/>
-            </Panel>
-            <Panel
+            </AdminPanel>
+            <AdminPanel
                 title={intl.formatMessage({defaultMessage: 'AI Functions'})}
                 subtitle={intl.formatMessage({defaultMessage: 'Choose a default bot.'})}
             >
                 <ItemList>
                     {runtimeBotsError && (
-                        <RuntimeBotsErrorBanner>{runtimeBotsError}</RuntimeBotsErrorBanner>
+                        <SectionNotice
+                            type='warning'
+                            title={runtimeBotsError}
+                        />
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
-                        value={value.defaultBotName}
-                        onChange={(e) => {
-                            updateConfig({defaultBotName: e.target.value});
+                        value={effectiveDefaultBotName(value.defaultBotName, runtimeBots)}
+                        onChange={(defaultBotName) => {
+                            updateConfig({defaultBotName});
                         }}
-                    >
-                        {runtimeBots.map((bot) => (
-                            <SelectionItemOption
-                                key={bot.username}
-                                value={bot.username}
-                            >
-                                {bot.displayName}
-                            </SelectionItemOption>
-                        ))}
-                    </SelectionItem>
+                        options={runtimeBots.map((bot) => ({value: bot.username, label: bot.displayName}))}
+                    />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}
                         value={value.allowedUpstreamHostnames}
@@ -364,7 +350,10 @@ const Config = (props: Props) => {
                         label={
                             <Horizontal>
                                 <FormattedMessage defaultMessage='Enable Channel Mention Tool Calling'/>
-                                <Pill><FormattedMessage defaultMessage='EXPERIMENTAL'/></Pill>
+                                <Tag
+                                    type='info'
+                                    label={<FormattedMessage defaultMessage='EXPERIMENTAL'/>}
+                                />
                             </Horizontal>
                         }
                         value={Boolean(value.enableChannelMentionToolCalling)}
@@ -386,22 +375,20 @@ const Config = (props: Props) => {
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, bots with native web search (Anthropic Claude, OpenAI with Responses API) can use their built-in web search capability in public and private channels, not just direct messages. This only affects native provider web search, not custom tools or MCP integrations.'})}
                     />
                 </ItemList>
-            </Panel>
-            <Panel
-                title={intl.formatMessage({defaultMessage: 'Debug'})}
-                subtitle=''
-            >
+            </AdminPanel>
+            <AdminPanel title={intl.formatMessage({defaultMessage: 'Debug'})}>
                 <ItemList>
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Trace Output'})}
                         value={value.telemetryOutput || 'off'}
-                        onChange={(e) => updateConfig({telemetryOutput: e.target.value as 'off' | 'logs' | 'otlp'})}
+                        onChange={(telemetryOutput) => updateConfig({telemetryOutput: telemetryOutput as 'off' | 'logs' | 'otlp'})}
                         helptext={intl.formatMessage({defaultMessage: 'Where to send distributed traces of LLM requests, tool execution, and search operations. "Server Logs" writes spans to the Mattermost server log and requires no extra infrastructure. "OTLP Endpoint" exports spans to a collector such as Grafana Tempo or Jaeger.'})}
-                    >
-                        <SelectionItemOption value='off'>{intl.formatMessage({defaultMessage: 'Off'})}</SelectionItemOption>
-                        <SelectionItemOption value='logs'>{intl.formatMessage({defaultMessage: 'Server Logs'})}</SelectionItemOption>
-                        <SelectionItemOption value='otlp'>{intl.formatMessage({defaultMessage: 'OTLP Endpoint'})}</SelectionItemOption>
-                    </SelectionItem>
+                        options={[
+                            {value: 'off', label: intl.formatMessage({defaultMessage: 'Off'})},
+                            {value: 'logs', label: intl.formatMessage({defaultMessage: 'Server Logs'})},
+                            {value: 'otlp', label: intl.formatMessage({defaultMessage: 'OTLP Endpoint'})},
+                        ]}
+                    />
                     {value.telemetryOutput === 'otlp' && (
                         <TextItem
                             label={intl.formatMessage({defaultMessage: 'OpenTelemetry Endpoint'})}
@@ -422,7 +409,7 @@ const Config = (props: Props) => {
                         helpText={intl.formatMessage({defaultMessage: 'Enable logging of token usage for all LLM interactions.'})}
                     />
                 </ItemList>
-            </Panel>
+            </AdminPanel>
             <EmbeddingSearchPanel
                 value={{...defaultConfig.embeddingSearchConfig, ...(value.embeddingSearchConfig || {})}}
                 onChange={(config) => {
@@ -435,26 +422,17 @@ const Config = (props: Props) => {
                     updateConfig({webSearch: config});
                 }}
             />
-            <Panel
-                title={
-                    <Horizontal>
-                        <FormattedMessage defaultMessage='Model Context Protocol (MCP)'/>
-                    </Horizontal>
-                }
-                subtitle={intl.formatMessage({defaultMessage: 'Configure MCP servers to enable AI tools.'})}
-            >
-                <MCPServers
-                    mcpConfig={mcpConfig}
-                    onChange={(config) => {
-                        // Ensure we're creating a valid structure for the server configuration
-                        const updatedConfig = {
-                            ...config,
-                            servers: config.servers || [],
-                        };
-                        updateConfig({mcp: updatedConfig});
-                    }}
-                />
-            </Panel>
+            <MCPServers
+                mcpConfig={mcpConfig}
+                onChange={(config) => {
+                    // Ensure we're creating a valid structure for the server configuration
+                    const updatedConfig = {
+                        ...config,
+                        servers: config.servers || [],
+                    };
+                    updateConfig({mcp: updatedConfig});
+                }}
+            />
         </ConfigContainer>
     );
 };

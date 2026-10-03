@@ -9,6 +9,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import {MattermostPage} from 'helpers/mm';
 import {SystemConsoleHelper} from 'helpers/system-console';
 import {AgentPageHelper} from 'helpers/agent-page';
+import {chooseCompassOption} from 'helpers/compass-select';
 import {AgentAPIHelper} from 'helpers/agent-api';
 import RunSystemConsoleContainer, {adminUsername, adminPassword} from 'helpers/system-console-container';
 
@@ -126,13 +127,14 @@ async function getTownSquareChannelID(client: any): Promise<string> {
 async function selectModelFromDropdown(
     container: Locator,
     page: Page,
+    label: string,
     preferredModel: string,
 ): Promise<string> {
-    const dropdownInput = container.locator('input[id^="react-select-"][id$="-input"]').first();
+    const dropdownInput = container.getByRole('combobox', {name: label, exact: true});
     await expect(dropdownInput).toBeVisible({timeout: 90000});
     await dropdownInput.click();
 
-    const options = page.locator('div[id^="react-select-"][id*="-option-"]');
+    const options = page.getByRole('listbox').getByRole('option');
     await expect(options.first()).toBeVisible({timeout: 90000});
 
     const optionTexts = (await options.allTextContents()).map((text) => text.trim());
@@ -212,11 +214,11 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
         await ensureServiceCardExpanded(serviceCard);
 
         await serviceCard.getByPlaceholder(/service name/i).fill(serviceName);
-        await serviceCard.getByRole('combobox').first().selectOption('openaicompatible');
+        await chooseCompassOption(serviceCard.getByRole('combobox', {name: 'Service type', exact: true}), 'OpenAI Compatible');
         await serviceCard.getByPlaceholder(/api key/i).fill('mock');
         await serviceCard.getByPlaceholder(/api url/i).fill('http://openai:8080');
 
-        const selectedServiceModel = await selectModelFromDropdown(serviceCard, page, aimockModel);
+        const selectedServiceModel = await selectModelFromDropdown(serviceCard, page, 'Default model', aimockModel);
 
         const inputTokenLimitField = serviceCard.getByPlaceholder(/input token limit/i);
         if (await inputTokenLimitField.isEnabled()) {
@@ -256,9 +258,9 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
             serviceLabel: serviceName,
             instructions: 'You are a concise and deterministic assistant for e2e verification.',
         });
-        const modelInput = page.locator('input[id^="react-select-"]').first();
+        const modelInput = page.getByRole('combobox', {name: 'Model', exact: true});
         if (await modelInput.isVisible({timeout: 15000}).catch(() => false)) {
-            await selectModelFromDropdown(page.locator('body'), page, aimockModel);
+            await selectModelFromDropdown(page.locator('body'), page, 'Model', aimockModel);
         }
         await agentPage.getModalSaveButton().click();
         await agentPage.waitForModalClosed();
