@@ -185,6 +185,7 @@ func (h *PluginMCPHandlers) buildServer() *mcp.Server {
 		searchService,
 		fileContentService,
 		h.allowStateChangingTools,
+		nil, // delegation is embedded-only
 	)
 	toolProvider.ProvideTools(mcpServer)
 

@@ -741,7 +741,10 @@ func sanitizeDisplayTitle(title string) string {
 // prepareToolCallMetadata prepares metadata to be sent with MCP tool calls.
 // bot_user_id is sourced from llm.Context for AI-generated-content tracking
 // and is only injected for the embedded server.
-func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Context) map[string]any {
+// parent_tool_call_id is sourced from ctx (stamped by the tool execution entry
+// points) so embedded tools like ask_agent can key per-call state on the
+// calling turn's tool_use ID without the model being able to forge it.
+func (c *UserClients) prepareToolCallMetadata(ctx context.Context, client *Client, llmContext *llm.Context) map[string]any {
 	if llmContext == nil {
 		return nil
 	}
@@ -751,13 +754,20 @@ func (c *UserClients) prepareToolCallMetadata(client *Client, llmContext *llm.Co
 		return nil
 	}
 
-	if llmContext.BotUserID == "" {
-		return nil
+	var metadata map[string]any
+	if llmContext.BotUserID != "" {
+		metadata = make(map[string]any, 2)
+		metadata["bot_user_id"] = llmContext.BotUserID
 	}
 
-	return map[string]any{
-		"bot_user_id": llmContext.BotUserID,
+	if toolCallID := llm.ToolCallIDFromContext(ctx); toolCallID != "" {
+		if metadata == nil {
+			metadata = make(map[string]any, 1)
+		}
+		metadata["parent_tool_call_id"] = toolCallID
 	}
+
+	return metadata
 }
 
 func (c *UserClients) clearOAuthNeededForServer(client *Client) {
@@ -811,7 +821,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 			return "", fmt.Errorf("failed to get arguments for tool %s: %w", toolName, err)
 		}
 
-		metadata := c.prepareToolCallMetadata(client, llmContext)
+		metadata := c.prepareToolCallMetadata(ctx, client, llmContext)
 
 		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {

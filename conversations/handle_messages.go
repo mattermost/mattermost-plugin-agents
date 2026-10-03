@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
@@ -411,7 +412,7 @@ func (c *Conversations) handleMentionViaConversation(
 	stream := decorateStreamWithWebSearchAnnotations(result.Stream, llmContext)
 	stream = c.decorateStreamWithCreatedFiles(ctx, bot, stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, nil); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
@@ -517,7 +518,7 @@ func (c *Conversations) streamDMConversation(
 
 	stream := c.decorateStreamWithCreatedFiles(ctx, bot, dmStream.Stream, responsePost, nil, llmContext, llmContext)
 
-	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false); streamErr != nil {
+	if streamErr := c.streamToExistingPost(ctx, stream, responsePost, postingUser, channel, false, nil); streamErr != nil {
 		return fmt.Errorf("unable to stream response: %w", streamErr)
 	}
 
@@ -581,8 +582,9 @@ func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string,
 
 // streamToExistingPost streams an LLM response onto an existing post. With
 // continuation=true it streams a tool-approval follow-up instead (see
-// streamingService.StreamContinuationToPost).
-func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, continuation bool) error {
+// streamingService.StreamContinuationToPost). onDone, when non-nil, runs
+// after the stream has been fully consumed (success or failure).
+func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.TextStreamResult, post *model.Post, postingUser *model.User, channel *model.Channel, continuation bool, onDone func()) error {
 	streamCtx, err := c.streamingService.GetStreamingContext(ctx, post.Id)
 	if err != nil {
 		return err
@@ -590,7 +592,12 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 
 	locale := c.responseLocale(postingUser, channel)
 	go func() {
-		defer c.streamingService.FinishStreaming(post.Id)
+		defer func() {
+			c.streamingService.FinishStreaming(post.Id)
+			if onDone != nil {
+				onDone()
+			}
+		}()
 		if continuation {
 			c.streamingService.StreamContinuationToPost(streamCtx, stream, post, locale, postingUser.Id)
 		} else {
@@ -599,6 +606,23 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 	}()
 
 	return nil
+}
+
+// publishConversationUpdated nudges open clients to refetch a conversation
+// whose turns changed without an accompanying post stream (e.g. an
+// asynchronously executed tool batch whose results await a share decision).
+// The conversation content API redacts unshared content for non-requesters,
+// so a channel-scoped refetch nudge leaks nothing.
+func (c *Conversations) publishConversationUpdated(conv *store.Conversation, post *model.Post) {
+	if conv == nil || post == nil || c.mmClient == nil {
+		return
+	}
+	c.mmClient.PublishWebSocketEvent("conversation_updated", map[string]interface{}{
+		"conversation_id": conv.ID,
+	}, &model.WebsocketBroadcast{
+		ChannelId:           post.ChannelId,
+		ReliableClusterSend: true,
+	})
 }
 
 func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {

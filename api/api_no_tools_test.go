@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -140,6 +141,45 @@ func (m *mockConvServiceStore) GetTurnsForConversation(conversationID string) ([
 
 func (m *mockConvServiceStore) UpdateTurnContent(id string, content json.RawMessage) error {
 	return nil
+}
+
+func (m *mockConvServiceStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	for conversationID, turns := range m.turns {
+		for i := range turns {
+			if turns[i].ID != id {
+				continue
+			}
+			var current, want any
+			if err := json.Unmarshal(turns[i].Content, &current); err != nil {
+				return false, err
+			}
+			if err := json.Unmarshal(expected, &want); err != nil {
+				return false, err
+			}
+			if !reflect.DeepEqual(current, want) {
+				return false, nil
+			}
+			m.turns[conversationID][i].Content = updated
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func TestMockConvServiceStoreRejectsStaleTurnClaim(t *testing.T) {
+	original := json.RawMessage(`[{"status":"pending"}]`)
+	testStore := newMockConvServiceStore()
+	testStore.turns["conv-1"] = []store.Turn{{ID: "turn-1", Content: original}}
+
+	claimed, err := testStore.UpdateTurnContentIfMatches(
+		"turn-1",
+		json.RawMessage(`[{"status":"accepted"}]`),
+		json.RawMessage(`[{"status":"error"}]`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, claimed)
+	assert.JSONEq(t, string(original), string(testStore.turns["conv-1"][0].Content))
 }
 
 func (m *mockConvServiceStore) UpdateTurnTokens(_ string, _, _ int64) error {

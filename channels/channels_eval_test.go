@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/channels"
@@ -182,6 +183,39 @@ func (s *evalInMemoryStore) GetTurnsForConversation(conversationID string) ([]st
 		}
 	}
 	return turns, nil
+}
+
+func (s *evalInMemoryStore) UpdateTurnContentIfMatches(id string, expected, updated json.RawMessage) (bool, error) {
+	turn, ok := s.turns[id]
+	if !ok {
+		return false, nil
+	}
+
+	var current, want any
+	if err := json.Unmarshal(turn.Content, &current); err != nil {
+		return false, err
+	}
+	if err := json.Unmarshal(expected, &want); err != nil {
+		return false, err
+	}
+	if !reflect.DeepEqual(current, want) {
+		return false, nil
+	}
+	turn.Content = updated
+	return true, nil
+}
+
+func TestEvalInMemoryStoreMissingTurnLosesClaim(t *testing.T) {
+	testStore := newEvalInMemoryStore()
+
+	claimed, err := testStore.UpdateTurnContentIfMatches(
+		"missing-turn",
+		json.RawMessage(`[{"status":"pending"}]`),
+		json.RawMessage(`[{"status":"accepted"}]`),
+	)
+
+	require.NoError(t, err)
+	assert.False(t, claimed)
 }
 
 func (s *evalInMemoryStore) UpdateTurnContent(id string, content json.RawMessage) error {

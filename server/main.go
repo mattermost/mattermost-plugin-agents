@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/delegation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
@@ -61,6 +62,7 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
+	delegationService    *delegation.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -452,6 +454,13 @@ func (p *Plugin) OnActivate() error {
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
+
+	// Delegation service skeleton: created before the embedded MCP server so
+	// ask_agent can be registered, completed later once the conversation
+	// service and context builder exist (they depend on the MCP client
+	// manager, which depends on the embedded server).
+	delegationService := delegation.New(mmClient, bots, streamingService, prompts, i18nBundle, metricsService)
+
 	var (
 		embeddedMu     sync.Mutex
 		embeddedServer *EmbeddedMCPServer
@@ -469,7 +478,7 @@ func (p *Plugin) OnActivate() error {
 		if embeddedServer == nil {
 			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
-			})
+			}, delegationService)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server", "error", embeddedErr)
 				return nil
@@ -570,6 +579,11 @@ func (p *Plugin) OnActivate() error {
 		})
 	}
 
+	// Complete the delegation service now that the conversation machinery
+	// exists, and hook sub-turn completion notifications back into it.
+	delegationService.Complete(convService, conversationsService, contextBuilder, p, mcpClientManager)
+	conversationsService.SetDelegationNotifier(delegationService)
+
 	// Initialize embedded MCP server handlers for plugin endpoints
 	var mcpHandlers *mcpserver.PluginMCPHandlers
 	// Create logger adapter to route MCP handler logs through plugin logging
@@ -625,6 +639,7 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	apiService.SetDelegationService(delegationService)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
@@ -638,6 +653,7 @@ func (p *Plugin) OnActivate() error {
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
+	p.delegationService = delegationService
 
 	return nil
 }
