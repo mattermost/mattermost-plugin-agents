@@ -6,6 +6,7 @@ package tools
 import (
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -128,6 +129,42 @@ func TestNewJSONSchemaForAccessMode(t *testing.T) {
 			NewJSONSchemaForAccessMode[TestArgs]("")
 		}, "Empty access mode should panic")
 	})
+}
+
+// TestPostArgsFilesSchemaAvailableInAllAccessModes ensures the inline `files`
+// parameter is exposed in both access modes while the legacy `attachments`
+// parameter stays local-only.
+func TestPostArgsFilesSchemaAvailableInAllAccessModes(t *testing.T) {
+	tests := []struct {
+		name            string
+		accessMode      string
+		wantAttachments bool
+	}{
+		{name: "local mode exposes files and attachments", accessMode: "local", wantAttachments: true},
+		{name: "remote mode exposes files but not attachments", accessMode: "remote", wantAttachments: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			schemas := map[string]*jsonschema.Schema{
+				"create_post":   NewJSONSchemaForAccessMode[CreatePostArgs](tt.accessMode),
+				"dm":            NewJSONSchemaForAccessMode[DMArgs](tt.accessMode),
+				"group_message": NewJSONSchemaForAccessMode[GroupMessageArgs](tt.accessMode),
+			}
+			for tool, schema := range schemas {
+				require.NotNil(t, schema.Properties, "%s schema has no properties", tool)
+				assert.Contains(t, schema.Properties, "files",
+					"%s should expose files in %s mode", tool, tt.accessMode)
+				if tt.wantAttachments {
+					assert.Contains(t, schema.Properties, "attachments",
+						"%s should expose attachments in local mode", tool)
+				} else {
+					assert.NotContains(t, schema.Properties, "attachments",
+						"%s should not expose attachments in remote mode", tool)
+				}
+			}
+		})
+	}
 }
 
 func TestIsAccessAllowed(t *testing.T) {

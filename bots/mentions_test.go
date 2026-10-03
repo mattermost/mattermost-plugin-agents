@@ -21,6 +21,11 @@ func TestUserIsMentionedMarkdown(t *testing.T) {
 			wasMentioned: true,
 		},
 		{
+			name:         "user is mentioned case-insensitively",
+			text:         "Hello @AI",
+			wasMentioned: true,
+		},
+		{
 			name:         "user is not mentioned",
 			text:         "Hello @somoneelse",
 			wasMentioned: false,

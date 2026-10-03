@@ -29,7 +29,7 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 			ID: "t1", PostID: &postA, Role: "assistant",
 			Content: mustBlocks([]ContentBlock{{
 				Type: BlockTypeToolUse, ID: "reuse", Name: "demo",
-				ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(false), UIMeta: uiMeta,
+				ServerOrigin: "http://srv-a/mcp", Shared: new(false), UIMeta: uiMeta,
 			}}),
 			Sequence: 1,
 		},
@@ -37,7 +37,7 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 			ID: "t2", Role: "tool_result",
 			Content: mustBlocks([]ContentBlock{{
 				Type: BlockTypeToolResult, ToolUseID: "reuse", Content: "private",
-				Shared: BoolPtr(false),
+				Shared: new(false),
 			}}),
 			Sequence: 2,
 		},
@@ -45,7 +45,7 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 			ID: "t3", PostID: &postB, Role: "assistant",
 			Content: mustBlocks([]ContentBlock{{
 				Type: BlockTypeToolUse, ID: "reuse", Name: "demo",
-				ServerOrigin: "http://srv-a/mcp", Shared: BoolPtr(true), UIMeta: uiMeta,
+				ServerOrigin: "http://srv-a/mcp", Shared: new(true), UIMeta: uiMeta,
 			}}),
 			Sequence: 3,
 		},
@@ -53,7 +53,7 @@ func TestFindToolCallBlocksPostAnchored(t *testing.T) {
 			ID: "t4", Role: "tool_result",
 			Content: mustBlocks([]ContentBlock{{
 				Type: BlockTypeToolResult, ToolUseID: "reuse", Content: "shared",
-				Shared: BoolPtr(true),
+				Shared: new(true),
 			}}),
 			Sequence: 4,
 		},

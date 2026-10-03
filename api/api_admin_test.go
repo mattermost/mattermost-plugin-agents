@@ -14,8 +14,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
+
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
+	embeddingsmocks "github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -26,6 +32,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -52,8 +60,10 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 		clusterNotifier: &testClusterNotifier{},
 	}
 
-	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil)
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil, nil, newPassthroughAccessChecker())
 
+	// Admin routes are exercised at Enterprise; license gating has its own tests.
+	api.licenseChecker = enterprisetest.CheckerAt(enterprise.LevelEnterprise)
 	return api, mockAPI, stores
 }
 
@@ -272,6 +282,20 @@ func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
 				"serviceType": llm.ServiceTypeGemini,
 			},
 		},
+		{
+			name: "North missing API key",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeNorth,
+				"apiURL":      "http://host",
+			},
+		},
+		{
+			name: "North missing API URL",
+			body: map[string]any{
+				"serviceType": llm.ServiceTypeNorth,
+				"apiKey":      "key",
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -300,6 +324,14 @@ func TestHandleFetchModelsVertexAndGeminiValidation(t *testing.T) {
 // mockIndexerService holds the mock configuration for creating test indexers
 type mockIndexerService struct {
 	jobStatus *indexer.JobStatus
+	// searchConfigured makes getSearch return a mock embedding search so the
+	// indexer gets past its "search functionality is not configured" guards.
+	searchConfigured bool
+	// lastIndexedAt seeds IndexerLastIndexedKey (used by StartCatchUpJob).
+	lastIndexedAt int64
+	// casOK is the result of KVCompareAndSet on the job status row (used by
+	// CancelJob's running -> cancel_requested transition).
+	casOK bool
 }
 
 // createMockIndexer creates a real indexer.Indexer with mocked dependencies
@@ -321,10 +353,30 @@ func createMockIndexer(t *testing.T, mockService *mockIndexerService) *indexer.I
 			Return(nil).Maybe()
 	}
 
+	if mockService.lastIndexedAt > 0 {
+		mockClient.On("KVGet", indexer.IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+			Run(func(args mock.Arguments) {
+				*(args.Get(1).(*int64)) = mockService.lastIndexedAt
+			}).
+			Return(nil).Maybe()
+	} else {
+		mockClient.On("KVGet", indexer.IndexerLastIndexedKey, mock.AnythingOfType("*int64")).
+			Return(mmapi.ErrKVNotFound).Maybe()
+	}
+
+	mockClient.On("KVCompareAndSet", indexer.ReindexJobKey, mock.Anything, mock.Anything).
+		Return(mockService.casOK, nil).Maybe()
+
 	mockMutexAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), mock.AnythingOfType("model.PluginKVSetOptions")).Return(true, nil).Maybe()
 	mockMutexAPI.On("KVDelete", mock.AnythingOfType("string")).Return(nil).Maybe()
 
-	return indexer.New(nil, nil, mockClient, nil, nil, mockMutexAPI)
+	var getSearch func() embeddings.EmbeddingSearch
+	if mockService.searchConfigured {
+		searchMock := embeddingsmocks.NewMockEmbeddingSearch(t)
+		getSearch = func() embeddings.EmbeddingSearch { return searchMock }
+	}
+
+	return indexer.New(getSearch, nil, mockClient, nil, nil, mockMutexAPI)
 }
 
 func TestHandleGetMCPTools_PluginServer(t *testing.T) {
@@ -471,7 +523,7 @@ func TestHandleGetMCPTools_PluginServer(t *testing.T) {
 			} else {
 				require.Nil(t, pluginRow.Error)
 			}
-			require.Equal(t, tt.expectProbeCalls, mgr.discoverPluginToolsCallCount)
+			require.Equal(t, tt.expectProbeCalls, mgr.pluginDiscoveryCallCount())
 			if tt.expectToolConfigs != nil {
 				require.Equal(t, tt.expectToolConfigs, pluginRow.ToolConfigs, "plugin row must surface ToolConfigs verbatim")
 			}
@@ -535,8 +587,94 @@ func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
 	require.Len(t, pluginRows, 1, "orphan plugin must be omitted from admin tools listing")
 	require.Equal(t, "Live", pluginRows[0].Name)
 
-	require.Equal(t, 1, mgr.discoverPluginToolsCallCount,
+	require.Equal(t, 1, mgr.pluginDiscoveryCallCount(),
 		"orphan plugin must not be probed; probing would surface a misleading session-not-found error")
+}
+
+type stubAdminEmbeddedServer struct{}
+
+func (s *stubAdminEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	return nil, errors.New("stub: discovery not needed for ID assertions")
+}
+
+func TestHandleGetMCPTools_ReturnsStableIDs(t *testing.T) {
+	api, mockAPI, _ := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+	mockAPI.On("LogDebug", mock.Anything).Return().Maybe()
+
+	const (
+		embeddedID = "abcdefghijklmnopqrstuvwx01"
+		remoteID   = "abcdefghijklmnopqrstuvwx02"
+		pluginID   = "abcdefghijklmnopqrstuvwx03"
+	)
+
+	cfg := api.config.(*testConfigImpl)
+	cfg.mcpConfig = mcp.Config{
+		Enabled: true,
+		EmbeddedServer: mcp.EmbeddedServerConfig{
+			ID:      embeddedID,
+			Enabled: true,
+		},
+		Servers: []mcp.ServerConfig{{
+			ID:      remoteID,
+			Name:    "Remote",
+			Enabled: true,
+			BaseURL: "https://mcp.example.com",
+		}},
+		PluginServers: []mcp.PluginServerConfig{{
+			ID:       pluginID,
+			PluginID: "com.mattermost.demo",
+			Name:     "Demo",
+			Path:     "/mcp",
+			Enabled:  true,
+		}},
+	}
+
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.embeddedServer = &stubAdminEmbeddedServer{}
+	// Non-nil client so remote discovery fails cleanly instead of panicking.
+	mgr.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("stub: discovery not needed for ID assertions")
+	})}
+	// Live registry carries the effective ID after config sync.
+	mgr.pluginServers = []mcp.PluginServerConfig{{
+		ID:       pluginID,
+		PluginID: "com.mattermost.demo",
+		Name:     "Demo",
+		Path:     "/mcp",
+		Enabled:  true,
+	}}
+	mgr.discoverPluginToolsResponse = []mcp.ToolInfo{{Name: "echo"}}
+
+	req := httptest.NewRequest(http.MethodGet, "/admin/mcp/tools", nil)
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+	resp := recorder.Result()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var body MCPToolsResponse
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+
+	byType := map[string]MCPServerInfo{}
+	for _, s := range body.Servers {
+		byType[s.ServerType] = s
+	}
+
+	require.Equal(t, embeddedID, byType["embedded"].ID)
+	require.Equal(t, remoteID, byType["remote"].ID)
+	require.Equal(t, pluginID, byType["plugin"].ID)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
 
 func TestHandleUpdatePluginServer(t *testing.T) {
@@ -547,11 +685,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 		body                   string
 		hasAdminPerm           bool
 		expectStatus           int
-		expectRegisterCalls    int
+		expectPatchCalls       int
 		expectEnabledAfter     bool
 		expectExposeAfter      bool
 		expectToolConfigsAfter []mcp.ToolConfig
 		expectRebuildCalls     int
+		orphanPluginIDs        map[string]bool
+		expectStateUnchanged   bool
 	}{
 		{
 			name:     "happy path: flips Enabled true->false",
@@ -559,13 +699,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			body:                `{"enabled": false}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  false,
-			expectExposeAfter:   false,
-			expectRebuildCalls:  0,
+			body:               `{"enabled": false}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: false,
+			expectExposeAfter:  false,
+			expectRebuildCalls: 0,
 		},
 		{
 			name:     "enabled update preserves existing ExposeExternal",
@@ -574,13 +714,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 				Enabled: true, ExposeExternal: true,
 			}},
-			body:                `{"enabled": false}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  false,
-			expectExposeAfter:   true,
-			expectRebuildCalls:  1,
+			body:               `{"enabled": false}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: false,
+			expectExposeAfter:  true,
+			expectRebuildCalls: 1,
 		},
 		{
 			name:     "expose_external field is ignored",
@@ -589,13 +729,13 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 				Enabled: true, ExposeExternal: false,
 			}},
-			body:                `{"expose_external": true}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  true,
-			expectExposeAfter:   false,
-			expectRebuildCalls:  0,
+			body:               `{"expose_external": true}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: true,
+			expectExposeAfter:  false,
+			expectRebuildCalls: 0,
 		},
 		{
 			name:     "empty body preserves both fields",
@@ -604,13 +744,27 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 				Enabled: true, ExposeExternal: true,
 			}},
-			body:                `{}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  true,
-			expectExposeAfter:   true,
-			expectRebuildCalls:  1,
+			body:               `{}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: true,
+			expectExposeAfter:  true,
+			expectRebuildCalls: 1,
+		},
+		{
+			name:     "admin update rejects config-only orphan",
+			pluginID: "com.mattermost.demo",
+			preRegistered: []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}},
+			orphanPluginIDs:      map[string]bool{"com.mattermost.demo": true},
+			body:                 `{"enabled": false}`,
+			hasAdminPerm:         true,
+			expectStatus:         http.StatusNotFound,
+			expectPatchCalls:     0,
+			expectRebuildCalls:   0,
+			expectStateUnchanged: true,
 		},
 		{
 			name:         "404 when pluginID not registered",
@@ -635,10 +789,10 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			preRegistered: []mcp.PluginServerConfig{{
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
 			}},
-			body:                `{"enabled": false}`,
-			hasAdminPerm:        false,
-			expectStatus:        http.StatusForbidden,
-			expectRegisterCalls: 0,
+			body:             `{"enabled": false}`,
+			hasAdminPerm:     false,
+			expectStatus:     http.StatusForbidden,
+			expectPatchCalls: 0,
 		},
 		{
 			name:     "tool_configs partial PUT sets policy, preserves enabled",
@@ -647,12 +801,12 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
 				Enabled: true, ExposeExternal: false,
 			}},
-			body:                `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  true,
-			expectExposeAfter:   false,
+			body:               `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: true,
+			expectExposeAfter:  false,
 			expectToolConfigsAfter: []mcp.ToolConfig{
 				{Name: "echo", Policy: "ask", Enabled: false},
 			},
@@ -670,7 +824,7 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			body:                   `{"tool_configs": []}`,
 			hasAdminPerm:           true,
 			expectStatus:           http.StatusOK,
-			expectRegisterCalls:    1,
+			expectPatchCalls:       1,
 			expectEnabledAfter:     true,
 			expectExposeAfter:      false,
 			expectToolConfigsAfter: []mcp.ToolConfig{},
@@ -686,12 +840,12 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 					{Name: "echo", Policy: "auto_run_in_dm", Enabled: true},
 				},
 			}},
-			body:                `{"enabled": false}`,
-			hasAdminPerm:        true,
-			expectStatus:        http.StatusOK,
-			expectRegisterCalls: 1,
-			expectEnabledAfter:  false,
-			expectExposeAfter:   false,
+			body:               `{"enabled": false}`,
+			hasAdminPerm:       true,
+			expectStatus:       http.StatusOK,
+			expectPatchCalls:   1,
+			expectEnabledAfter: false,
+			expectExposeAfter:  false,
 			expectToolConfigsAfter: []mcp.ToolConfig{
 				{Name: "echo", Policy: "auto_run_in_dm", Enabled: true},
 			},
@@ -709,6 +863,12 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 
 			mgr := api.mcpClientManager.(*mockMCPClientManager)
 			mgr.pluginServers = tt.preRegistered
+			mgr.orphanPluginIDs = tt.orphanPluginIDs
+			pluginServersBefore := append([]mcp.PluginServerConfig(nil), mgr.pluginServers...)
+			orphanPluginIDsBefore := make(map[string]bool, len(mgr.orphanPluginIDs))
+			for pluginID, orphaned := range mgr.orphanPluginIDs {
+				orphanPluginIDsBefore[pluginID] = orphaned
+			}
 
 			// Seed a baseline persisted config so the handler can clone it
 			// instead of treating the store's nil as a 500.
@@ -727,18 +887,27 @@ func TestHandleUpdatePluginServer(t *testing.T) {
 			resp := recorder.Result()
 			require.Equal(t, tt.expectStatus, resp.StatusCode)
 
-			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls)
+			require.Empty(t, mgr.registerCalls)
+			require.Len(t, mgr.adminPatchCalls, tt.expectPatchCalls)
 			if tt.expectStatus == http.StatusOK {
-				require.Equal(t, tt.expectEnabledAfter, mgr.registerCalls[0].Enabled)
-				require.Equal(t, tt.expectExposeAfter, mgr.registerCalls[0].ExposeExternal)
-				require.Equal(t, "Demo", mgr.registerCalls[0].Name)
-				require.Equal(t, "/mcp", mgr.registerCalls[0].Path)
-				require.Equal(t, "com.mattermost.demo", mgr.registerCalls[0].PluginID)
+				require.Equal(t, tt.expectEnabledAfter, mgr.adminPatchCalls[0].Enabled)
+				require.Equal(t, tt.expectExposeAfter, mgr.adminPatchCalls[0].ExposeExternal)
+				require.Equal(t, "Demo", mgr.adminPatchCalls[0].Name)
+				require.Equal(t, "/mcp", mgr.adminPatchCalls[0].Path)
+				require.Equal(t, "com.mattermost.demo", mgr.adminPatchCalls[0].PluginID)
 				if tt.expectToolConfigsAfter != nil {
-					require.Equal(t, tt.expectToolConfigsAfter, mgr.registerCalls[0].ToolConfigs, "ToolConfigs assertion")
+					require.Equal(t, tt.expectToolConfigsAfter, mgr.adminPatchCalls[0].ToolConfigs, "ToolConfigs assertion")
 				}
 			}
 			require.Equal(t, tt.expectRebuildCalls, spy.callCount)
+			if tt.expectStateUnchanged {
+				require.Equal(t, pluginServersBefore, mgr.pluginServers)
+				require.Equal(t, orphanPluginIDsBefore, mgr.orphanPluginIDs)
+				require.Empty(t, mgr.unregisterCalls)
+				require.Equal(t, &config.Config{}, stores.configStore.cfg)
+				require.Zero(t, stores.configUpdater.callCount)
+				require.Zero(t, stores.clusterNotifier.callCount)
+			}
 		})
 	}
 }
@@ -757,7 +926,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 		expectSaveCalls       int
 		expectUpdateCalls     int
 		expectPublishCalls    int
-		expectRegisterCalls   int
+		expectPatchCalls      int
 		expectUnregisterCalls int
 		assertPersistedState  func(t *testing.T, savedCfg *config.Config)
 	}{
@@ -774,7 +943,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     1,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   1,
+			expectPatchCalls:      1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
 				require.Len(t, savedCfg.MCP.PluginServers, 1)
@@ -819,7 +988,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     1,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   1,
+			expectPatchCalls:      1,
 			expectUnregisterCalls: 0,
 			assertPersistedState: func(t *testing.T, savedCfg *config.Config) {
 				require.Len(t, savedCfg.MCP.PluginServers, 2,
@@ -855,7 +1024,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       0,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectPatchCalls:      0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -869,7 +1038,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectPatchCalls:      0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -883,7 +1052,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       1,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    1,
-			expectRegisterCalls:   0,
+			expectPatchCalls:      0,
 			expectUnregisterCalls: 0,
 		},
 		{
@@ -900,7 +1069,7 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			expectSaveCalls:       0,
 			expectUpdateCalls:     0,
 			expectPublishCalls:    0,
-			expectRegisterCalls:   0,
+			expectPatchCalls:      0,
 			expectUnregisterCalls: 0,
 		},
 	}
@@ -954,7 +1123,8 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			require.Equal(t, tt.expectUpdateCalls, stores.configUpdater.callCount)
 			require.Equal(t, tt.expectPublishCalls, stores.clusterNotifier.callCount)
 
-			require.Len(t, mgr.registerCalls, tt.expectRegisterCalls, "live plugin registry must not be mutated on failure paths")
+			require.Empty(t, mgr.registerCalls)
+			require.Len(t, mgr.adminPatchCalls, tt.expectPatchCalls, "live plugin registry must not be mutated on failure paths")
 			require.Len(t, mgr.unregisterCalls, tt.expectUnregisterCalls, "live plugin registry must not be mutated on failure paths")
 
 			if tt.assertPersistedState != nil {
@@ -963,6 +1133,106 @@ func TestHandleUpdatePluginServer_PersistsToConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Lost-update regression: two updates to different fields that both read the
+// same live state must both survive in the persisted config (the merge must
+// rebase onto the freshest persisted entry inside the UpdateConfig transform).
+func TestHandleUpdatePluginServer_ConcurrentFieldUpdatesBothSurvive(t *testing.T) {
+	api, mockAPI, stores := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	// Fresh copies each time: the mock's RegisterPluginServer mutates the
+	// slice in place, and the reset below must restore the pristine state.
+	liveSnapshot := func() []mcp.PluginServerConfig {
+		return []mcp.PluginServerConfig{{
+			PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+		}}
+	}
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = liveSnapshot()
+	stores.configStore.cfg = &config.Config{}
+
+	put := func(body string) int {
+		req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(body))
+		req.Header.Set("Mattermost-User-Id", "admin-user")
+		req.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		api.ServeHTTP(&plugin.Context{}, recorder, req)
+		return recorder.Result().StatusCode
+	}
+
+	require.Equal(t, http.StatusOK, put(`{"enabled": false}`))
+
+	// Pin the exact racing interleaving: the second request read the live
+	// registry before the first request's admin-field patch landed, so it
+	// sees the original Enabled:true snapshot.
+	mgr.pluginServers = liveSnapshot()
+
+	require.Equal(t, http.StatusOK, put(`{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": false}]}`))
+
+	require.Len(t, stores.configStore.cfg.MCP.PluginServers, 1)
+	persisted := stores.configStore.cfg.MCP.PluginServers[0]
+	require.False(t, persisted.Enabled, "first update's Enabled=false must survive the second update")
+	require.Len(t, persisted.ToolConfigs, 1, "second update's tool_configs must be applied")
+	require.Equal(t, "echo", persisted.ToolConfigs[0].Name)
+}
+
+// Pins field ownership: the source plugin owns Name/Path/ExposeExternal and
+// admins own Enabled/ToolConfigs. An admin update whose persisted entry
+// predates a plugin re-registration must not resurrect stale plugin-owned
+// values in the persisted config, the runtime registry, or the response.
+func TestHandleUpdatePluginServer_PluginOwnedFieldsNotReverted(t *testing.T) {
+	api, mockAPI, stores := setupAdminTestEnvironment(t)
+	defer mockAPI.AssertExpectations(t)
+
+	mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+	mockAPI.On("LogError", mock.Anything).Return().Maybe()
+
+	// The plugin re-registered with new plugin-owned values after the entry
+	// below was persisted.
+	mgr := api.mcpClientManager.(*mockMCPClientManager)
+	mgr.pluginServers = []mcp.PluginServerConfig{{
+		PluginID: "com.mattermost.demo", Name: "Demo v2", Path: "/mcp/v2",
+		Enabled: true, ExposeExternal: true,
+	}}
+	stores.configStore.cfg = &config.Config{}
+	stores.configStore.cfg.MCP.PluginServers = []config.PluginServerConfig{{
+		PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp",
+		Enabled: false, ExposeExternal: false,
+		ToolConfigs: []config.MCPToolConfig{{Name: "echo", Policy: config.MCPToolPolicyAsk, Enabled: false}},
+	}}
+
+	spy := &spyRebuilder{}
+	api.SetExternalRebuilderForTest(spy)
+
+	req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(`{"enabled": true}`))
+	req.Header.Set("Mattermost-User-Id", "admin-user")
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	api.ServeHTTP(&plugin.Context{}, recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+
+	require.Len(t, stores.configStore.cfg.MCP.PluginServers, 1)
+	persisted := stores.configStore.cfg.MCP.PluginServers[0]
+	require.Equal(t, "Demo v2", persisted.Name, "persisted Name must come from the live registration")
+	require.Equal(t, "/mcp/v2", persisted.Path, "persisted Path must come from the live registration")
+	require.True(t, persisted.ExposeExternal, "persisted ExposeExternal must come from the live registration")
+	require.True(t, persisted.Enabled, "request patch must apply")
+	require.Equal(t, []config.MCPToolConfig{{Name: "echo", Policy: config.MCPToolPolicyAsk, Enabled: false}},
+		persisted.ToolConfigs, "persisted admin-owned ToolConfigs must carry over")
+
+	require.Len(t, mgr.adminPatchCalls, 1, "runtime registration must be an admin-field patch")
+	require.Empty(t, mgr.registerCalls, "runtime registration must not be a whole-object replacement")
+	patched := mgr.adminPatchCalls[0]
+	require.Equal(t, "Demo v2", patched.Name)
+	require.Equal(t, "/mcp/v2", patched.Path)
+	require.True(t, patched.ExposeExternal)
+	require.True(t, patched.Enabled)
+	require.Equal(t, []mcp.ToolConfig{{Name: "echo", Policy: config.MCPToolPolicyAsk, Enabled: false}}, patched.ToolConfigs)
 }
 
 // failingConfigStore is a testConfigStore variant with configurable error injection on Get/Save.
@@ -985,4 +1255,630 @@ func (s *failingConfigStore) SaveConfig(cfg config.Config) error {
 	clone := cfg
 	s.cfg = &clone
 	return nil
+}
+
+func (s *failingConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	if s.getErr != nil {
+		return config.Config{}, s.getErr
+	}
+	next, err := transform(s.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if err := s.SaveConfig(next); err != nil {
+		return next, err
+	}
+	return next, nil
+}
+
+// setupAdminAuditTest wires the full-router environment with audit capture so
+// the audit middleware runs end to end for admin routes.
+func setupAdminAuditTest(t *testing.T) (*TestEnvironment, *[]*model.AuditRecord) {
+	t.Helper()
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	e := SetupTestEnvironment(t)
+	records := e.CaptureAuditRecords()
+	return e, records
+}
+
+// runningReindexJob returns a fresh (non-stale) running job status.
+func runningReindexJob() *indexer.JobStatus {
+	return &indexer.JobStatus{
+		JobID:         "reindexjobid12345678901234",
+		Status:        indexer.JobStatusRunning,
+		StartedAt:     time.Now().Add(-2 * time.Minute),
+		LastUpdatedAt: time.Now().Add(-time.Minute),
+	}
+}
+
+func TestAuditReindexPosts(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		isAdmin        bool
+		mockIndexer    *mockIndexerService // nil leaves indexerService nil
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "explicit clearIndex=false is recorded on the job-already-running fail path",
+			body:           `{"clearIndex": false}`,
+			isAdmin:        true,
+			mockIndexer:    &mockIndexerService{jobStatus: runningReindexJob(), searchConfigured: true},
+			expectedStatus: http.StatusConflict,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusConflict, rec.Error.Code)
+				assert.Equal(t, false, rec.EventData.Parameters["clear_index"])
+			},
+		},
+		{
+			name:           "empty body records the clear_index=true default",
+			body:           "",
+			isAdmin:        true,
+			mockIndexer:    &mockIndexerService{jobStatus: runningReindexJob(), searchConfigured: true},
+			expectedStatus: http.StatusConflict,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusConflict, rec.Error.Code)
+				assert.Equal(t, true, rec.EventData.Parameters["clear_index"])
+			},
+		},
+		{
+			name:           "search not configured records a 400 fail before clear_index is known",
+			body:           "",
+			isAdmin:        true,
+			mockIndexer:    nil,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+				assert.NotContains(t, rec.EventData.Parameters, "clear_index")
+			},
+		},
+		{
+			// Covers the non-admin denial once for all admin routes: the audit
+			// middleware runs before authorization, so the denial is recorded.
+			name:           "non-admin request records a 403 fail",
+			body:           `{"clearIndex": false}`,
+			isAdmin:        false,
+			mockIndexer:    nil,
+			expectedStatus: http.StatusForbidden,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusForbidden, rec.Error.Code)
+				assert.NotContains(t, rec.EventData.Parameters, "clear_index")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(tt.isAdmin)
+			if tt.mockIndexer != nil {
+				e.api.indexerService = createMockIndexer(t, tt.mockIndexer)
+			}
+
+			var body io.Reader
+			if tt.body != "" {
+				body = strings.NewReader(tt.body)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex", body)
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventReindexPosts, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			assert.Equal(t, "/admin/reindex", rec.Meta[model.AuditKeyAPIPath])
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditCancelReindexJob(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockIndexer    *mockIndexerService // nil leaves indexerService nil
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "successful cancel records cancel_requested",
+			mockIndexer:    &mockIndexerService{jobStatus: runningReindexJob(), casOK: true},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, indexer.JobStatusCancelRequested, rec.EventData.Parameters["job_status"])
+			},
+		},
+		{
+			name:           "no indexer records a 404 fail with no_job",
+			mockIndexer:    nil,
+			expectedStatus: http.StatusNotFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
+				assert.Equal(t, "no_job", rec.EventData.Parameters["job_status"])
+			},
+		},
+		{
+			name:           "terminal job records a 400 fail with not_running",
+			mockIndexer:    &mockIndexerService{jobStatus: &indexer.JobStatus{Status: indexer.JobStatusCompleted}},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Equal(t, "not_running", rec.EventData.Parameters["job_status"])
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			if tt.mockIndexer != nil {
+				e.api.indexerService = createMockIndexer(t, tt.mockIndexer)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/cancel", nil)
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventCancelReindexJob, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditCatchUpReindex(t *testing.T) {
+	tests := []struct {
+		name           string
+		mockIndexer    *mockIndexerService // nil leaves indexerService nil
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "job already running records a 409 fail with the blocking job status",
+			mockIndexer: &mockIndexerService{
+				jobStatus:        runningReindexJob(),
+				searchConfigured: true,
+				lastIndexedAt:    time.Now().Add(-time.Hour).UnixMilli(),
+			},
+			expectedStatus: http.StatusConflict,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusConflict, rec.Error.Code)
+				assert.Equal(t, indexer.JobStatusRunning, rec.EventData.Parameters["job_status"])
+			},
+		},
+		{
+			name:           "no previous index records a 400 fail without job_status",
+			mockIndexer:    &mockIndexerService{searchConfigured: true},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.NotContains(t, rec.EventData.Parameters, "job_status")
+			},
+		},
+		{
+			name:           "search not configured records a 400 fail",
+			mockIndexer:    nil,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			if tt.mockIndexer != nil {
+				e.api.indexerService = createMockIndexer(t, tt.mockIndexer)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/catchup", nil)
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventCatchUpReindex, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+const plantedRebuildSentinel = "SENTINEL_REBUILD_PROMPT_MUST_NOT_APPEAR"
+
+func TestAuditRebuildVectorIndex(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           string
+		mockIndexer    *mockIndexerService // nil leaves indexerService nil
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "job already running records a 409 fail with the blocking job status",
+			body:           `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer:    &mockIndexerService{jobStatus: runningReindexJob(), searchConfigured: true},
+			expectedStatus: http.StatusConflict,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusConflict, rec.Error.Code)
+				assert.Equal(t, indexer.JobStatusRunning, rec.EventData.Parameters["job_status"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+		{
+			name: "incomplete reindex records a 400 fail",
+			body: `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer: &mockIndexerService{
+				jobStatus: &indexer.JobStatus{
+					JobID:     "failed-reindex",
+					Status:    indexer.JobStatusFailed,
+					Operation: indexer.JobOperationReindex,
+					Resumable: false,
+				},
+				searchConfigured: true,
+			},
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+		{
+			name:           "search not configured records a 400 fail",
+			body:           `{"prompt":"` + plantedRebuildSentinel + `"}`,
+			mockIndexer:    nil,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+				assert.NotContains(t, rec.EventData.Parameters, "hnswM")
+				assert.NotContains(t, rec.EventData.Parameters, "hnsw_m")
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedRebuildSentinel,
+					"audit record must never carry request content")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			if tt.mockIndexer != nil {
+				e.api.indexerService = createMockIndexer(t, tt.mockIndexer)
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/reindex/rebuild-vector-index", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventRebuildVectorIndex, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+// toolsCacheMCPClientManager overrides GetToolsCache so the clear-cache
+// success path can run against a real mcp.ToolsCache over the mocked KV store.
+type toolsCacheMCPClientManager struct {
+	*mockMCPClientManager
+	cache *mcp.ToolsCache
+}
+
+func (m *toolsCacheMCPClientManager) GetToolsCache() *mcp.ToolsCache { return m.cache }
+
+func TestAuditClearMCPToolsCache(t *testing.T) {
+	tests := []struct {
+		name           string
+		setup          func(e *TestEnvironment)
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name: "success records cleared_servers",
+			setup: func(e *TestEnvironment) {
+				// ClearAll lists all KV keys and deletes the cache-prefixed
+				// ones; pluginapi implements Delete as KVSetWithOptions with
+				// a nil value.
+				e.mockAPI.On("KVList", 0, 1000).Return([]string{
+					"mcp_tools_cache_v1_server1",
+					"mcp_tools_cache_v1_server2",
+					"unrelated_key",
+				}, nil)
+				e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server1", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
+				e.mockAPI.On("KVSetWithOptions", "mcp_tools_cache_v1_server2", []byte(nil), model.PluginKVSetOptions{}).Return(true, nil)
+
+				e.api.mcpClientManager = &toolsCacheMCPClientManager{
+					mockMCPClientManager: e.mcp,
+					cache:                mcp.NewToolsCache(&e.client.KV, &e.client.Log),
+				}
+			},
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, 2, rec.EventData.Parameters["cleared_servers"])
+			},
+		},
+		{
+			name: "missing tools cache records a 500 fail",
+			setup: func(e *TestEnvironment) {
+				// The default mockMCPClientManager returns a nil tools cache.
+			},
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.Empty(t, rec.Error.Description,
+					"free-form handler error text must never enter audit records")
+				assert.NotContains(t, rec.EventData.Parameters, "cleared_servers")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+			tt.setup(e)
+
+			req := httptest.NewRequest(http.MethodPost, "/admin/mcp/tools/cache/clear", nil)
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventClearMCPToolsCache, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestAuditUpdatePluginServer(t *testing.T) {
+	// Planted tool config content that must never leak into the audit record.
+	const plantedToolName = "planted-secret-tool-name"
+
+	tests := []struct {
+		name           string
+		pluginID       string
+		body           string
+		nilStoredCfg   bool
+		getErr         error
+		expectedStatus int
+		validateRecord func(t *testing.T, rec *model.AuditRecord)
+	}{
+		{
+			name:           "disabling the server records the effective enabled=false",
+			pluginID:       "com.mattermost.demo",
+			body:           `{"enabled": false}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
+				assert.Equal(t, false, rec.EventData.Parameters["tool_configs_changed"])
+				assert.Equal(t, true, rec.EventData.Parameters["persisted"])
+			},
+		},
+		{
+			name:           "tool config update records tool_configs_changed but never the configs",
+			pluginID:       "com.mattermost.demo",
+			body:           `{"tool_configs": [{"name": "` + plantedToolName + `", "policy": "ask", "enabled": false}]}`,
+			expectedStatus: http.StatusOK,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusSuccess, rec.Status)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				// Enabled was not in the request; the preserved value is recorded.
+				assert.Equal(t, true, rec.EventData.Parameters["enabled"])
+				assert.Equal(t, true, rec.EventData.Parameters["tool_configs_changed"])
+
+				raw, err := json.Marshal(rec)
+				require.NoError(t, err)
+				assert.NotContains(t, string(raw), plantedToolName, "audit record must never carry tool config content")
+			},
+		},
+		{
+			name:           "unregistered plugin records a 404 fail with the target id",
+			pluginID:       "com.missing",
+			body:           `{"enabled": true}`,
+			expectedStatus: http.StatusNotFound,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusNotFound, rec.Error.Code)
+				assert.Equal(t, "com.missing", rec.EventData.Parameters[audit.KeyMCPPluginID])
+			},
+		},
+		{
+			name:           "malformed body records a 400 fail with the target id",
+			pluginID:       "com.mattermost.demo",
+			body:           `not json`,
+			expectedStatus: http.StatusBadRequest,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusBadRequest, rec.Error.Code)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				assert.NotContains(t, rec.EventData.Parameters, "tool_configs_changed")
+			},
+		},
+		{
+			name:           "nil stored config records a 500 fail with the merged parameters",
+			pluginID:       "com.mattermost.demo",
+			body:           `{"enabled": false}`,
+			nilStoredCfg:   true,
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
+				assert.Equal(t, false, rec.EventData.Parameters["tool_configs_changed"])
+				assert.NotContains(t, rec.EventData.Parameters, "persisted")
+			},
+		},
+		{
+			name:           "prior-config read failure records a 500 fail with the merged parameters",
+			pluginID:       "com.mattermost.demo",
+			body:           `{"enabled": false}`,
+			getErr:         errors.New("config store unavailable"),
+			expectedStatus: http.StatusInternalServerError,
+			validateRecord: func(t *testing.T, rec *model.AuditRecord) {
+				assert.Equal(t, model.AuditStatusFail, rec.Status)
+				assert.Equal(t, http.StatusInternalServerError, rec.Error.Code)
+				assert.Equal(t, "com.mattermost.demo", rec.EventData.Parameters[audit.KeyMCPPluginID])
+				assert.Equal(t, false, rec.EventData.Parameters["enabled"])
+				assert.NotContains(t, rec.EventData.Parameters, "persisted")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e, records := setupAdminAuditTest(t)
+			defer e.Cleanup(t)
+
+			e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(true)
+
+			e.mcp.pluginServers = []mcp.PluginServerConfig{{
+				PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: true,
+			}}
+
+			var storedCfg *config.Config
+			if !tt.nilStoredCfg {
+				storedCfg = &config.Config{}
+			}
+			e.api.configStore = &testConfigStore{cfg: storedCfg, getErr: tt.getErr}
+			e.api.configUpdater = &testConfigUpdater{}
+			e.api.clusterNotifier = &testClusterNotifier{}
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/"+tt.pluginID, strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Mattermost-User-Id", "userid")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode)
+			require.Len(t, *records, 1, "exactly one audit record must be emitted")
+			rec := (*records)[0]
+			assert.Equal(t, AuditEventUpdateMCPPluginServer, rec.EventName)
+			assert.Equal(t, "userid", rec.Actor.UserId)
+			tt.validateRecord(t, rec)
+		})
+	}
+}
+
+func TestHandleUpdatePluginServerLicenseGate(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  bool
+		policy   string
+		body     string
+		minLevel enterprise.Level
+	}{
+		{name: "enabling a disabled server", enabled: false, policy: config.MCPToolPolicyAsk, body: `{"enabled": true}`, minLevel: enterprise.LevelEnterprise},
+		{name: "widening a tool policy", enabled: true, policy: config.MCPToolPolicyAsk, body: `{"tool_configs": [{"name": "echo", "policy": "auto_run_everywhere", "enabled": true}]}`, minLevel: enterprise.LevelEnterprise},
+		{name: "disabling a server with an auto-run policy", enabled: true, policy: config.MCPToolPolicyAutoRunEverywhere, body: `{"enabled": false}`},
+		{name: "narrowing a tool policy", enabled: true, policy: config.MCPToolPolicyAutoRunEverywhere, body: `{"tool_configs": [{"name": "echo", "policy": "ask", "enabled": true}]}`},
+	}
+
+	for _, tc := range tests {
+		for _, level := range enterprisetest.AllLevels {
+			t.Run(tc.name+"/"+level.String(), func(t *testing.T) {
+				api, mockAPI, stores := setupAdminTestEnvironment(t)
+				api.licenseChecker = enterprisetest.CheckerAt(level)
+				mockAPI.On("HasPermissionTo", "admin-user", model.PermissionManageSystem).Return(true).Maybe()
+				mockAPI.On("LogError", mock.Anything).Return().Maybe()
+				mockAPI.On("LogAuditRec", mock.Anything).Return().Maybe()
+
+				mgr := api.mcpClientManager.(*mockMCPClientManager)
+				mgr.pluginServers = []mcp.PluginServerConfig{{PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: tc.enabled}}
+				stores.configStore.cfg = &config.Config{}
+				stores.configStore.cfg.MCP.PluginServers = []config.PluginServerConfig{{
+					PluginID: "com.mattermost.demo", Name: "Demo", Path: "/mcp", Enabled: tc.enabled,
+					ToolConfigs: []config.MCPToolConfig{{Name: "echo", Policy: tc.policy, Enabled: true}},
+				}}
+
+				req := httptest.NewRequest(http.MethodPut, "/admin/mcp/plugin-servers/com.mattermost.demo", strings.NewReader(tc.body))
+				req.Header.Set("Mattermost-User-Id", "admin-user")
+				req.Header.Set("Content-Type", "application/json")
+				recorder := httptest.NewRecorder()
+				api.ServeHTTP(&plugin.Context{}, recorder, req)
+
+				if tc.minLevel != enterprise.LevelUnlicensed && level < tc.minLevel {
+					require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
+					require.Empty(t, mgr.adminPatchCalls)
+					return
+				}
+				require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
+			})
+		}
+	}
 }

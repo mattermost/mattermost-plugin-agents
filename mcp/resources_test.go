@@ -302,35 +302,71 @@ func TestClientManagerReadUserAppResource(t *testing.T) {
 		uri    = "ui://srv-a/app.html"
 	)
 
-	t.Run("unknown origin", func(t *testing.T) {
-		m := &ClientManager{
-			clients:  make(map[string]*UserClients),
-			activity: make(map[string]time.Time),
-			log:      newTestLogService(),
-			config:   Config{Servers: []ServerConfig{{Name: "srv-a", BaseURL: "http://srv-a/", Enabled: true}}},
+	newManager := func(servers []ServerConfig, httpClient *http.Client) *ClientManager {
+		return &ClientManager{
+			clients:       make(map[clientKey]*UserClients),
+			activity:      make(map[clientKey]time.Time),
+			log:           newTestLogService(),
+			httpClient:    httpClient,
+			toolsCache:    newTestToolsCache(),
+			oauthManager:  newTestOAuthManager(),
+			config:        Config{Servers: servers},
+			remoteAllowed: RemoteMCPAlwaysAllowed,
 		}
-		t.Cleanup(m.Close)
+	}
 
-		got, err := m.ReadUserAppResource(context.Background(), userID, "http://unknown/", uri)
-		require.Nil(t, got)
-		require.ErrorIs(t, err, ErrServerNotConfigured)
-	})
+	ineligible := []struct {
+		name      string
+		servers   []ServerConfig
+		origin    string
+		configure func(m *ClientManager)
+		wantErr   error
+	}{
+		{
+			name:    "unknown origin",
+			servers: []ServerConfig{{Name: "srv-a", BaseURL: "http://srv-a/", Enabled: true}},
+			origin:  "http://unknown/",
+			wantErr: ErrServerNotConfigured,
+		},
+		{
+			name:    "disabled origin is not configured",
+			servers: []ServerConfig{{Name: "srv-a", BaseURL: "http://srv-a/", Enabled: false}},
+			origin:  "http://srv-a/",
+			wantErr: ErrServerNotConfigured,
+		},
+		{
+			name:      "unlicensed remote origin is not configured",
+			servers:   []ServerConfig{{Name: "srv-a", BaseURL: "http://srv-a/", Enabled: true}},
+			origin:    "http://srv-a/",
+			configure: func(m *ClientManager) { m.remoteAllowed = func() bool { return false } },
+			wantErr:   ErrServerNotConfigured,
+		},
+		{
+			name:    "access policy denial",
+			servers: []ServerConfig{{ID: accessDeniedID, Name: "srv-a", BaseURL: "http://srv-a/", Enabled: true}},
+			origin:  "http://srv-a/",
+			configure: func(m *ClientManager) {
+				m.accessChecker = &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true}}
+			},
+			wantErr: ErrServerAccessDenied,
+		},
+	}
+	for _, tt := range ineligible {
+		t.Run(tt.name, func(t *testing.T) {
+			var dials atomic.Int32
+			httpClient := &http.Client{Transport: &refusingTransport{dials: &dials}}
+			m := newManager(tt.servers, httpClient)
+			if tt.configure != nil {
+				tt.configure(m)
+			}
+			t.Cleanup(m.Close)
 
-	t.Run("disabled origin is not configured", func(t *testing.T) {
-		m := &ClientManager{
-			clients:  make(map[string]*UserClients),
-			activity: make(map[string]time.Time),
-			log:      newTestLogService(),
-			config: Config{Servers: []ServerConfig{
-				{Name: "srv-a", BaseURL: "http://srv-a/", Enabled: false},
-			}},
-		}
-		t.Cleanup(m.Close)
-
-		got, err := m.ReadUserAppResource(context.Background(), userID, "http://srv-a/", uri)
-		require.Nil(t, got)
-		require.ErrorIs(t, err, ErrServerNotConfigured)
-	})
+			got, err := m.ReadUserAppResource(context.Background(), userID, tt.origin, uri)
+			require.Nil(t, got)
+			require.ErrorIs(t, err, tt.wantErr)
+			require.Zero(t, dials.Load(), "ineligible servers must never be dialed")
+		})
+	}
 
 	t.Run("lazy connect dials only the target enabled server", func(t *testing.T) {
 		targetServer := newAppResourceMCPServer(uri, UIResourceMIMEType, "<html>target</html>", nil, nil)
@@ -346,23 +382,12 @@ func TestClientManagerReadUserAppResource(t *testing.T) {
 				otherHTTP.Listener.Addr().String():  &otherHits,
 			},
 		}
-		httpClient := &http.Client{Transport: counting}
 
-		m := &ClientManager{
-			clients:      make(map[string]*UserClients),
-			activity:     make(map[string]time.Time),
-			log:          newTestLogService(),
-			httpClient:   httpClient,
-			toolsCache:   newTestToolsCache(),
-			oauthManager: newTestOAuthManager(),
-			config: Config{
-				Servers: []ServerConfig{
-					{Name: "target", BaseURL: targetHTTP.URL, Enabled: true},
-					{Name: "other", BaseURL: otherHTTP.URL, Enabled: true},
-					{Name: "disabled", BaseURL: "http://disabled.example/", Enabled: false},
-				},
-			},
-		}
+		m := newManager([]ServerConfig{
+			{Name: "target", BaseURL: targetHTTP.URL, Enabled: true},
+			{Name: "other", BaseURL: otherHTTP.URL, Enabled: true},
+			{Name: "disabled", BaseURL: "http://disabled.example/", Enabled: false},
+		}, &http.Client{Transport: counting})
 		// Close clients before httptest cleanup so SSE GETs are released.
 		t.Cleanup(func() {
 			m.Close()
@@ -375,7 +400,15 @@ func TestClientManagerReadUserAppResource(t *testing.T) {
 		require.Equal(t, "<html>target</html>", got.HTML)
 		require.Greater(t, targetHits.Load(), int32(0))
 		require.Zero(t, otherHits.Load(), "other enabled servers must not be dialed")
-		require.False(t, m.clients[userID].hasRemoteFanOutDone())
+
+		userClients := m.clients[UserCatalogRequest(userID).remoteKey()]
+		require.NotNil(t, userClients)
+		require.True(t, hasClientFromOrigin(userClients, targetHTTP.URL))
+		require.False(t, hasClientFromOrigin(userClients, otherHTTP.URL))
+
+		// A later catalog request still connects the servers the read skipped.
+		m.GetCatalogAccess(context.Background(), UserCatalogRequest(userID))
+		require.Greater(t, otherHits.Load(), int32(0))
 	})
 
 	t.Run("live resources/read 401 returns OAuthNeededError", func(t *testing.T) {
@@ -402,6 +435,16 @@ func TestClientManagerReadUserAppResource(t *testing.T) {
 		require.ErrorAs(t, readErr, &oauthErr)
 		require.NotEmpty(t, oauthErr.AuthURL())
 	})
+}
+
+// refusingTransport counts and fails every request.
+type refusingTransport struct {
+	dials *atomic.Int32
+}
+
+func (t *refusingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	t.dials.Add(1)
+	return nil, errors.New("must not dial")
 }
 
 type countingHostTransport struct {

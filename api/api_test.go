@@ -10,16 +10,21 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
@@ -55,6 +60,7 @@ type TestEnvironment struct {
 	conversationStore *mockConversationStore
 	agentStore        *mockAgentStore
 	mcp               *mockMCPClientManager
+	autoReplyStore    *fakeChannelAutoReplyStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -62,6 +68,7 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
+	services                        []llm.ServiceConfig
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -88,6 +95,10 @@ func (tc *testConfigImpl) AllowNativeWebSearchInChannels() bool {
 	return false
 }
 
+func (tc *testConfigImpl) GetServices() []llm.ServiceConfig {
+	return slices.Clone(tc.services)
+}
+
 type testLLMContextToolProvider struct {
 	tools []llm.Tool
 }
@@ -107,33 +118,68 @@ type mcpDisconnectCall struct {
 	serverName string
 }
 
+// allowAnyPluginAPILogging permits arbitrary log calls from subsystems used in
+// tests (for example MCP discovery). plugintest expands variadic arguments into
+// positional ones, so each arity needs its own expectation.
+func allowAnyPluginAPILogging(mockAPI *plugintest.API) {
+	for arity := 1; arity <= 20; arity++ {
+		args := make([]any, arity)
+		for i := range args {
+			args[i] = mock.Anything
+		}
+		mockAPI.On("LogDebug", args...).Maybe()
+		mockAPI.On("LogInfo", args...).Maybe()
+		mockAPI.On("LogWarn", args...).Maybe()
+		mockAPI.On("LogError", args...).Maybe()
+	}
+}
+
 // mockMCPClientManager is a minimal implementation of MCPClientManager for testing
 type mockMCPClientManager struct {
-	oauthManager        *mcp.OAuthManager
-	tools               []llm.Tool
-	mcpErrors           *mcp.Errors
-	config              mcp.Config
-	embeddedServer      mcp.EmbeddedMCPServer
-	processOAuthSession *mcp.OAuthSession
-	processOAuthErr     error
-	disconnectCalls     []mcpDisconnectCall
-	disconnectErr       error
-	oauthNeededCalls    []mcpDisconnectCall
-	refreshErr          error
-	refreshCalls        []string
-	getContexts         []context.Context
-	refreshContexts     []context.Context
-	ensureSessionErr    error
+	oauthManager                  *mcp.OAuthManager
+	tools                         []llm.Tool
+	mcpErrors                     *mcp.Errors
+	deniedOrigins                 map[string]bool
+	config                        mcp.Config
+	embeddedServer                mcp.EmbeddedMCPServer
+	processOAuthSession           *mcp.OAuthSession
+	processOAuthErr               error
+	disconnectCalls               []mcpDisconnectCall
+	disconnectErr                 error
+	oauthNeededCalls              []mcpDisconnectCall
+	refreshErr                    error
+	refreshCalls                  []string
+	getContexts                   []context.Context
+	getServiceAccountCalls        []string
+	getServiceAccountInvokerCalls []string
+	getServiceAccountContexts     []context.Context
+	serviceAccountTools           []llm.Tool
+	serviceAccountErrors          *mcp.Errors
+	refreshContexts               []context.Context
+	ensureSessionErr              error
+	ensureSessionCreated          bool
 
 	registerCalls   []mcp.PluginServerConfig
+	adminPatchCalls []mcp.PluginServerConfig
 	unregisterCalls []string
 	pluginServers   []mcp.PluginServerConfig
+	// accessPluginServers, when non-nil, is returned on CatalogAccess instead
+	// of ListPluginServers — used to assert response rendering ignores a live
+	// re-sample of the registry.
+	accessPluginServers []mcp.PluginServerConfig
 	// orphanPluginIDs simulates entries present in pluginServers but with
 	// no live source-plugin registration (hydrated from persisted config).
 	orphanPluginIDs map[string]bool
 
-	discoverPluginToolsResponse  []mcp.ToolInfo
-	discoverPluginToolsErr       error
+	discoverPluginToolsResponse []mcp.ToolInfo
+	discoverPluginToolsErr      error
+	// discoverPluginToolsFunc overrides the canned response per plugin. Set it
+	// to model per-plugin latency or per-plugin failures.
+	discoverPluginToolsFunc func(cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
+	httpClient              *http.Client
+
+	// Plugin discovery runs concurrently, so its bookkeeping is guarded.
+	discoverMu                   sync.Mutex
 	discoverPluginToolsCallCount int
 
 	readUserAppResource func(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error)
@@ -156,11 +202,11 @@ func (m *mockMCPClientManager) GetToolsCache() *mcp.ToolsCache {
 	return nil
 }
 
-func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error) {
+func (m *mockMCPClientManager) ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error) {
 	return m.processOAuthSession, m.processOAuthErr
 }
 
-func (m *mockMCPClientManager) DisconnectUserOAuth(userID, serverName string) error {
+func (m *mockMCPClientManager) DisconnectUserOAuth(_ context.Context, userID, serverName string) error {
 	m.disconnectCalls = append(m.disconnectCalls, mcpDisconnectCall{
 		userID:     userID,
 		serverName: serverName,
@@ -180,26 +226,68 @@ func (m *mockMCPClientManager) GetEmbeddedServer() mcp.EmbeddedMCPServer {
 	return m.embeddedServer
 }
 
-func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, error) {
+func (m *mockMCPClientManager) EnsureMCPSessionID(userID string) (string, bool, error) {
 	if m.ensureSessionErr != nil {
-		return "", m.ensureSessionErr
+		return "", false, m.ensureSessionErr
 	}
-	return "mock-session-id", nil
+	return "mock-session-id", m.ensureSessionCreated, nil
 }
 
 func (m *mockMCPClientManager) GetHTTPClient() *http.Client {
-	return nil
+	return m.httpClient
 }
 
-func (m *mockMCPClientManager) GetToolsForUser(ctx context.Context, _ string) ([]llm.Tool, *mcp.Errors) {
+func (m *mockMCPClientManager) GetToolsWithSelection(ctx context.Context, _ mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
 	m.getContexts = append(m.getContexts, ctx)
 	return m.tools, m.mcpErrors
 }
 
-func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
-	m.refreshCalls = append(m.refreshCalls, userID)
+func (m *mockMCPClientManager) catalogAccess(req mcp.CatalogRequest) mcp.CatalogAccess {
+	pluginSnapshot := m.accessPluginServers
+	if pluginSnapshot == nil {
+		pluginSnapshot = m.ListPluginServers()
+	}
+	access := mcp.CatalogAccess{
+		Tools:         m.tools,
+		Errors:        m.mcpErrors,
+		DeniedOrigins: m.deniedOrigins,
+		PluginServers: pluginSnapshot,
+	}
+	if req.ServiceAccount {
+		access.Tools = m.serviceAccountTools
+		access.Errors = m.serviceAccountErrors
+	}
+	return access
+}
+
+func (m *mockMCPClientManager) GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess {
+	if req.ServiceAccount {
+		m.getServiceAccountCalls = append(m.getServiceAccountCalls, req.RemoteOwnerID)
+		m.getServiceAccountInvokerCalls = append(m.getServiceAccountInvokerCalls, req.InvokingUserID)
+		m.getServiceAccountContexts = append(m.getServiceAccountContexts, ctx)
+		return m.catalogAccess(req)
+	}
+	m.getContexts = append(m.getContexts, ctx)
+	return m.catalogAccess(req)
+}
+
+func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
+	access := m.GetCatalogAccess(ctx, req)
+	return access.Tools, access.Errors
+}
+
+func (m *mockMCPClientManager) RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error) {
+	m.refreshCalls = append(m.refreshCalls, req.RemoteOwnerID)
 	m.refreshContexts = append(m.refreshContexts, ctx)
-	return m.tools, m.mcpErrors, m.refreshErr
+	if m.refreshErr != nil {
+		return mcp.CatalogAccess{}, m.refreshErr
+	}
+	return m.catalogAccess(req), nil
+}
+
+func (m *mockMCPClientManager) RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error) {
+	access, err := m.RefreshCatalogAccess(ctx, mcp.UserCatalogRequest(userID))
+	return access.Tools, access.Errors, err
 }
 
 func (m *mockMCPClientManager) GetConfig() mcp.Config {
@@ -208,7 +296,11 @@ func (m *mockMCPClientManager) GetConfig() mcp.Config {
 
 func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) {
 	m.registerCalls = append(m.registerCalls, cfg)
-	// Mirror real ClientManager: same PluginID replaces existing entry.
+	delete(m.orphanPluginIDs, cfg.PluginID)
+	m.storePluginServer(cfg)
+}
+
+func (m *mockMCPClientManager) storePluginServer(cfg mcp.PluginServerConfig) {
 	for i, existing := range m.pluginServers {
 		if existing.PluginID == cfg.PluginID {
 			m.pluginServers[i] = cfg
@@ -216,6 +308,20 @@ func (m *mockMCPClientManager) RegisterPluginServer(cfg mcp.PluginServerConfig) 
 		}
 	}
 	m.pluginServers = append(m.pluginServers, cfg)
+}
+
+func (m *mockMCPClientManager) UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool) {
+	// Mirror real ClientManager: patch only admin-owned fields on the live entry.
+	for i, existing := range m.pluginServers {
+		if existing.PluginID == pluginID {
+			existing.Enabled = enabled
+			existing.ToolConfigs = toolConfigs
+			m.pluginServers[i] = existing
+			m.adminPatchCalls = append(m.adminPatchCalls, existing)
+			return existing, true
+		}
+	}
+	return mcp.PluginServerConfig{}, false
 }
 
 func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
@@ -229,8 +335,13 @@ func (m *mockMCPClientManager) UnregisterPluginServer(pluginID string) {
 }
 
 func (m *mockMCPClientManager) ListPluginServers() []mcp.PluginServerConfig {
-	out := make([]mcp.PluginServerConfig, len(m.pluginServers))
-	copy(out, m.pluginServers)
+	out := make([]mcp.PluginServerConfig, 0, len(m.pluginServers))
+	for _, cfg := range m.pluginServers {
+		if m.orphanPluginIDs[cfg.PluginID] {
+			continue
+		}
+		out = append(out, cfg)
+	}
 	return out
 }
 
@@ -243,21 +354,70 @@ func (m *mockMCPClientManager) GetPluginServer(pluginID string) (mcp.PluginServe
 	return mcp.PluginServerConfig{}, false
 }
 
-func (m *mockMCPClientManager) IsPluginRegistered(pluginID string) bool {
-	if m.orphanPluginIDs[pluginID] {
-		return false
+func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
+	m.discoverMu.Lock()
+	m.discoverPluginToolsCallCount++
+	discover := m.discoverPluginToolsFunc
+	m.discoverMu.Unlock()
+
+	if discover != nil {
+		return discover(cfg)
 	}
-	for _, existing := range m.pluginServers {
-		if existing.PluginID == pluginID {
-			return true
-		}
-	}
-	return false
+	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
 }
 
-func (m *mockMCPClientManager) DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error) {
-	m.discoverPluginToolsCallCount++
-	return m.discoverPluginToolsResponse, m.discoverPluginToolsErr
+func (m *mockMCPClientManager) pluginDiscoveryCallCount() int {
+	m.discoverMu.Lock()
+	defer m.discoverMu.Unlock()
+	return m.discoverPluginToolsCallCount
+}
+
+// fakeChannelAutoReplyStore is a hand-rolled in-memory implementation of
+// ChannelAutoReplyStore. Injectable errors exercise the handlers' status-code
+// mapping; setErr may wrap autoreply.ErrValidation to exercise the 400 path.
+type fakeChannelAutoReplyStore struct {
+	settings    map[string]*autoreply.Setting
+	setCalls    []autoreply.Setting
+	deleteCalls []string
+	getErr      error
+	setErr      error
+	deleteErr   error
+}
+
+func newFakeChannelAutoReplyStore() *fakeChannelAutoReplyStore {
+	return &fakeChannelAutoReplyStore{settings: make(map[string]*autoreply.Setting)}
+}
+
+func (f *fakeChannelAutoReplyStore) Get(channelID string) (*autoreply.Setting, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.settings[channelID], nil
+}
+
+func (f *fakeChannelAutoReplyStore) Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error) {
+	if f.setErr != nil {
+		return nil, f.setErr
+	}
+	setting := autoreply.Setting{
+		ChannelID: channelID,
+		BotID:     botID,
+		Mode:      mode,
+		UpdatedBy: updatedBy,
+		UpdateAt:  time.Now().UnixMilli(),
+	}
+	f.setCalls = append(f.setCalls, setting)
+	f.settings[channelID] = &setting
+	return &setting, nil
+}
+
+func (f *fakeChannelAutoReplyStore) Delete(channelID string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	f.deleteCalls = append(f.deleteCalls, channelID)
+	delete(f.settings, channelID)
+	return nil
 }
 
 func (m *mockMCPClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
@@ -354,6 +514,12 @@ type mockAgentStore struct {
 
 	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
 	countErr error
+
+	// updateErr, when set, makes UpdateAgent fail.
+	updateErr error
+
+	// updateErrs, when non-empty, pops errors on consecutive UpdateAgent calls.
+	updateErrs []error
 }
 
 func newMockAgentStore() *mockAgentStore {
@@ -438,6 +604,16 @@ func (m *mockAgentStore) CountActiveAgents() (int, error) {
 }
 
 func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+	if len(m.updateErrs) > 0 {
+		err := m.updateErrs[0]
+		m.updateErrs = m.updateErrs[1:]
+		if err != nil {
+			return err
+		}
+	}
+	if m.updateErr != nil {
+		return m.updateErr
+	}
 	existing, ok := m.agents[cfg.ID]
 	if !ok || existing.DeleteAt != 0 {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
@@ -475,6 +651,29 @@ func (e *TestEnvironment) OverrideLicense(license *model.License) {
 	}
 	e.mockAPI.ExpectedCalls = filtered
 	e.mockAPI.On("GetLicense").Return(license).Maybe()
+}
+
+// CaptureAuditRecords replaces the default LogAuditRec mock registered by
+// SetupTestEnvironment with one that appends every logged record to the
+// returned slice, so tests can assert on emitted audit record contents.
+// The returned pointer must only be dereferenced after the request completes.
+func (e *TestEnvironment) CaptureAuditRecords() *[]*model.AuditRecord {
+	filtered := make([]*mock.Call, 0, len(e.mockAPI.ExpectedCalls))
+	for _, call := range e.mockAPI.ExpectedCalls {
+		if call.Method != "LogAuditRec" {
+			filtered = append(filtered, call)
+		}
+	}
+	e.mockAPI.ExpectedCalls = filtered
+
+	records := &[]*model.AuditRecord{}
+	e.mockAPI.On("LogAuditRec", mock.Anything).Run(func(args mock.Arguments) {
+		rec, ok := args.Get(0).(*model.AuditRecord)
+		if ok {
+			*records = append(*records, rec)
+		}
+	}).Maybe()
+	return records
 }
 
 // OverrideConfig replaces the default GetConfig mock registered by
@@ -520,10 +719,16 @@ func (t *testPluginAPI) PluginHTTP(req *http.Request) *http.Response {
 	return recorder.Result()
 }
 
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+}
+
 // createTestBots creates a test MMBots instance for testing
 func createTestBots(mockAPI *plugintest.API, client *pluginapi.Client) *bots.MMBots {
 	licenseChecker := enterprise.NewLicenseChecker(client)
-	testBots := bots.New(mockAPI, client, licenseChecker, nil, nil, &http.Client{}, nil)
+	testBots := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	return testBots
 }
 
@@ -565,22 +770,21 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	mockConvStore := newMockConversationStore()
 	agentStore := newMockAgentStore()
 	mcpMgr := newTestMCPClientManager(t)
+	autoReplyStore := newFakeChannelAutoReplyStore()
 
-	// Allow arbitrary log calls from subsystems used in tests (e.g. MCP discovery).
-	for i := 1; i <= 20; i++ {
-		args := make([]interface{}, i)
-		for j := range args {
-			args[j] = mock.Anything
-		}
-		mockAPI.On("LogDebug", args...).Maybe()
-		mockAPI.On("LogInfo", args...).Maybe()
-		mockAPI.On("LogWarn", args...).Maybe()
-		mockAPI.On("LogError", args...).Maybe()
-	}
+	allowAnyPluginAPILogging(mockAPI)
 
-	// Mock GetConfig and GetLicense for WithLLMContextServerInfo used in bridge context building.
+	// Mock GetConfig and GetLicense for WithLLMContextServerInfo and the
+	// context builder's remote-MCP license gate. Default to a licensed
+	// server so remote MCP tools are supplied; tests asserting unlicensed
+	// behavior override via OverrideLicense.
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
-	mockAPI.On("GetLicense").Return((*model.License)(nil)).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
+
+	// The audit middleware logs a record for every audited route; accept them
+	// by default so unrelated tests don't have to care. Tests asserting audit
+	// behavior replace this with CaptureAuditRecords.
+	mockAPI.On("LogAuditRec", mock.Anything).Maybe()
 
 	conversationsService := conversations.New(
 		llmPrompts,
@@ -608,7 +812,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		llmPrompts,
 		nil,
 		nil,
-		nil,
+		enterprise.NewLicenseChecker(client),
 		nil,
 		nil,
 		mcpMgr,
@@ -624,6 +828,8 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		mockConvStore,
 		nil,
 		nil,
+		autoReplyStore,
+		newPassthroughAccessChecker(),
 	)
 
 	return &TestEnvironment{
@@ -635,6 +841,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		conversationStore: mockConvStore,
 		agentStore:        agentStore,
 		mcp:               mcpMgr,
+		autoReplyStore:    autoReplyStore,
 	}
 }
 
@@ -700,7 +907,7 @@ func TestPostRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(false)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(false)
 				},
 			},
 			"user not allowed": {
@@ -708,7 +915,7 @@ func TestPostRouter(t *testing.T) {
 				expectedStatus: http.StatusForbidden,
 				botconfig: llm.BotConfig{
 					UserAccessLevel: llm.UserAccessLevelBlock,
-					UserIDs:         []string{"userid"},
+					UserIDs:         []string{testUserID},
 				},
 				envSetup: func(e *TestEnvironment) {
 					e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
@@ -716,7 +923,7 @@ func TestPostRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
 				},
 			},
 		} {
@@ -735,7 +942,7 @@ func TestPostRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -765,7 +972,7 @@ func TestAdminRouter(t *testing.T) {
 				request:        httptest.NewRequest(http.MethodGet, url, nil),
 				expectedStatus: http.StatusForbidden,
 				envSetup: func(e *TestEnvironment) {
-					e.mockAPI.On("HasPermissionTo", "userid", model.PermissionManageSystem).Return(false)
+					e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 				},
 			},
 		} {
@@ -777,7 +984,7 @@ func TestAdminRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -882,7 +1089,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			e.bots.SetBotsForTesting([]*bots.Bot{bots.NewBot(llm.BotConfig{Name: "thebot"}, llm.ServiceConfig{}, nil, nil)})
 
 			request := httptest.NewRequest(http.MethodPost, url, strings.NewReader("non-empty body"))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			recorder := httptest.NewRecorder()
 			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
 			resp := recorder.Result()
@@ -915,7 +1122,7 @@ func TestChannelRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(false)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(false)
 				},
 			},
 			"test user not allowed": {
@@ -923,7 +1130,7 @@ func TestChannelRouter(t *testing.T) {
 				expectedStatus: http.StatusForbidden,
 				botconfig: llm.BotConfig{
 					UserAccessLevel: llm.UserAccessLevelBlock,
-					UserIDs:         []string{"userid"},
+					UserIDs:         []string{testUserID},
 				},
 				envSetup: func(e *TestEnvironment) {
 					e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{
@@ -931,7 +1138,7 @@ func TestChannelRouter(t *testing.T) {
 						Type:   model.ChannelTypeOpen,
 						TeamId: "teamid",
 					}, nil)
-					e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+					e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true)
 				},
 			},
 		} {
@@ -947,7 +1154,7 @@ func TestChannelRouter(t *testing.T) {
 
 				test.envSetup(e)
 
-				test.request.Header.Add("Mattermost-User-ID", "userid")
+				test.request.Header.Add("Mattermost-User-ID", testUserID)
 				recorder := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{}, recorder, test.request)
 				resp := recorder.Result()
@@ -962,18 +1169,20 @@ func TestHandleGetAIBots(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	tests := []struct {
-		name                     string
-		searchService            *search.Search
-		expectedSearchEnabled    bool
-		expectedAllowUnsafeLinks bool
-		expectedStatus           int
-		envSetup                 func(e *TestEnvironment)
+		name                          string
+		searchService                 *search.Search
+		useServiceAccountAuth         bool
+		expectedUseServiceAccountAuth bool
+		expectedSearchEnabled         bool
+		expectedAllowUnsafeLinks      bool
+		expectedStatus                int
+		envSetup                      func(e *TestEnvironment)
 	}{
 		{
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), nil)
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
@@ -1003,13 +1212,31 @@ func TestHandleGetAIBots(t *testing.T) {
 			},
 		},
 		{
-			name:                     "unsafe links enabled via config",
-			searchService:            nil,
-			expectedSearchEnabled:    false,
-			expectedAllowUnsafeLinks: true,
-			expectedStatus:           http.StatusOK,
+			// The webapp reads useServiceAccountAuth to hide per-user MCP connect prompts.
+			name:                          "unsafe links enabled via config",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: true,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      true,
+			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			// Unlicensed servers run service account agents in per-user mode, so the
+			// response must report the effective mode instead of the raw agent flag.
+			name:                          "service account agent reports user mode when unlicensed",
+			searchService:                 nil,
+			useServiceAccountAuth:         true,
+			expectedUseServiceAccountAuth: false,
+			expectedSearchEnabled:         false,
+			expectedAllowUnsafeLinks:      false,
+			expectedStatus:                http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.OverrideLicense(nil)
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -1025,8 +1252,9 @@ func TestHandleGetAIBots(t *testing.T) {
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
-				Name:        "test-bot",
-				DisplayName: "Test Bot",
+				Name:                  "test-bot",
+				DisplayName:           "Test Bot",
+				UseServiceAccountAuth: test.useServiceAccountAuth,
 			})
 
 			// Setup mock expectations
@@ -1035,7 +1263,7 @@ func TestHandleGetAIBots(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 
 			// Execute request
 			recorder := httptest.NewRecorder()
@@ -1053,6 +1281,8 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
+				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
+					"UseServiceAccountAuth field should report the effective service account mode")
 			}
 		})
 	}
@@ -1070,7 +1300,7 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 			Name:            "hidden",
 			DisplayName:     "Hidden Agent",
 			UserAccessLevel: llm.UserAccessLevelBlock,
-			UserIDs:         []string{"userid"},
+			UserIDs:         []string{testUserID},
 		},
 		llm.ServiceConfig{},
 		&model.Bot{UserId: "hiddenbotuserid1234567890", Username: "hidden", DisplayName: "Hidden Agent"},
@@ -1091,7 +1321,7 @@ func TestHandleGetAIBotsDefaultBotAfterFilteredBot(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
 
 	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-	request.Header.Add("Mattermost-User-ID", "userid")
+	request.Header.Add("Mattermost-User-ID", testUserID)
 
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)
@@ -1132,7 +1362,7 @@ func TestHandleGetAIBotsIsDefaultFlag(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything).Maybe()
 
 	request := httptest.NewRequest(http.MethodGet, "/ai_bots", nil)
-	request.Header.Add("Mattermost-User-ID", "userid")
+	request.Header.Add("Mattermost-User-ID", testUserID)
 
 	recorder := httptest.NewRecorder()
 	e.api.ServeHTTP(&plugin.Context{}, recorder, request)

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -172,9 +173,9 @@ func (s *loadedStateFlowStore) DeleteResponseTurns(conversationID, postID string
 		return nil
 	}
 	userSeq := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].Role == "user" && turns[i].Sequence < anchorSeq {
-			userSeq = turns[i].Sequence
+	for _, turn := range slices.Backward(turns) {
+		if turn.Role == "user" && turn.Sequence < anchorSeq {
+			userSeq = turn.Sequence
 			break
 		}
 	}
@@ -381,7 +382,7 @@ func TestProcessDMRequestIssuesSingleRequest(t *testing.T) {
 	convService := conversation.NewService(convStore, nil, nil, nil)
 	lm := &loadedStateLLM{}
 	c := &Conversations{convService: convService}
-	llmContext := &llm.Context{Tools: llm.NewNoTools()}
+	llmContext := &llm.Context{Tools: llm.NewToolStore()}
 
 	streamResult, err := c.ProcessDMRequest(context.Background(), "conv-id", lm, llmContext, 0)
 	require.NoError(t, err)
@@ -418,7 +419,7 @@ func TestHandleToolCallExecutesApprovedToolRestoredFromLoadTurns(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -476,9 +477,11 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 	}))
 
 	mockAPI := &plugintest.API{}
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -490,6 +493,7 @@ func TestHandleToolCallFailsSafelyWhenNoMatchingLoadTurn(t *testing.T) {
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           botsService,
+		licenseChecker: licenseChecker,
 		convService:    conversation.NewService(convStore, nil, nil, nil),
 	}
 
@@ -539,9 +543,11 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 	}))
 
 	mockAPI := &plugintest.API{}
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -553,6 +559,7 @@ func TestHandleToolCallRejectsServerOriginMismatchEvenAfterLoad(t *testing.T) {
 		mmClient:       mmClient,
 		contextBuilder: loadedStateBuilder(t),
 		bots:           botsService,
+		licenseChecker: licenseChecker,
 		convService:    conversation.NewService(convStore, nil, nil, nil),
 	}
 
@@ -608,7 +615,7 @@ func TestHandleToolCallRestoresMultipleLoadsBeforeExecutingApprovedTool(t *testi
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	bot := loadedStateBot(&loadedStateLLM{})
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 
@@ -665,6 +672,7 @@ func TestStreamToolFollowUpRestoresToolFromPriorLoadTurns(t *testing.T) {
 		&model.Post{Id: "root-post-id"},
 		conv,
 		true,
+		false,
 		nil,
 	)
 	require.NoError(t, err)
@@ -816,7 +824,7 @@ func TestHandleToolResultScopesSharedToClickedPost(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{loadedStateBot(&loadedStateLLM{})})
 
 	mmClient := mocks.NewMockClient(t)

@@ -9,7 +9,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -31,20 +33,33 @@ func (a *API) handleCreateCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	if prompt.IsShared && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+		return
+	}
+
 	created, err := a.customPromptsStore.Create(prompt)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to create custom prompt: %w", err))
 		return
 	}
 
+	// Audit that a prompt was created and whether it is shared — never its
+	// name or template, which are user content.
+	rec := auditRec(c)
+	audit.AddParam(rec, "prompt_id", created.ID)
+	audit.AddParam(rec, "is_shared", created.IsShared)
+
 	c.JSON(http.StatusCreated, created)
 }
 
-// handleListCustomPrompts returns all prompts visible to the authenticated user.
+// handleListCustomPrompts returns prompts visible to the authenticated user.
+// Shared prompt libraries are available at Enterprise and above; below that
+// level only the caller's own prompts are returned.
 func (a *API) handleListCustomPrompts(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	prompts, err := a.customPromptsStore.ListForUser(userID)
+	includeShared := a.licenseChecker.Allows(enterprise.CapSharedPrompts)
+	prompts, err := a.customPromptsStore.ListForUser(userID, includeShared)
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to list custom prompts: %w", err))
 		return
@@ -58,7 +73,12 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
 
-	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
+	// Record the target before the ownership check so denial and not-found
+	// failures still identify which prompt was targeted.
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
+
+	existing, ok := a.requirePromptOwnership(c, promptID, userID)
+	if !ok {
 		return
 	}
 
@@ -68,11 +88,19 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 		return
 	}
 
+	// Sharing state is the only body field audited — never the name or
+	// template, which are user content.
+	audit.AddParam(auditRec(c), "is_shared", prompt.IsShared)
+
 	prompt.ID = promptID
 	prompt.CreatorID = userID
 
 	if err := prompt.Validate(); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	if !existing.IsShared && prompt.IsShared && !a.requireCapability(c, enterprise.CapSharedPrompts) {
 		return
 	}
 
@@ -88,6 +116,10 @@ func (a *API) handleUpdateCustomPrompt(c *gin.Context) {
 func (a *API) handleDeleteCustomPrompt(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	promptID := c.Param("id")
+
+	// Record the target before the ownership check so denial and not-found
+	// failures still identify which prompt was targeted.
+	audit.AddParam(auditRec(c), "prompt_id", audit.TruncateID(promptID))
 
 	if _, ok := a.requirePromptOwnership(c, promptID, userID); !ok {
 		return
@@ -135,6 +167,17 @@ func (a *API) handleSetPromptPin(c *gin.Context) {
 		return
 	}
 
+	if req.Pinned {
+		prompt, err := a.customPromptsStore.Get(req.PromptID)
+		if err != nil {
+			c.AbortWithError(http.StatusNotFound, fmt.Errorf("prompt not found: %w", err))
+			return
+		}
+		if prompt.CreatorID != userID && !a.requireCapability(c, enterprise.CapSharedPrompts) {
+			return
+		}
+	}
+
 	if err := a.customPromptsStore.SetPinned(userID, req.PromptID, req.Pinned); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to set prompt pin: %w", err))
 		return
@@ -169,6 +212,9 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	// Enforce visibility: only the creator or shared prompts are accessible
 	if prompt.CreatorID != userID && !prompt.IsShared {
 		c.AbortWithError(http.StatusNotFound, errors.New("prompt not found or not accessible"))
+		return
+	}
+	if prompt.CreatorID != userID && !a.requireCapability(c, enterprise.CapSharedPrompts) {
 		return
 	}
 

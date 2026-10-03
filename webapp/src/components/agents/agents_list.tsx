@@ -15,16 +15,13 @@ import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
 import {PrimaryButton} from '@/components/assets/buttons';
 import {UserAgent, ServiceInfo} from '@/types/agents';
-import {useIsMultiLLMLicensed} from '@/license';
+import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
 
 type Tab = 'all' | 'yours';
-
-// Keep in sync with api.FreeTierAgentLimit (api/api_agents.go).
-const FREE_TIER_AGENT_LIMIT = 1;
 
 const AgentsList = () => {
     const intl = useIntl();
@@ -40,7 +37,9 @@ const AgentsList = () => {
     // Mirrors api.canConfigureAgentServices. Users without these permissions
     // browse read-only; requesting /services would 403 and wrongly flag every agent.
     const canViewServices = hasManageOwnAgent || hasManageOthersAgent || hasManageSystem;
-    const multiLLMLicensed = useIsMultiLLMLicensed();
+    const agentLimit = useAgentLimit();
+    const licenseLevel = useLicenseLevel();
+    const licenseLevelName = useLicenseLevelName();
 
     const [agents, setAgents] = useState<UserAgent[]>([]);
     const [services, setServices] = useState<ServiceInfo[]>([]);
@@ -58,8 +57,15 @@ const AgentsList = () => {
     const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
 
     const serverAgentCount = activeAgentCount ?? agents.length;
-    const createQuotaReached = !multiLLMLicensed && serverAgentCount >= FREE_TIER_AGENT_LIMIT;
+    const createQuotaReached = agentLimit !== null && serverAgentCount >= agentLimit;
     const createButtonDisabled = loading || createQuotaReached;
+    const nextAgentPlanName = licenseLevelName(
+        licenseLevel < LicenseLevel.Professional ? LicenseLevel.Professional : LicenseLevel.Enterprise,
+    );
+    const createQuotaMessage = agentLimit === null ? '' : intl.formatMessage(
+        {defaultMessage: 'Your current plan allows {count, plural, one {# agent} other {# agents}}. Additional agents are available on {plan} plans and above.'},
+        {count: agentLimit, plan: nextAgentPlanName},
+    );
 
     const fetchAgents = useCallback(async () => {
         try {
@@ -167,137 +173,149 @@ const AgentsList = () => {
 
     if (viewOpen) {
         return (
-            <AgentConfigView
-                mode={viewMode}
-                {...(editingAgent ? {agent: editingAgent} : {})}
-                services={services}
-                onBack={handleViewBack}
-                onSaved={handleViewSaved}
-            />
+            <ConfigViewFrame>
+                <ContentColumn $fillHeight={true}>
+                    <AgentConfigView
+                        mode={viewMode}
+                        {...(editingAgent ? {agent: editingAgent} : {})}
+                        services={services}
+                        onBack={handleViewBack}
+                        onSaved={handleViewSaved}
+                    />
+                </ContentColumn>
+            </ConfigViewFrame>
         );
     }
 
     return (
         <Container>
-            <Header>
-                <TitleRow>
-                    <Title>
-                        <FormattedMessage defaultMessage='Agents'/>
-                    </Title>
-                    <Subtitle>
-                        <FormattedMessage defaultMessage='Here are the agents you have access to'/>
-                    </Subtitle>
-                </TitleRow>
-                {userCanCreateAgent && (
-                    createQuotaReached ? (
-                        <OverlayTrigger
-                            placement='bottom'
-                            overlay={
-                                <Tooltip id='create-agent-quota-tooltip'>
-                                    <FormattedMessage defaultMessage='Multiple self-service agents require a qualifying Mattermost plan'/>
-                                </Tooltip>
-                            }
-                        >
-                            {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
-                            <CreateButtonWrapper>
+            <FixedChrome>
+                <ContentColumn>
+                    <Header>
+                        <TitleRow>
+                            <Title>
+                                <FormattedMessage defaultMessage='Agents'/>
+                            </Title>
+                            <Subtitle>
+                                <FormattedMessage defaultMessage='Agents are AI assistants in your workspace. Mention @username in a channel or direct message to chat with one.'/>
+                            </Subtitle>
+                        </TitleRow>
+                        {userCanCreateAgent && (
+                            createQuotaReached ? (
+                                <OverlayTrigger
+                                    placement='bottom'
+                                    overlay={
+                                        <Tooltip id='create-agent-quota-tooltip'>
+                                            {createQuotaMessage}
+                                        </Tooltip>
+                                    }
+                                >
+                                    {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
+                                    <CreateButtonWrapper>
+                                        <CreateButton
+                                            onClick={handleCreateAgent}
+                                            disabled={true}
+                                        >
+                                            <PlusIcon size={16}/>
+                                            <FormattedMessage defaultMessage='Create agent'/>
+                                        </CreateButton>
+                                    </CreateButtonWrapper>
+                                </OverlayTrigger>
+                            ) : (
                                 <CreateButton
                                     onClick={handleCreateAgent}
-                                    disabled={true}
+                                    disabled={createButtonDisabled}
                                 >
                                     <PlusIcon size={16}/>
                                     <FormattedMessage defaultMessage='Create agent'/>
                                 </CreateButton>
-                            </CreateButtonWrapper>
-                        </OverlayTrigger>
-                    ) : (
-                        <CreateButton
-                            onClick={handleCreateAgent}
-                            disabled={createButtonDisabled}
+                            )
+                        )}
+                    </Header>
+
+                    <TabBar>
+                        <TabButton
+                            $active={activeTab === 'all'}
+                            onClick={() => setActiveTab('all')}
                         >
-                            <PlusIcon size={16}/>
-                            <FormattedMessage defaultMessage='Create agent'/>
-                        </CreateButton>
-                    )
-                )}
-            </Header>
+                            <FormattedMessage defaultMessage='All agents'/>
+                        </TabButton>
+                        <TabButton
+                            $active={activeTab === 'yours'}
+                            onClick={() => setActiveTab('yours')}
+                        >
+                            <FormattedMessage defaultMessage='Your agents'/>
+                        </TabButton>
+                    </TabBar>
 
-            <TabBar>
-                <TabButton
-                    $active={activeTab === 'all'}
-                    onClick={() => setActiveTab('all')}
-                >
-                    <FormattedMessage defaultMessage='All agents'/>
-                </TabButton>
-                <TabButton
-                    $active={activeTab === 'yours'}
-                    onClick={() => setActiveTab('yours')}
-                >
-                    <FormattedMessage defaultMessage='Your agents'/>
-                </TabButton>
-            </TabBar>
+                    <SearchContainer>
+                        <SearchInputWrapper>
+                            <SearchIconWrapper>
+                                <MagnifyIcon size={18}/>
+                            </SearchIconWrapper>
+                            <SearchInput
+                                type='text'
+                                placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                            />
+                        </SearchInputWrapper>
+                    </SearchContainer>
+                </ContentColumn>
+            </FixedChrome>
 
-            <SearchContainer>
-                <SearchInputWrapper>
-                    <SearchIconWrapper>
-                        <MagnifyIcon size={18}/>
-                    </SearchIconWrapper>
-                    <SearchInput
-                        type='text'
-                        placeholder={intl.formatMessage({defaultMessage: 'Search agents...'})}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                    />
-                </SearchInputWrapper>
-            </SearchContainer>
-
-            {loading && (
-                <LoadingContainer>
-                    <FormattedMessage defaultMessage='Loading agents...'/>
-                </LoadingContainer>
-            )}
-
-            {error && (
-                <ErrorContainer>{error}</ErrorContainer>
-            )}
-
-            {servicesError && !error && (
-                <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
-            )}
-
-            {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
-                <NoResultsMessage>
-                    <FormattedMessage
-                        defaultMessage='No agents match "{query}"'
-                        values={{query: searchQuery}}
-                    />
-                </NoResultsMessage>
-            )}
-
-            {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
-                <EmptyState>
-                    {activeTab === 'yours' ? (
-                        <FormattedMessage defaultMessage="You haven't created any agents yet."/>
-                    ) : (
-                        <FormattedMessage defaultMessage='No agents have been created yet.'/>
+            <ListViewport data-testid='agents-list-viewport'>
+                <ListContent>
+                    {loading && (
+                        <LoadingContainer>
+                            <FormattedMessage defaultMessage='Loading agents...'/>
+                        </LoadingContainer>
                     )}
-                </EmptyState>
-            )}
 
-            {!loading && !error && filteredAgents.length > 0 && (
-                <AgentListContainer>
-                    {filteredAgents.map((agent) => (
-                        <AgentRow
-                            key={agent.id}
-                            agent={agent}
-                            services={services}
-                            servicesLoaded={servicesLoaded}
-                            canManage={userCanManageAgent(agent)}
-                            onEdit={handleEdit}
-                            onDelete={handleDeleteRequest}
-                        />
-                    ))}
-                </AgentListContainer>
-            )}
+                    {error && (
+                        <ErrorContainer>{error}</ErrorContainer>
+                    )}
+
+                    {servicesError && !error && (
+                        <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
+                    )}
+
+                    {!loading && !error && filteredAgents.length === 0 && searchQuery.trim() && (
+                        <NoResultsMessage>
+                            <FormattedMessage
+                                defaultMessage='No agents match "{query}"'
+                                values={{query: searchQuery}}
+                            />
+                        </NoResultsMessage>
+                    )}
+
+                    {!loading && !error && filteredAgents.length === 0 && !searchQuery.trim() && (
+                        <EmptyState>
+                            {activeTab === 'yours' ? (
+                                <FormattedMessage defaultMessage="You haven't created any agents yet."/>
+                            ) : (
+                                <FormattedMessage defaultMessage='No agents have been created yet.'/>
+                            )}
+                        </EmptyState>
+                    )}
+
+                    {!loading && !error && filteredAgents.length > 0 && (
+                        <AgentListContainer>
+                            {filteredAgents.map((agent) => (
+                                <AgentRow
+                                    key={agent.id}
+                                    agent={agent}
+                                    services={services}
+                                    servicesLoaded={servicesLoaded}
+                                    canManage={userCanManageAgent(agent)}
+                                    onEdit={handleEdit}
+                                    onDelete={handleDeleteRequest}
+                                />
+                            ))}
+                        </AgentListContainer>
+                    )}
+                </ListContent>
+            </ListViewport>
 
             {deletingAgent && (
                 <DeleteAgentDialog
@@ -308,25 +326,63 @@ const AgentsList = () => {
                 />
             )}
 
-            <Footer>
-                <FormattedMessage defaultMessage='AI services are third party services. Mattermost is not responsible for output.'/>
-            </Footer>
+            <FixedChrome>
+                <ContentColumn>
+                    <Footer>
+                        <FormattedMessage defaultMessage='AI services are third party services. Mattermost is not responsible for output.'/>
+                    </Footer>
+                </ContentColumn>
+            </FixedChrome>
         </Container>
     );
 };
 
 // --- Styled Components ---
 
+const CONTENT_MAX_WIDTH = '960px';
+const CONTENT_HORIZONTAL_PADDING = '32px';
+
+const ContentColumn = styled.div<{$fillHeight?: boolean}>`
+    width: 100%;
+    max-width: ${CONTENT_MAX_WIDTH};
+    margin: 0 auto;
+    padding: 0 ${CONTENT_HORIZONTAL_PADDING};
+
+    ${({$fillHeight}) => $fillHeight && `
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        height: 100%;
+    `}
+`;
+
+const FixedChrome = styled.div`
+    flex-shrink: 0;
+    width: 100%;
+`;
+
+const ConfigViewFrame = styled.div`
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    align-items: stretch;
+`;
+
 const Container = styled.div`
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    gap: 0;
-    overflow-y: auto;
+    height: 100%;
+    overflow: hidden;
+`;
 
-    // Keep the scrollbar hidden until the list is hovered, matching the
-    // overlay-style behaviour users expect from the rest of Mattermost.
+const listScrollbarStyles = `
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;
 
@@ -348,19 +404,40 @@ const Container = styled.div`
     }
 `;
 
+const ListViewport = styled.div`
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    ${listScrollbarStyles}
+`;
+
+const ListContent = styled.div`
+    width: 100%;
+    max-width: ${CONTENT_MAX_WIDTH};
+    margin: 0 auto;
+    padding: 0 ${CONTENT_HORIZONTAL_PADDING} 8px;
+`;
+
 const Header = styled.div`
     display: flex;
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
     padding: 48px 0 24px;
+    flex-shrink: 0;
+    gap: 16px;
 `;
 
 const TitleRow = styled.div`
     display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    min-width: 0;
+    flex: 1;
 `;
 
 const Title = styled.h1`
@@ -396,6 +473,7 @@ const TabBar = styled.div`
     flex-direction: row;
     gap: 4px;
     padding-bottom: 16px;
+    flex-shrink: 0;
 `;
 
 const TabButton = styled.button<{$active: boolean}>`
@@ -417,6 +495,7 @@ const TabButton = styled.button<{$active: boolean}>`
 
 const SearchContainer = styled.div`
     padding: 0 0 16px 0;
+    flex-shrink: 0;
 `;
 
 const SearchInputWrapper = styled.div`
@@ -515,6 +594,7 @@ const Footer = styled.div`
     font-weight: 400;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
+    flex-shrink: 0;
 `;
 
 export default AgentsList;

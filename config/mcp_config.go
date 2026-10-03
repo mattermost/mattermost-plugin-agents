@@ -3,11 +3,28 @@
 
 package config
 
+import (
+	"errors"
+	"fmt"
+	"net/textproto"
+	"strings"
+)
+
 const (
 	MCPToolPolicyAsk               = "ask"
 	MCPToolPolicyAutoRunInDM       = "auto_run_in_dm"
 	MCPToolPolicyAutoRunEverywhere = "auto_run_everywhere"
+
+	// MCPEmbeddedServerOrigin is the runtime ServerOrigin for the embedded
+	// Mattermost MCP server (matches mcp.EmbeddedClientKey).
+	MCPEmbeddedServerOrigin = "embedded://mattermost"
 )
+
+// PluginServerOrigin returns the runtime ServerOrigin for a plugin-registered
+// MCP server. Identity is keyed by PluginID only — Path is not part of the origin.
+func PluginServerOrigin(pluginID string) string {
+	return "plugin://" + pluginID
+}
 
 // MCPToolConfig represents per-tool configuration for an MCP server.
 type MCPToolConfig struct {
@@ -32,6 +49,8 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // MCPEmbeddedServerConfig contains configuration for the embedded MCP server
 type MCPEmbeddedServerConfig struct {
+	// ID is the ABAC policy identity; runtime tool origin is MCPEmbeddedServerOrigin.
+	ID          string          `json:"id,omitempty"`
 	Enabled     bool            `json:"enabled"`
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
 }
@@ -48,13 +67,21 @@ type MCPConfig struct {
 
 // MCPServerConfig contains the configuration for a single MCP server
 type MCPServerConfig struct {
-	Name         string            `json:"name"`
-	Enabled      bool              `json:"enabled"`
-	BaseURL      string            `json:"baseURL"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	ClientID     string            `json:"clientID,omitempty"`
-	ClientSecret string            `json:"clientSecret,omitempty"`
-	ToolConfigs  []MCPToolConfig   `json:"tool_configs,omitempty"`
+	// ID is the immutable, never-reused ABAC policy identity; it survives Name/BaseURL
+	// edits. OAuth keying (Name) and tool origin (BaseURL) are separate identity systems.
+	ID      string            `json:"id,omitempty"`
+	Name    string            `json:"name"`
+	Enabled bool              `json:"enabled"`
+	BaseURL string            `json:"baseURL"`
+	Headers map[string]string `json:"headers,omitempty"`
+
+	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
+	// sent in place of per-user OAuth on service-account-mode connections.
+	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`
+
+	ClientID     string          `json:"clientID,omitempty"`
+	ClientSecret string          `json:"clientSecret,omitempty"`
+	ToolConfigs  []MCPToolConfig `json:"tool_configs,omitempty"`
 }
 
 // GetToolPolicy returns the policy and enabled state for a tool.
@@ -101,8 +128,170 @@ func (s *MCPServerConfig) IsToolAutoRunInDM(toolName string) bool {
 	return IsToolPolicyAutoRunInDM(policy) && enabled
 }
 
+// EffectiveServiceAccountHeaders returns the ServiceAccountHeaders entries with a
+// non-blank name and value, trimmed of surrounding whitespace and keyed by their
+// canonical MIME form; blank or padded System Console rows would make Go's HTTP
+// transport reject the whole request. Because http.Header canonicalizes names on
+// the wire, collisions are case-insensitive: entries whose canonical names collide
+// are ambiguous, so all of them are dropped instead of letting map iteration order
+// pick the winner.
+func (s *MCPServerConfig) EffectiveServiceAccountHeaders() map[string]string {
+	if s == nil {
+		return nil
+	}
+
+	counts := make(map[string]int, len(s.ServiceAccountHeaders))
+	for name, value := range s.ServiceAccountHeaders {
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+		if canonicalName == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		counts[canonicalName]++
+	}
+
+	var headers map[string]string
+	for name, value := range s.ServiceAccountHeaders {
+		canonicalName := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+		trimmedValue := strings.TrimSpace(value)
+		if canonicalName == "" || trimmedValue == "" || counts[canonicalName] > 1 {
+			continue
+		}
+		if headers == nil {
+			headers = make(map[string]string, len(counts))
+		}
+		headers[canonicalName] = trimmedValue
+	}
+	return headers
+}
+
+// HasServiceAccountAuth reports whether this server has at least one usable
+// service account header. Enabled is intentionally ignored.
+func (s *MCPServerConfig) HasServiceAccountAuth() bool {
+	return len(s.EffectiveServiceAccountHeaders()) > 0
+}
+
+// ServerIDByOrigin maps a runtime ServerOrigin to the stable server ID.
+// Origins are BaseURL (external), MCPEmbeddedServerOrigin (embedded), or
+// PluginServerOrigin(PluginID) (plugin). ID-less servers are omitted; on
+// duplicate origins the last entry wins (matching filterToolsByConfig);
+// disabled servers are included because policy CRUD needs the mapping
+// regardless of enablement.
+func (c *MCPConfig) ServerIDByOrigin() map[string]string {
+	out := make(map[string]string, len(c.Servers)+len(c.PluginServers)+1)
+	for i := range c.Servers {
+		if c.Servers[i].ID == "" {
+			continue
+		}
+		out[c.Servers[i].BaseURL] = c.Servers[i].ID
+	}
+	if c.EmbeddedServer.ID != "" {
+		out[MCPEmbeddedServerOrigin] = c.EmbeddedServer.ID
+	}
+	for i := range c.PluginServers {
+		if c.PluginServers[i].ID == "" || c.PluginServers[i].PluginID == "" {
+			continue
+		}
+		out[PluginServerOrigin(c.PluginServers[i].PluginID)] = c.PluginServers[i].ID
+	}
+	return out
+}
+
+// OriginByServerID is the inverse of ServerIDByOrigin.
+func (c *MCPConfig) OriginByServerID() map[string]string {
+	out := make(map[string]string, len(c.Servers)+len(c.PluginServers)+1)
+	for i := range c.Servers {
+		if c.Servers[i].ID == "" {
+			continue
+		}
+		out[c.Servers[i].ID] = c.Servers[i].BaseURL
+	}
+	if c.EmbeddedServer.ID != "" {
+		out[c.EmbeddedServer.ID] = MCPEmbeddedServerOrigin
+	}
+	for i := range c.PluginServers {
+		if c.PluginServers[i].ID == "" || c.PluginServers[i].PluginID == "" {
+			continue
+		}
+		out[c.PluginServers[i].ID] = PluginServerOrigin(c.PluginServers[i].PluginID)
+	}
+	return out
+}
+
+// ErrMCPServerIDConflict is returned when the config being written contains
+// duplicate non-empty MCP server IDs, or when an incoming embedded server ID
+// differs from the stored ID.
+var ErrMCPServerIDConflict = errors.New("MCP server identity conflict")
+
+// ReconcileMCPConfigIDs reconciles MCP identity on config save. PluginServers are
+// server-owned and always carried forward from prev, never accepted from the client.
+// Only the config being written is checked for duplicate IDs; duplicates in prev alone are not a conflict.
+func ReconcileMCPConfigIDs(next, prev MCPConfig) (MCPConfig, error) {
+	next.PluginServers = append([]PluginServerConfig(nil), prev.PluginServers...)
+
+	embedded, err := ReconcileEmbeddedMCPServerID(next.EmbeddedServer, prev.EmbeddedServer)
+	if err != nil {
+		return MCPConfig{}, err
+	}
+	next.EmbeddedServer = embedded
+
+	if err := ValidateMCPServerIDUniqueness(next); err != nil {
+		return MCPConfig{}, err
+	}
+	return next, nil
+}
+
+// ValidateMCPServerIDUniqueness returns ErrMCPServerIDConflict when any two MCP resources share a non-empty ID.
+func ValidateMCPServerIDUniqueness(cfg MCPConfig) error {
+	seen := make(map[string]string, len(cfg.Servers)+len(cfg.PluginServers)+1)
+	claim := func(id, label string) error {
+		if id == "" {
+			return nil
+		}
+		if other, ok := seen[id]; ok {
+			return fmt.Errorf("%w: %s and %s share ID %q", ErrMCPServerIDConflict, other, label, id)
+		}
+		seen[id] = label
+		return nil
+	}
+	for i := range cfg.Servers {
+		label := fmt.Sprintf("remote server %q", cfg.Servers[i].Name)
+		if err := claim(cfg.Servers[i].ID, label); err != nil {
+			return err
+		}
+	}
+	if err := claim(cfg.EmbeddedServer.ID, "embedded server"); err != nil {
+		return err
+	}
+	for i := range cfg.PluginServers {
+		label := fmt.Sprintf("plugin server %q", cfg.PluginServers[i].PluginID)
+		if err := claim(cfg.PluginServers[i].ID, label); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ReconcileEmbeddedMCPServerID copies prev.ID onto an ID-less next (one
+// embedded server, not a list heuristic). A non-empty next ID that differs
+// from a non-empty prev ID is a conflict. Caller-chosen IDs on a previously
+// ID-less embedded server are kept; both empty leaves next ID-less for the
+// caller to mint.
+func ReconcileEmbeddedMCPServerID(next, prev MCPEmbeddedServerConfig) (MCPEmbeddedServerConfig, error) {
+	if next.ID == "" {
+		next.ID = prev.ID
+		return next, nil
+	}
+	if prev.ID != "" && next.ID != prev.ID {
+		return MCPEmbeddedServerConfig{}, fmt.Errorf("%w: embedded server carries ID %q that differs from the stored ID %q", ErrMCPServerIDConflict, next.ID, prev.ID)
+	}
+	return next, nil
+}
+
 // PluginServerConfig describes an MCP server registered by another plugin.
 type PluginServerConfig struct {
+	// ID is the ABAC policy identity, keyed by PluginID so it survives re-registration
+	// and Path changes. Runtime tool origin is PluginServerOrigin(PluginID).
+	ID             string          `json:"id,omitempty"`
 	PluginID       string          `json:"plugin_id"`
 	Name           string          `json:"name"`
 	Path           string          `json:"path"`

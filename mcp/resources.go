@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -29,6 +28,10 @@ var ErrServerNotConnected = errors.New("no connected MCP client for server")
 // ErrServerNotConfigured is returned when the normalized origin matches no
 // currently enabled remote, plugin, or embedded MCP server.
 var ErrServerNotConfigured = errors.New("MCP server is not configured")
+
+// ErrServerAccessDenied is returned when access policy denies the user the
+// MCP server that owns the requested resource.
+var ErrServerAccessDenied = errors.New("MCP server access denied by policy")
 
 // InvalidAppResourceError is returned when a ui:// resource is served with a
 // MIME type other than text/html;profile=mcp-app, or with no content.
@@ -57,49 +60,6 @@ type AppResource struct {
 	// Nil when the server declared none; the host then applies the spec's
 	// restrictive CSP default (Phase 1b).
 	UIMeta *AppResourceUIMeta `json:"ui_meta,omitempty"`
-}
-
-type resolvedMCPOrigin struct {
-	kind       string // "remote", "embedded", "plugin"
-	serverID   string
-	remote     ServerConfig
-	plugin     PluginServerConfig
-	normalized string
-}
-
-// resolveEnabledOrigin maps a server origin to an enabled remote/plugin/embedded
-// target. Returns ErrServerNotConfigured when no enabled match exists.
-func (m *ClientManager) resolveEnabledOrigin(serverOrigin string) (*resolvedMCPOrigin, error) {
-	normalized := llm.NormalizeMCPServerOrigin(serverOrigin)
-	if normalized == "" {
-		return nil, ErrServerNotConfigured
-	}
-
-	if normalized == llm.NormalizeMCPServerOrigin(EmbeddedClientKey) {
-		if m.embeddedClient == nil || !m.config.EmbeddedServer.Enabled {
-			return nil, ErrServerNotConfigured
-		}
-		return &resolvedMCPOrigin{kind: "embedded", serverID: EmbeddedClientKey, normalized: normalized}, nil
-	}
-
-	if strings.HasPrefix(normalized, "plugin://") {
-		for _, cfg := range m.snapshotEnabledPluginServers() {
-			if llm.NormalizeMCPServerOrigin("plugin://"+cfg.PluginID) == normalized {
-				return &resolvedMCPOrigin{kind: "plugin", serverID: "plugin://" + cfg.PluginID, plugin: cfg, normalized: normalized}, nil
-			}
-		}
-		return nil, ErrServerNotConfigured
-	}
-
-	for _, server := range m.config.Servers {
-		if !server.Enabled || server.BaseURL == "" {
-			continue
-		}
-		if llm.NormalizeMCPServerOrigin(server.BaseURL) == normalized {
-			return &resolvedMCPOrigin{kind: "remote", serverID: server.Name, remote: server, normalized: normalized}, nil
-		}
-	}
-	return nil, ErrServerNotConfigured
 }
 
 // ReadAppResource fetches a ui:// resource from this MCP server via
@@ -235,60 +195,118 @@ func (c *UserClients) ReadAppResource(ctx context.Context, serverOrigin, uri str
 	return nil, ErrServerNotConnected
 }
 
+// narrowToOrigin keeps only the eligible server whose normalized origin is
+// normalized, so a targeted read never plans connects to unrelated servers.
+func (s eligibleServers) narrowToOrigin(normalized string) (eligibleServers, bool) {
+	narrowed := eligibleServers{origins: make(map[string]bool)}
+	for _, server := range s.remote {
+		if llm.NormalizeMCPServerOrigin(server.BaseURL) == normalized {
+			narrowed.remote = append(narrowed.remote, server)
+			narrowed.origins[normalized] = true
+			return narrowed, true
+		}
+	}
+	if s.embedded && llm.NormalizeMCPServerOrigin(EmbeddedClientKey) == normalized {
+		narrowed.embedded = true
+		narrowed.origins[EmbeddedClientKey] = true
+		return narrowed, true
+	}
+	for _, cfg := range s.plugins {
+		origin := pluginServerOriginKey(cfg.PluginID)
+		if llm.NormalizeMCPServerOrigin(origin) == normalized {
+			narrowed.plugins = append(narrowed.plugins, cfg)
+			narrowed.origins[origin] = true
+			return narrowed, true
+		}
+	}
+	return narrowed, false
+}
+
 // ReadUserAppResource fetches a ui:// resource for a user from the MCP server
-// identified by serverOrigin. It connects only that enabled origin into the
-// per-user client set (lazy, targeted) — unlike GetToolsForUser, it does not
-// fan out to every configured server. Returns ErrServerNotConfigured when the
-// origin is unknown or disabled, *OAuthNeededError when the user must complete
-// OAuth first, and ErrServerNotConnected when the server is otherwise unreachable.
+// identified by serverOrigin, authenticating as that user. Eligibility follows
+// the user-mode catalog (enabled, licensed, conflict-free, and allowed by
+// access policy), and only that one origin is connected (lazy, targeted) —
+// unlike catalog construction, it does not fan out to every configured server.
+// Returns ErrServerNotConfigured when the origin is unknown or ineligible,
+// ErrServerAccessDenied when access policy denies it, *OAuthNeededError when the
+// user must complete OAuth first, and ErrServerNotConnected when the server is
+// otherwise unreachable.
 func (m *ClientManager) ReadUserAppResource(ctx context.Context, userID, serverOrigin, uri string) (*AppResource, error) {
-	target, err := m.resolveEnabledOrigin(serverOrigin)
-	if err != nil {
+	req := UserCatalogRequest(userID)
+	if err := req.validate(); err != nil {
 		return nil, err
 	}
-
-	userClient := m.getOrCreateUserClientsShell(userID)
-
-	switch target.kind {
-	case "embedded":
-		m.connectEmbeddedForUser(ctx, userClient, userID)
-	case "plugin":
-		if connectErr := userClient.ConnectToPluginServer(ctx, target.plugin, m.sourcePluginAPI); connectErr != nil {
-			m.log.Error("Failed to connect to plugin MCP server for app resource",
-				"userID", userID, "pluginID", target.plugin.PluginID, "error", connectErr)
-			return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, connectErr)
-		}
-	case "remote":
-		if connectErr := userClient.ConnectToRemoteServer(cacheableContext(ctx), target.remote, false); connectErr != nil {
-			var oauthErr *OAuthNeededError
-			if errors.As(connectErr, &oauthErr) {
-				return nil, oauthErr
-			}
-			m.log.Error("Failed to connect to MCP server for app resource",
-				"userID", userID, "server", target.remote.Name, "error", connectErr)
-			return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, connectErr)
-		}
+	normalized := llm.NormalizeMCPServerOrigin(serverOrigin)
+	if normalized == "" {
+		return nil, ErrServerNotConfigured
 	}
 
-	res, err := userClient.ReadAppResource(ctx, serverOrigin, uri)
+	m.lifecycleMu.RLock()
+	if m.closed {
+		m.lifecycleMu.RUnlock()
+		return nil, ErrServerNotConnected
+	}
+	cfg := m.config
+	embeddedClient := m.embeddedClient
+	plugins := m.snapshotEnabledPluginServers()
+	deniedOrigins := m.deniedMCPServerOrigins(ctx, userID, cfg, embeddedClient, plugins)
+	if deniedOrigins[normalized] {
+		m.lifecycleMu.RUnlock()
+		return nil, ErrServerAccessDenied
+	}
+	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, ToolSelection{}, deniedOrigins, false)
+	target, ok := servers.narrowToOrigin(normalized)
+	if !ok {
+		m.lifecycleMu.RUnlock()
+		return nil, ErrServerNotConfigured
+	}
+
+	key := req.remoteKey()
+	if len(target.remote) == 0 {
+		key = clientKey{userID: userID, kind: clientKindLocal}
+	}
+	userClients := m.getOrCreateClient(key)
+	if userClients == nil {
+		m.lifecycleMu.RUnlock()
+		return nil, ErrServerNotConnected
+	}
+
+	var sessionID string
+	var sessionErr error
+	if target.embedded {
+		sessionID, _, sessionErr = m.ensureEmbeddedSessionID(userID)
+	}
+	plans, discarded := userClients.planConnections(
+		m.buildConnectTasks(ctx, userClients, target, embeddedClient, false, sessionID, sessionErr),
+	)
+	m.lifecycleMu.RUnlock()
+	closeDetachedClients(m.log, discarded)
+
+	if connectErr := firstConnectError(userClients.executeConnections(ctx, plans)); connectErr != nil {
+		if oauthErr, isOAuth := errors.AsType[*OAuthNeededError](connectErr); isOAuth {
+			return nil, oauthErr
+		}
+		m.log.Debug("Failed to connect to MCP server for app resource",
+			"userID", userID, "serverOrigin", serverOrigin, "error", connectErr)
+		return nil, fmt.Errorf("%w: %v", ErrServerNotConnected, connectErr)
+	}
+
+	res, err := userClients.ReadAppResource(ctx, serverOrigin, uri)
 	if err == nil {
 		return res, nil
 	}
-	var oauthErr *OAuthNeededError
-	if errors.As(err, &oauthErr) {
+	if oauthErr, isOAuth := errors.AsType[*OAuthNeededError](err); isOAuth {
 		return nil, oauthErr
 	}
-	if errors.Is(err, ErrServerNotConnected) {
-		if m.oauthManager != nil && target.kind == "remote" {
-			state, loadErr := m.oauthManager.LoadAuthNeededState(userID, target.remote.Name)
-			if loadErr != nil {
-				m.log.Debug("Failed to load OAuth-needed state for app resource",
-					"userID", userID, "server", target.remote.Name, "error", loadErr)
-			} else if state != nil && state.AuthURL != "" {
-				return nil, NewOAuthNeededError(state.AuthURL)
-			}
+	if errors.Is(err, ErrServerNotConnected) && m.oauthManager != nil && len(target.remote) > 0 {
+		serverName := target.remote[0].Name
+		state, loadErr := m.oauthManager.LoadAuthNeededState(userID, serverName)
+		if loadErr != nil {
+			m.log.Debug("Failed to load OAuth-needed state for app resource",
+				"userID", userID, "server", serverName, "error", loadErr)
+		} else if state != nil && state.AuthURL != "" {
+			return nil, NewOAuthNeededError(state.AuthURL)
 		}
-		return nil, err
 	}
 	return nil, err
 }

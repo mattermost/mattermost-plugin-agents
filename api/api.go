@@ -15,6 +15,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
@@ -30,6 +32,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/meetings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -53,26 +56,31 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+
+	// GetServices returns a snapshot of the stored service configurations, in
+	// configuration order. The bridge service endpoints operate on this
+	// snapshot directly rather than going through an agent.
+	GetServices() []llm.ServiceConfig
 }
 
 type MCPClientManager interface {
 	GetOAuthManager() *mcp.OAuthManager
 	GetToolsCache() *mcp.ToolsCache
 	GetHTTPClient() *http.Client
-	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code string) (*mcp.OAuthSession, error)
-	DisconnectUserOAuth(userID, serverName string) error
+	ProcessOAuthCallback(ctx context.Context, loggedInUserID, state, code, iss string) (*mcp.OAuthSession, error)
+	DisconnectUserOAuth(ctx context.Context, userID, serverName string) error
 	MarkOAuthNeeded(userID, serverName, authURL string) error
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
-	EnsureMCPSessionID(userID string) (string, error)
-	GetToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors)
-	RefreshToolsForUser(ctx context.Context, userID string) ([]llm.Tool, *mcp.Errors, error)
+	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
+	GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess
+	RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error)
 	GetConfig() mcp.Config
 
 	RegisterPluginServer(cfg mcp.PluginServerConfig)
+	UpdatePluginServerAdminFields(pluginID string, enabled bool, toolConfigs []mcp.ToolConfig) (mcp.PluginServerConfig, bool)
 	UnregisterPluginServer(pluginID string)
 	ListPluginServers() []mcp.PluginServerConfig
 	GetPluginServer(pluginID string) (mcp.PluginServerConfig, bool)
-	IsPluginRegistered(pluginID string) bool
 
 	DiscoverPluginServerTools(ctx context.Context, userID string, cfg mcp.PluginServerConfig) ([]mcp.ToolInfo, error)
 
@@ -83,6 +91,10 @@ type MCPClientManager interface {
 type ConfigStore interface {
 	GetConfig() (*config.Config, error)
 	SaveConfig(cfg config.Config) error
+	// UpdateConfig atomically reads the active config, applies transform, and
+	// persists the result under the config advisory lock. A transform error
+	// aborts the update and is returned as-is.
+	UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error)
 }
 
 // AgentStore provides CRUD access to user-created agents in the database.
@@ -113,6 +125,16 @@ type ConversationStore interface {
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnContent(id string, content json.RawMessage) error
 	GetConversationSummariesForUser(userID string, limit, offset int) ([]store.ConversationSummary, error)
+}
+
+// ChannelAutoReplyStore provides read/write access to per-channel auto-reply settings.
+// Implemented by *autoreply.Service (Phase 1). Get reads the database so API reads are
+// read-your-writes across cluster nodes; Set/Delete validate, persist, and handle
+// cluster cache invalidation internally.
+type ChannelAutoReplyStore interface {
+	Get(channelID string) (*autoreply.Setting, error)
+	Set(channelID, botID string, mode autoreply.Mode, updatedBy string) (*autoreply.Setting, error)
+	Delete(channelID string) error
 }
 
 // ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
@@ -153,7 +175,6 @@ type API struct {
 	i18nBundle            *i18n.Bundle
 	mcpClientManager      MCPClientManager
 	mcpHandlers           *mcpserver.PluginMCPHandlers
-	beforeHookStore       *mcp.BeforeHookStore
 	llmUpstreamHTTPClient *http.Client
 	configStore           ConfigStore
 	agentStore            AgentStore
@@ -166,6 +187,13 @@ type API struct {
 	convService           *conversation.Service
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
+	autoReplyStore        ChannelAutoReplyStore
+	accessChecker         *accesscontrol.Checker
+	mcpRequestLimiter     *mcpRequestLimiter
+
+	// auditEvents maps gin handler names to audit event names for routes
+	// that emit server audit records. Built once in New; read-only after.
+	auditEvents map[string]string
 
 	// externalRebuilderForTest must be nil in production; SetExternalRebuilderForTest
 	// is the only supported entry point for tests.
@@ -207,8 +235,15 @@ func New(
 	conversationStore ConversationStore,
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
+	autoReplyStore ChannelAutoReplyStore,
+	accessChecker *accesscontrol.Checker,
 ) *API {
-	return &API{
+	// A nil checker would silently disable authorization gates (e.g. MCP listing).
+	if accessChecker == nil {
+		panic("api: New requires a non-nil access checker")
+	}
+	a := &API{
+		mcpRequestLimiter:     newMCPRequestLimiter(),
 		bots:                  bots,
 		conversationsService:  conversationsService,
 		meetingsService:       meetingsService,
@@ -228,7 +263,6 @@ func New(
 		i18nBundle:            i18nBundle,
 		mcpClientManager:      mcpClientManager,
 		mcpHandlers:           mcpHandlers,
-		beforeHookStore:       mcp.NewBeforeHookStore(&pluginAPI.KV),
 		llmUpstreamHTTPClient: llmUpstreamHTTPClient,
 		configStore:           configStore,
 		agentStore:            agentStore,
@@ -240,7 +274,11 @@ func New(
 		conversationStore:     conversationStore,
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
+		autoReplyStore:        autoReplyStore,
+		accessChecker:         accessChecker,
 	}
+	a.auditEvents = buildAuditEventRegistry(a)
+	return a
 }
 
 // SetConversationService sets the conversation entity service for channel analysis.
@@ -250,10 +288,15 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	if c != nil {
+		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
+	}
+
 	router := gin.Default()
 	router.Use(otelgin.Middleware("mattermost-ai-agents"))
 	router.Use(a.ginlogger)
 	router.Use(a.metricsMiddleware)
+	router.Use(a.auditMiddleware(c))
 
 	// LLM Bridge API v1 routes - inter-plugin only
 	llmBridgeRoute := router.Group("/bridge/v1")
@@ -280,7 +323,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 		// Store plugin.Context in gin.Context for MCP endpoints
 		mcpServerGroup.Use(func(gc *gin.Context) {
-			gc.Set("pluginContext", c)
+			gc.Set(pluginContextGinKey, c)
 			gc.Next()
 		})
 
@@ -324,12 +367,17 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	// Access policy authoring: agent managers.
+	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
+	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
+	agentRouter.DELETE("/:agentid/access_policy", a.handleDeleteAgentPolicy)
 
 	router.GET("/services", a.handleListServices)
 
 	// Raw search endpoint returns enriched semantic search results without LLM processing.
-	// Used by the MCP server for external search callbacks.
-	router.POST("/search/raw", a.handleRawSearch)
+	// Used by the MCP server for external search callbacks. Semantic search is
+	// available at Enterprise and above.
+	router.POST("/search/raw", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRawSearch)
 
 	// Raw file content endpoint returns a ranged slice of a file's text after
 	// checking the requesting user's channel permission. Used by the MCP server
@@ -353,8 +401,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.Use(a.postAuthorizationRequired)
 	postRouter.POST("/react", a.handleReact)
 	postRouter.POST("/analyze", a.handleThreadAnalysis)
-	postRouter.POST("/transcribe/file/:fileid", a.handleTranscribeFile)
-	postRouter.POST("/summarize_transcription", a.handleSummarizeTranscription)
+	postRouter.POST("/transcribe/file/:fileid", a.capabilityRequired(enterprise.CapMeetings), a.handleTranscribeFile)
+	postRouter.POST("/summarize_transcription", a.capabilityRequired(enterprise.CapMeetings), a.handleSummarizeTranscription)
 	postRouter.POST("/stop", a.handleStop)
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
@@ -364,15 +412,26 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 
 	channelRouter := botRequiredRouter.Group("/channel/:channelid")
 	channelRouter.Use(a.channelAuthorizationRequired)
-	channelRouter.POST("/analyze", a.channelAnalysisLicenseRequired, a.handleChannelAnalysis)
-	channelRouter.POST("/interval", a.channelAnalysisLicenseRequired, a.handleInterval)
+	channelRouter.POST("/analyze", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleChannelAnalysis)
+	channelRouter.POST("/interval", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleInterval)
+
+	// Auto-reply settings are channel configuration, not a bot invocation:
+	// they must not depend on the default agent (restricted default agents and
+	// zero-agent installs must not block reading or clearing a setting), so
+	// they are registered outside the aiBotRequired group. The PUT handler and
+	// the autoreply service validate the selected bot themselves.
+	autoReplyRouter := router.Group("/channel/:channelid")
+	autoReplyRouter.Use(a.channelReadAuthorizationRequired)
+	autoReplyRouter.GET("/autoreply", a.handleGetChannelAutoReply)
+	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)
-	adminRouter.POST("/reindex", a.handleReindexPosts)
+	adminRouter.POST("/reindex", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleReindexPosts)
 	adminRouter.GET("/reindex/status", a.handleGetJobStatus)
 	adminRouter.POST("/reindex/cancel", a.handleCancelJob)
-	adminRouter.POST("/reindex/catchup", a.handleCatchUpIndex)
+	adminRouter.POST("/reindex/catchup", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleCatchUpIndex)
+	adminRouter.POST("/reindex/rebuild-vector-index", a.capabilityRequired(enterprise.CapSemanticSearch), a.handleRebuildVectorIndex)
 	adminRouter.GET("/reindex/health-check", a.handleIndexHealthCheck)
 	adminRouter.GET("/mcp/tools", a.handleGetMCPTools)
 	adminRouter.GET("/mcp/vetted-tool-seed", a.handleGetVettedToolSeed)
@@ -381,8 +440,30 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	adminRouter.POST("/models/fetch", a.handleFetchModels)
 	adminRouter.GET("/config", a.handleGetConfig)
 	adminRouter.PUT("/config", a.handleSaveConfig)
+	// Service / MCP-server access policy authoring: system admins only. The
+	// :serverid wildcard coexists with the static /admin/mcp/* routes above
+	// (pinned by a route test).
+	adminRouter.GET("/services/:serviceid/access_policy", a.handleGetServicePolicy)
+	adminRouter.PUT("/services/:serviceid/access_policy", a.handlePutServicePolicy)
+	adminRouter.DELETE("/services/:serviceid/access_policy", a.handleDeleteServicePolicy)
+	adminRouter.GET("/mcp/:serverid/access_policy", a.handleGetMCPPolicy)
+	adminRouter.PUT("/mcp/:serverid/access_policy", a.handlePutMCPPolicy)
+	adminRouter.DELETE("/mcp/:serverid/access_policy", a.handleDeleteMCPPolicy)
+
+	// ABAC availability + CEL editor proxies.
+	acRouter := router.Group("/access_control")
+	acRouter.GET("/status", a.handleABACStatus) // any authenticated user
+	celRouter := acRouter.Group("/cel")
+	// /test is resource-type gated (and self-inclusion for non-sysadmins)
+	// inside the handler: agent authors may test, service/MCP is manage_system.
+	celRouter.POST("/test", a.handleCELTest)
+	celRouter.Use(a.celRouteAuthzRequired)
+	celRouter.POST("/check", a.handleCELCheck)
+	celRouter.GET("/autocomplete/fields", a.handleCELAutocompleteFields)
+	celRouter.POST("/visual_ast", a.handleCELVisualAST)
 
 	searchRouter := botRequiredRouter.Group("/search")
+	searchRouter.Use(a.capabilityRequired(enterprise.CapSemanticSearch))
 	// Only returns search results
 	searchRouter.POST("", a.handleSearchQuery)
 	// Initiates a search and responds to the user in a DM with the selected bot
@@ -512,7 +593,10 @@ type AIBotInfo struct {
 	UserIDs               []string               `json:"userIDs"`
 	EnabledMCPTools       []llm.EnabledMCPTool   `json:"enabledMCPTools"`
 	AutoEnableNewMCPTools bool                   `json:"autoEnableNewMCPTools"`
-	IsDefault             bool                   `json:"isDefault,omitempty"`
+	// UseServiceAccountAuth is the effective mode, not the raw agent flag: it is
+	// false when the server is not licensed for remote MCP.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
+	IsDefault             bool `json:"isDefault,omitempty"`
 }
 
 type AIBotsResponse struct {
@@ -521,8 +605,18 @@ type AIBotsResponse struct {
 	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
 }
 
+// usesServiceAccountAuth reports the effective service account mode for a bot:
+// on an unlicensed server a service account agent runs in per-user mode, and the
+// webapp keys its per-user MCP UI off this value.
+func (a *API) usesServiceAccountAuth(bot *bots.Bot) bool {
+	if a.contextBuilder == nil {
+		return bot.GetConfig().UseServiceAccountAuth
+	}
+	return a.contextBuilder.UsesServiceAccountCatalog(bot)
+}
+
 // getAIBotsForUser returns all AI bots available to a user
-func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
+func (a *API) getAIBotsForUser(ctx context.Context, userID string) []AIBotInfo {
 	allBots := a.bots.GetAllBots()
 
 	// Get the info from all the bots.
@@ -531,7 +625,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 	defaultBotName := a.config.GetDefaultBotName()
 	for _, bot := range allBots {
 		// Don't return bots the user is excluded from using.
-		if a.bots.CheckUsageRestrictionsForUser(bot, userID) != nil {
+		if a.bots.CheckUsageRestrictionsForUser(ctx, bot, userID) != nil {
 			continue
 		}
 
@@ -557,6 +651,7 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 			UserIDs:               bot.GetConfig().UserIDs,
 			EnabledMCPTools:       bot.GetConfig().EnabledMCPTools,
 			AutoEnableNewMCPTools: bot.GetConfig().AutoEnableNewMCPTools,
+			UseServiceAccountAuth: a.usesServiceAccountAuth(bot),
 			IsDefault:             isDefault,
 		})
 		if isDefault {
@@ -565,16 +660,12 @@ func (a *API) getAIBotsForUser(userID string) ([]AIBotInfo, error) {
 		}
 	}
 
-	return bots, nil
+	return bots
 }
 
 func (a *API) handleGetAIBots(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
-	bots, err := a.getAIBotsForUser(userID)
-	if err != nil {
-		c.AbortWithError(http.StatusInternalServerError, err)
-		return
-	}
+	bots := a.getAIBotsForUser(c.Request.Context(), userID)
 
 	// Check if search is enabled
 	searchEnabled := a.searchService.Enabled()
@@ -626,6 +717,11 @@ func (a *API) handleFetchModels(c *gin.Context) {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("vertexProjectID and region are required for Vertex AI"))
 			return
 		}
+	case llm.ServiceTypeNorth:
+		if req.APIKey == "" || req.APIURL == "" {
+			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey and apiURL are required for north"))
+			return
+		}
 	default:
 		if req.APIKey == "" {
 			c.AbortWithError(http.StatusBadRequest, fmt.Errorf("apiKey is required"))
@@ -638,7 +734,7 @@ func (a *API) handleFetchModels(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(llm.ServiceConfig{
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), llm.ServiceConfig{
 		Type:                  req.ServiceType,
 		APIKey:                req.APIKey,
 		APIURL:                req.APIURL,

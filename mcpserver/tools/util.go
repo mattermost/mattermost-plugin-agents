@@ -25,6 +25,15 @@ func (p *MattermostToolProvider) resolveUserID(mcpContext *MCPToolContext) (stri
 	return user.Id, nil
 }
 
+// resolveUserIDOrDefault returns userID when set, otherwise the authenticated
+// user's ID, for tools whose user_id argument defaults to the caller.
+func (p *MattermostToolProvider) resolveUserIDOrDefault(mcpContext *MCPToolContext, userID string) (string, error) {
+	if userID != "" {
+		return userID, nil
+	}
+	return p.resolveUserID(mcpContext)
+}
+
 // parseTimeMillis parses an RFC3339 timestamp into Unix milliseconds, matching the
 // timestamp handling used by read_channel's `since` argument.
 func parseTimeMillis(value string) (int64, error) {

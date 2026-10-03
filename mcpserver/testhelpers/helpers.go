@@ -150,7 +150,7 @@ func CreateTestMCPSession(t *testing.T, mcpServer *mcp.Server) *mcp.ClientSessio
 
 // ExecuteMCPTool calls an MCP tool through a test client session
 // This provides true integration testing by using the actual MCP protocol with in-memory transport
-func ExecuteMCPTool(t *testing.T, mcpServer *mcp.Server, toolName string, args map[string]interface{}) (*mcp.CallToolResult, error) {
+func ExecuteMCPTool(t *testing.T, mcpServer *mcp.Server, toolName string, args map[string]any) (*mcp.CallToolResult, error) {
 	// Create test session
 	session := CreateTestMCPSession(t, mcpServer)
 	defer session.Close()

@@ -22,6 +22,36 @@ export const REINDEX_INDEX_STRATEGY = {
     defer: 'defer',
 } as const;
 
+// Mirror the server's recency bias defaults
+// (embeddings.DefaultRecency* in embeddings/recency.go).
+export const RECENCY_DEFAULTS = {
+    halfLifeDays: 7,
+    floor: 0.7,
+} as const;
+
+// Mirror the server's HNSW m defaults and bounds
+// (embeddings.DefaultHNSWM etc. in embeddings/embeddings.go).
+export const HNSW_DEFAULTS = {
+    m: 8,
+    min: 2,
+    max: 100,
+} as const;
+
+// Mirror embeddings.VectorElementType* / GetVectorElementType.
+export const VECTOR_ELEMENT_TYPE = {
+    vector: 'vector',
+    halfvec: 'halfvec',
+} as const;
+
+export type VectorElementType = typeof VECTOR_ELEMENT_TYPE[keyof typeof VECTOR_ELEMENT_TYPE];
+
+export const normalizeVectorElementType = (value: string | undefined): VectorElementType => {
+    if (value === VECTOR_ELEMENT_TYPE.halfvec) {
+        return VECTOR_ELEMENT_TYPE.halfvec;
+    }
+    return VECTOR_ELEMENT_TYPE.vector;
+};
+
 export type ReindexIndexStrategy = typeof REINDEX_INDEX_STRATEGY[keyof typeof REINDEX_INDEX_STRATEGY];
 
 export interface ChunkingOptions {
@@ -36,10 +66,16 @@ export interface EmbeddingSearchConfig {
     embeddingProvider: UpstreamConfig;
     parameters: Record<string, unknown> | null; // server sends nil json.RawMessage as JSON null
     dimensions: number;
+    hnswM?: number;
+    vectorElementType?: VectorElementType;
     chunkingOptions?: ChunkingOptions;
     reindexWorkers?: number;
     reindexBatchSize?: number;
     reindexIndexStrategy?: ReindexIndexStrategy;
+    recencyBiasEnabled?: boolean;
+    recencyHalfLifeDays?: number;
+    recencyFloor?: number;
+    indexRetentionDays?: number;
 }
 
 // Match the server's JobStatus struct field names
@@ -56,6 +92,12 @@ export interface JobStatusType {
     cutoff_at?: number;
     last_updated_at?: string;
     is_stale?: boolean;
+
+    // Known values: 'building_index' (HNSW CREATE INDEX after bulk load).
+    phase?: string;
+
+    // Server JobStatus.operation: 'reindex' | 'rebuild_vector_index' | 'catch_up'
+    operation?: string;
 }
 
 // Mirror the server's vector index phases
@@ -80,8 +122,13 @@ export interface HealthCheckResultType {
     model_compatible: boolean;
     model_needs_reindex: boolean;
     model_compat_reason?: string;
+    stored_provider_type?: string;
     stored_dimensions?: number;
     stored_model_name?: string;
+    stored_hnsw_m?: number;
+    stored_vector_element_type?: string;
+    stored_index_retention_days?: number;
+    needs_catch_up?: boolean;
 
     // Deferred reindex owns the ANN lifecycle; search gated for dropped/building.
     vector_index_state?: {

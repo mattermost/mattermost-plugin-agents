@@ -7,7 +7,7 @@ See LICENSE.txt for license information.
 
 Channel Summaries help you catch up on activity in the current channel without manually reading every post. Use the **Ask Agents about this channel** button in the channel header to summarize recent activity, focus on a time range, or enter a prompt about the conversation.
 
-Channel Summaries require a license. See the [license requirements](../admin_guide.md#license-requirements) for details.
+Channel Summaries are available at Professional and above. See the [license requirements](../admin_guide.md#license-requirements) for details.
 
 ## Use Channel Summaries
 

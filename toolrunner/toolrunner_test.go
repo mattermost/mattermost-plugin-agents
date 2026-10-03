@@ -111,7 +111,7 @@ type testToolDef struct {
 
 // newTestToolStore creates a ToolStore with the given test tools.
 func newTestToolStore(tools ...testToolDef) *llm.ToolStore {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	llmTools := make([]llm.Tool, len(tools))
 	for i, t := range tools {
 		result := t.result
@@ -184,7 +184,7 @@ func TestToolRunner_NoToolCalls(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "Hi"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -267,6 +267,70 @@ func TestToolRunner_SingleToolRound(t *testing.T) {
 	require.Len(t, botPost.ToolUse, 1)
 	assert.Equal(t, "72F sunny", botPost.ToolUse[0].Result)
 	assert.Equal(t, llm.ToolCallStatusAutoApproved, botPost.ToolUse[0].Status)
+}
+
+func TestToolRunner_ServerToolActivityPersistsInToolTurn(t *testing.T) {
+	inProgress := []llm.ServerToolUse{{
+		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusInProgress,
+	}}
+	final := []llm.ServerToolUse{{
+		ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess, Query: "weather NYC",
+		Output: "raw\u202eoutput", FileIDs: []string{"file_from_sandbox"}, ProviderRoute: "anthropic::fallback",
+	}}
+
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeServerToolUse, Value: inProgress},
+				{Type: llm.EventTypeServerToolUse, Value: final},
+				{Type: llm.EventTypeText, Value: "Searched. Now checking the channel."},
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "get_weather", Arguments: json.RawMessage(`{"city":"NYC"}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "All done."},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(testToolDef{name: "get_weather", result: "72F sunny"})
+	runner := New(inner)
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "What's the weather?"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+
+	forwardedSnapshots := 0
+	for event := range result.Stream.Stream {
+		if event.Type == llm.EventTypeServerToolUse {
+			forwardedSnapshots++
+		}
+	}
+	assert.Equal(t, 2, forwardedSnapshots, "server tool events must be forwarded downstream")
+
+	require.Len(t, result.ToolTurns, 1)
+	turn := result.ToolTurns[0]
+	require.Len(t, turn.AssistantServerTools, 1)
+	assert.Equal(t, final[0], turn.AssistantServerTools[0])
+	assert.Contains(t, turn.AssistantServerTools[0].Output, "\u202e",
+		"canonical provider replay data must remain byte-for-byte unchanged")
+
+	assert.Equal(t, 2, inner.callCount)
+	replayedPost := inner.capturedRequests[1].Posts[len(inner.capturedRequests[1].Posts)-1]
+	require.Len(t, replayedPost.ServerTools, 1)
+	assert.Equal(t, "raw\u202eoutput", replayedPost.ServerTools[0].Output,
+		"presentation sanitation must not alter the next provider request")
+
+	// Snapshot is cumulative: a repeated id must not be recorded twice.
+	assert.Equal(t, []llm.ProviderFileReference{{
+		ID: "file_from_sandbox", ProviderRoute: "anthropic::fallback",
+	}}, request.Context.ConsumeSandboxFiles())
 }
 
 func TestToolRunner_MultipleToolRounds(t *testing.T) {
@@ -429,7 +493,7 @@ func TestToolRunner_UnknownToolReturnsErrorInsteadOfApproval(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "run ghost"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	shouldExecuteCalls := 0
@@ -507,7 +571,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Name:      "WebSearch",
 				Arguments: json.RawMessage(`{"query":"docs"}`),
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 		{
 			name: "unknown MCP-like name with server origin",
@@ -517,7 +581,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Arguments:    json.RawMessage(`{"key":"MM-1"}`),
 				ServerOrigin: "https://mcp.example.com",
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 		{
 			name: "nil tool store",
@@ -535,7 +599,7 @@ func TestToolRunner_UnknownToolEdgeNamesReturnErrors(t *testing.T) {
 				Name:      "",
 				Arguments: json.RawMessage(`{}`),
 			},
-			context: &llm.Context{Tools: llm.NewNoTools()},
+			context: &llm.Context{Tools: llm.NewToolStore()},
 		},
 	}
 
@@ -592,7 +656,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	}
 
 	resolverCalls := 0
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools([]llm.Tool{{
 		Name: "dangerous_tool",
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
@@ -620,7 +684,7 @@ func TestToolRunner_UnknownBatchSkipsKnownToolWithoutApproval(t *testing.T) {
 	require.Len(t, result.ToolTurns, 1)
 	require.Len(t, result.ToolTurns[0].ToolResults, 2)
 	assert.True(t, result.ToolTurns[0].ToolResults[0].IsError)
-	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained unavailable tool(s): ghost_tool")
+	assert.Contains(t, result.ToolTurns[0].ToolResults[0].Result, "batch contained rejected tool call(s): ghost_tool")
 	assert.True(t, result.ToolTurns[0].ToolResults[1].IsError)
 	assert.Equal(t, "unknown tool ghost_tool", result.ToolTurns[0].ToolResults[1].Result)
 
@@ -687,7 +751,7 @@ func TestToolRunner_LLMError(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -709,7 +773,7 @@ func TestToolRunner_LLMStreamError(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -741,7 +805,7 @@ func TestToolRunner_StreamEventPassthrough(t *testing.T) {
 	runner := New(inner)
 	request := llm.CompletionRequest{
 		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
-		Context: &llm.Context{Tools: llm.NewNoTools()},
+		Context: &llm.Context{Tools: llm.NewToolStore()},
 	}
 
 	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
@@ -868,7 +932,7 @@ func TestToolRunner_MaxRoundsExhausted_SynthesisCallHasToolsDisabled(t *testing.
 	require.Len(t, capturedOpts, llm.DefaultMaxToolTurns)
 
 	// Earlier calls must not have tools disabled.
-	for round := 0; round < llm.DefaultMaxToolTurns-1; round++ {
+	for round := range llm.DefaultMaxToolTurns - 1 {
 		var cfg llm.LanguageModelConfig
 		for _, opt := range capturedOpts[round] {
 			opt(&cfg)
@@ -964,7 +1028,7 @@ func TestToolRunner_FinalText_OmitsToolRoundPreamble(t *testing.T) {
 
 func TestToolRunner_FinalText_DropsFailedSynthesisPreamble(t *testing.T) {
 	responses := make([]testResponse, llm.DefaultMaxToolTurns)
-	for i := 0; i < llm.DefaultMaxToolTurns-1; i++ {
+	for i := range llm.DefaultMaxToolTurns - 1 {
 		responses[i] = testResponse{
 			events: []llm.TextStreamEvent{
 				{Type: llm.EventTypeText, Value: fmt.Sprintf("preamble %d ", i)},

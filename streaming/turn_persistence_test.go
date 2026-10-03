@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -257,7 +258,7 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 	t.Run("sequence number increments from existing turns", func(t *testing.T) {
 		ts := &fakeTurnStore{}
 		// Pre-populate 3 existing turns.
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			pid := fmt.Sprintf("old-post-%d", i)
 			ts.turns = append(ts.turns, &store.Turn{
 				ID:             fmt.Sprintf("old-turn-%d", i),
@@ -410,6 +411,73 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
 		require.Len(t, parsedAnnotations, 1)
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
+	})
+
+	t.Run("finalizes with server tool activity blocks and broadcasts them", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		inProgress := []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusInProgress, SubTool: "bash",
+		}}
+		final := []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess,
+			SubTool: "bash", Command: "ls", Output: "file.txt\u202E\n",
+			FileIDs: []string{"file\u202E1"}, ProviderRoute: "anthropic::fallback",
+		}}
+
+		streamChannel := make(chan llm.TextStreamEvent, 4)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: inProgress}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: final}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Done."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", "test-user-id")
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+		require.Len(t, blocks, 2)
+		require.Equal(t, conversation.BlockTypeServerToolUse, blocks[0].Type)
+		require.NotNil(t, blocks[0].ServerTool)
+		require.Equal(t, "srv1", blocks[0].ServerTool.ID)
+		require.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
+		require.Equal(t, "ls", blocks[0].ServerTool.Command)
+		require.NotContains(t, blocks[0].ServerTool.Output, "\u202E", "output must be sanitized before persisting")
+		require.NotContains(t, blocks[0].ServerTool.FileIDs[0], "\u202E")
+		require.Empty(t, blocks[0].ServerTool.ProviderRoute, "runtime route must not be persisted")
+		require.Equal(t, conversation.BlockTypeText, blocks[1].Type)
+
+		// Sanitation of the broadcast copy must not mutate ToolRunner's replay snapshot.
+		require.Equal(t, "file.txt\u202E\n", final[0].Output)
+		require.Equal(t, "file\u202E1", final[0].FileIDs[0])
+		require.Equal(t, "anthropic::fallback", final[0].ProviderRoute)
+
+		var serverToolEvents []publishedEvent
+		for _, ev := range client.events {
+			if ev.payload["control"] == "server_tool" {
+				serverToolEvents = append(serverToolEvents, ev)
+			}
+		}
+		require.Len(t, serverToolEvents, 2, "both snapshots must be broadcast")
+		var broadcastUses []llm.ServerToolUse
+		require.NoError(t, json.Unmarshal([]byte(serverToolEvents[1].payload["server_tool"].(string)), &broadcastUses))
+		require.Len(t, broadcastUses, 1)
+		require.Equal(t, llm.ServerToolStatusSuccess, broadcastUses[0].Status)
+		require.NotContains(t, broadcastUses[0].Output, "\u202E")
+		require.Empty(t, broadcastUses[0].ProviderRoute)
 	})
 
 	t.Run("finalizes with token usage", func(t *testing.T) {
@@ -848,13 +916,15 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		annotations := []llm.Annotation{
 			{Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1},
 		}
-		annotationEvent := map[string]interface{}{
-			"annotations":    annotations,
-			"cleanedMessage": "Cleaned text",
+		annotationEvent := map[string]any{
+			"annotations":       annotations,
+			"cleanedMessage":    "Cleaned text",
+			"originalMessage":   "Cleaned !!CITE1!!text",
+			"removedTextRanges": []llm.TextRange{{Start: 8, End: 17}},
 		}
 
 		streamChannel := make(chan llm.TextStreamEvent, 3)
-		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Original text [1]"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Cleaned !!CITE1!!text"}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeAnnotations, Value: annotationEvent}
 		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
 		close(streamChannel)
@@ -888,6 +958,59 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 		require.NoError(t, json.Unmarshal(annotationsBlock.WebSearchContext.Results, &parsedAnnotations))
 		require.Len(t, parsedAnnotations, 1)
 		require.Equal(t, "https://example.com", parsedAnnotations[0].URL)
+	})
+
+	t.Run("citation cleanup preserves text around provider activity", func(t *testing.T) {
+		ts := &fakeTurnStore{}
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		const original = "Before !!CITE1!! after !!CITE2!!"
+		firstMarker := strings.Index(original, "!!CITE1!!")
+		secondMarker := strings.Index(original, "!!CITE2!!")
+		annotationEvent := map[string]any{
+			"annotations": []llm.Annotation{{
+				Type: llm.AnnotationTypeURLCitation, URL: "https://example.com", Title: "Example", Index: 1,
+			}},
+			"cleanedMessage":  "Before  after ",
+			"originalMessage": original,
+			"removedTextRanges": []llm.TextRange{
+				{Start: firstMarker, End: firstMarker + len("!!CITE1!!")},
+				{Start: secondMarker, End: secondMarker + len("!!CITE2!!")},
+			},
+		}
+
+		streamChannel := make(chan llm.TextStreamEvent, 5)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Before !!CITE1!!"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeServerToolUse, Value: []llm.ServerToolUse{{
+			ID: "srv1", Tool: llm.NativeToolWebSearch, Status: llm.ServerToolStatusSuccess,
+		}}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: " after !!CITE2!!"}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeAnnotations, Value: annotationEvent}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		ts.mu.Lock()
+		defer ts.mu.Unlock()
+		streamTurn := findStreamTurn(ts.turns, postID)
+		require.NotNil(t, streamTurn)
+		blocks := parseContentBlocks(t, streamTurn.Content)
+		require.GreaterOrEqual(t, len(blocks), 3)
+		require.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+		require.Equal(t, "Before ", blocks[0].Text)
+		require.Equal(t, conversation.BlockTypeServerToolUse, blocks[1].Type)
+		require.Equal(t, conversation.BlockTypeText, blocks[2].Type)
+		require.Equal(t, " after ", blocks[2].Text)
 	})
 
 	// An empty stream must persist the no-result fallback (and the content
@@ -1541,18 +1664,92 @@ func TestRedactToolCallsClearsUIMeta(t *testing.T) {
 
 func TestBuildContentBlocksCarriesUIMeta(t *testing.T) {
 	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html"}
-	acc := &turnAccumulator{
-		toolCalls: []llm.ToolCall{{
-			ID:           "tc1",
-			Name:         "demo",
-			ServerOrigin: "https://srv.example",
-			Status:       llm.ToolCallStatusPending,
-			UIMeta:       uiMeta,
-		}},
-	}
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+	acc.toolCalls = []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		ServerOrigin: "https://srv.example",
+		Status:       llm.ToolCallStatusPending,
+		UIMeta:       uiMeta,
+	}}
 
 	blocks := acc.buildContentBlocks()
 	require.Len(t, blocks, 1)
 	require.Equal(t, conversation.BlockTypeToolUse, blocks[0].Type)
 	require.Equal(t, uiMeta, blocks[0].UIMeta)
+}
+
+func TestBuildContentBlocksPreservesArrivalOrder(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+
+	acc.sequence.AppendText("I'll write the script.")
+	firstSnapshot := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "cat > f.py"},
+	}
+	acc.serverTools = firstSnapshot
+	acc.sequence.RecordServerTools(firstSnapshot)
+
+	acc.sequence.AppendReasoning("that produced no file")
+	acc.sequence.FinishReasoning(llm.ReasoningData{Text: "No file came back.", Signature: "sig"})
+
+	acc.sequence.AppendText("Let me try again.")
+	secondSnapshot := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, SubTool: "bash", Command: "cat > f.py"},
+		{ID: "srv2", Tool: llm.NativeToolCodeInterpreter, SubTool: "python", Command: "open('f.py')"},
+	}
+	acc.serverTools = secondSnapshot
+	acc.sequence.RecordServerTools(secondSnapshot)
+
+	acc.sequence.AppendText("Done.")
+	acc.toolCalls = []llm.ToolCall{{ID: "tc1", Name: "CreateFile", Status: llm.ToolCallStatusAutoApproved}}
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 7)
+	assert.Equal(t, conversation.BlockTypeText, blocks[0].Type)
+	assert.Equal(t, "I'll write the script.", blocks[0].Text)
+
+	assert.Equal(t, conversation.BlockTypeServerToolUse, blocks[1].Type)
+	require.NotNil(t, blocks[1].ServerTool)
+	assert.Equal(t, "srv1", blocks[1].ServerTool.ID)
+
+	assert.Equal(t, conversation.BlockTypeThinking, blocks[2].Type)
+	assert.Equal(t, "No file came back.", blocks[2].Text)
+
+	assert.Equal(t, conversation.BlockTypeText, blocks[3].Type)
+	assert.Equal(t, "Let me try again.", blocks[3].Text)
+
+	assert.Equal(t, conversation.BlockTypeServerToolUse, blocks[4].Type)
+	require.NotNil(t, blocks[4].ServerTool)
+	assert.Equal(t, "srv2", blocks[4].ServerTool.ID, "the second execution keeps its place after the narration")
+
+	assert.Equal(t, conversation.BlockTypeText, blocks[5].Type)
+	assert.Equal(t, "Done.", blocks[5].Text)
+
+	assert.Equal(t, conversation.BlockTypeToolUse, blocks[6].Type)
+}
+
+func TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot(t *testing.T) {
+	acc := newTurnAccumulator("conv-id", "post-id", "", false, false)
+
+	inProgress := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusInProgress},
+	}
+	acc.serverTools = inProgress
+	acc.sequence.RecordServerTools(inProgress)
+	acc.sequence.AppendText("running")
+
+	finished := []llm.ServerToolUse{
+		{ID: "srv1", Tool: llm.NativeToolCodeInterpreter, Status: llm.ServerToolStatusSuccess, Output: "ok"},
+	}
+	acc.serverTools = finished
+	acc.sequence.RecordServerTools(finished)
+
+	blocks := acc.buildContentBlocks()
+
+	require.Len(t, blocks, 2)
+	require.Equal(t, conversation.BlockTypeServerToolUse, blocks[0].Type)
+	assert.Equal(t, llm.ServerToolStatusSuccess, blocks[0].ServerTool.Status)
+	assert.Equal(t, "ok", blocks[0].ServerTool.Output)
+	assert.Equal(t, conversation.BlockTypeText, blocks[1].Type)
 }

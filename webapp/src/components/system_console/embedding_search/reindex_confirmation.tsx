@@ -42,3 +42,31 @@ export const ReindexConfirmation = ({show, onConfirm, onCancel, embeddingProvide
         />
     );
 };
+
+interface RebuildVectorIndexConfirmationProps {
+    show: boolean;
+    onConfirm: () => void;
+    onCancel: () => void;
+}
+
+export const RebuildVectorIndexConfirmation = ({show, onConfirm, onCancel}: RebuildVectorIndexConfirmationProps) => {
+    return (
+        <ConfirmationDialog
+            show={show}
+            title={<FormattedMessage defaultMessage='Confirm vector index rebuild'/>}
+            message={
+                <>
+                    <p>
+                        <FormattedMessage defaultMessage='Rebuild the vector index with the current HNSW M setting? This does not re-embed posts.'/>
+                    </p>
+                    <p>
+                        <FormattedMessage defaultMessage='Semantic search is unavailable until the rebuild finishes. On large databases this can take a while.'/>
+                    </p>
+                </>
+            }
+            confirmButtonText={<FormattedMessage defaultMessage='Rebuild vector index'/>}
+            onConfirm={onConfirm}
+            onCancel={onCancel}
+        />
+    );
+};

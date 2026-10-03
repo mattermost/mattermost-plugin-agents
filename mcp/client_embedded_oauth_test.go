@@ -5,7 +5,6 @@ package mcp
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -87,11 +86,11 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			_ = client.Tools()
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		client.toolsMu.Lock()
 		client.tools = make(map[string]*mcp.Tool)
 		client.toolsMu.Unlock()
@@ -100,105 +99,48 @@ func TestClientToolsReturnsCopyAndSurvivesConcurrentUpdate(t *testing.T) {
 	require.Empty(t, client.Tools())
 }
 
-func TestExtractOAuthMetadataURL(t *testing.T) {
-	tests := []struct {
-		name      string
-		errMsg    string
-		wantURL   string
-		wantFound bool
-	}{
-		{
-			name:      "nil error",
-			errMsg:    "",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "unrelated error",
-			errMsg:    "connection refused",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "metadata URL without wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL with wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com/.well-known/oauth-protected-resource: Got error: token refresh failed",
-			wantURL:   "https://example.com/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "metadata URL embedded in longer error chain",
-			errMsg:    "failed to connect: OAuth authentication needed for resource at https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantURL:   "https://api.githubcopilot.com/.well-known/oauth-protected-resource/mcp/",
-			wantFound: true,
-		},
-		{
-			name:      "empty metadata URL",
-			errMsg:    "OAuth authentication needed for resource at ",
-			wantURL:   "",
-			wantFound: false,
-		},
-		{
-			name:      "URL with port",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-		{
-			name:      "URL with port and wrapped error",
-			errMsg:    "OAuth authentication needed for resource at https://example.com:8443/.well-known/oauth-protected-resource: Got error: something failed",
-			wantURL:   "https://example.com:8443/.well-known/oauth-protected-resource",
-			wantFound: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var err error
-			if tt.errMsg != "" {
-				err = fmt.Errorf("%s", tt.errMsg)
-			}
-			gotURL, gotFound := extractOAuthMetadataURL(err)
-			require.Equal(t, tt.wantFound, gotFound)
-			require.Equal(t, tt.wantURL, gotURL)
-		})
-	}
-}
-
 func TestClientOAuthNeededError(t *testing.T) {
-	client := &Client{
-		config: ServerConfig{
-			Name: "OAuth Server",
-		},
-		oauthManager: &OAuthManager{
-			callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
-		},
-	}
-
 	tests := []struct {
-		name string
-		err  error
+		name           string
+		err            error
+		serviceAccount bool
+		wantOAuthError bool
 	}{
 		{
 			name: "mcp unauthorized error",
 			err: &mcpUnauthorized{
 				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
 			},
+			wantOAuthError: true,
 		},
 		{
-			name: "string matched oauth error",
-			err:  fmt.Errorf("OAuth authentication needed for resource at https://oauth.example.com/.well-known/oauth-protected-resource"),
+			name: "service account mode ignores an unauthorized error",
+			err: &mcpUnauthorized{
+				metadataURL: "https://oauth.example.com/.well-known/oauth-protected-resource",
+			},
+			serviceAccount: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Service account bags have no OAuth manager in production; keeping one here
+			// pins the mode guard rather than the nil.
+			client := &Client{
+				config: ServerConfig{
+					Name: "OAuth Server",
+				},
+				oauthManager: &OAuthManager{
+					callbackURL: "https://mattermost.example.com/plugins/mattermost-ai/oauth/callback",
+				},
+				serviceAccount: tt.serviceAccount,
+			}
+
 			err := client.oauthNeededError(tt.err)
+			if !tt.wantOAuthError {
+				require.NoError(t, err, "service account mode must never ask the user to connect an account")
+				return
+			}
 			require.Error(t, err)
 
 			var oauthErr *OAuthNeededError
@@ -228,7 +170,7 @@ func TestNilCacheHandling(t *testing.T) {
 	require.Nil(t, tools)
 }
 
-func TestShouldUseSharedToolsCache(t *testing.T) {
+func TestSharedToolsCacheAllowedForServer(t *testing.T) {
 	tests := []struct {
 		name         string
 		serverConfig ServerConfig
@@ -256,7 +198,7 @@ func TestShouldUseSharedToolsCache(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, shouldUseSharedToolsCache(tt.serverConfig))
+			require.Equal(t, tt.expected, sharedToolsCacheAllowedForServer(tt.serverConfig))
 		})
 	}
 }

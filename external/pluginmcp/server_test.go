@@ -295,14 +295,14 @@ func TestServeHTTP_InjectsUserID(t *testing.T) {
 	assert.Equal(t, "uxyz", capturedUserID)
 }
 
-// TestServeHTTP_HandlerLazyInit exercises s.mu under -race.
+// TestServeHTTP_HandlerLazyInit exercises lazy handler init under -race.
 func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 	s := NewServer(nil, Config{PluginID: "x", Name: "X", Path: "/mcp"})
 
 	var wg sync.WaitGroup
 	const N = 10
 	wg.Add(N)
-	for i := 0; i < N; i++ {
+	for range N {
 		go func() {
 			defer wg.Done()
 			rec := httptest.NewRecorder()
@@ -313,8 +313,35 @@ func TestServeHTTP_HandlerLazyInit(t *testing.T) {
 	}
 	wg.Wait()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	assert.True(t, s.handlerBuiltOK, "handler should have been built")
-	assert.NotNil(t, s.handler, "handler should be non-nil after lazy init")
+	assert.NotNil(t, s.streamableHandler(), "handler should be non-nil after lazy init")
+}
+
+// TestServeHTTPEnforcesRequestBodyLimit pins the request body size limit
+// introduced by go-sdk v1.7.0 (previously unlimited): requests over the
+// explicit MaxRequestBodyBytes get 413, while normal MCP traffic works.
+func TestServeHTTPEnforcesRequestBodyLimit(t *testing.T) {
+	s := NewServer(nil, Config{PluginID: "com.example.limits"})
+	registerEchoTool(s, "echo")
+	ts := newTestServerWithAuthInjection(t, s, nil)
+
+	// Over the limit: a request padded past the limit must be rejected.
+	padding := strings.Repeat("a", int(mcp.DefaultMaxRequestBodyBytes)+1024)
+	body := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"_pad":"` + padding + `"}}`
+	req, err := http.NewRequest(http.MethodPost, ts.URL, strings.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
+
+	// Under the limit: connect and call a tool normally.
+	session := connectClient(context.Background(), t, ts.URL)
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "com_example_limits__echo",
+		Arguments: map[string]any{"message": "still works"},
+	})
+	require.NoError(t, err)
+	require.False(t, result.IsError)
 }

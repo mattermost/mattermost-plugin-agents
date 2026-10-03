@@ -193,7 +193,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=missing",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(true), true, true)
+				return seedDefaults(e, new(true), true, true)
 			},
 			wantStatus:    http.StatusNotFound,
 			wantErrorCode: appResourceErrNotFound,
@@ -203,7 +203,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(true), false, true)
+				return seedDefaults(e, new(true), false, true)
 			},
 			wantStatus:    http.StatusNotFound,
 			wantErrorCode: appResourceErrNotFound,
@@ -213,7 +213,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(false), true, true)
+				return seedDefaults(e, new(false), true, true)
 			},
 			wantStatus:      http.StatusOK,
 			wantHTML:        "<html>app</html>",
@@ -224,7 +224,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(true), true, true)
+				return seedDefaults(e, new(true), true, true)
 			},
 			wantStatus:      http.StatusOK,
 			wantHTML:        "<html>app</html>",
@@ -235,7 +235,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testOtherUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(true), true, true)
+				return seedDefaults(e, new(true), true, true)
 			},
 			wantStatus:      http.StatusOK,
 			wantHTML:        "<html>app</html>",
@@ -246,7 +246,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testOtherUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(false), true, true)
+				return seedDefaults(e, new(false), true, true)
 			},
 			wantStatus:      http.StatusForbidden,
 			wantErrorCode:   appResourceErrForbidden,
@@ -257,7 +257,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				calls := seedDefaults(e, conversation.BoolPtr(true), true, true)
+				calls := seedDefaults(e, new(true), true, true)
 				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
 					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
 					return nil, mcp.ErrServerNotConfigured
@@ -273,7 +273,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				calls := seedDefaults(e, conversation.BoolPtr(true), true, true)
+				calls := seedDefaults(e, new(true), true, true)
 				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
 					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
 					return nil, mcp.NewOAuthNeededError("https://auth.example/start")
@@ -290,7 +290,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				calls := seedDefaults(e, conversation.BoolPtr(true), true, true)
+				calls := seedDefaults(e, new(true), true, true)
 				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
 					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
 					return nil, &mcp.InvalidAppResourceError{URI: testAppResourceURI, MIMEType: "text/html"}
@@ -306,7 +306,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				calls := seedDefaults(e, conversation.BoolPtr(true), true, true)
+				calls := seedDefaults(e, new(true), true, true)
 				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
 					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
 					return nil, mcp.ErrServerNotConnected
@@ -322,7 +322,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				calls := seedDefaults(e, conversation.BoolPtr(true), true, true)
+				calls := seedDefaults(e, new(true), true, true)
 				e.mcp.readUserAppResource = func(_ context.Context, userID, serverOrigin, uri string) (*mcp.AppResource, error) {
 					*calls = append(*calls, readAppResourceCall{userID: userID, serverOrigin: serverOrigin, uri: uri})
 					return nil, errors.New("dial tcp 10.0.0.1:443: secret internals")
@@ -345,7 +345,7 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 			caller: testUserID,
 			query:  "post_id=" + testAppResourcePostID + "&tool_call_id=tc1",
 			setup: func(e *TestEnvironment) *[]readAppResourceCall {
-				return seedDefaults(e, conversation.BoolPtr(true), true, true)
+				return seedDefaults(e, new(true), true, true)
 			},
 			wantStatus:      http.StatusOK,
 			wantManagerCall: true,
@@ -397,11 +397,11 @@ func TestHandleGetMCPAppResource(t *testing.T) {
 				uiMeta := &llm.ToolUIMeta{ResourceURI: testAppResourceURI}
 				unshared, _ := json.Marshal([]conversation.ContentBlock{{
 					Type: conversation.BlockTypeToolUse, ID: "reuse", ServerOrigin: testAppResourceOrigin,
-					Shared: conversation.BoolPtr(false), UIMeta: uiMeta,
+					Shared: new(false), UIMeta: uiMeta,
 				}})
 				shared, _ := json.Marshal([]conversation.ContentBlock{{
 					Type: conversation.BlockTypeToolUse, ID: "reuse", ServerOrigin: testAppResourceOrigin,
-					Shared: conversation.BoolPtr(true), UIMeta: uiMeta,
+					Shared: new(true), UIMeta: uiMeta,
 				}})
 				e.conversationStore.turns[testAppResourceConvID] = []store.Turn{
 					{ID: "t1", ConversationID: testAppResourceConvID, PostID: &postA, Role: "assistant", Content: unshared, Sequence: 1},
