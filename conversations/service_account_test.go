@@ -125,7 +125,7 @@ func serviceAccountConversations(t *testing.T, convStore *loadedStateFlowStore, 
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := toolLicenseChecker(t, true)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{serviceAccountTestBot(true)})
 
 	mmClient := mocks.NewMockClient(t)

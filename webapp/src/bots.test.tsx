@@ -35,6 +35,11 @@ jest.mock('@/mm_webapp', () => ({
     useWebSocketClient: () => null,
 }));
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: () => null,
+    Tooltip: () => null,
+}), {virtual: true});
+
 // @/client is the real HTTP boundary; stub it so persistence is observable and
 // the bot-fetch effect never makes a network call.
 const mockGetAIBots = jest.fn();

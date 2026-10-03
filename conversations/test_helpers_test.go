@@ -12,11 +12,20 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/stretchr/testify/mock"
 )
+
+// newPassthroughAccessChecker builds an ABAC checker that always reports
+// no_policy, so tests exercise pure legacy permission behavior.
+func newPassthroughAccessChecker() *accesscontrol.Checker {
+	return accesscontrol.New(accesscontrol.PassthroughClient{}, nil, accesscontrol.NoMCPServerIDs, nil)
+}
 
 type fakeWebSocketEvent struct {
 	event     string
@@ -241,6 +250,10 @@ func (c *fakeMMClient) HasPermissionToChannel(string, string, *model.Permission)
 	return true
 }
 
+func (c *fakeMMClient) HasPermissionToFileAction(sessionID, _, _ string) bool {
+	return sessionID != ""
+}
+
 func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	if c.fileInfos != nil {
 		if info, ok := c.fileInfos[fileID]; ok {
@@ -319,4 +332,17 @@ func (c *testToolCallingConfig) AllowNativeWebSearchInChannels() bool {
 
 func (c *testToolCallingConfig) MCP() mcp.Config {
 	return mcp.Config{}
+}
+
+// overrideMockLicense replaces GetLicense expectations so a LicenseChecker
+// built over mockAPI reports the given license.
+func overrideMockLicense(mockAPI *plugintest.API, license *model.License) {
+	filtered := make([]*mock.Call, 0, len(mockAPI.ExpectedCalls))
+	for _, call := range mockAPI.ExpectedCalls {
+		if call.Method != "GetLicense" {
+			filtered = append(filtered, call)
+		}
+	}
+	mockAPI.ExpectedCalls = filtered
+	mockAPI.On("GetLicense").Return(license).Maybe()
 }

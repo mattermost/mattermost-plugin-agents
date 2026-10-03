@@ -5,6 +5,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -32,7 +33,9 @@ func userBlocksWithAttachments(message string, fileIDs []string, mmClient mmapi.
 	for _, fileID := range fileIDs {
 		fileInfo, err := mmClient.GetFileInfo(fileID)
 		if err != nil {
-			mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
+			if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+				mmClient.LogError("failed to get file info for user attachment", "error", err, "file_id", fileID)
+			}
 			continue
 		}
 		if strings.HasPrefix(fileInfo.MimeType, "image/") {
@@ -157,17 +160,18 @@ func toolUseBlocks(
 	// Tool use ends an assistant turn, so calls always come last.
 	for _, tc := range toolCalls {
 		blocks = append(blocks, ContentBlock{
-			Type:            BlockTypeToolUse,
-			ID:              tc.ID,
-			Name:            tc.Name,
-			ServerOrigin:    tc.ServerOrigin,
-			Input:           tc.Arguments,
-			MCPBareName:     tc.MCPBareName,
-			Status:          StatusToString(tc.Status),
-			Shared:          new(shared),
-			UserInteraction: tc.UserInteraction,
-			Title:           tc.Title,
-			Description:     tc.Description,
+			Type:             BlockTypeToolUse,
+			ID:               tc.ID,
+			Name:             tc.Name,
+			ServerOrigin:     tc.ServerOrigin,
+			Input:            tc.Arguments,
+			MCPBareName:      tc.MCPBareName,
+			Status:           StatusToString(tc.Status),
+			Shared:           new(shared),
+			UserInteraction:  tc.UserInteraction,
+			WouldAutoExecute: tc.WouldAutoExecute,
+			Title:            tc.Title,
+			Description:      tc.Description,
 		})
 	}
 

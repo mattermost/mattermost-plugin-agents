@@ -47,10 +47,10 @@ jest.mock('react-router-dom', () => ({
 
 // @/client is the real HTTP boundary; stub the calls initialize() makes.
 const mockGetAIBots = jest.fn();
+const mockSetSiteURL = jest.fn();
 jest.mock('@/client', () => ({
     getAIBots: (...args: unknown[]) => mockGetAIBots(...args),
-    setSiteURL: jest.fn(),
-    getAIDirectChannel: jest.fn(),
+    setSiteURL: (...args: unknown[]) => mockSetSiteURL(...args),
     doReaction: jest.fn(),
     doRunSearch: jest.fn(),
     doThreadAnalysis: jest.fn(),
@@ -92,10 +92,10 @@ function makeRegistry(websocketHandlers: WebSocketHandlers) {
     };
 }
 
-function makeStore(dispatch: jest.Mock) {
+function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
     const state = {
         entities: {
-            general: {config: {SiteURL: 'http://localhost:8065'}},
+            general: {config: {SiteURL: siteURL}},
             users: {currentUserId: ''},
             i18n: {locale: 'en'},
         },
@@ -107,7 +107,7 @@ function makeStore(dispatch: jest.Mock) {
     };
 }
 
-async function initializePlugin() {
+async function initializePlugin(siteURL?: string) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
 
@@ -116,7 +116,7 @@ async function initializePlugin() {
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch));
+    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL));
 
     return {websocketHandlers, dispatch};
 }
@@ -131,6 +131,25 @@ function fireWebSocketEvent(websocketHandlers: WebSocketHandlers, event: string)
     }
     handler({});
 }
+
+describe('client base URL', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockSetSiteURL.mockReset();
+        window.basename = '/mattermost';
+    });
+
+    afterEach(() => {
+        delete window.basename;
+    });
+
+    test('uses the loaded origin and basename instead of the configured SiteURL', async () => {
+        await initializePlugin('https://configured.example.test/mattermost');
+
+        expect(mockSetSiteURL).toHaveBeenCalledTimes(1);
+        expect(mockSetSiteURL).toHaveBeenCalledWith(`${window.location.origin}/mattermost`);
+    });
+});
 
 describe('bots cache websocket handlers', () => {
     beforeEach(() => {

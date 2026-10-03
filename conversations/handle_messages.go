@@ -11,9 +11,11 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -146,8 +148,12 @@ func (c *Conversations) buildConversationContextWithTools(
 	return llmContext
 }
 
-func (c *Conversations) MessageHasBeenPosted(_ *plugin.Context, post *model.Post) {
-	ctx, span := telemetry.Tracer().Start(context.Background(), "message has been posted",
+func (c *Conversations) MessageHasBeenPosted(pluginContext *plugin.Context, post *model.Post) {
+	ctx := context.Background()
+	if pluginContext != nil {
+		ctx = auth.WithSessionID(ctx, pluginContext.SessionId)
+	}
+	ctx, span := telemetry.Tracer().Start(ctx, "message has been posted",
 		trace.WithAttributes(
 			telemetry.PostID.String(post.Id),
 			telemetry.ChannelID.String(post.ChannelId),
@@ -230,21 +236,28 @@ func (c *Conversations) handleMessages(ctx context.Context, post *model.Post) er
 	if setting := c.autoReplySettingForChannel(channel); setting != nil {
 		autoReplyErr := c.handleAutoReply(ctx, setting, post, postingUser, channel)
 		if errors.Is(autoReplyErr, ErrNoResponse) {
-			c.maybeNotifyAgentMentionNeeded(post, channel)
+			c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
 		}
 		return autoReplyErr
 	}
 
 	// Reply in a thread that did not @mention an agent: when the previous post
 	// was authored by an agent, nudge the user with an ephemeral reminder.
-	c.maybeNotifyAgentMentionNeeded(post, channel)
+	c.maybeNotifyAgentMentionNeeded(ctx, post, channel)
 
 	return nil
 }
 
 func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post *model.Post, postingUser *model.User, channel *model.Channel) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictions(postingUser.Id, bot, channel); restrictionErr != nil {
+	if restrictionErr := c.bots.CheckUsageRestrictions(ctx, postingUser.Id, bot, channel); restrictionErr != nil {
 		return restrictionErr
+	}
+
+	if !mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
+		if licErr := c.licenseChecker.Check(enterprise.CapMultiplayerChannels); licErr != nil {
+			c.postMultiplayerChannelsUnavailable(bot, channel, post)
+			return fmt.Errorf("%w: %w", licErr, ErrNoResponse)
+		}
 	}
 
 	// Check config to determine if tools should be allowed in channel mentions
@@ -329,6 +342,7 @@ func (c *Conversations) handleMentionViaConversation(
 	userPostID := post.Id
 	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
+		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        bot.GetMMBot().UserId,
 		ChannelID:    channel.Id,
 		RootPostID:   responsePost.RootId,
@@ -368,6 +382,7 @@ func (c *Conversations) handleMentionViaConversation(
 		convResult.Conversation,
 		llmContext,
 		threadData,
+		conversation.BuildOptions{SessionID: auth.SessionIDFromContext(ctx)},
 	)
 	if reqErr != nil {
 		return fmt.Errorf("failed to build completion request: %w", reqErr)
@@ -417,7 +432,7 @@ func (c *Conversations) handleMentionViaConversation(
 }
 
 func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *model.Channel, postingUser *model.User, post *model.Post) (err error) {
-	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(bot, postingUser.Id); restrictionErr != nil {
+	if restrictionErr := c.bots.CheckUsageRestrictionsForUser(ctx, bot, postingUser.Id); restrictionErr != nil {
 		return restrictionErr
 	}
 
@@ -462,7 +477,7 @@ func (c *Conversations) handleDMViaConversation(ctx context.Context, bot *bots.B
 	progress.Advance(responseProgressLoadingConversation)
 	ensureDMWebSearchTracking(llmContext)
 
-	convResult, err := c.CreateOrGetDMConversation(bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
+	convResult, err := c.createOrGetDMConversation(auth.SessionIDFromContext(ctx), bot.GetMMBot().UserId, postingUser, channel, post, llmContext)
 	if err != nil {
 		return fmt.Errorf("unable to create DM conversation: %w", err)
 	}
@@ -587,6 +602,36 @@ func (c *Conversations) responseLocale(postingUser *model.User, channel *model.C
 		return postingUser.Locale
 	}
 	return defaultLocale
+}
+
+// postMultiplayerChannelsUnavailable replies in the thread as the agent so
+// everyone in the channel sees why it did not answer. The reply uses the
+// server locale because it is visible to the whole channel.
+func (c *Conversations) postMultiplayerChannelsUnavailable(bot *bots.Bot, channel *model.Channel, post *model.Post) {
+	if c.mmClient == nil || bot == nil || channel == nil || post == nil {
+		return
+	}
+
+	fallback := "Agents can reply in channels and group messages on Mattermost Professional and above. You can still chat with me in a direct message."
+	message := fallback
+	if c.i18n != nil {
+		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(""))
+		message = T("agents.multiplayer_channels_requires_professional", fallback)
+	}
+
+	rootID := post.RootId
+	if rootID == "" {
+		rootID = post.Id
+	}
+	reply := &model.Post{
+		UserId:    bot.GetMMBot().UserId,
+		ChannelId: channel.Id,
+		RootId:    rootID,
+		Message:   message,
+	}
+	if err := c.mmClient.CreatePost(reply); err != nil {
+		c.mmClient.LogError("Failed to post multiplayer availability reply", "error", err.Error())
+	}
 }
 
 func (c *Conversations) fallbackLocale(userLocale string) string {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"sync/atomic"
 
@@ -40,11 +41,12 @@ type Config struct {
 }
 
 type WebSearchConfig struct {
-	Enabled        bool                  `json:"enabled"`
-	Provider       string                `json:"provider"`
-	Google         WebSearchGoogleConfig `json:"google"`
-	Brave          WebSearchBraveConfig  `json:"brave"`
-	DomainDenylist []string              `json:"domainDenylist"`
+	Enabled        bool                   `json:"enabled"`
+	Provider       string                 `json:"provider"`
+	Google         WebSearchGoogleConfig  `json:"google"`
+	Brave          WebSearchBraveConfig   `json:"brave"`
+	SearXNG        WebSearchSearXNGConfig `json:"searxng"`
+	DomainDenylist []string               `json:"domainDenylist"`
 }
 
 type WebSearchGoogleConfig struct {
@@ -52,6 +54,11 @@ type WebSearchGoogleConfig struct {
 	SearchEngineID string `json:"searchEngineId"`
 	ResultLimit    int    `json:"resultLimit"`
 	APIURL         string `json:"apiURL"`
+}
+
+type WebSearchSearXNGConfig struct {
+	BaseURL     string `json:"baseURL"`
+	ResultLimit int    `json:"resultLimit"`
 }
 
 type WebSearchBraveConfig struct {
@@ -174,6 +181,16 @@ func (c *Container) RegisterUpdateListener(listener UpdateListener) {
 
 func (c *Container) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
 	return c.Config().EmbeddingSearchConfig
+}
+
+// GetServices returns a shallow copy of the configured services so callers can
+// hold and iterate a stable snapshot while the container is updated.
+func (c *Container) GetServices() []llm.ServiceConfig {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return nil
+	}
+	return slices.Clone(cfg.Services)
 }
 
 // GetServiceByID returns the service configuration for the given ID

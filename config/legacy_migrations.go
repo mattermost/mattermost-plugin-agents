@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // LegacyServiceConfig represents the old config.json format with the legacy service fields.
@@ -75,7 +76,7 @@ func MigrateServicesToBots(cfg Config, loadLegacyConfig func() (LegacyServiceCon
 	existingConfig.Services = make([]llm.ServiceConfig, 0, len(oldConfig.Config.Services))
 	for _, service := range oldConfig.Config.Services {
 		existingConfig.Services = append(existingConfig.Services, llm.ServiceConfig{
-			ID:              uuid.New().String(),
+			ID:              model.NewId(),
 			Name:            service.Name,
 			Type:            service.ServiceName,
 			DefaultModel:    service.DefaultModel,
@@ -149,7 +150,7 @@ func MigrateSeparateServicesFromBots(cfg Config) (Config, bool, error) {
 		}
 
 		// Generate service ID
-		serviceID := uuid.New().String()
+		serviceID := generateServiceID()
 
 		// Check if similar service already exists (deduplication)
 		existingID := findIdenticalService(serviceMap, bot.Service)
@@ -209,6 +210,12 @@ func RunAllLegacyMigrations(cfg Config, loadLegacyConfig func() (LegacyServiceCo
 	}
 
 	return cfg, changed, nil
+}
+
+// generateServiceID returns a Mattermost-style 26-char service ID. Service IDs
+// are ABAC policy identities; config-bot IDs (below) intentionally stay UUIDs.
+func generateServiceID() string {
+	return model.NewId()
 }
 
 // findIdenticalService checks if a service with identical configuration already exists.

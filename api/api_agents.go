@@ -5,19 +5,23 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -47,6 +51,18 @@ type agentErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// statusForAccessErr: policy denials are 403; saving as attribute-based without ABAC is 400.
+func statusForAccessErr(err error) int {
+	switch {
+	case errors.Is(err, accesscontrol.ErrAccessDenied):
+		return http.StatusForbidden
+	case errors.Is(err, accesscontrol.ErrABACUnavailable):
+		return http.StatusBadRequest
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
 // abortAgentRequest writes a JSON error response with the given status code so
 // the webapp can surface the message instead of falling back to a generic
 // "Failed to save agent. Please try again." The error is also recorded on the
@@ -66,28 +82,31 @@ func abortAgentRequest(c *gin.Context, status int, err error) {
 //   - autoEnableNewMCPTools=true gives the agent every currently configured MCP tool and any added later.
 //   - Otherwise, the agent gets only the tools listed in enabledMCPTools (empty/missing = no MCP tools).
 type AgentRequestFields struct {
-	DisplayName             string               `json:"displayName" binding:"required"`
-	ServiceID               string               `json:"serviceID" binding:"required"`
-	CustomInstructions      string               `json:"customInstructions"`
-	ChannelAccessLevel      int                  `json:"channelAccessLevel"`
-	ChannelIDs              []string             `json:"channelIDs"`
-	UserAccessLevel         int                  `json:"userAccessLevel"`
-	UserIDs                 []string             `json:"userIDs"`
-	TeamIDs                 []string             `json:"teamIDs"`
-	AdminUserIDs            []string             `json:"adminUserIDs"`
-	EnabledMCPTools         []llm.EnabledMCPTool `json:"enabledMCPTools"`
-	AutoEnableNewMCPTools   bool                 `json:"autoEnableNewMCPTools"`
-	MCPDynamicToolLoading   bool                 `json:"mcpDynamicToolLoading"`
-	UseServiceAccountAuth   bool                 `json:"useServiceAccountAuth"`
-	Model                   string               `json:"model"`
-	EnableVision            bool                 `json:"enableVision"`
-	DisableTools            bool                 `json:"disableTools"`
-	EnabledNativeTools      []string             `json:"enabledNativeTools"`
-	ReasoningEnabled        bool                 `json:"reasoningEnabled"`
-	ReasoningEffort         string               `json:"reasoningEffort"`
-	ThinkingBudget          int                  `json:"thinkingBudget"`
-	StructuredOutputEnabled bool                 `json:"structuredOutputEnabled"`
-	MaxToolTurns            int                  `json:"maxToolTurns"`
+	DisplayName           string               `json:"displayName" binding:"required"`
+	ServiceID             string               `json:"serviceID" binding:"required"`
+	CustomInstructions    string               `json:"customInstructions"`
+	ChannelAccessLevel    int                  `json:"channelAccessLevel"`
+	ChannelIDs            []string             `json:"channelIDs"`
+	UserAccessLevel       int                  `json:"userAccessLevel"`
+	UserIDs               []string             `json:"userIDs"`
+	TeamIDs               []string             `json:"teamIDs"`
+	AdminUserIDs          []string             `json:"adminUserIDs"`
+	EnabledMCPTools       []llm.EnabledMCPTool `json:"enabledMCPTools"`
+	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
+	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
+	UseServiceAccountAuth bool                 `json:"useServiceAccountAuth"`
+	Model                 string               `json:"model"`
+	EnableVision          bool                 `json:"enableVision"`
+	DisableTools          bool                 `json:"disableTools"`
+	EnabledNativeTools    []string             `json:"enabledNativeTools"`
+	ReasoningEnabled      bool                 `json:"reasoningEnabled"`
+	ReasoningEffort       string               `json:"reasoningEffort"`
+	ThinkingBudget        int                  `json:"thinkingBudget"`
+	// StructuredOutputEnabled is deprecated: it is accepted and persisted for
+	// compatibility with existing callers, but ignored at runtime. Structured
+	// output is a per-service policy (ServiceConfig.StructuredOutputPolicy).
+	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
+	MaxToolTurns            int  `json:"maxToolTurns"`
 }
 
 // applyTo overwrites the request-controlled fields on cfg.
@@ -112,7 +131,9 @@ func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	cfg.ReasoningEnabled = r.ReasoningEnabled
 	cfg.ReasoningEffort = r.ReasoningEffort
 	cfg.ThinkingBudget = r.ThinkingBudget
-	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled
+	// Persisted verbatim so existing callers keep round-tripping; the runtime
+	// reads ServiceConfig.StructuredOutputPolicy instead.
+	cfg.StructuredOutputEnabled = r.StructuredOutputEnabled //nolint:staticcheck
 	cfg.MaxToolTurns = r.MaxToolTurns
 }
 
@@ -159,29 +180,97 @@ type ServiceInfo struct {
 	UseResponsesAPI  bool   `json:"useResponsesAPI"`
 }
 
-// FreeTierAgentLimit is the maximum number of self-service agents allowed when
-// the server does not have a multi-LLM (E20+) license.
-const FreeTierAgentLimit = 1
-
-// AgentActiveCountHeader is returned on GET /agents for unlicensed servers so the
-// webapp can gate creation against the server-wide count (not the access-filtered list).
+// AgentActiveCountHeader is returned on GET /agents when agents are capped so the
+// webapp can gate creation against the server-wide combined pool (not the
+// access-filtered list).
 const AgentActiveCountHeader = "X-Agent-Active-Count"
 
-// checkAgentCreateQuota allows unlimited creation when multi-LLM licensed; otherwise
-// enforces FreeTierAgentLimit across all self-service agents on the server. It writes
-// the abort response and returns false when creation must be blocked.
+func (a *API) pluginConfigOrEmpty() *config.Config {
+	if a.configStore == nil {
+		return &config.Config{}
+	}
+	cfg, err := a.configStore.GetConfig()
+	if err != nil || cfg == nil {
+		return &config.Config{}
+	}
+	return cfg
+}
+
+// agentPoolStatus classifies the combined agent pool (stored
+// configuration-file bots and dbAgents) at the current license level with the
+// same rule the runtime uses to choose which agents run.
+func (a *API) agentPoolStatus(dbAgents []*llm.BotConfig) ([]llm.BotConfig, []config.AgentInactiveReason, error) {
+	cfg := &config.Config{}
+	if a.configStore != nil {
+		stored, err := a.configStore.GetConfig()
+		if err != nil {
+			return nil, nil, err
+		}
+		if stored != nil {
+			cfg = stored
+		}
+	}
+	pool := config.AgentPool(cfg.Bots, dbAgents)
+	return pool, config.AgentInactiveReasons(cfg.Services, pool, a.licenseChecker.Level()), nil
+}
+
+// licensedAgentPoolCount counts the agents that take a slot in the agent cap:
+// active agents plus those waiting for a slot. Agents whose LLM service is
+// missing, incomplete or inactive at the current level are not counted, so
+// they never block creating one that works.
+func licensedAgentPoolCount(reasons []config.AgentInactiveReason) int {
+	n := 0
+	for _, reason := range reasons {
+		if reason == config.AgentActive || reason == config.AgentInactiveAgentLimit {
+			n++
+		}
+	}
+	return n
+}
+
+// checkAgentCreateQuota allows unlimited creation when agents are uncapped;
+// otherwise enforces AgentLimit across the combined pool. It writes the abort
+// response and returns false when creation must be blocked.
 func (a *API) checkAgentCreateQuota(c *gin.Context) bool {
-	if a.licenseChecker.IsMultiLLMLicensed() {
+	limit, capped := a.licenseChecker.AgentLimit()
+	if !capped {
 		return true
 	}
-	count, err := a.agentStore.CountActiveAgents()
+	dbAgents, err := a.agentStore.ListAgents()
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
 	}
-	if count >= FreeTierAgentLimit {
-		abortAgentRequest(c, http.StatusForbidden, fmt.Errorf("creating more than %d self-service agent(s) requires an E20 or Enterprise license", FreeTierAgentLimit))
+	_, reasons, err := a.agentPoolStatus(dbAgents)
+	if err != nil {
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to check agent quota: %w", err))
 		return false
+	}
+	if licensedAgentPoolCount(reasons) >= limit {
+		abortNotLicensed(c, enterprise.AgentLimitError(a.licenseChecker.Level()))
+		return false
+	}
+	return true
+}
+
+// checkAgentLicenseGates denies create/update requests that newly enable a
+// gated BotConfig field. prev is nil on create (compared against defaults).
+func (a *API) checkAgentLicenseGates(c *gin.Context, proposed llm.BotConfig, prev *llm.BotConfig) bool {
+	var before llm.BotConfig
+	if prev != nil {
+		before = *prev
+	}
+	level := a.licenseChecker.Level()
+	if err := config.ValidateAgentTransition(before, proposed, level); err != nil {
+		abortNotLicensed(c, err)
+		return false
+	}
+	// Below Enterprise only the active service may be newly selected.
+	if !a.licenseChecker.Allows(enterprise.CapMultipleLLMServices) && (prev == nil || prev.ServiceID != proposed.ServiceID) {
+		if !slices.Contains(config.ActiveServiceIDs(a.pluginConfigOrEmpty(), level), proposed.ServiceID) {
+			abortNotLicensed(c, enterprise.NewLicenseError(enterprise.CapMultipleLLMServices, level))
+			return false
+		}
 	}
 	return true
 }
@@ -308,10 +397,20 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		return
 	}
 
+	proposed := buildAgentConfigForCreate(req, userID, "")
+	if !a.checkAgentLicenseGates(c, *proposed, nil) {
+		return
+	}
+
 	// Validate the built config before creating the Mattermost bot account so an
 	// invalid request does not leave an orphan bot user behind.
-	if err := buildAgentConfigForCreate(req, userID, "").Validate(); err != nil {
+	if err := proposed.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		return
+	}
+
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, proposed, nil); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
 		return
 	}
 
@@ -348,6 +447,13 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	c.JSON(http.StatusCreated, agent)
 }
 
+// agentListItem is an agent as listed on GET /agents, with the reason it is
+// not running when it is inactive.
+type agentListItem struct {
+	*llm.BotConfig
+	InactiveReason config.AgentInactiveReason `json:"inactiveReason,omitempty"`
+}
+
 // handleListAgents handles GET /agents: agents the caller may access.
 func (a *API) handleListAgents(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -358,22 +464,33 @@ func (a *API) handleListAgents(c *gin.Context) {
 		return
 	}
 
-	accessible := make([]*llm.BotConfig, 0, len(agents))
-	for _, cfg := range agents {
-		if a.canUserAccessAgent(cfg, userID) {
-			accessible = append(accessible, sanitizeAgentForUser(a.pluginAPI, cfg, userID))
+	// Status enrichment is best-effort: a failure here must not fail the list
+	// request, so agents are listed without a status and without the header,
+	// and the create API still enforces the limit.
+	inactive := make(map[string]config.AgentInactiveReason)
+	pool, reasons, err := a.agentPoolStatus(agents)
+	if err != nil {
+		a.pluginAPI.Log.Warn("Failed to determine which agents are active", "error", err.Error())
+	} else {
+		for i, bot := range pool {
+			if bot.ID != "" {
+				inactive[bot.ID] = reasons[i]
+			}
+		}
+		// The server-wide pool count lets the webapp gate creation against the
+		// real quota, not the access-filtered list.
+		if _, capped := a.licenseChecker.AgentLimit(); capped {
+			c.Header(AgentActiveCountHeader, strconv.Itoa(licensedAgentPoolCount(reasons)))
 		}
 	}
 
-	// Enrich (best-effort) with the server-wide count so the webapp can gate creation
-	// against the real quota, not the access-filtered list. A failure here must not fail
-	// the list request: just omit the header and let the create API enforce the limit.
-	if !a.licenseChecker.IsMultiLLMLicensed() {
-		count, err := a.agentStore.CountActiveAgents()
-		if err != nil {
-			a.pluginAPI.Log.Warn("Failed to count active agents for quota header", "error", err.Error())
-		} else {
-			c.Header(AgentActiveCountHeader, strconv.Itoa(count))
+	accessible := make([]agentListItem, 0, len(agents))
+	for _, cfg := range agents {
+		if a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
+			accessible = append(accessible, agentListItem{
+				BotConfig:      sanitizeAgentForUser(a.pluginAPI, cfg, userID),
+				InactiveReason: inactive[cfg.ID],
+			})
 		}
 	}
 
@@ -395,7 +512,7 @@ func (a *API) handleGetAgent(c *gin.Context) {
 		return
 	}
 
-	if !a.canUserAccessAgent(cfg, userID) {
+	if !a.canUserAccessAgent(c.Request.Context(), cfg, userID) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
@@ -472,6 +589,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	if !a.checkAgentLicenseGates(c, proposed, cfg) {
+		return
+	}
+
 	// Snapshot the stored config for the audit field diff, then adopt the
 	// already-applied proposed update (apply-then-compare ACL above).
 	prev := *cfg
@@ -488,9 +609,32 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return
+	}
+
 	if err := a.agentStore.UpdateAgent(cfg); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
 		return
+	}
+
+	// Switching away from attribute-based access: delete the agent policy.
+	// If policy deletion fails with an unexpected error, rollback the agent
+	// store to prev so the agent is not left in an inconsistent state where
+	// legacy access claims everyone is allowed but a dangling policy continues
+	// to deny users.
+	if prev.UserAccessLevel == llm.UserAccessLevelAttributeBased &&
+		cfg.UserAccessLevel != llm.UserAccessLevelAttributeBased {
+		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
+
+		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
+				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
+			}
+			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
+			return
+		}
 	}
 
 	ensureErr := a.refreshBotsAndNotify()
@@ -525,6 +669,12 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 	if err := a.agentStore.DeleteAgent(agentID); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to delete agent: %w", err))
 		return
+	}
+
+	// Best-effort policy cleanup: agent deletion must not fail on it. A stale
+	// policy on a deleted agent gates nothing.
+	if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
+		a.pluginAPI.Log.Error("Failed to delete access policy for deleted agent", "agent_id", cfg.ID, "error", err.Error())
 	}
 
 	ensureErr := a.refreshBotsAndNotify()
@@ -580,6 +730,11 @@ func (a *API) handleUploadAgentAvatar(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// canBypassServicePolicies: system admins author the policies and must see the full catalog.
+func (a *API) canBypassServicePolicies(userID string) bool {
+	return a.pluginAPI.User.HasPermissionTo(userID, model.PermissionManageSystem)
+}
+
 // handleListServices handles GET /services (non-secret fields only).
 func (a *API) handleListServices(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
@@ -599,8 +754,14 @@ func (a *API) handleListServices(c *gin.Context) {
 		return
 	}
 
+	bypassPolicies := a.canBypassServicePolicies(userID)
 	services := make([]ServiceInfo, 0, len(cfg.Services))
 	for _, svc := range cfg.Services {
+		if !bypassPolicies {
+			if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+				continue
+			}
+		}
 		services = append(services, ServiceInfo{
 			ID:               svc.ID,
 			Name:             svc.Name,
@@ -655,12 +816,21 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
+	// Same gate as GET /services.
+	if !a.canBypassServicePolicies(userID) {
+		if policyErr := a.accessChecker.CanUseService(c.Request.Context(), userID, svc.ID); policyErr != nil {
+			abortAgentRequest(c, http.StatusForbidden, errors.New("you do not have access to the selected service"))
+			return
+		}
+	}
+
 	supportsModelFetching := svc.Type == llm.ServiceTypeAnthropic ||
 		svc.Type == llm.ServiceTypeOpenAI ||
 		svc.Type == llm.ServiceTypeAzure ||
 		svc.Type == llm.ServiceTypeOpenAICompatible ||
 		svc.Type == llm.ServiceTypeGemini ||
-		svc.Type == llm.ServiceTypeVertex
+		svc.Type == llm.ServiceTypeVertex ||
+		svc.Type == llm.ServiceTypeNorth
 	if !supportsModelFetching {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("model listing not supported for service type %q", svc.Type))
 		return
@@ -670,7 +840,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	switch svc.Type {
 	case llm.ServiceTypeOpenAICompatible:
 		hasRequiredCredentials = svc.APIKey != "" || svc.APIURL != ""
-	case llm.ServiceTypeAzure:
+	case llm.ServiceTypeAzure, llm.ServiceTypeNorth:
 		hasRequiredCredentials = svc.APIKey != "" && svc.APIURL != ""
 	case llm.ServiceTypeVertex:
 		// Vertex uses GCP project + region; service-account JSON is optional (ADC).
@@ -681,7 +851,7 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 		return
 	}
 
-	models, err := bifrost.FetchModelsForService(*svc)
+	models, err := bifrost.FetchModelsForService(c.Request.Context(), *svc)
 	if err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to fetch models: %w", err))
 		return
@@ -690,16 +860,31 @@ func (a *API) handleFetchModelsForService(c *gin.Context) {
 	c.JSON(http.StatusOK, models)
 }
 
-// canUserAccessAgent reports whether userID may view or use the agent (admin, then usage restrictions).
-func (a *API) canUserAccessAgent(cfg *llm.BotConfig, userID string) bool {
+// canUserAccessAgent reports whether userID may see the agent on list/get.
+// System admins see agents even when CanUseService would deny (they author
+// policies). Everyone else must pass the agent gate and CanUseService for the
+// primary service. Denied fallback hops are truncated per request, not here.
+func (a *API) canUserAccessAgent(ctx context.Context, cfg *llm.BotConfig, userID string) bool {
 	if cfg == nil || a.pluginAPI == nil {
 		return false
 	}
+
+	agentOK := false
 	if cfg.IsAdmin(userID) {
+		agentOK = true
+	} else {
+		// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
+		legacy := func() error { return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) }
+		agentOK = a.accessChecker.CanUseAgent(ctx, userID, cfg, legacy) == nil
+	}
+	if !agentOK {
+		return false
+	}
+
+	if a.canBypassServicePolicies(userID) {
 		return true
 	}
-	// Do not use a.bots here: agent list/get routes are not bot-middleware-gated and a.bots may be nil.
-	return bots.UsageRestrictionsForUserConfig(a.pluginAPI, *cfg, userID) == nil
+	return a.accessChecker.CanUseService(ctx, userID, cfg.ServiceID) == nil
 }
 
 // sanitizeAgentForUser returns cfg unchanged for users who can manage the agent

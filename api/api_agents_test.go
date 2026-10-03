@@ -41,7 +41,7 @@ func setupAgentTestEnvironment(t *testing.T) *TestEnvironment {
 	e.api.configStore = &mockConfigStore{
 		cfg: &config.Config{
 			Services: []llm.ServiceConfig{
-				{ID: "svc-1", Name: "Test Service", Type: "openai"},
+				{ID: "svc-1", Name: "Test Service", Type: "openai", APIKey: "test-key"},
 			},
 		},
 	}
@@ -66,6 +66,20 @@ func (m *mockConfigStore) SaveConfig(cfg config.Config) error {
 	return nil
 }
 
+func (m *mockConfigStore) UpdateConfig(transform func(prev *config.Config) (config.Config, error)) (config.Config, error) {
+	if m.getErr != nil {
+		return config.Config{}, m.getErr
+	}
+	next, err := transform(m.cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	// Persist like the real store so a subsequent GetConfig observes the update.
+	clone := next
+	m.cfg = &clone
+	return next, nil
+}
+
 // overrideLicenseMocks replaces any GetConfig/GetLicense expectations already
 // registered (e.g. by SetupTestEnvironment). Testify matches the first
 // registered expectation, so simply adding new ones would not take effect.
@@ -85,7 +99,7 @@ func overrideLicenseMocks(mockAPI *plugintest.API, license *model.License) {
 	mockAPI.On("GetLicense").Return(license).Maybe()
 }
 
-// mockLicensed sets up mock expectations so IsMultiLLMLicensed() returns true.
+// mockLicensed sets up mock expectations for an Enterprise license.
 func mockLicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, &model.License{
 		Features: &model.Features{
@@ -95,7 +109,7 @@ func mockLicensed(mockAPI *plugintest.API) {
 	})
 }
 
-// mockUnlicensed sets up mock expectations so IsMultiLLMLicensed() returns false.
+// mockUnlicensed sets up mock expectations for an unlicensed server.
 func mockUnlicensed(mockAPI *plugintest.API) {
 	overrideLicenseMocks(mockAPI, nil)
 }
@@ -157,7 +171,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"reasoningEnabled":        cfg.ReasoningEnabled,
 		"reasoningEffort":         cfg.ReasoningEffort,
 		"thinkingBudget":          cfg.ThinkingBudget,
-		"structuredOutputEnabled": cfg.StructuredOutputEnabled,
+		"structuredOutputEnabled": cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated but still accepted on the wire
 		"maxToolTurns":            cfg.MaxToolTurns,
 	}
 	maps.Copy(body, overrides)
@@ -195,7 +209,7 @@ func TestCreateAgentWithPermission(t *testing.T) {
 	assert.NotEmpty(t, agent.ID)
 	assert.True(t, agent.MCPDynamicToolLoading)
 	assert.True(t, agent.ReasoningEnabled)
-	assert.False(t, agent.StructuredOutputEnabled)
+	assert.False(t, agent.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 }
 
 func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
@@ -235,7 +249,7 @@ func TestCreateAgentPersistsExplicitRequestValues(t *testing.T) {
 	assert.True(t, agent.DisableTools)
 	assert.False(t, agent.ReasoningEnabled)
 	assert.Equal(t, "high", agent.ReasoningEffort)
-	assert.False(t, agent.StructuredOutputEnabled)
+	assert.False(t, agent.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 	assert.Empty(t, agent.EnabledNativeTools)
 	assert.True(t, agent.UseServiceAccountAuth)
 	assert.True(t, e.agentStore.agents[agent.ID].UseServiceAccountAuth)
@@ -505,7 +519,7 @@ func TestCreateAgentFreeTierBlocksWhenQuotaReached(t *testing.T) {
 
 	// One existing agent is already at the free-tier quota.
 	e.agentStore.agents["existing"] = &llm.BotConfig{
-		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+		ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 	}
 
 	recorder := doRequest(e.api, http.MethodPost, "/agents", createAgentBody(nil), testUserID)
@@ -520,8 +534,8 @@ func TestListAgentsIncludesActiveCountHeaderWhenUnlicensed(t *testing.T) {
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
-		ID: "agent-1", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: llm.UserAccessLevelNone,
+		ID: "agent-1", CreatorID: "other-user", Name: "private-agent", DisplayName: "Private Agent",
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
@@ -542,7 +556,7 @@ func TestListAgentsOmitsActiveCountHeaderWhenCountFails(t *testing.T) {
 	e.mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
-	e.agentStore.countErr = errors.New("boom")
+	e.api.configStore = &mockConfigStore{getErr: errors.New("boom")}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
 	resp := recorder.Result()
@@ -559,18 +573,19 @@ func TestListAgentsFiltersByAccess(t *testing.T) {
 	mockLicensed(e.mockAPI)
 	// sanitizeAgentForUser → canManageAgent checks PermissionManageOthersAgent for each accessible agent.
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Seed agents: one accessible (UserAccessLevelAll, with sensitive customInstructions),
 	// one blocked (UserAccessLevelNone)
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID: "agent-1", CreatorID: "other-user", DisplayName: "Public Agent",
-		UserAccessLevel:    llm.UserAccessLevelAll,
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
 		CustomInstructions: "internal procedures",
 	}
 	e.agentStore.agents["agent-2"] = &llm.BotConfig{
 		ID: "agent-2", CreatorID: "other-user", DisplayName: "Private Agent",
-		UserAccessLevel: llm.UserAccessLevelNone,
+		ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, testUserID)
@@ -983,6 +998,7 @@ func TestListServicesNoSecrets(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -1082,8 +1098,11 @@ func TestFetchModelsForServiceMissingCredentials(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
 
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
@@ -1119,6 +1138,7 @@ func TestFetchModelsForServiceVertexMissingProject(t *testing.T) {
 	}
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
@@ -1142,12 +1162,51 @@ func TestFetchModelsForServiceGeminiMissingAPIKey(t *testing.T) {
 	}
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	body := map[string]string{"serviceID": "gemini-svc"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+}
+
+func TestFetchModelsForServiceNorthMissingCredentials(t *testing.T) {
+	tests := []struct {
+		name string
+		svc  llm.ServiceConfig
+	}{
+		{
+			name: "missing API key",
+			svc:  llm.ServiceConfig{ID: "north-svc", Type: llm.ServiceTypeNorth, APIURL: "http://host"},
+		},
+		{
+			name: "missing API URL",
+			svc:  llm.ServiceConfig{ID: "north-svc", Type: llm.ServiceTypeNorth, APIKey: "key"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			e.api.configStore = &mockConfigStore{
+				cfg: &config.Config{
+					Services: []llm.ServiceConfig{tt.svc},
+				},
+			}
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			body := map[string]string{"serviceID": tt.svc.ID}
+			recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
+			require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
+		})
+	}
 }
 
 func TestListServicesForbiddenWithoutManageOwnPermission(t *testing.T) {
@@ -1184,6 +1243,7 @@ func TestListServicesWithManageOthersPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
@@ -1197,9 +1257,12 @@ func TestFetchModelsForServiceWithManageOthersPermission(t *testing.T) {
 	defer e.Cleanup(t)
 
 	mockLicensed(e.mockAPI)
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(false)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(true)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+	e.api.configStore.(*mockConfigStore).cfg.Services[0].APIKey = ""
 
 	body := map[string]string{"serviceID": "svc-1"}
 	recorder := doRequest(e.api, http.MethodPost, "/agents/models/fetch", body, testUserID)
@@ -1351,6 +1414,7 @@ func TestGetAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
@@ -1377,12 +1441,14 @@ func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID:                    "agent-1",
 		CreatorID:             "other-user",
 		DisplayName:           "Dynamic On",
+		ServiceID:             "svc-1",
 		UserAccessLevel:       llm.UserAccessLevelAll,
 		MCPDynamicToolLoading: true,
 	}
@@ -1390,6 +1456,7 @@ func TestListAgentsMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 		ID:                    "agent-2",
 		CreatorID:             "other-user",
 		DisplayName:           "Dynamic Off",
+		ServiceID:             "svc-1",
 		UserAccessLevel:       llm.UserAccessLevelAll,
 		MCPDynamicToolLoading: false,
 	}
@@ -1466,7 +1533,7 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 		ReasoningEnabled:        true,
 		ReasoningEffort:         "high",
 		ThinkingBudget:          4096,
-		StructuredOutputEnabled: true,
+		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 	}
 
 	body := map[string]any{
@@ -1503,7 +1570,7 @@ func TestUpdateAgentFullReplacementOverwritesMutableFields(t *testing.T) {
 	assert.False(t, updated.ReasoningEnabled)
 	assert.Empty(t, updated.ReasoningEffort)
 	assert.Zero(t, updated.ThinkingBudget)
-	assert.False(t, updated.StructuredOutputEnabled)
+	assert.False(t, updated.StructuredOutputEnabled) //nolint:staticcheck // deprecated but still persisted verbatim
 }
 
 // TestAgentSaveErrorsAreActionable confirms every failure path on the agent
@@ -1805,31 +1872,40 @@ func TestCanUserAccessAgentCreatorAdminBypass(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)
 	mockLicensed(e.mockAPI)
+
+	creatorID := model.NewId()
+	adminID := model.NewId()
+	randomID := model.NewId()
+
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageOthersAgent).Return(false).Maybe()
+	e.mockAPI.On("HasPermissionTo", mock.Anything, model.PermissionManageSystem).Return(false).Maybe()
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 
 	// Agent that normally blocks every user, but grants access to creator + admin.
+	// ServiceID is non-policy-addressable ("svc-1"), so CanUseService fails open.
 	e.agentStore.agents["agent-1"] = &llm.BotConfig{
 		ID:              "agent-1",
-		CreatorID:       "creator-user",
-		AdminUserIDs:    []string{"admin-user"},
+		CreatorID:       creatorID,
+		AdminUserIDs:    []string{adminID},
+		ServiceID:       "svc-1",
 		UserAccessLevel: llm.UserAccessLevelNone,
 	}
 
 	// Creator can see it via GET /agents.
-	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, "creator-user")
+	recorder := doRequest(e.api, http.MethodGet, "/agents", nil, creatorID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	var agents []*llm.BotConfig
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Len(t, agents, 1)
 
 	// Admin can see it.
-	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "admin-user")
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, adminID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Len(t, agents, 1)
 
 	// Random user cannot — UserAccessLevelNone blocks them.
-	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, "random-user")
+	recorder = doRequest(e.api, http.MethodGet, "/agents", nil, randomID)
 	require.Equal(t, http.StatusOK, recorder.Result().StatusCode)
 	require.NoError(t, json.NewDecoder(recorder.Result().Body).Decode(&agents))
 	require.Empty(t, agents)
@@ -1961,7 +2037,7 @@ func TestAuditCreateAgent(t *testing.T) {
 				mockUnlicensed(e.mockAPI)
 				e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
 				e.agentStore.agents["existing"] = &llm.BotConfig{
-					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing",
+					ID: "existing", CreatorID: "someone-else", Name: "existing", DisplayName: "Existing", ServiceID: "svc-1",
 				}
 			},
 			body:           createAgentBody(nil),

@@ -24,6 +24,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/websearch"
 )
@@ -86,21 +87,24 @@ type WebSearchContextValue struct {
 }
 
 type webSearchService struct {
-	cfgGetter  func() *config.Config
-	logger     WebSearchLog
-	httpClient *http.Client
-	tool       *llm.Tool
-	sourceTool *llm.Tool
-	provider   websearch.Provider
-	mutex      sync.RWMutex
+	cfgGetter      func() *config.Config
+	logger         WebSearchLog
+	httpClient     *http.Client
+	licenseChecker *enterprise.LicenseChecker
+	tool           *llm.Tool
+	sourceTool     *llm.Tool
+	provider       websearch.Provider
+	mutex          sync.RWMutex
 }
 
 // NewWebSearchService constructs a new WebSearchService implementation.
-func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, httpClient *http.Client) WebSearchService {
+// A nil license checker fails closed so the tools are not cataloged or executed.
+func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, httpClient *http.Client, licenseChecker *enterprise.LicenseChecker) WebSearchService {
 	service := &webSearchService{
-		cfgGetter:  cfgGetter,
-		logger:     logger,
-		httpClient: httpClient,
+		cfgGetter:      cfgGetter,
+		logger:         logger,
+		httpClient:     httpClient,
+		licenseChecker: licenseChecker,
 	}
 
 	service.tool = &llm.Tool{
@@ -120,12 +124,24 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	return service
 }
 
+func (s *webSearchService) sovereignWebSearchLicensed() bool {
+	return s.licenseChecker.Allows(enterprise.CapSovereignWebSearch)
+}
+
+func (s *webSearchService) sovereignWebSearchLicenseError() error {
+	return s.licenseChecker.Check(enterprise.CapSovereignWebSearch)
+}
+
 // Tool returns the web search tool if the configuration is valid and enabled.
 func (s *webSearchService) Tool() *llm.Tool {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	if s.tool == nil {
+		return nil
+	}
+
+	if !s.sovereignWebSearchLicensed() {
 		return nil
 	}
 
@@ -168,6 +184,17 @@ func (s *webSearchService) Tool() *llm.Tool {
 			s.httpClient,
 			s.logger,
 		)
+	case "searxng":
+		searxngBaseURL := strings.TrimSpace(webCfg.SearXNG.BaseURL)
+		if searxngBaseURL == "" {
+			s.logWarn("web search misconfigured: missing SearXNG base URL")
+			return nil
+		}
+		s.provider = websearch.NewSearXNGProvider(
+			searxngBaseURL,
+			s.httpClient,
+			s.logger,
+		)
 	default:
 		s.logDebug("web search provider not supported", "provider", webCfg.Provider)
 		return nil
@@ -181,6 +208,10 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	if s.sourceTool == nil {
+		return nil
+	}
+
+	if !s.sovereignWebSearchLicensed() {
 		return nil
 	}
 
@@ -206,6 +237,10 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 		if webCfg.Brave.APIKey == "" {
 			return nil
 		}
+	case "searxng":
+		if strings.TrimSpace(webCfg.SearXNG.BaseURL) == "" {
+			return nil
+		}
 	default:
 		return nil
 	}
@@ -219,6 +254,10 @@ func (s *webSearchService) SourceTool(bot *bots.Bot) *llm.Tool {
 }
 
 func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	if !s.sovereignWebSearchLicensed() {
+		return "sovereign web search is available at Enterprise and above", s.sovereignWebSearchLicenseError()
+	}
+
 	var args WebSearchToolArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearch tool: %w", err)
@@ -294,6 +333,8 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 		resultLimit = webCfg.Google.ResultLimit
 	case "brave":
 		resultLimit = webCfg.Brave.ResultLimit
+	case "searxng":
+		resultLimit = webCfg.SearXNG.ResultLimit
 	}
 
 	// Perform the search
@@ -429,6 +470,10 @@ func (s *webSearchService) resolve(ctx context.Context, llmContext *llm.Context,
 }
 
 func (s *webSearchService) resolveSource(ctx context.Context, bot *bots.Bot, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
+	if !s.sovereignWebSearchLicensed() {
+		return "sovereign web search is available at Enterprise and above", s.sovereignWebSearchLicenseError()
+	}
+
 	var args WebSearchSourceArgs
 	if err := argsGetter(&args); err != nil {
 		return "invalid parameters to function", fmt.Errorf("failed to get arguments for WebSearchFetchSource tool: %w", err)

@@ -155,7 +155,7 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) err
 	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, channel)
-	if err := c.streamToolFollowUp(ctx, bot, user, channel, wakePost, conv, isDM, nil); err != nil {
+	if err := c.streamToolFollowUp(ctx, bot, user, channel, wakePost, conv, isDM, false, nil); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "failed to resume conversation")
 		c.failResponsePlaceholder(wakePost, user.Locale)

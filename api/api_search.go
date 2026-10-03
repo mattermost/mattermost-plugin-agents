@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 )
 
@@ -34,6 +35,13 @@ const (
 func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (any, error)) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
+
+	// Search triggers a full LLM completion, so the agent+service usage gate
+	// applies (user-level only: search requests are not channel-scoped here).
+	if err := a.bots.CheckUsageRestrictionsForUser(c.Request.Context(), bot, userID); err != nil {
+		c.AbortWithError(http.StatusForbidden, err)
+		return
+	}
 
 	if !a.searchService.Enabled() {
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("search functionality is not configured"))
@@ -65,6 +73,11 @@ func (a *API) handleBotSearch(c *gin.Context, run func(ctx context.Context, user
 
 	result, err := run(c.Request.Context(), userID, bot, req.Query, req.TeamID, req.ChannelID, req.MaxResults)
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
@@ -165,6 +178,11 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
+		var licErr *enterprise.LicenseError
+		if errors.As(err, &licErr) {
+			abortNotLicensed(c, err)
+			return
+		}
 		if errors.Is(err, search.ErrSearchUnavailable) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return

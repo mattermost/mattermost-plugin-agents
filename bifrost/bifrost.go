@@ -7,10 +7,17 @@
 package bifrost
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"image"
+
+	// Register standard image decoders for image.DecodeConfig.
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"slices"
 	"strings"
@@ -21,6 +28,9 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+
+	// Register the WebP decoder for image.DecodeConfig.
+	_ "golang.org/x/image/webp"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -67,11 +77,18 @@ type LLM struct {
 
 	// fallbacks is attached to every outgoing request so Bifrost retries with
 	// alternative providers when the primary fails.
-	fallbacks []schemas.Fallback
+	fallbacks []fallbackHop
 
 	// providerFileDownloadRoutes are registered Bifrost routes that can serve
 	// captured files. Fallbacks of the same provider type have distinct routes.
 	providerFileDownloadRoutes map[schemas.ModelProvider]bool
+}
+
+// fallbackHop pairs a Bifrost fallback with the durable service ID it came
+// from, so the chain can be prefix-filtered per requesting user.
+type fallbackHop struct {
+	fallback  schemas.Fallback
+	serviceID string
 }
 
 // ProviderSettings holds the connection and credential fields needed to reach
@@ -94,6 +111,11 @@ type ProviderSettings struct {
 
 	DefaultModel     string
 	StreamingTimeout time.Duration
+
+	// DisableStore maps onto schemas.OpenAIConfig.DisableStore so Bifrost
+	// forces store=false on every outgoing OpenAI-family request for this
+	// provider — including when it is reached as a fallback hop.
+	DisableStore bool
 }
 
 // Config holds the configuration for creating a LLM instance.
@@ -167,7 +189,7 @@ func New(cfg Config) (*LLM, error) {
 		providerFileDownloadRoutes[primaryEntry.registeredName()] = true
 	}
 
-	var fallbacks []schemas.Fallback
+	var fallbacks []fallbackHop
 	for _, fb := range cfg.Fallbacks {
 		if fb.APIKey != "" {
 			redactKeys = append(redactKeys, fb.APIKey)
@@ -201,9 +223,12 @@ func New(cfg Config) (*LLM, error) {
 		if supportsProviderFileDownloadProvider(fb.Provider) {
 			providerFileDownloadRoutes[name] = true
 		}
-		fallbacks = append(fallbacks, schemas.Fallback{
-			Provider: name,
-			Model:    fb.DefaultModel,
+		fallbacks = append(fallbacks, fallbackHop{
+			fallback: schemas.Fallback{
+				Provider: name,
+				Model:    fb.DefaultModel,
+			},
+			serviceID: fb.ID,
 		})
 	}
 
@@ -443,7 +468,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file retrieve error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := providerError(nil, "bifrost file retrieve error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if meta == nil {
@@ -458,7 +483,7 @@ func (b *LLM) DownloadProviderFile(ctx context.Context, ref llm.ProviderFileRefe
 		FileID:   ref.ID,
 	})
 	if bifrostErr != nil {
-		err := llm.SanitizeProviderError(fmt.Errorf("bifrost file content error: %s", bifrostErrorString(bifrostErr)), b.redactionKeys()...)
+		err := providerError(nil, "bifrost file content error", bifrostErr, b.redactionKeys()...)
 		return fail(err)
 	}
 	if resp == nil {
@@ -491,7 +516,7 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 // when supported and readable, a placeholder text block otherwise. The block
 // type differs between the chat and Responses APIs, so callers supply the
 // text- and image-block constructors.
-func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
+func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
 	parts := make([]T, 0, len(post.Files)+1)
 
 	if post.Message != "" {
@@ -508,6 +533,19 @@ func multimodalContent[T any](post llm.Post, textBlock func(string) T, imageBloc
 		if err != nil {
 			parts = append(parts, textBlock("[Error reading image data]"))
 			continue
+		}
+
+		if maxDim > 0 {
+			if imageConfig, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil &&
+				(imageConfig.Width > maxDim || imageConfig.Height > maxDim) {
+				parts = append(parts, textBlock(fmt.Sprintf(
+					"[Image omitted because its dimensions (%dx%d) exceed the maximum allowed size of %d pixels per dimension.]",
+					imageConfig.Width,
+					imageConfig.Height,
+					maxDim,
+				)))
+				continue
+			}
 		}
 
 		encoded := base64.StdEncoding.EncodeToString(data)
@@ -547,13 +585,13 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 	if b.providerSupportsNativeTools() && len(b.enabledNativeTools) > 0 {
 		return true
 	}
-	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed {
+	if b.providerSupportsNativeTools() && cfg.NativeWebSearchAllowed && !cfg.SkipNativeWebSearch {
 		return true
 	}
 	return false
 }
 
-// promptCachingEnabled reports whether to request Anthropic automatic prompt
+// promptCachingEnabledFor reports whether to request Anthropic automatic prompt
 // caching (top-level cache_control). Anthropic caches nothing unless asked,
 // so without this every turn re-bills the full system prompt, tool schemas,
 // and history at the base input rate. OpenAI-family and Gemini cache prompt
@@ -561,17 +599,36 @@ func (b *LLM) shouldUseResponsesAPI(cfg llm.LanguageModelConfig) bool {
 // unstripped to non-Anthropic providers, so it is only attached when the
 // primary and every fallback are Anthropic; a mixed chain would 400 the
 // fallback request.
-func (b *LLM) promptCachingEnabled() bool {
+func (b *LLM) promptCachingEnabledFor(fallbacks []schemas.Fallback) bool {
 	if b.provider != schemas.Anthropic {
 		return false
 	}
-	for _, fb := range b.fallbacks {
+	for _, fb := range fallbacks {
 		if fb.Provider != schemas.Anthropic &&
 			!strings.HasPrefix(string(fb.Provider), string(schemas.Anthropic)+"::") {
 			return false
 		}
 	}
 	return true
+}
+
+// requestFallbacks returns the fallback chain to attach to this request.
+// RestrictFallbacks truncates at the first hop whose service ID is not in
+// AllowedFallbackServiceIDs so a denied hop is never skipped over.
+func (b *LLM) requestFallbacks(request llm.CompletionRequest) []schemas.Fallback {
+	allowed := make(map[string]struct{}, len(request.AllowedFallbackServiceIDs))
+	for _, id := range request.AllowedFallbackServiceIDs {
+		allowed[id] = struct{}{}
+	}
+
+	var out []schemas.Fallback
+	for _, hop := range b.fallbacks {
+		if _, ok := allowed[hop.serviceID]; request.RestrictFallbacks && !ok {
+			break
+		}
+		out = append(out, hop.fallback)
+	}
+	return out
 }
 
 // isNativeToolEnabled checks if a native tool is enabled by name.

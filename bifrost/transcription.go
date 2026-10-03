@@ -13,7 +13,6 @@ import (
 	bifrostcore "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 )
 
@@ -85,7 +84,7 @@ func (t *Transcriber) Transcribe(file io.Reader) (*subtitles.Subtitles, error) {
 
 	resp, bifrostErr := t.client.TranscriptionRequest(bifrostCtx, req)
 	if bifrostErr != nil {
-		return nil, llm.SanitizeProviderError(fmt.Errorf("bifrost transcription error: %s", bifrostErrorString(bifrostErr)), t.apiKey)
+		return nil, providerError(nil, "bifrost transcription error", bifrostErr, t.apiKey)
 	}
 
 	if resp == nil || resp.Text == "" {

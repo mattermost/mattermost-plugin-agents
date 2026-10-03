@@ -146,6 +146,10 @@ func (a *providerAccount) GetConfigForProvider(provider schemas.ModelProvider) (
 		config.CustomProviderConfig = cpc
 	}
 
+	if a.DisableStore {
+		config.OpenAIConfig = &schemas.OpenAIConfig{DisableStore: true}
+	}
+
 	return config, nil
 }
 

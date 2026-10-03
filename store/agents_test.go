@@ -41,7 +41,7 @@ func testAgent(creatorID, username, displayName string) *llm.BotConfig {
 		ReasoningEnabled:        true,
 		ReasoningEffort:         "medium",
 		ThinkingBudget:          10000,
-		StructuredOutputEnabled: true,
+		StructuredOutputEnabled: true, //nolint:staticcheck // deprecated but still persisted verbatim
 		MaxToolTurns:            42,
 		UseServiceAccountAuth:   true,
 	}
@@ -101,7 +101,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	assert.True(t, fetched.ReasoningEnabled)
 	assert.Equal(t, "medium", fetched.ReasoningEffort)
 	assert.Equal(t, 10000, fetched.ThinkingBudget)
-	assert.True(t, fetched.StructuredOutputEnabled)
+	assert.True(t, fetched.StructuredOutputEnabled) //nolint:staticcheck // deprecated field still round-trips through the store
 	assert.Equal(t, 42, fetched.MaxToolTurns)
 	assert.True(t, fetched.UseServiceAccountAuth)
 }

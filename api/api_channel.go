@@ -61,15 +61,8 @@ func (a *API) channelAuthorizationRequired(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-	if err := a.bots.CheckUsageRestrictions(userID, bot, channel); err != nil {
+	if err := a.bots.CheckUsageRestrictions(c.Request.Context(), userID, bot, channel); err != nil {
 		c.AbortWithError(http.StatusForbidden, err)
-		return
-	}
-}
-
-func (a *API) channelAnalysisLicenseRequired(c *gin.Context) {
-	if !a.licenseChecker.IsBasicsLicensed() {
-		c.AbortWithError(http.StatusForbidden, errors.New("feature not licensed"))
 		return
 	}
 }

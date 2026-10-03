@@ -36,9 +36,9 @@ The **System Console > AI Bots** page no longer hosts the agent editor. Instead,
 The Agents page itself shows:
 
 - A header with the page title and a **Create agent** button (visible only to users who can create agents — see [Permissions and license](#permissions-and-license)).
-- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created).
+- Two tabs: **All agents** (every agent the user can see) and **Your agents** (agents the current user created that they can still see).
 - A search box that filters by display name or username.
-- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and a **Service unavailable** warning badge if the agent's configured AI service is missing.
+- One row per agent showing the avatar, display name, `@username`, an **All MCP tools** or **N tools** badge, and an **Inactive** warning badge when the agent is not running. Hovering the badge explains why: the agent's AI service was deleted or is missing required settings, the service is not active on the current plan, or the plan's agent limit is reached (see [Agent shows an "Inactive" badge](#agent-shows-an-inactive-badge)).
 - A row-level overflow menu (`⋯`) with **Edit** and **Delete** actions for users who can manage that agent. Selecting the row itself also opens the editor for users who can manage the agent.
 
 ## Permissions and license
@@ -65,12 +65,24 @@ The Agents page applies these rules consistently between the UI and the API:
 
 By default, regular users do not have `manage_own_agent`. Grant it through your existing Mattermost role/permission model to delegate agent creation — typically under **System Console > User Management > Permissions** (exact path varies by Mattermost server version).
 
+### Who can see which agents
+
+Manage permission alone does not decide list visibility. Agents (and the AI services shown when binding an agent) are filtered by what the signed-in user can use:
+
+- **System administrators** can see agents even when a service ABAC policy would deny them personally, so they can rebind services or restore access.
+- **All other users** — including creators and delegated agent admins — only see agents they can use under both agent access and the agent's AI service access. Agents whose service they cannot use are hidden, not shown with a deny badge.
+
+If a non–system-admin agent admin loses access to an agent's service under ABAC, that agent disappears from their Agents page until a system admin restores service access or changes the binding. See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac) in the Admin Guide.
+
 ### License
 
-The number of self-service agents you can create is gated by Mattermost's multi-LLM license check (Entry, Enterprise, or Enterprise Advanced).
+The number of agents that can be active depends on the license level. Configuration-file bots and user-created agents count together as one pool.
 
-- **Without a multi-LLM license**, you can create and fully manage a single agent (`FreeTierAgentLimit = 1`, defined in `api/api_agents.go`). The Agents page always shows the agent list; once one agent exists the **Create agent** button is disabled with an upgrade hint. The API safety rail returns HTTP 403 with the message *"creating more than 1 self-service agent(s) requires an E20 or Enterprise license"* for any over-limit creation attempt.
-- **With a multi-LLM license**, agent creation is unlimited (subject to permissions).
+- **Free** (no license): one agent. Once one agent exists, the **Create agent** button is disabled with a hint naming the plan that raises the cap, and the API returns HTTP 403 with an actionable licensing message for any over-limit creation attempt.
+- **Professional**: three agents.
+- **Enterprise, Entry and Enterprise Advanced**: unlimited agents (subject to permissions).
+
+Agent access controls (restricting an agent to named users, teams or channels, and the corresponding block lists) are available at Professional and above; attribute-based access is available at Enterprise Advanced; service-account authentication is available at Enterprise and above. Resetting any of these to their open defaults is always permitted, and an agent that already has user, team or channel lists can have those lists edited at any level.
 
 For the full feature/license matrix, see [License requirements](../admin_guide.md#license-requirements) in the Admin Guide.
 
@@ -100,9 +112,10 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
 | **Reasoning** | Available for Anthropic, OpenAI (Responses API), Gemini, and Vertex AI services. Lets you enable extended thinking and pick a reasoning effort or thinking budget. |
-| **Structured Output** | Available for Anthropic, OpenAI, OpenAI Compatible, and Azure services. When enabled and a JSON schema is supplied at request time, the model returns valid JSON matching the schema. For Anthropic services, **Structured Output** and extended thinking can both stay enabled; because Anthropic doesn't support both on the same request, requests that ask for structured JSON output skip extended thinking while all other requests keep using it. |
 
-Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, thinking budget, and structured output fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
+Structured output is not configured on the agent. How a request-time JSON schema is fulfilled (native provider structured output versus a prompt-based fallback) is controlled by the **Structured output** policy on the service, configured in **System Console > Plugins > Agents**; see [Structured output](../admin_guide.md#structured-output) in the Admin Guide. The deprecated per-agent `structuredOutputEnabled` API property and database column are still accepted for compatibility but are ignored at runtime.
+
+Switching the **AI Service** to a service of a different type clears the model field and resets the native tools, reasoning, and thinking budget fields back to defaults so you don't carry stale provider-specific values across providers. Switching between two services of the same type (for example two OpenAI Compatible entries) preserves those fields.
 
 If the form is invalid when you select **Save**, validation errors are shown inline (display name required, username required and must match the allowed pattern, AI Service required) and the editor returns to the Configuration tab.
 
@@ -119,7 +132,8 @@ The Access tab controls who can interact with the agent and who can administer i
   - **All users** (default): anyone in the workspace.
   - **Allow only**: only listed users, or members of listed teams.
   - **Block**: everyone except listed users or members of listed teams.
-- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list.
+  - **Attribute-based (access policy)**: an ABAC policy is the only user-access gate (allow/block lists are ignored). See [Attribute-based access control (ABAC)](../admin_guide.md#attribute-based-access-control-abac).
+- **Agent admins** is a list of users who can edit and delete this agent in addition to the creator. The agent creator is always an admin and is not shown in the editable list. Agent admins still only *see* the agent when they can use its AI service (system admins are the exception — see [Who can see which agents](#who-can-see-which-agents)).
 
 These rules are enforced both for `@mentions` in channels and for direct conversations with the agent. They are enforced in the server in `bots/permissions.go`, so they apply uniformly to UI flows, slash commands, and tool-driven access.
 
@@ -156,7 +170,7 @@ While **Use service accounts for authentication** is off, anyone who can manage 
 
 While **Use service accounts for authentication** is enabled:
 
-- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, reasoning, and structured output.
+- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
 - **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
@@ -263,7 +277,7 @@ Practical consequences:
 
 ### "Create agent" is disabled and an upgrade hint is shown
 
-The server is at the free-tier self-service agent limit without a multi-LLM licence. The Agents page still shows the list, but after one self-service agent exists, **Create agent** is disabled. Apply an Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to create additional agents, or delete the existing free-tier agent before creating a replacement.
+The server has reached the number of agents its license level allows (one on Free, three on Professional). The Agents page still shows the list, but **Create agent** is disabled. Apply a Professional, Entry, Enterprise, or Enterprise Advanced licence in **System Console > About > Edition and License** to raise the cap, or delete an existing agent before creating a replacement.
 
 ### "Create agent" button is hidden
 
@@ -273,17 +287,23 @@ The signed-in user does not have `manage_own_agent` or `manage_system`. Grant `m
 
 The signed-in user is not the agent's creator, not in **Agent admins**, and does not have `manage_others_agent`. For migrated legacy bots (no creator), only system administrators see these actions.
 
-### Agent shows "Service unavailable" badge
+### Agent shows an "Inactive" badge
 
-The agent's `serviceID` no longer matches any service in **System Console > Plugins > Agents**. Edit the agent and pick a current service from the dropdown, or restore the missing service in System Console.
+The agent is stored but not running. The badge tooltip names the reason:
+
+- **Service deleted or incomplete** — the agent's `serviceID` no longer matches a service in **System Console > Plugins > Agents**, or that service is missing required settings such as its API key. Edit the agent and pick a current service, or complete the service configuration.
+- **Service not active on the plan** — Free and Professional use only the first service in the **Services** list. Edit the agent and choose that service; multiple services are available at Enterprise and above.
+- **Agent limit reached** — the plan's agent cap is filled by configuration-file bots and agents created earlier. Delete an earlier agent or move to a plan with more agents.
+
+The badge is **not** used to mean "you are denied by service ABAC." Non–system-admins who cannot use an agent's service simply do not see that agent.
 
 ### Saving an agent returns "This username is already taken"
 
 Another agent (active or recently deleted) already uses the username. Pick a different username. Usernames cannot be changed after creation, so attempting to edit the conflicting agent is not a workaround — delete that agent if it is truly unused, or pick another name.
 
-### Saving an agent returns "creating more than 1 self-service agent(s) requires an E20 or Enterprise license"
+### Saving an agent returns a licensing error naming a required plan
 
-You are at the free-tier limit and the server does not have a multi-LLM license. Apply a qualifying license, or delete the existing agent before creating a replacement.
+The server has reached the number of agents its license level allows, or the agent uses a capability available at a higher level (for example access controls, attribute-based access or service-account authentication). The message names the level that provides it. Apply a qualifying license, or adjust the agent so it stays within the current level.
 
 ### Avatar didn't update after save
 

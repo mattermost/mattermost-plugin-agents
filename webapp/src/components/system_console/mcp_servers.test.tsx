@@ -8,13 +8,26 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 jest.mock('react-intl', () => {
     const React = require('react'); // eslint-disable-line @typescript-eslint/no-shadow, no-shadow, global-require
 
+    const formatMessage = (
+        {defaultMessage}: {defaultMessage?: string},
+        values?: Record<string, unknown>,
+    ) => {
+        let message = defaultMessage ?? '';
+        if (values) {
+            for (const [key, value] of Object.entries(values)) {
+                message = message.replace(new RegExp(`\\{${key}\\}`, 'g'), String(value));
+            }
+        }
+        return message;
+    };
+
     return {
         __esModule: true,
         IntlProvider: ({children}: {children: React.ReactNode}) => React.createElement(React.Fragment, null, children),
-        FormattedMessage: ({defaultMessage}: {defaultMessage?: string}) =>
-            React.createElement(React.Fragment, null, defaultMessage ?? ''),
+        FormattedMessage: ({defaultMessage, values}: {defaultMessage?: string; values?: Record<string, unknown>}) =>
+            React.createElement(React.Fragment, null, formatMessage({defaultMessage}, values)),
         useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage?: string}) => defaultMessage ?? '',
+            formatMessage,
         }),
     };
 });
@@ -27,11 +40,14 @@ jest.mock('react-bootstrap', () => ({
 
 // The component reads SiteURL via useSelector; null falls back to window.location.origin.
 jest.mock('react-redux', () => ({
+    __esModule: true,
     useSelector: jest.fn(() => null),
 }));
 
 jest.mock('@/license', () => ({
-    useIsBasicsLicensed: jest.fn(),
+    useIsLicensedFor: jest.fn(() => true),
+    useLicenseLevelName: jest.fn(() => () => 'Enterprise'),
+    requiredLevelFor: jest.fn(() => 2),
 }));
 
 jest.mock('../../client', () => ({
@@ -42,22 +58,44 @@ jest.mock('../../client', () => ({
     updatePluginServer: jest.fn().mockResolvedValue({}),
 }));
 
+jest.mock('./mcp_tools_viewer', () => ({
+    __esModule: true,
+    default: () => null,
+}));
+
+jest.mock('../access_control/console_policy_section', () => ({
+    __esModule: true,
+    default: ({resourceId}: {resourceId: string}) => (
+        <div data-testid='console-policy-section'>{resourceId}</div>
+    ),
+}));
+
 /* eslint-disable import/first, import/order */
 import {IntlProvider} from 'react-intl';
 
-import {useIsBasicsLicensed} from '@/license';
+import {useIsLicensedFor} from '@/license';
 
-import MCPServers, {MCPConfig, MCPServerConfig} from './mcp_servers';
+import {getMCPTools} from '../../client';
+
+import MCPServers, {type MCPConfig, type MCPServerConfig} from './mcp_servers';
+import type {PluginServerConfig} from './mcp_types';
 /* eslint-enable import/first, import/order */
 
-const mockUseIsBasicsLicensed = useIsBasicsLicensed as jest.Mock;
+const mockUseIsLicensedFor = useIsLicensedFor as jest.Mock;
+const mockGetMCPTools = getMCPTools as jest.Mock;
 
-function makeMCPConfig(servers: MCPServerConfig[] = []): MCPConfig {
+const STABLE_ID = 'abcdefghijklmnopqrstuvwxyz';
+
+function makeMCPConfig(servers: MCPServerConfig[] = [], embeddedId?: string): MCPConfig {
     return {
         enabled: true,
         enablePluginServer: false,
         servers,
-        embeddedServer: {enabled: true, tool_configs: []},
+        embeddedServer: {
+            ...(embeddedId ? {id: embeddedId} : {}),
+            enabled: true,
+            tool_configs: [],
+        },
     };
 }
 
@@ -86,55 +124,72 @@ function renderServers(mcpConfig: MCPConfig) {
     };
 }
 
-describe('MCPServers license gating', () => {
+function lastChangedServers(onChange: jest.Mock): MCPServerConfig[] {
+    expect(onChange).toHaveBeenCalled();
+    const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    return config.servers ?? [];
+}
+
+const existingServer: MCPServerConfig = {
+    id: STABLE_ID,
+    name: 'Jira',
+    enabled: true,
+    baseURL: 'https://jira.example.com',
+    headers: {},
+};
+
+describe('MCPServers stable ID handling', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+
+        // The remote-server UI these tests drive is behind the license gate.
+        mockUseIsLicensedFor.mockReturnValue(true);
+
+        // Never resolves: these assertions are synchronous, so a resolving
+        // prefetch would update state outside act().
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
     });
 
-    test('unlicensed: remote server UI is hidden and the enterprise chip is shown', async () => {
-        mockUseIsBasicsLicensed.mockReturnValue(false);
+    it('preserves the server id through a name edit', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]));
 
-        renderServers(makeMCPConfig());
+        fireEvent.click(screen.getByText('Jira'));
+        const nameInput = screen.getByPlaceholderText('Server name');
+        fireEvent.change(nameInput, {target: {value: 'Jira Cloud'}});
+        fireEvent.blur(nameInput);
 
-        expect(screen.queryByRole('button', {name: /Add Remote MCP Server/})).toBeNull();
-        expect(screen.queryByText(/No remote MCP servers configured/)).toBeNull();
-        expect(screen.queryByText('MCP OAuth Callback URL')).toBeNull();
-        await waitFor(() => {
-            expect(screen.getByText('Use remote MCP servers on qualifying Mattermost plans')).not.toBeNull();
-        });
+        const servers = lastChangedServers(onChange);
+        expect(servers[0].name).toBe('Jira Cloud');
+        expect(servers[0].id).toBe(STABLE_ID);
     });
 
-    test('unlicensed with configured servers: server rows are hidden too', async () => {
-        mockUseIsBasicsLicensed.mockReturnValue(false);
+    it('preserves the server id through a URL edit', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]));
 
-        renderServers(makeMCPConfig([makeRemoteServer()]));
+        const urlInput = screen.getByPlaceholderText('https://mcp.example.com');
+        fireEvent.change(urlInput, {target: {value: 'https://jira2.example.com'}});
 
-        expect(screen.queryByText('Jira')).toBeNull();
-        expect(screen.queryByRole('button', {name: /Add Remote MCP Server/})).toBeNull();
-        await waitFor(() => {
-            expect(screen.getByText('Use remote MCP servers on qualifying Mattermost plans')).not.toBeNull();
-        });
+        const servers = lastChangedServers(onChange);
+        expect(servers[0].baseURL).toBe('https://jira2.example.com');
+        expect(servers[0].id).toBe(STABLE_ID);
     });
 
-    test('licensed: remote server UI is shown and no license UI appears', async () => {
-        mockUseIsBasicsLicensed.mockReturnValue(true);
+    it('adds a new server without an id so the backend mints the stable ID on save', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]));
 
-        renderServers(makeMCPConfig([makeRemoteServer()]));
+        fireEvent.click(screen.getByText('Add Remote MCP Server'));
 
-        const addButton = screen.getByRole('button', {name: /Add Remote MCP Server/});
-        expect((addButton as HTMLButtonElement).disabled).toBe(false);
-        expect(screen.getByText('Jira')).not.toBeNull();
-        expect(screen.getByText('MCP OAuth Callback URL')).not.toBeNull();
-        await waitFor(() => {
-            expect(screen.queryByText('Use remote MCP servers on qualifying Mattermost plans')).toBeNull();
-        });
+        const servers = lastChangedServers(onChange);
+        expect(servers).toHaveLength(2);
+        expect(servers[1].id).toBeUndefined();
+        expect(servers[0].id).toBe(STABLE_ID);
     });
 });
 
 describe('MCPServers service account headers', () => {
     beforeEach(() => {
         jest.clearAllMocks();
-        mockUseIsBasicsLicensed.mockReturnValue(true);
+        mockUseIsLicensedFor.mockReturnValue(true);
     });
 
     // Rows render in DOM order: base Headers first, then Service Account headers.
@@ -197,5 +252,209 @@ describe('MCPServers service account headers', () => {
         expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
         expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
         expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
+    });
+});
+
+describe('MCPServers license gating', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockGetMCPTools.mockResolvedValue({servers: []});
+    });
+
+    test('unlicensed: existing empty list stays visible and add is disabled with a chip', async () => {
+        mockUseIsLicensedFor.mockReturnValue(false);
+
+        renderServers(makeMCPConfig());
+
+        const addButton = screen.getByRole('button', {name: /Add Remote MCP Server/}) as HTMLButtonElement;
+        expect(addButton.disabled).toBe(true);
+        expect(screen.getByText(/No remote MCP servers configured/)).not.toBeNull();
+        expect(screen.queryByText('MCP OAuth Callback URL')).toBeNull();
+        await waitFor(() => {
+            expect(screen.getAllByText('Available on Enterprise plans and above').length).toBeGreaterThan(0);
+        });
+    });
+
+    test('unlicensed with configured servers: server rows stay visible and add is disabled', async () => {
+        mockUseIsLicensedFor.mockReturnValue(false);
+
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        expect(screen.getByText('Jira')).not.toBeNull();
+        const addButton = screen.getByRole('button', {name: /Add Remote MCP Server/}) as HTMLButtonElement;
+        expect(addButton.disabled).toBe(true);
+        expect(screen.getByText('MCP OAuth Callback URL')).not.toBeNull();
+        await waitFor(() => {
+            expect(screen.getAllByText('Available on Enterprise plans and above').length).toBeGreaterThan(0);
+        });
+    });
+
+    test('licensed: remote server UI is shown and no license UI appears', async () => {
+        mockUseIsLicensedFor.mockReturnValue(true);
+
+        renderServers(makeMCPConfig([makeRemoteServer()]));
+
+        const addButton = screen.getByRole('button', {name: /Add Remote MCP Server/});
+        expect((addButton as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.getByText('Jira')).not.toBeNull();
+        expect(screen.getByText('MCP OAuth Callback URL')).not.toBeNull();
+        await waitFor(() => {
+            expect(screen.queryByText('Available on Enterprise plans and above')).toBeNull();
+        });
+    });
+});
+
+describe('MCPServers built-in & plugin section', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsLicensedFor.mockReturnValue(true);
+        mockGetMCPTools.mockResolvedValue({servers: []});
+    });
+
+    test('always renders the embedded Mattermost card', async () => {
+        renderServers(makeMCPConfig());
+
+        expect(screen.getByTestId('built-in-plugin-servers-section')).not.toBeNull();
+        expect(screen.getByText('Built-in & plugin servers')).not.toBeNull();
+        expect(screen.getByText('Mattermost')).not.toBeNull();
+        expect(screen.getByText('Built-in')).not.toBeNull();
+        await waitFor(() => {
+            expect(mockGetMCPTools).toHaveBeenCalled();
+        });
+    });
+
+    test('renders ConsolePolicySection for embedded only when id is present', () => {
+        const {rerender} = render(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig()}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        const section = screen.getByTestId('built-in-plugin-servers-section');
+        expect(section.querySelector('[data-testid="console-policy-section"]')).toBeNull();
+
+        rerender(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig([], STABLE_ID)}
+                    onChange={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(screen.getByTestId('console-policy-section').textContent).toBe(STABLE_ID);
+    });
+
+    test('renders plugin cards from getMCPTools with policy sections when ids are present', async () => {
+        const pluginID = 'abcdefghijklmnopqrstuvwxpl';
+        mockGetMCPTools.mockResolvedValue({
+            servers: [
+                {
+                    name: 'Demo Plugin',
+                    url: 'plugin://com.mattermost.demo/mcp',
+                    tools: [],
+                    needsOAuth: false,
+                    error: null,
+                    serverType: 'plugin',
+                    enabled: true,
+                    id: pluginID,
+                },
+                {
+                    name: 'Remote',
+                    url: 'https://mcp.example.com',
+                    tools: [],
+                    needsOAuth: false,
+                    error: null,
+                    serverType: 'remote',
+                    enabled: true,
+                    id: 'abcdefghijklmnopqrstuvwxrm',
+                },
+            ],
+        });
+
+        renderServers(makeMCPConfig([], STABLE_ID));
+
+        await waitFor(() => {
+            expect(screen.getByText('Demo Plugin')).not.toBeNull();
+        });
+        expect(screen.getByText('Plugin ID: com.mattermost.demo')).not.toBeNull();
+        expect(screen.getAllByText('Plugin').length).toBeGreaterThanOrEqual(1);
+
+        const policySections = screen.getAllByTestId('console-policy-section');
+        const policyIds = policySections.map((el) => el.textContent);
+        expect(policyIds).toContain(STABLE_ID);
+        expect(policyIds).toContain(pluginID);
+
+        // Remote tools rows must not appear in the built-in section.
+        const builtInSection = screen.getByTestId('built-in-plugin-servers-section');
+        expect(builtInSection.textContent).not.toContain('https://mcp.example.com');
+    });
+
+    test('built-in section is read-only: no delete or URL inputs', async () => {
+        mockGetMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Demo Plugin',
+                url: 'plugin://com.mattermost.demo/mcp',
+                tools: [],
+                needsOAuth: false,
+                error: null,
+                serverType: 'plugin',
+                enabled: true,
+                id: 'abcdefghijklmnopqrstuvwxpl',
+            }],
+        });
+
+        // Unlicensed so remote add is disabled; built-in cards must stay read-only.
+        mockUseIsLicensedFor.mockReturnValue(false);
+        renderServers(makeMCPConfig());
+
+        await waitFor(() => {
+            expect(screen.getByText('Demo Plugin')).not.toBeNull();
+        });
+
+        const section = screen.getByTestId('built-in-plugin-servers-section');
+        expect(section.querySelector('input')).toBeNull();
+        expect(screen.queryByText('Delete Server')).toBeNull();
+        expect(screen.queryByPlaceholderText('https://mcp.example.com')).toBeNull();
+    });
+
+    test('preserves embeddedServer.id through enablePluginServer toggle', () => {
+        const {onChange} = renderServers(makeMCPConfig([], STABLE_ID));
+
+        // BooleanItem exposes true/false radios under the enablePluginServer row.
+        const trueRadios = screen.getAllByDisplayValue('true');
+        fireEvent.click(trueRadios[0]);
+
+        expect(onChange).toHaveBeenCalled();
+        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+        expect(config.embeddedServer.id).toBe(STABLE_ID);
+        expect(config.embeddedServer.enabled).toBe(true);
+    });
+
+    test('preserves plugin_servers through enablePluginServer toggle', () => {
+        const pluginServers: PluginServerConfig[] = [{
+            id: 'pluginstableidabcdefghijklm',
+            plugin_id: 'com.example.demo',
+            name: 'Demo Plugin',
+            path: '/mcp',
+            enabled: true,
+            expose_external: false,
+            tool_configs: [{name: 'echo', policy: 'ask', enabled: true}],
+        }];
+        const {onChange} = renderServers({
+            ...makeMCPConfig([], STABLE_ID),
+            plugin_servers: pluginServers,
+        });
+
+        const trueRadios = screen.getAllByDisplayValue('true');
+        fireEvent.click(trueRadios[0]);
+
+        expect(onChange).toHaveBeenCalled();
+        const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+        expect(config.plugin_servers).toEqual(pluginServers);
+        expect(config.enablePluginServer).toBe(true);
     });
 });

@@ -107,7 +107,7 @@ func TestRebuildExternalServerDiscoversPluginsConcurrently(t *testing.T) {
 	registry := &stubRegistry{}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, allowAllStateChangingTools)
 	require.NoError(t, err)
 
 	exposed := make([]mcppkg.PluginServerConfig, 0, len(servers))
@@ -156,7 +156,7 @@ func TestRebuildExternalServerBoundsDiscoveryConcurrency(t *testing.T) {
 	registry := &stubRegistry{}
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, allowAllStateChangingTools)
 	require.NoError(t, err)
 
 	const serverCount = maxConcurrentProxyDiscoveries*2 + 3
@@ -197,7 +197,7 @@ func TestRebuildExternalServerCollisionWinnerIgnoresCompletionOrder(t *testing.T
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, allowAllStateChangingTools)
 	require.NoError(t, err)
 
 	descriptions := listToolDescriptions(t, handlers)
@@ -219,7 +219,7 @@ func TestRebuildExternalServerNativeToolWinsOverSlowProxy(t *testing.T) {
 
 	logger, err := loggerlib.CreateDefaultLogger()
 	require.NoError(t, err)
-	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI)
+	handlers, err := NewPluginMCPHandlers("https://mm.test", "http://mm.internal", logger, registry, mockAPI, allowAllStateChangingTools)
 	require.NoError(t, err)
 
 	toolNames := listToolNames(t, handlers)

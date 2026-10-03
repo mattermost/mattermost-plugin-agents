@@ -6,6 +6,7 @@ package conversation
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -146,7 +147,9 @@ func BlocksToPost(
 			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
+				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+					opts.MMClient.LogError("failed to get file info for image attachment", "error", err)
+				}
 				continue
 			}
 			if !llm.IsSupportedImageMimeType(fileInfo.MimeType) {
@@ -182,7 +185,9 @@ func BlocksToPost(
 			}
 			fileInfo, err := opts.MMClient.GetFileInfo(block.FileID)
 			if err != nil {
-				opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
+				if !errors.Is(err, mmapi.ErrFileActionForbidden) {
+					opts.MMClient.LogError("failed to get file info for file attachment", "error", err)
+				}
 				continue
 			}
 

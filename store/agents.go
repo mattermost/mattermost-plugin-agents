@@ -100,7 +100,7 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 		ReasoningEnabled:        r.ReasoningEnabled,
 		ReasoningEffort:         r.ReasoningEffort,
 		ThinkingBudget:          r.ThinkingBudget,
-		StructuredOutputEnabled: r.StructuredOutputEnabled,
+		StructuredOutputEnabled: r.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		MaxToolTurns:            r.MaxToolTurns,
 		UseServiceAccountAuth:   r.UseServiceAccountAuth,
 		CreateAt:                r.CreateAt,
@@ -173,7 +173,7 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
-		cfg.StructuredOutputEnabled,
+		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
 		cfg.CreateAt,
@@ -325,7 +325,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 		cfg.ReasoningEnabled,
 		cfg.ReasoningEffort,
 		cfg.ThinkingBudget,
-		cfg.StructuredOutputEnabled,
+		cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field persisted verbatim for compatibility
 		cfg.MaxToolTurns,
 		cfg.UseServiceAccountAuth,
 		cfg.UpdateAt,

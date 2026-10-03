@@ -4,6 +4,10 @@
 package conversations
 
 import (
+	"context"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -27,7 +31,7 @@ const (
 //
 // This is a no-op for top-level posts, DM channels, and threads whose previous
 // post was authored by a human.
-func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel *model.Channel) {
+func (c *Conversations) maybeNotifyAgentMentionNeeded(ctx context.Context, post *model.Post, channel *model.Channel) {
 	if post == nil || channel == nil {
 		return
 	}
@@ -35,6 +39,11 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 		return
 	}
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		return
+	}
+	// The reminder points at channel mentions and loop-in, which are
+	// available at Professional and above.
+	if !c.licenseChecker.Allows(enterprise.CapMultiplayerChannels) {
 		return
 	}
 
@@ -56,7 +65,7 @@ func (c *Conversations) maybeNotifyAgentMentionNeeded(post *model.Post, channel 
 	if mmBot == nil {
 		return
 	}
-	if err := c.bots.CheckUsageRestrictions(post.UserId, bot, channel); err != nil {
+	if err := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); err != nil {
 		c.mmClient.LogDebug(
 			"agent mention reminder: bot unavailable for user/channel",
 			"error", err.Error(),

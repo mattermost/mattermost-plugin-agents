@@ -403,8 +403,10 @@ func TestGetToolsForUserSkipsUnregisteredPluginServers(t *testing.T) {
 	manager := harness.newManagerWithoutPluginRegister()
 
 	require.False(t, manager.IsPluginRegistered(plugin.PluginID))
+	require.Equal(t, []PluginServerConfig{plugin}, manager.GetConfig().PluginServers,
+		"config-only plugin row must remain persisted in config")
 	_, ok := manager.GetPluginServer(plugin.PluginID)
-	require.True(t, ok, "config still hydrates the plugin row")
+	require.False(t, ok, "config-only plugin row must not be hydrated into the live registry")
 
 	tools, mcpErrors := manager.GetToolsForUser(context.Background(), "alice", ToolSelection{})
 	require.Nil(t, mcpErrors)

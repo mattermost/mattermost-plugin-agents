@@ -31,6 +31,14 @@ func canManageAgent(client *pluginapi.Client, cfg *llm.BotConfig, userID string)
 	return false
 }
 
+// serviceAccountPolicyWriteNeedsAdmin reports whether mutating cfg's access
+// policy requires manage_system. Policy PUT/DELETE are access grants, which
+// serviceAccountChangeNeedsAdmin already treats as admin-only while SA stays
+// on; the policy lives outside BotConfig so this is the equivalent.
+func serviceAccountPolicyWriteNeedsAdmin(cfg *llm.BotConfig) bool {
+	return cfg != nil && cfg.UseServiceAccountAuth
+}
+
 // canCreateAgent returns true if the user may create new agents via POST /agents.
 func canCreateAgent(client *pluginapi.Client, userID string) bool {
 	if client.User.HasPermissionTo(userID, model.PermissionManageOwnAgent) {
@@ -71,7 +79,7 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.ReasoningEnabled = false
 	cfg.ReasoningEffort = ""
 	cfg.ThinkingBudget = 0
-	cfg.StructuredOutputEnabled = false
+	cfg.StructuredOutputEnabled = false //nolint:staticcheck // deprecated field is still persisted, so it must be normalized too
 	cfg.MaxToolTurns = 0
 	cfg.UseServiceAccountAuth = false
 
