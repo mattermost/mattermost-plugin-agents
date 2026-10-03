@@ -143,7 +143,7 @@ If you have unsaved changes and try to leave the agent configuration view by sel
 | Setting | Description |
 |---------|-------------|
 | **Display Name** | User-facing name shown in Mattermost |
-| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Set it when creating the agent; it can't be changed later. |
+| **Agent Username** | The Mattermost username for the agent. @mentions use this name. Changing it later renames the existing bot account, so conversations are kept, but old @mentions and integrations that use the previous name stop reaching the agent. See [Renaming an agent](features/managing_agents.md#renaming-an-agent). |
 | **Agent Avatar** | Custom image for the agent |
 | **Service** | Select a configured Service from the dropdown |
 | **Model** | (Optional) Override the service's default model for this agent |

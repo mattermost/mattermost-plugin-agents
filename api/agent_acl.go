@@ -68,6 +68,7 @@ func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 // proposed config starts as a copy of the stored one, so a field added to
 // applyAgentUpdateRequest later is admin-only until it is listed here.
 func clearManagerEditableFields(cfg *llm.BotConfig) {
+	cfg.Name = ""
 	cfg.DisplayName = ""
 	cfg.CustomInstructions = ""
 	cfg.Model = ""

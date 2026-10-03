@@ -84,9 +84,9 @@ func TestSnapshotBotsAppliesAgentCap(t *testing.T) {
 			assert.Equal(t, tc.wantNames, got)
 
 			for _, name := range tc.wantActiveDB {
-				assert.Contains(t, activeDB, name)
+				assert.True(t, activeDB.owns(&model.Bot{Username: name}), name)
 			}
-			assert.Len(t, activeDB, len(tc.wantActiveDB))
+			assert.Len(t, activeDB.usernames, len(tc.wantActiveDB))
 			assert.Equal(t, cfg.bots[1].ID, cfg.GetBots()[1].ID, "config-owned slice must not be mutated")
 		})
 	}
@@ -100,7 +100,8 @@ func TestSnapshotBotsAppliesAgentCap(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, bots, 1)
 		assert.Equal(t, "filebot1", bots[0].Name)
-		assert.Empty(t, activeDB)
+		assert.Empty(t, activeDB.usernames)
+		assert.Empty(t, activeDB.userIDs)
 	})
 }
 
