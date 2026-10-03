@@ -315,7 +315,8 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
-	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionReq,
+	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(),
+		c.newDeferredDispatcherForConversation(bot, conv, post.Id), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,
 		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },

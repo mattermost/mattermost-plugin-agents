@@ -26,6 +26,7 @@ func applyLanguageModelOptions(opts []llm.LanguageModelOption) llm.LanguageModel
 type nativeWebSearchChannelConfig struct{}
 
 func (nativeWebSearchChannelConfig) EnableChannelMentionToolCalling() bool { return true }
+func (nativeWebSearchChannelConfig) EnableAskAnotherUser() bool            { return false }
 func (nativeWebSearchChannelConfig) AllowNativeWebSearchInChannels() bool  { return true }
 func (nativeWebSearchChannelConfig) MCP() mcp.Config                       { return mcp.Config{} }
 

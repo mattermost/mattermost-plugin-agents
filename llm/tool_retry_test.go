@@ -181,6 +181,32 @@ func TestEnsureToolIterationLimitUserMessage(t *testing.T) {
 	}
 }
 
+func TestCountTrailingFailedToolCallsWaiting(t *testing.T) {
+	buildPosts := func(nonTerminalStatus ToolCallStatus) []Post {
+		return []Post{{
+			Role: PostRoleBot,
+			ToolUse: []ToolCall{
+				{Name: "ask_tool", Status: nonTerminalStatus},
+				{Name: "normal_tool", Status: ToolCallStatusError},
+			},
+		}}
+	}
+
+	tests := []struct {
+		name   string
+		status ToolCallStatus
+	}{
+		{name: "waiting call does not break failure counting", status: ToolCallStatusWaiting},
+		{name: "pending call behaves identically", status: ToolCallStatusPending},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, 1, CountTrailingFailedToolCalls(buildPosts(tt.status)))
+		})
+	}
+}
+
 func TestCountTrailingFailedToolCallsIgnoresFailedMetaTools(t *testing.T) {
 	posts := []Post{{
 		Role: PostRoleBot,

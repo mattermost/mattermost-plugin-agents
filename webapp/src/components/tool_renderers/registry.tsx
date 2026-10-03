@@ -11,6 +11,7 @@ import React from 'react';
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
+import {type AskCancelState} from '../ask_another_user_tool';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
 
@@ -38,6 +39,11 @@ export interface ToolRenderContext {
     canAnswer: boolean;
     onAnswer?: (selections: string[], custom: string) => void;
     onSkip?: () => void;
+
+    // Requester-side cancel of a waiting AskAnotherUser call.
+    onCancelAsk?: () => void;
+    askCancelState?: AskCancelState;
+    askCancelDisabled?: boolean;
 }
 
 interface RendererEntry {

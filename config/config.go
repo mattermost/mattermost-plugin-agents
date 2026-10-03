@@ -32,6 +32,7 @@ type Config struct {
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
+	EnableAskAnotherUser            bool                             `json:"enableAskAnotherUser"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
@@ -169,6 +170,18 @@ func (c *Container) AllowUnsafeLinks() bool {
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
 	return c.Config().EnableChannelMentionToolCalling
+}
+
+// EnableAskAnotherUser reports whether the experimental AskAnotherUser tool
+// is enabled (V2-C1). Default false: the tool is not registered and its
+// answer/cancel endpoints refuse while off.
+func (c *Container) EnableAskAnotherUser() bool {
+	cfg := c.cfg.Load()
+	if cfg == nil {
+		return false
+	}
+
+	return cfg.EnableAskAnotherUser
 }
 
 func (c *Container) AllowNativeWebSearchInChannels() bool {

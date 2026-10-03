@@ -20,7 +20,7 @@ import {isValidId} from '@/utils/ids';
 import {ServerToolUse} from '@/types/conversation';
 
 import {SearchSources, parseSearchSources} from '../search_sources';
-import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
+import {isCancelableAskCall, needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
 
@@ -631,8 +631,11 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     // A round the viewer owes a decision on stays out of the activity area so
     // its approval card renders in full. Onlookers owe none, so it folds in.
+    // A waiting AskAnotherUser question stays out too, so the requester can
+    // reach its Cancel control.
     const awaitingDecision = anchorRound !== null &&
-        needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester);
+        (needsViewerDecision(anchorRound.toolCalls, anchorStage, mayBeRequester) ||
+            anchorRound.toolCalls.some((call) => isCancelableAskCall(call, mayBeRequester)));
     const pendingDecisionRoundId = awaitingDecision ? anchorRound.id : undefined; // eslint-disable-line no-undefined
 
     const reasoningLoadingRoundId = isReasoningLoading ? LIVE_ROUND_ID : undefined; // eslint-disable-line no-undefined

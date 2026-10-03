@@ -805,6 +805,40 @@ describe('LLMBotPost rounds awaiting a decision', () => {
         expect(screen.queryByText('Used 1 tool')).toBeNull();
     });
 
+    // A dispatched AskAnotherUser question leaves the round with nothing to
+    // approve, but the requester still needs its card for the Cancel control.
+    test.each([
+        {viewer: 'the requester', userId: 'user_1', keptOut: true},
+        {viewer: 'an onlooker', userId: 'someone_else', keptOut: false},
+    ])('a waiting AskAnotherUser round for $viewer stays out of the activity area: $keptOut', ({userId, keptOut}) => {
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([
+                makeTurn({id: 'u1', post_id: 'user_post', role: 'user', content: [{type: 'text', text: 'ask bob'}]}),
+                makeTurn({
+                    id: 'anchor',
+                    sequence: 2,
+                    approval_state: 'done',
+                    content: [
+                        {type: 'text', text: 'Asking Bob now'},
+                        {type: 'tool_use', id: 'tc_ask', name: 'AskAnotherUser', status: 'waiting', deferred_result: true},
+                    ],
+                }),
+            ], userId),
+            loading: false,
+            error: null,
+        });
+
+        renderPost();
+
+        if (keptOut) {
+            expect(screen.getByText('Asking Bob now')).toBeTruthy();
+            expect(screen.queryByTestId('llm-bot-tool-activity')).toBeNull();
+        } else {
+            expect(screen.queryByText('Asking Bob now')).toBeNull();
+            expect(screen.getByTestId('llm-bot-tool-activity-current').textContent).toBe('AskAnotherUser');
+        }
+    });
+
     // A pending tool_call can land over the websocket before the refetch persists the round.
     test('keeps a live pending tool call out of the activity area for the requester', () => {
         mockUseConversation.mockReturnValue({

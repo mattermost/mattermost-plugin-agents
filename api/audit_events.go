@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 29
+// Audit event names for every state-changing operation in the plugin: 30
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -58,6 +58,12 @@ const (
 	// In-channel tool approval: the human decision the server cannot see.
 	AuditEventToolCallApproval   = "toolCallApproval"
 	AuditEventToolResultApproval = "toolResultApproval"
+
+	// Ask-another-user cancel: the initiator's decision to resolve an
+	// outstanding question without an answer. The target's answer endpoint
+	// (handleAskUserResponse) is deliberately NOT audited — the answer body
+	// is user content.
+	AuditEventAskUserCancel = "askUserCancel"
 
 	// MCP session grant: an external MCP client obtained a dedicated session
 	// holding API access as the user. Not a gin route — emitted directly by
@@ -138,5 +144,7 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleDeleteServicePolicy): AuditEventDeleteServicePolicy,
 		handlerFuncName(a.handlePutMCPPolicy):        AuditEventPutMCPPolicy,
 		handlerFuncName(a.handleDeleteMCPPolicy):     AuditEventDeleteMCPPolicy,
+		// Ask-another-user cancel.
+		handlerFuncName(a.handleAskUserCancel): AuditEventAskUserCancel,
 	}
 }

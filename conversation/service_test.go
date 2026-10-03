@@ -599,6 +599,72 @@ func TestBuildCompletionRequest_WithToolTurns(t *testing.T) {
 	assert.Equal(t, "The weather is 72F and sunny.", req.Posts[3].Message)
 }
 
+// TestBuildCompletionRequestWithWaitingBlock proves a waiting (deferred)
+// tool_use block with no tool_result assembles into a request with exactly
+// the same shape as the identical seed with a pending block — so a new
+// completion mid-wait (initiator sends another message, regenerate) cannot
+// break providers any differently than the long-standing pending case does.
+func TestBuildCompletionRequestWithWaitingBlock(t *testing.T) {
+	svc, s := setupTestService(t)
+
+	buildRequest := func(status string, deferred bool) *llm.CompletionRequest {
+		result, err := svc.CreateConversation(CreateConversationParams{
+			UserID:       model.NewId(),
+			BotID:        model.NewId(),
+			Operation:    "conversation",
+			SystemPrompt: "system",
+			UserMessage:  "ask bob",
+		})
+		require.NoError(t, err)
+		convID := result.ConversationID
+
+		assistantBlocks := []ContentBlock{{
+			Type:           BlockTypeToolUse,
+			ID:             "tc1",
+			Name:           "AskAnotherUser",
+			Input:          json.RawMessage(`{"username":"bob","question":"which release?"}`),
+			Status:         status,
+			DeferredResult: deferred,
+		}}
+		assistantContent, err := json.Marshal(assistantBlocks)
+		require.NoError(t, err)
+		require.NoError(t, s.CreateTurn(&store.Turn{
+			ID:             model.NewId(),
+			ConversationID: convID,
+			Role:           "assistant",
+			Content:        assistantContent,
+			Sequence:       2,
+			CreatedAt:      model.GetMillis(),
+		}))
+
+		conv, err := s.GetConversation(convID)
+		require.NoError(t, err)
+		req, err := svc.BuildCompletionRequest(conv, &llm.Context{})
+		require.NoError(t, err)
+		return req
+	}
+
+	waitingReq := buildRequest(StatusWaiting, true)
+	pendingReq := buildRequest(StatusPending, false)
+
+	require.Len(t, waitingReq.Posts, 3)
+	require.Len(t, waitingReq.Posts[2].ToolUse, 1)
+	assert.Equal(t, llm.ToolCallStatusWaiting, waitingReq.Posts[2].ToolUse[0].Status)
+	assert.True(t, waitingReq.Posts[2].ToolUse[0].DeferredResult)
+	assert.Empty(t, waitingReq.Posts[2].ToolUse[0].Result, "waiting call has no result yet")
+
+	// Same request shape as the pending seed, modulo status and the deferred flag.
+	require.Len(t, pendingReq.Posts, len(waitingReq.Posts))
+	for i := range pendingReq.Posts {
+		assert.Equal(t, pendingReq.Posts[i].Role, waitingReq.Posts[i].Role)
+		assert.Equal(t, pendingReq.Posts[i].Message, waitingReq.Posts[i].Message)
+	}
+	normalized := waitingReq.Posts[2].ToolUse[0]
+	normalized.Status = llm.ToolCallStatusPending
+	normalized.DeferredResult = false
+	assert.Equal(t, pendingReq.Posts[2].ToolUse[0], normalized)
+}
+
 func TestBuildCompletionRequest_StripsPersistedAssistantReasoning(t *testing.T) {
 	svc, s := setupTestService(t)
 

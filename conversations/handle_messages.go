@@ -392,7 +392,8 @@ func (c *Conversations) handleMentionViaConversation(
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionRequest,
+	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(),
+		c.newDeferredDispatcherForConversation(bot, convResult.Conversation, ""), *completionRequest,
 		func(tc llm.ToolCall) bool {
 			if !allowToolsInChannel {
 				return false

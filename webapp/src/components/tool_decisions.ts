@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {AskAnotherUserToolName, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
 
 /** The tool calls in a round that still need a per-call decision from this viewer. */
 export function selectDecisionToolCalls(
@@ -61,4 +61,9 @@ export function needsViewerDecision(
     }
     return selectDecisionToolCalls(toolCalls, approvalStage, canApprove).length > 0 ||
         isInterruptedAutoApprovalRound(toolCalls, approvalStage);
+}
+
+/** An outstanding AskAnotherUser question the requester may cancel (F5). */
+export function isCancelableAskCall(call: ToolCall, canApprove: boolean): boolean {
+    return canApprove && call.name === AskAnotherUserToolName && call.status === ToolCallStatus.Waiting;
 }

@@ -143,6 +143,7 @@ func (a *turnAccumulator) buildContentBlocks() []conversation.ContentBlock {
 			WouldAutoExecute: tc.WouldAutoExecute,
 			Title:            tc.Title,
 			Description:      tc.Description,
+			DeferredResult:   tc.DeferredResult,
 		})
 	}
 
@@ -371,6 +372,7 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 			Status:           tc.Status,
 			UserInteraction:  tc.UserInteraction,
 			WouldAutoExecute: tc.WouldAutoExecute,
+			DeferredResult:   tc.DeferredResult,
 		}
 	}
 	return redacted
