@@ -45,9 +45,9 @@ func AgentList(agents []AgentInfo, currentBotUserID string) string {
 // the target agent's final answer.
 func DelegationResult(displayName, username, permalink, answer string) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Answer from %s (@%s)", displayName, username))
+	fmt.Fprintf(&b, "Answer from %s (@%s)", displayName, username)
 	if permalink != "" {
-		b.WriteString(fmt.Sprintf(" — conversation: %s", permalink))
+		fmt.Fprintf(&b, " — conversation: %s", permalink)
 	}
 	b.WriteString("\n\n")
 	b.WriteString(answer)
