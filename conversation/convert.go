@@ -109,6 +109,7 @@ func BlocksToPost(
 				Status:       StatusFromString(block.Status),
 				Title:        block.Title,
 				Description:  block.Description,
+				UIMeta:       block.UIMeta,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""

@@ -270,14 +270,9 @@ func listAllTools(ctx context.Context, session *mcp.ClientSession) (map[string]*
 // found, installs the session and tools on c. On failure the session is
 // closed and c is left unmodified.
 func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, serverLabel string) error {
-	discoveredTools, err := listAllTools(ctx, session)
+	discoveredTools, err := c.discoverSessionTools(ctx, session, serverLabel)
 	if err != nil {
-		session.Close()
-		return fmt.Errorf("failed to list tools: %w", err)
-	}
-	if len(discoveredTools) == 0 {
-		session.Close()
-		return fmt.Errorf("no tools found on MCP server %s for user %s", serverLabel, c.userID)
+		return err
 	}
 
 	c.toolsMu.Lock()
@@ -285,14 +280,34 @@ func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, s
 	c.tools = discoveredTools
 	c.toolsMu.Unlock()
 
-	for _, tool := range discoveredTools {
+	c.logRegisteredTools(discoveredTools, serverLabel)
+	return nil
+}
+
+// discoverSessionTools lists the tools on session, closing it and returning an
+// error when listing fails or the catalog is empty. It does not touch c's
+// session state, so callers holding toolsMu may use it.
+func (c *Client) discoverSessionTools(ctx context.Context, session *mcp.ClientSession, serverLabel string) (map[string]*mcp.Tool, error) {
+	discoveredTools, err := listAllTools(ctx, session)
+	if err != nil {
+		session.Close()
+		return nil, fmt.Errorf("failed to list tools: %w", err)
+	}
+	if len(discoveredTools) == 0 {
+		session.Close()
+		return nil, fmt.Errorf("no tools found on MCP server %s for user %s", serverLabel, c.userID)
+	}
+	return discoveredTools, nil
+}
+
+func (c *Client) logRegisteredTools(tools map[string]*mcp.Tool, serverLabel string) {
+	for _, tool := range tools {
 		c.log.Debug("Registered MCP tool",
 			"userID", c.userID,
 			"name", tool.Name,
 			"description", tool.Description,
 			"server", serverLabel)
 	}
-	return nil
 }
 
 // CreateClient creates an embedded MCP client using session ID for authentication.
@@ -327,7 +342,7 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 			Name:    "mattermost-agents-embedded",
 			Version: "1.0",
 		},
-		nil,
+		uiClientOptions(),
 	)
 
 	// Connect to the embedded server using in-memory transport
@@ -480,7 +495,7 @@ func NewPluginClient(ctx context.Context, userID string, cfg PluginServerConfig,
 		httpClient: httpClient,
 	}
 
-	session, err := ConnectPluginServer(ctx, "mattermost-agents-plugin-bridge", cfg.Path, httpClient)
+	session, err := connectPluginServerWithOptions(ctx, "mattermost-agents-plugin-bridge", cfg.Path, httpClient, uiClientOptions())
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to plugin MCP server %s: %w", cfg.PluginID, err)
 	}
@@ -525,7 +540,7 @@ func (c *Client) createSession(ctx context.Context, serverConfig ServerConfig) (
 			Name:    "mattermost-agents",
 			Version: "1.0",
 		},
-		nil,
+		uiClientOptions(),
 	)
 
 	httpClient := c.httpClientForMCP(serverConfig.BaseURL, headers)
@@ -612,12 +627,23 @@ func (c *Client) oauthNeededRedirectURL(metadataURL, scope string) string {
 	return u.String()
 }
 
+// currentSession returns the live session under toolsMu.
+func (c *Client) currentSession() *mcp.ClientSession {
+	c.toolsMu.RLock()
+	defer c.toolsMu.RUnlock()
+	return c.session
+}
+
 // Close closes the connection to the MCP server
 func (c *Client) Close() error {
-	if c.session == nil {
+	c.toolsMu.Lock()
+	session := c.session
+	c.session = nil
+	c.toolsMu.Unlock()
+	if session == nil {
 		return nil
 	}
-	return c.session.Close()
+	return session.Close()
 }
 
 // Tools returns the tools available from this client
@@ -642,7 +668,8 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	)
 	defer span.End()
 
-	if c.session == nil {
+	session := c.currentSession()
+	if session == nil {
 		err := fmt.Errorf("MCP client not connected")
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -660,53 +687,21 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 		params.Meta = mcp.Meta(metadata)
 	}
 
-	result, err := c.session.CallTool(ctx, params)
+	result, err := session.CallTool(ctx, params)
 	if err != nil {
-		if errors.Is(err, mcp.ErrConnectionClosed) {
-			if c.embeddedClient != nil {
-				// Reconnect to embedded server using stored client helper and session ID
-				if c.sessionID == "" {
-					return "", fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
-				}
-
-				newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
-				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
-				}
-
-				c.toolsMu.Lock()
-				c.session = newClient.session
-				c.tools = newClient.Tools()
-				c.toolsMu.Unlock()
-				c.log.Debug("Successfully reconnected to embedded MCP server", "userID", c.userID)
-			} else {
-				// Reconnect to remote server
-				newSession, reconnectErr := c.createSession(ctx, c.config)
-				if reconnectErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
-				}
-				if adoptErr := c.adoptSession(ctx, newSession, c.config.Name); adoptErr != nil {
-					return "", fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
-				}
-
-				if c.toolsCache != nil && c.useSharedToolsCache() {
-					if cacheErr := c.toolsCache.SetTools(c.toolsCacheServerID(), c.config.Name, c.config.BaseURL, c.Tools(), time.Now()); cacheErr != nil {
-						c.log.Warn("Failed to update tools cache after MCP reconnect",
-							"server", c.config.Name,
-							"userID", c.userID,
-							"error", cacheErr)
-					}
-				}
-				c.log.Debug("Successfully reconnected to MCP server", "userID", c.userID, "server", c.config.Name)
-			}
-
-			// Retry the tool call after reconnecting
-			result, err = c.session.CallTool(ctx, params)
-			if err != nil {
-				return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
-			}
-		} else {
+		if !errors.Is(err, mcp.ErrConnectionClosed) {
 			return "", fmt.Errorf("failed to call tool %s on server %s: %w", toolName, c.config.Name, err)
+		}
+		if reconnectErr := c.reconnect(ctx, session); reconnectErr != nil {
+			return "", reconnectErr
+		}
+		session = c.currentSession()
+		if session == nil {
+			return "", fmt.Errorf("MCP client not connected after reconnecting")
+		}
+		result, err = session.CallTool(ctx, params)
+		if err != nil {
+			return "", fmt.Errorf("failed to call tool %s on server %s after reconnecting: %w", toolName, c.config.Name, err)
 		}
 	}
 	var textBuilder strings.Builder
@@ -733,4 +728,69 @@ func (c *Client) CallToolWithMetadata(ctx context.Context, toolName string, args
 	}
 
 	return "", fmt.Errorf("no text content found in response from tool %s on server %s", toolName, c.config.Name)
+}
+
+// reconnect re-establishes the session after mcp.ErrConnectionClosed,
+// re-listing tools and updating the shared cache (remote) or recreating the
+// embedded client (embedded). Callers retry their operation once afterwards.
+//
+// failedSession is the session pointer the caller observed as closed. If another
+// goroutine has already replaced that session, reconnect is a no-op (single-flight).
+// The session being replaced is closed after a successful swap.
+func (c *Client) reconnect(ctx context.Context, failedSession *mcp.ClientSession) error {
+	c.toolsMu.Lock()
+	defer c.toolsMu.Unlock()
+
+	if c.session != failedSession {
+		return nil
+	}
+	oldSession := c.session
+
+	if c.embeddedClient != nil {
+		// Reconnect to embedded server using stored client helper and session ID
+		if c.sessionID == "" {
+			return fmt.Errorf("embedded server connection lost and cannot be reconnected: missing session ID")
+		}
+
+		newClient, reconnectErr := c.embeddedClient.CreateClient(ctx, c.userID, c.sessionID)
+		if reconnectErr != nil {
+			return fmt.Errorf("failed to reconnect to embedded MCP server: %w", reconnectErr)
+		}
+
+		c.session = newClient.session
+		c.tools = newClient.Tools()
+		if oldSession != nil {
+			_ = oldSession.Close()
+		}
+		c.log.Debug("Successfully reconnected to embedded MCP server", "userID", c.userID)
+		return nil
+	}
+
+	// Reconnect to remote server
+	newSession, reconnectErr := c.createSession(ctx, c.config)
+	if reconnectErr != nil {
+		return fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, reconnectErr)
+	}
+	discoveredTools, adoptErr := c.discoverSessionTools(ctx, newSession, c.config.Name)
+	if adoptErr != nil {
+		return fmt.Errorf("failed to reconnect to MCP server %s: %w", c.config.Name, adoptErr)
+	}
+
+	c.session = newSession
+	c.tools = discoveredTools
+	if oldSession != nil {
+		_ = oldSession.Close()
+	}
+	c.logRegisteredTools(discoveredTools, c.config.Name)
+
+	if c.toolsCache != nil && c.useSharedToolsCache() {
+		if cacheErr := c.toolsCache.SetTools(c.toolsCacheServerID(), c.config.Name, c.config.BaseURL, discoveredTools, time.Now()); cacheErr != nil {
+			c.log.Warn("Failed to update tools cache after MCP reconnect",
+				"server", c.config.Name,
+				"userID", c.userID,
+				"error", cacheErr)
+		}
+	}
+	c.log.Debug("Successfully reconnected to MCP server", "userID", c.userID, "server", c.config.Name)
+	return nil
 }
