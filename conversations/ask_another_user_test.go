@@ -52,7 +52,7 @@ func newAskAnotherUserBotsService(t *testing.T, bot *bots.Bot) *bots.MMBots {
 	mockAPI := &plugintest.API{}
 	pluginAPI := pluginapi.NewClient(mockAPI, nil)
 	licenseChecker := enterprise.NewLicenseChecker(pluginAPI)
-	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, &http.Client{}, nil)
+	botsService := bots.New(mockAPI, pluginAPI, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
 	botsService.SetBotsForTesting([]*bots.Bot{bot})
 	return botsService
 }
@@ -82,7 +82,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			name:              "happy path sends card with all props",
 			rawArgs:           validArgs,
 			anchorPostID:      "anchor-post-id",
-			target:            &model.User{Id: "bob-id", Username: "bob"},
+			target:            &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requester:         &model.User{Id: "user-id", Username: "user"},
 			wantDM:            true,
 			wantRequesterProp: "user-id",
@@ -93,7 +93,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			rawArgs:           validArgs,
 			anchorPostID:      "",
 			rootPostID:        &rootPostID,
-			target:            &model.User{Id: "bob-id", Username: "bob"},
+			target:            &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requester:         &model.User{Id: "user-id", Username: "user"},
 			wantDM:            true,
 			wantRequesterProp: "user-id",
@@ -108,13 +108,13 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 		{
 			name:            "target is a bot",
 			rawArgs:         validArgs,
-			target:          &model.User{Id: "bob-id", Username: "bob", IsBot: true},
+			target:          &model.User{Id: "bobtargetuserid00000000000", Username: "bob", IsBot: true},
 			wantErrContains: "is a bot",
 		},
 		{
 			name:            "target deactivated",
 			rawArgs:         validArgs,
-			target:          &model.User{Id: "bob-id", Username: "bob", DeleteAt: 1},
+			target:          &model.User{Id: "bobtargetuserid00000000000", Username: "bob", DeleteAt: 1},
 			wantErrContains: "is deactivated",
 		},
 		{
@@ -127,13 +127,13 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			name:             "target lacks access to the agent",
 			rawArgs:          validArgs,
 			restrictedAccess: true,
-			target:           &model.User{Id: "bob-id", Username: "bob"},
+			target:           &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			wantErrContains:  "does not have access",
 		},
 		{
 			name:            "DM creation failure",
 			rawArgs:         validArgs,
-			target:          &model.User{Id: "bob-id", Username: "bob"},
+			target:          &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requester:       &model.User{Id: "user-id", Username: "user"},
 			dmErr:           errors.New("boom"),
 			wantErrContains: "failed to open a direct message",
@@ -148,7 +148,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			name:              "bot requester gets empty attribution",
 			rawArgs:           validArgs,
 			anchorPostID:      "anchor-post-id",
-			target:            &model.User{Id: "bob-id", Username: "bob"},
+			target:            &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requester:         &model.User{Id: "user-id", Username: "flowbot", IsBot: true},
 			wantDM:            true,
 			wantRequesterProp: "",
@@ -161,7 +161,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			name:               "requester lookup failure sends an unattributed card",
 			rawArgs:            validArgs,
 			anchorPostID:       "anchor-post-id",
-			target:             &model.User{Id: "bob-id", Username: "bob"},
+			target:             &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requesterLookupErr: true,
 			wantDM:             true,
 			wantRequesterProp:  "",
@@ -171,7 +171,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			name:               "whitespace-and-@ username is canonicalized for the lookup",
 			rawArgs:            `{"username":"  @bob  ","question":"Which environment?","options":[{"label":"Prod"},{"label":"Staging"}],"context":"Deciding where to deploy"}`,
 			anchorPostID:       "anchor-post-id",
-			target:             &model.User{Id: "bob-id", Username: "bob"},
+			target:             &model.User{Id: "bobtargetuserid00000000000", Username: "bob"},
 			requester:          &model.User{Id: "user-id", Username: "user"},
 			wantDM:             true,
 			wantRequesterProp:  "user-id",
@@ -277,7 +277,7 @@ func TestDispatchAskAnotherUserValidation(t *testing.T) {
 			assert.Equal(t, false, sentPost.GetProp(AskUserMultiSelectProp))
 			assert.Equal(t, true, sentPost.GetProp(AskUserAllowFreeFormProp))
 			assert.Equal(t, tc.wantRequesterProp, sentPost.GetProp(AskUserRequesterIDProp))
-			assert.Equal(t, "bob-id", sentPost.GetProp(AskUserTargetIDProp))
+			assert.Equal(t, "bobtargetuserid00000000000", sentPost.GetProp(AskUserTargetIDProp))
 			if tc.wantLookupUsername != "" {
 				assert.Equal(t, tc.wantLookupUsername, lookedUpUsername,
 					"the user lookup must use the canonical username")
@@ -354,10 +354,10 @@ func TestDispatchWritesCardPointer(t *testing.T) {
 				}
 				mmClient.On("LogWarn", args...).Maybe().Return()
 			}
-			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil).Once()
 			mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
-			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+			mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).
 				Run(func(args mock.Arguments) {
 					// Production DM fills the created post's ID in place.
 					args.Get(2).(*model.Post).Id = "card-post-id"
@@ -490,7 +490,7 @@ func TestDispatchAskAnotherUserDestinationProps(t *testing.T) {
 			bot := loadedStateBot(&loadedStateLLM{})
 
 			mmClient := mocks.NewMockClient(t)
-			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil).Once()
 			mmClient.On("GetUser", "user-id").Return(&model.User{Id: "user-id", Username: "user"}, nil).Once()
 			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 
@@ -519,7 +519,7 @@ func TestDispatchAskAnotherUserDestinationProps(t *testing.T) {
 				}
 			}
 			var sentPost *model.Post
-			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+			mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).
 				Run(func(args mock.Arguments) { sentPost = args.Get(2).(*model.Post) }).
 				Return(nil).Once()
 
@@ -637,7 +637,7 @@ func TestDispatchAskAnotherUserRequesterKind(t *testing.T) {
 			)
 
 			mmClient := mocks.NewMockClient(t)
-			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil).Once()
 			if tc.requesterErr {
 				mmClient.On("GetUser", "user-id").Return(nil, errors.New("lookup down")).Once()
 			} else {
@@ -646,7 +646,7 @@ func TestDispatchAskAnotherUserRequesterKind(t *testing.T) {
 			mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
 			mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 			var sentPost *model.Post
-			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+			mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).
 				Run(func(args mock.Arguments) { sentPost = args.Get(2).(*model.Post) }).
 				Return(nil).Once()
 
@@ -732,12 +732,15 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 		{
 			// Rejected-only batches never stream a follow-up: nothing
 			// executed, matching the behavior for normal tools.
+			// Rejection-only batches continue the conversation so the model
+			// can take a different approach.
 			name:            "unaccepted deferred call is rejected",
 			acceptedIDs:     []string{},
 			wantBlockStatus: conversation.StatusRejected,
 			wantResultTurn:  true,
 			wantResultText:  "Tool call rejected by user",
 			wantResultErr:   true,
+			wantFollowUp:    true,
 		},
 		{
 			name:             "auto-exec resume dispatches without an accept click",
@@ -792,7 +795,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 					Name:   "jira__get_issue",
 					Input:  json.RawMessage(`{}`),
 					Status: conversation.StatusPending,
-					Shared: conversation.BoolPtr(false),
+					Shared: new(false),
 				})
 			}
 			blocks = append(blocks, conversation.ContentBlock{
@@ -803,7 +806,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 				Status:           conversation.StatusPending,
 				DeferredResult:   true,
 				WouldAutoExecute: tc.wouldAutoExecute,
-				Shared:           conversation.BoolPtr(false),
+				Shared:           new(false),
 			})
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -834,8 +837,8 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 
 			dmCalls := 0
 			if tc.wantDMCalls > 0 {
-				mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
-				mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+				mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
+				mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).
 					Run(func(mock.Arguments) { dmCalls++ }).
 					Return(tc.dmErr).
 					Times(tc.wantDMCalls)
@@ -921,7 +924,7 @@ func TestHandleToolCallDeferredAccept(t *testing.T) {
 			if tc.wantFollowUp {
 				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
 			} else {
-				assert.Empty(t, lm.requests, "waiting/rejected-only batches must not stream a follow-up")
+				assert.Empty(t, lm.requests, "waiting-only batches must not stream a follow-up")
 			}
 		})
 	}
@@ -940,7 +943,7 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 		Input:          json.RawMessage(`{"username":"bob","question":"Which environment?"}`),
 		Status:         conversation.StatusPending,
 		DeferredResult: true,
-		Shared:         conversation.BoolPtr(false),
+		Shared:         new(false),
 	}}
 	content, err := json.Marshal(blocks)
 	require.NoError(t, err)
@@ -965,9 +968,9 @@ func TestHandleToolCallDeferredDoubleAccept(t *testing.T) {
 	mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 	mmClient.On("KVSetWithExpiry", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 	mmClient.On("GetPost", mock.Anything).Maybe().Return(nil, errors.New("not found"))
-	mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
+	mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil).Once()
 	dmCalls := 0
-	mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).
+	mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).
 		Run(func(mock.Arguments) { dmCalls++ }).
 		Return(nil).
 		Once()
@@ -1046,7 +1049,7 @@ func TestAskToolUseClaimRaces(t *testing.T) {
 				Input:          askInput,
 				Status:         seedStatus,
 				DeferredResult: true,
-				Shared:         conversation.BoolPtr(false),
+				Shared:         new(false),
 			}}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -1072,7 +1075,7 @@ func TestAskToolUseClaimRaces(t *testing.T) {
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
 			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).
 				Return(false, tc.claimErr).Once()
 
@@ -1092,11 +1095,11 @@ func TestAskToolUseClaimRaces(t *testing.T) {
 				err = c.HandleToolCall(context.Background(), "user-id", approvalPost, dmChannel, []string{"ask-1"}, nil)
 			case "answer":
 				cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
-				cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+				cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 				cardPost.AddProp(AskUserConversationIDProp, conv.ID)
 				cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
-				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
-				_, err = c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bobtargetuserid00000000000__bot-id"}
+				_, err = c.HandleAskUserResponse(context.Background(), "bobtargetuserid00000000000", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
 					Selected: []string{"Prod"},
 				})
@@ -1142,11 +1145,13 @@ func TestHandleAskUserResponse(t *testing.T) {
 		extraPending           bool
 		channelAnchor          bool
 		extraExecutedUndecided bool
+		extraUserRejected      bool
 		cardPatchFails         bool
 		wantErr                error
 		wantBlockStatus        string
 		wantResultJSON         string
 		wantFollowUp           bool
+		wantRejectionGuidance  bool
 		wantCardStatus         string
 		wantPreview            string
 	}{
@@ -1286,6 +1291,20 @@ func TestHandleAskUserResponse(t *testing.T) {
 			wantCardStatus:         AskUserStatusAnswered,
 			wantPreview:            "Prod",
 		},
+		{
+			// The sibling rejection's follow-up was gated on the waiting
+			// question, so the answer's resume must carry the guidance.
+			name:                  "sibling user rejection carries rejection guidance into the resume",
+			action:                AskUserActionAnswer,
+			selected:              []string{"Prod"},
+			extraUserRejected:     true,
+			wantBlockStatus:       conversation.StatusSuccess,
+			wantResultJSON:        `{"status":"answered","target_username":"bob","selected":["Prod"],"free_form":""}`,
+			wantFollowUp:          true,
+			wantRejectionGuidance: true,
+			wantCardStatus:        AskUserStatusAnswered,
+			wantPreview:           "Prod",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1307,7 +1326,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 				Input:          json.RawMessage(askInput),
 				Status:         seedStatus,
 				DeferredResult: true,
-				Shared:         conversation.BoolPtr(false),
+				Shared:         new(false),
 			}}
 			if tc.extraPending {
 				blocks = append(blocks, conversation.ContentBlock{
@@ -1316,7 +1335,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 					Name:   "jira__get_issue",
 					Input:  json.RawMessage(`{}`),
 					Status: conversation.StatusPending,
-					Shared: conversation.BoolPtr(false),
+					Shared: new(false),
 				})
 			}
 			if tc.extraExecutedUndecided {
@@ -1326,7 +1345,17 @@ func TestHandleAskUserResponse(t *testing.T) {
 					Name:   "jira__get_issue",
 					Input:  json.RawMessage(`{}`),
 					Status: conversation.StatusSuccess,
-					Shared: conversation.BoolPtr(false),
+					Shared: new(false),
+				})
+			}
+			if tc.extraUserRejected {
+				blocks = append(blocks, conversation.ContentBlock{
+					Type:   conversation.BlockTypeToolUse,
+					ID:     "tool-use-2",
+					Name:   "jira__get_issue",
+					Input:  json.RawMessage(`{}`),
+					Status: conversation.StatusRejected,
+					Shared: new(false),
 				})
 			}
 			content, err := json.Marshal(blocks)
@@ -1350,7 +1379,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 					ToolUseID: "tool-use-2",
 					Content:   "restored-result",
 					Status:    conversation.StatusSuccess,
-					Shared:    conversation.BoolPtr(false),
+					Shared:    new(false),
 				}}
 				undecidedContent, marshalErr := json.Marshal(undecided)
 				require.NoError(t, marshalErr)
@@ -1359,6 +1388,26 @@ func TestHandleAskUserResponse(t *testing.T) {
 					ConversationID: conv.ID,
 					Role:           "tool_result",
 					Content:        undecidedContent,
+					Sequence:       2,
+				}))
+				seededTurns = 2
+			}
+			if tc.extraUserRejected {
+				rejected := []conversation.ContentBlock{{
+					Type:      conversation.BlockTypeToolResult,
+					ToolUseID: "tool-use-2",
+					Content:   toolCallRejectedByUserResult,
+					Status:    conversation.StatusError,
+					Shared:    new(true),
+					DecidedAt: new(int64(1)),
+				}}
+				rejectedContent, marshalErr := json.Marshal(rejected)
+				require.NoError(t, marshalErr)
+				require.NoError(t, convStore.CreateTurn(&store.Turn{
+					ID:             "rejected-result-turn",
+					ConversationID: conv.ID,
+					Role:           "tool_result",
+					Content:        rejectedContent,
 					Sequence:       2,
 				}))
 				seededTurns = 2
@@ -1372,7 +1421,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			if tc.cardConvID != "" {
 				cardConvID = tc.cardConvID
 			}
-			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 			cardPost.AddProp(AskUserConversationIDProp, cardConvID)
 			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
 
@@ -1391,7 +1440,7 @@ func TestHandleAskUserResponse(t *testing.T) {
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
 			mmClient.On("GetChannel", anchorChannel.Id).Maybe().Return(anchorChannel, nil)
@@ -1419,11 +1468,11 @@ func TestHandleAskUserResponse(t *testing.T) {
 				streamingService: streamingService,
 			}
 
-			caller := "bob-id"
+			caller := "bobtargetuserid00000000000"
 			if tc.caller != "" {
 				caller = tc.caller
 			}
-			cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
+			cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bobtargetuserid00000000000__bot-id"}
 			req := AskUserResponse{Action: tc.action, Selected: tc.selected, FreeForm: tc.freeForm}
 
 			_, err = c.HandleAskUserResponse(context.Background(), caller, cardPost, cardChannel, req)
@@ -1479,7 +1528,12 @@ func TestHandleAskUserResponse(t *testing.T) {
 			assert.Equal(t, 1, publishes, "answer must refresh the initiator's conversation view")
 
 			if tc.wantFollowUp {
-				assert.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				require.Len(t, lm.requests, 1, "expected a follow-up LLM request")
+				wantGuidance := 0
+				if tc.wantRejectionGuidance {
+					wantGuidance = 1
+				}
+				assert.Equal(t, wantGuidance, countUserMessagesContaining(lm.requests[0].Posts, toolRejectionGuidance))
 			} else {
 				assert.Empty(t, lm.requests, "follow-up must wait for the remaining unresolved tool calls")
 			}
@@ -1529,7 +1583,7 @@ func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
 				Input:          askInput,
 				Status:         tc.seedStatus,
 				DeferredResult: true,
-				Shared:         conversation.BoolPtr(true),
+				Shared:         new(true),
 			}}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -1565,7 +1619,7 @@ func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
 			bot := loadedStateBot(lm)
 			mmClient := mocks.NewMockClient(t)
 			mmClient.On("GetConfig").Maybe().Return(&model.Config{})
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
 			if tc.cancelAtClaim {
 				mmClient.On("KVCompareAndSet", "askclaim_answer_ask-1", mock.Anything, []byte(AskUserActionAnswer)).
 					Return(false, nil).
@@ -1586,13 +1640,13 @@ func TestHandleAskUserResponseTerminalOutcomes(t *testing.T) {
 				streamingService: &loadedStateStreamingService{},
 			}
 			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
-			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
 			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
 
 			status, responseErr := c.HandleAskUserResponse(
 				context.Background(),
-				"bob-id",
+				"bobtargetuserid00000000000",
 				cardPost,
 				&model.Channel{Id: "card-dm"},
 				AskUserResponse{Action: AskUserActionAnswer, Selected: []string{"Prod"}},
@@ -1737,7 +1791,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 				Input:          json.RawMessage(askInput),
 				Status:         seedStatus,
 				DeferredResult: !tc.notDeferred,
-				Shared:         conversation.BoolPtr(false),
+				Shared:         new(false),
 			}}
 			if tc.extraWaiting {
 				blocks = append(blocks, conversation.ContentBlock{
@@ -1747,7 +1801,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 					Input:          json.RawMessage(askInput),
 					Status:         conversation.StatusWaiting,
 					DeferredResult: true,
-					Shared:         conversation.BoolPtr(false),
+					Shared:         new(false),
 				})
 			}
 			if tc.extraExecutedUndecided {
@@ -1757,7 +1811,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 					Name:   "jira__get_issue",
 					Input:  json.RawMessage(`{}`),
 					Status: conversation.StatusSuccess,
-					Shared: conversation.BoolPtr(false),
+					Shared: new(false),
 				})
 			}
 			content, err := json.Marshal(blocks)
@@ -1782,7 +1836,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 					ToolUseID: "tool-use-2",
 					Content:   "restored-result",
 					Status:    conversation.StatusSuccess,
-					Shared:    conversation.BoolPtr(false),
+					Shared:    new(false),
 				}}
 				undecidedContent, marshalErr := json.Marshal(undecided)
 				require.NoError(t, marshalErr)
@@ -1809,7 +1863,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 			}
 
 			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
-			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 			cardPost.AddProp(AskUserStatusProp, AskUserStatusPending)
 
 			mmClient := mocks.NewMockClient(t)
@@ -1832,7 +1886,7 @@ func TestHandleAskUserCancel(t *testing.T) {
 					}
 				}).Return(nil)
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
 			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
@@ -1963,7 +2017,7 @@ func TestCancelAnswerRace(t *testing.T) {
 				Input:          json.RawMessage(askInput),
 				Status:         conversation.StatusWaiting,
 				DeferredResult: true,
-				Shared:         conversation.BoolPtr(false),
+				Shared:         new(false),
 			}}
 			content, err := json.Marshal(blocks)
 			require.NoError(t, err)
@@ -1985,7 +2039,7 @@ func TestCancelAnswerRace(t *testing.T) {
 			anchorPost.AddProp(streaming.ConversationIDProp, conv.ID)
 
 			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
-			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
 			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
 
@@ -2011,7 +2065,7 @@ func TestCancelAnswerRace(t *testing.T) {
 				Run(func(args mock.Arguments) { *(args.Get(1).(*string)) = "card-post-id" }).
 				Return(nil)
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
 			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
@@ -2033,8 +2087,8 @@ func TestCancelAnswerRace(t *testing.T) {
 				return c.HandleAskUserCancel(context.Background(), "user-id", anchorPost, anchorChannel, "ask-1")
 			}
 			answer := func() (string, error) {
-				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
-				return c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bobtargetuserid00000000000__bot-id"}
+				return c.HandleAskUserResponse(context.Background(), "bobtargetuserid00000000000", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
 					Selected: []string{"Prod"},
 				})
@@ -2108,7 +2162,7 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 					Name:   "jira__get_issue",
 					Input:  json.RawMessage(`{}`),
 					Status: conversation.StatusPending,
-					Shared: conversation.BoolPtr(false),
+					Shared: new(false),
 				},
 				{
 					Type:           conversation.BlockTypeToolUse,
@@ -2117,7 +2171,7 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 					Input:          askInput,
 					Status:         conversation.StatusPending,
 					DeferredResult: true,
-					Shared:         conversation.BoolPtr(false),
+					Shared:         new(false),
 				},
 			}
 			content, err := json.Marshal(blocks)
@@ -2140,7 +2194,7 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 			anchorPost.AddProp(streaming.ConversationIDProp, conv.ID)
 
 			cardPost := &model.Post{Id: "card-post-id", UserId: "bot-id", Type: AskUserPostType}
-			cardPost.AddProp(AskUserTargetIDProp, "bob-id")
+			cardPost.AddProp(AskUserTargetIDProp, "bobtargetuserid00000000000")
 			cardPost.AddProp(AskUserConversationIDProp, conv.ID)
 			cardPost.AddProp(AskUserToolUseIDProp, "ask-1")
 
@@ -2151,9 +2205,9 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 			mmClient.On("KVGet", mock.Anything, mock.Anything).Maybe().Return(nil)
 			mmClient.On("KVCompareAndSet", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(true, nil)
 			mmClient.On("GetUser", "user-id").Maybe().Return(&model.User{Id: "user-id", Username: "user"}, nil)
-			mmClient.On("GetUser", "bob-id").Maybe().Return(&model.User{Id: "bob-id", Username: "bob"}, nil)
-			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bob-id", Username: "bob"}, nil).Once()
-			mmClient.On("DM", "bot-id", "bob-id", mock.AnythingOfType("*model.Post")).Return(nil).Once()
+			mmClient.On("GetUser", "bobtargetuserid00000000000").Maybe().Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil)
+			mmClient.On("GetUserByUsername", "bob").Return(&model.User{Id: "bobtargetuserid00000000000", Username: "bob"}, nil).Once()
+			mmClient.On("DM", "bot-id", "bobtargetuserid00000000000", mock.AnythingOfType("*model.Post")).Return(nil).Once()
 			mmClient.On("GetPost", anchorPostID).Maybe().Return(anchorPost, nil)
 			mmClient.On("GetPost", "card-post-id").Maybe().Return(cardPost, nil)
 			mmClient.On("GetChannel", channel.Id).Maybe().Return(channel, nil)
@@ -2182,8 +2236,8 @@ func TestChannelMixedBatchShareAnswerOrdering(t *testing.T) {
 				return c.HandleToolResult(context.Background(), "user-id", anchorPost, channel, []string{"tool-use-1"})
 			}
 			answer := func() error {
-				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bob-id__bot-id"}
-				_, responseErr := c.HandleAskUserResponse(context.Background(), "bob-id", cardPost, cardChannel, AskUserResponse{
+				cardChannel := &model.Channel{Id: "card-dm", Type: model.ChannelTypeDirect, Name: "bobtargetuserid00000000000__bot-id"}
+				_, responseErr := c.HandleAskUserResponse(context.Background(), "bobtargetuserid00000000000", cardPost, cardChannel, AskUserResponse{
 					Action:   AskUserActionAnswer,
 					Selected: []string{"Prod"},
 				})

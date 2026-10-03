@@ -10,10 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 22
+// Audit event names for every state-changing operation in the plugin: 30
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
-// never use inline string literals and parallel work never edits this file.
+// never use inline string literals; new state-changing routes add their
+// names here rather than inline.
 //
 // The server stamps the plugin ID into every record's parameters when it is
 // logged, so the names stay unprefixed.
@@ -25,6 +26,7 @@ const (
 	AuditEventReindexPosts          = "reindexPosts"
 	AuditEventCancelReindexJob      = "cancelReindexJob"
 	AuditEventCatchUpReindex        = "catchUpReindex"
+	AuditEventRebuildVectorIndex    = "rebuildVectorIndex"
 	AuditEventClearMCPToolsCache    = "clearMCPToolsCache"
 	AuditEventUpdateMCPPluginServer = "updateMCPPluginServer"
 
@@ -38,6 +40,9 @@ const (
 	AuditEventCreateCustomPrompt = "createCustomPrompt"
 	AuditEventUpdateCustomPrompt = "updateCustomPrompt"
 	AuditEventDeleteCustomPrompt = "deleteCustomPrompt"
+
+	// Channel configuration.
+	AuditEventUpdateChannelAutoReply = "updateChannelAutoReply"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -65,6 +70,14 @@ const (
 	// delegateToMCPHandler when a session is newly created, so it has no
 	// registry entry below.
 	AuditEventMCPSessionGrant = "mcpSessionGrant"
+
+	// Access-policy authoring. GET is read-only and is not audited.
+	AuditEventPutAgentPolicy      = "putAgentAccessPolicy"
+	AuditEventDeleteAgentPolicy   = "deleteAgentAccessPolicy"
+	AuditEventPutServicePolicy    = "putServiceAccessPolicy"
+	AuditEventDeleteServicePolicy = "deleteServiceAccessPolicy"
+	AuditEventPutMCPPolicy        = "putMCPAccessPolicy"
+	AuditEventDeleteMCPPolicy     = "deleteMCPAccessPolicy"
 )
 
 // handlerFuncName returns the fully-qualified function name of h, which is
@@ -92,6 +105,7 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,
 		handlerFuncName(a.handleCancelJob):          AuditEventCancelReindexJob,
 		handlerFuncName(a.handleCatchUpIndex):       AuditEventCatchUpReindex,
+		handlerFuncName(a.handleRebuildVectorIndex): AuditEventRebuildVectorIndex,
 		handlerFuncName(a.handleClearMCPToolsCache): AuditEventClearMCPToolsCache,
 		handlerFuncName(a.handleUpdatePluginServer): AuditEventUpdateMCPPluginServer,
 
@@ -105,6 +119,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleCreateCustomPrompt): AuditEventCreateCustomPrompt,
 		handlerFuncName(a.handleUpdateCustomPrompt): AuditEventUpdateCustomPrompt,
 		handlerFuncName(a.handleDeleteCustomPrompt): AuditEventDeleteCustomPrompt,
+
+		// Channel configuration.
+		handlerFuncName(a.handlePutChannelAutoReply): AuditEventUpdateChannelAutoReply,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,
@@ -120,6 +137,13 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		handlerFuncName(a.handleToolCall):   AuditEventToolCallApproval,
 		handlerFuncName(a.handleToolResult): AuditEventToolResultApproval,
 
+		// Access-policy authoring.
+		handlerFuncName(a.handlePutAgentPolicy):      AuditEventPutAgentPolicy,
+		handlerFuncName(a.handleDeleteAgentPolicy):   AuditEventDeleteAgentPolicy,
+		handlerFuncName(a.handlePutServicePolicy):    AuditEventPutServicePolicy,
+		handlerFuncName(a.handleDeleteServicePolicy): AuditEventDeleteServicePolicy,
+		handlerFuncName(a.handlePutMCPPolicy):        AuditEventPutMCPPolicy,
+		handlerFuncName(a.handleDeleteMCPPolicy):     AuditEventDeleteMCPPolicy,
 		// Ask-another-user cancel.
 		handlerFuncName(a.handleAskUserCancel): AuditEventAskUserCancel,
 	}

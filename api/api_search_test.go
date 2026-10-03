@@ -16,6 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -25,6 +27,10 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func licensedSearchService(getSearch func() embeddings.EmbeddingSearch, client mmapi.Client) *search.Search {
+	return search.New(getSearch, client, nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), nil)
+}
 
 func TestHandleRunSearch(t *testing.T) {
 	gin.SetMode(gin.ReleaseMode)
@@ -44,7 +50,7 @@ func TestHandleRunSearch(t *testing.T) {
 				mockClient.On("KVGet", indexer.VectorIndexStateKey, mock.Anything).Return(mmapi.ErrKVNotFound)
 				mockClient.On("DM", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("DM failed"))
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, mockClient)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -66,7 +72,7 @@ func TestHandleRunSearch(t *testing.T) {
 					}).
 					Return(nil)
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, mockClient, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, mockClient)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -102,7 +108,7 @@ func TestHandleRunSearch(t *testing.T) {
 			name: "search fails - empty query",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "",
@@ -116,7 +122,7 @@ func TestHandleRunSearch(t *testing.T) {
 			name: "search fails - query exceeds max length",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4001),
@@ -155,7 +161,7 @@ func TestHandleRunSearch(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search/run?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -185,7 +191,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -225,7 +231,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -243,7 +249,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 5
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -261,7 +267,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -275,7 +281,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			name: "search query fails - query exceeds max length",
 			setupMock: func(t *testing.T) *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return me }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4001),
@@ -290,7 +296,7 @@ func TestHandleSearchQuery(t *testing.T) {
 			setupMock: func(t *testing.T) *search.Search {
 				mockEmbedding := mocks.NewMockEmbeddingSearch(t)
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      strings.Repeat("a", 4000),
@@ -308,7 +314,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -326,7 +332,7 @@ func TestHandleSearchQuery(t *testing.T) {
 				mockEmbedding.On("Search", mock.Anything, "test query", mock.MatchedBy(func(opts embeddings.SearchOptions) bool {
 					return opts.Limit == 100
 				})).Return([]embeddings.SearchResult{}, nil)
-				return search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+				return licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 			},
 			requestBody: SearchRequest{
 				Query:      "test query",
@@ -365,7 +371,7 @@ func TestHandleSearchQuery(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -412,7 +418,7 @@ func TestHandleSearchQueryMalformedJSON(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -425,7 +431,7 @@ func TestHandleSearchQueryMalformedJSON(t *testing.T) {
 
 			// Create request with malformed JSON body
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", strings.NewReader(test.requestBody))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -445,17 +451,17 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		requestBody    map[string]interface{}
+		requestBody    map[string]any
 		expectedStatus int
 	}{
 		{
 			name:           "empty object - missing query",
-			requestBody:    map[string]interface{}{},
+			requestBody:    map[string]any{},
 			expectedStatus: http.StatusBadRequest,
 		},
 		{
 			name: "missing query - only teamId and channelId",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"teamId":    "team123",
 				"channelId": "channel123",
 			},
@@ -463,7 +469,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "empty query string",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":     "",
 				"teamId":    "team123",
 				"channelId": "channel123",
@@ -472,7 +478,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "whitespace-only query",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":     "   ",
 				"teamId":    "team123",
 				"channelId": "channel123",
@@ -481,14 +487,14 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 		},
 		{
 			name: "valid query - missing optional fields is OK",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query": "test query",
 			},
 			expectedStatus: http.StatusOK,
 		},
 		{
 			name: "query with only maxResults (missing teamId, channelId is OK)",
-			requestBody: map[string]interface{}{
+			requestBody: map[string]any{
 				"query":      "test query",
 				"maxResults": 10,
 			},
@@ -506,7 +512,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 			if test.expectedStatus == http.StatusOK {
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -523,7 +529,7 @@ func TestHandleSearchQueryMissingFields(t *testing.T) {
 
 			// Create request
 			request := httptest.NewRequest(http.MethodPost, "/search?botUsername=test-bot", bytes.NewReader(bodyBytes))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -561,7 +567,7 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 		{
 			name: "valid Mattermost-User-Id header",
 			headers: map[string]string{
-				"Mattermost-User-Id": "userid",
+				"Mattermost-User-Id": testUserID,
 			},
 			expectedStatus: http.StatusOK,
 		},
@@ -577,7 +583,7 @@ func TestHandleSearchQueryMissingUserHeader(t *testing.T) {
 			if test.expectedStatus == http.StatusOK {
 				mockEmbedding.On("Search", mock.Anything, mock.Anything, mock.Anything).Return([]embeddings.SearchResult{}, nil)
 			}
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -647,7 +653,7 @@ func TestHandleRunSearchMissingUserHeader(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -715,7 +721,7 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 
 			// Setup search service (enabled)
 			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
-			e.api.searchService = search.New(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil, nil, nil, nil, nil)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
 
 			// Setup a test bot
 			e.setupTestBot(llm.BotConfig{
@@ -728,7 +734,7 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 
 			// Create request with malformed JSON body
 			request := httptest.NewRequest(http.MethodPost, "/search/run?botUsername=test-bot", strings.NewReader(test.requestBody))
-			request.Header.Add("Mattermost-User-ID", "userid")
+			request.Header.Add("Mattermost-User-ID", testUserID)
 			request.Header.Set("Content-Type", "application/json")
 
 			// Execute request
@@ -738,6 +744,41 @@ func TestHandleRunSearchMalformedJSON(t *testing.T) {
 			// Verify status code
 			resp := recorder.Result()
 			require.Equal(t, test.expectedStatus, resp.StatusCode, "Expected status %d for %s", test.expectedStatus, test.name)
+		})
+	}
+}
+
+func TestSearchHandlersEnforceUsageRestrictions(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	for _, url := range []string{"/search", "/search/run"} {
+		t.Run(url, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockEmbedding := mocks.NewMockEmbeddingSearch(t)
+			e.api.searchService = licensedSearchService(func() embeddings.EmbeddingSearch { return mockEmbedding }, nil)
+
+			e.setupTestBot(llm.BotConfig{
+				Name:            "restricted-bot",
+				DisplayName:     "Restricted Bot",
+				UserAccessLevel: llm.UserAccessLevelBlock,
+				UserIDs:         []string{testUserID},
+			})
+
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			bodyBytes, err := json.Marshal(SearchRequest{Query: "test query"})
+			require.NoError(t, err)
+
+			request := httptest.NewRequest(http.MethodPost, url+"?botUsername=restricted-bot", bytes.NewReader(bodyBytes))
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			request.Header.Set("Content-Type", "application/json")
+
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+			require.Equal(t, http.StatusForbidden, recorder.Result().StatusCode)
 		})
 	}
 }

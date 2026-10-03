@@ -4,11 +4,10 @@
 package bridgeclient
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-
-	"github.com/pkg/errors"
 )
 
 // pluginAPIRoundTripper wraps the Mattermost plugin API for HTTP requests
@@ -19,7 +18,7 @@ type pluginAPIRoundTripper struct {
 func (p *pluginAPIRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp := p.api.PluginHTTP(req)
 	if resp == nil {
-		return nil, errors.Errorf("failed to make interplugin request")
+		return nil, errors.New("failed to make interplugin request")
 	}
 	return resp, nil
 }

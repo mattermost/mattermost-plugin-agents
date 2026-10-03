@@ -46,16 +46,12 @@ type LanguageModelConfig struct {
 	JSONOutputFormat       *jsonschema.Schema
 	ToolsDisabled          bool
 	NativeWebSearchAllowed bool // Allows native web search even when ToolsDisabled is true
+	SkipNativeWebSearch    bool // Omits the provider-native web search tool from the request
 	ReasoningDisabled      bool
 }
 
 type LanguageModelOption func(*LanguageModelConfig)
 
-func WithModel(model string) LanguageModelOption {
-	return func(cfg *LanguageModelConfig) {
-		cfg.Model = model
-	}
-}
 func WithMaxGeneratedTokens(maxGeneratedTokens int) LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.MaxGeneratedTokens = maxGeneratedTokens
@@ -80,6 +76,12 @@ func WithNativeWebSearchAllowed() LanguageModelOption {
 	}
 }
 
+func WithSkipNativeWebSearch() LanguageModelOption {
+	return func(cfg *LanguageModelConfig) {
+		cfg.SkipNativeWebSearch = true
+	}
+}
+
 func WithReasoningDisabled() LanguageModelOption {
 	return func(cfg *LanguageModelConfig) {
 		cfg.ReasoningDisabled = true
@@ -87,3 +89,26 @@ func WithReasoningDisabled() LanguageModelOption {
 }
 
 type LanguageModelWrapper func(LanguageModel) LanguageModel
+
+// ProviderFileReference identifies a provider-side file. ProviderRoute is
+// opaque: preserve it exactly and never expose it to users.
+type ProviderFileReference struct {
+	ID            string
+	ProviderRoute string
+}
+
+// ProviderFile is a provider-side file's content and metadata.
+type ProviderFile struct {
+	// Name is model-influenced for sandbox output; sanitize before use.
+	Name        string
+	ContentType string
+	Content     []byte
+}
+
+// ProviderFileDownloader serves provider-side files. Reach it through
+// ProviderServices.FileDownloader, never by asserting on LanguageModel.
+// A positive maxBytes rejects a file whose provider-reported metadata size
+// exceeds it before any content is fetched; 0 disables the gate.
+type ProviderFileDownloader interface {
+	DownloadProviderFile(ctx context.Context, ref ProviderFileReference, maxBytes int64) (ProviderFile, error)
+}

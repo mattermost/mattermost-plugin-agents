@@ -8,7 +8,7 @@ import "github.com/mattermost/mattermost/server/public/model"
 // benchmarkClient implements Client for benchmarks with zero overhead.
 type benchmarkClient struct{}
 
-func (c *benchmarkClient) PublishWebSocketEvent(_ string, _ map[string]interface{}, _ *model.WebsocketBroadcast) {
+func (c *benchmarkClient) PublishWebSocketEvent(_ string, _ map[string]any, _ *model.WebsocketBroadcast) {
 }
 
 func (c *benchmarkClient) UpdatePost(_ *model.Post) error {
@@ -40,12 +40,12 @@ func (c *benchmarkClient) GetConfig() *model.Config {
 	}
 }
 
-func (c *benchmarkClient) KVSet(_ string, _ interface{}) error {
+func (c *benchmarkClient) KVSet(_ string, _ any) error {
 	return nil
 }
 
-func (c *benchmarkClient) LogError(_ string, _ ...interface{}) {}
+func (c *benchmarkClient) LogError(_ string, _ ...any) {}
 
-func (c *benchmarkClient) LogWarn(_ string, _ ...interface{}) {}
+func (c *benchmarkClient) LogWarn(_ string, _ ...any) {}
 
-func (c *benchmarkClient) LogDebug(_ string, _ ...interface{}) {}
+func (c *benchmarkClient) LogDebug(_ string, _ ...any) {}

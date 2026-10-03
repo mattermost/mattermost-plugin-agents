@@ -13,9 +13,10 @@ import {GlobalState} from '@mattermost/types/store';
 import {doAskUserCancel, doToolCall, doToolResult, getProfilesByIds} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
-import {AskAnotherUserToolName, ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus, UserInteractionSelect} from './tool_types';
-import ToolCard, {type AskCancelState} from './tool_card';
-import QuestionCard, {parseQuestionArgs} from './question_card';
+import {ToolAnswer, ToolApprovalStage, ToolCall, ToolCallStatus} from './tool_types';
+import {isCancelableAskCall, isInterruptedAutoApprovalRound, selectDecisionToolCalls} from './tool_decisions';
+import {renderToolCall} from './tool_renderers/registry';
+import {type AskCancelState} from './ask_another_user_tool';
 
 // Styled components
 const ToolCallsContainer = styled.div`
@@ -70,8 +71,6 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
-    showArguments: boolean;
-    showResults: boolean;
 }
 
 // Define a type for tool decisions
@@ -111,9 +110,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     );
     const dispatch = useDispatch();
 
-    const hasCancelableAskCall = props.canApprove && props.toolCalls.some((call) =>
-        call.name === AskAnotherUserToolName && call.status === ToolCallStatus.Waiting,
-    );
+    const hasCancelableAskCall = props.toolCalls.some((call) => isCancelableAskCall(call, props.canApprove));
 
     // The cancel request needs the bot's username, so hydrate the anchor-post
     // author's profile when redux hasn't cached it (same pattern as the
@@ -136,46 +133,20 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
 
     const isCallStage = props.approvalStage === 'call';
     const isResultStage = props.approvalStage === 'result';
-    const pendingToolCalls = useMemo(() => {
-        return props.toolCalls.filter((call) => call.status === ToolCallStatus.Pending);
-    }, [props.toolCalls]);
-    const isInterruptedAutoRound = isCallStage &&
-        pendingToolCalls.length > 0 &&
-        pendingToolCalls.every((call) => call.would_auto_execute);
+    const isInterruptedAutoRound = isInterruptedAutoApprovalRound(props.toolCalls, props.approvalStage);
+
+    // Onlookers get redacted calls without arguments or results.
+    const showArguments = props.toolCalls.some((call) => call.arguments != null);
+    const showResults = props.toolCalls.some((call) => call.result != null);
 
     // Approval is per pending tool. Earlier auto-approved tools in the same
     // response should not suppress controls for later manual ones.
     const effectiveCanApprove = props.canApprove;
 
-    const decisionToolCalls = useMemo(() => {
-        if (!effectiveCanApprove) {
-            return [];
-        }
-
-        if (isCallStage) {
-            // Calls that passed the auto-execution policy run server-side
-            // once the rest of the batch is resolved — no decision needed.
-            return props.toolCalls.filter((call) =>
-                call.status === ToolCallStatus.Pending && !call.would_auto_execute,
-            );
-        }
-
-        if (!isResultStage) {
-            // 'done' stage — server says no decision remains, render no buttons.
-            return [];
-        }
-
-        // User-interaction results are decided at answer time (the user
-        // authored them) and auto-executed results are decided at write time,
-        // so neither needs a share/keep-private decision.
-        return props.toolCalls.filter((call) =>
-            !call.user_interaction &&
-            !call.decided &&
-            (call.status === ToolCallStatus.Success ||
-            call.status === ToolCallStatus.Error ||
-            call.status === ToolCallStatus.AutoApproved),
-        );
-    }, [props.toolCalls, effectiveCanApprove, isCallStage, isResultStage]);
+    const decisionToolCalls = useMemo(
+        () => selectDecisionToolCalls(props.toolCalls, props.approvalStage, effectiveCanApprove),
+        [props.toolCalls, props.approvalStage, effectiveCanApprove],
+    );
 
     const decisionToolIDSet = useMemo(() => {
         return new Set(decisionToolCalls.map((call) => call.id));
@@ -390,52 +361,35 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                     return null;
                 }
 
-                if (tool.user_interaction === UserInteractionSelect) {
-                    // Redacted calls (non-requesters) have no arguments to
-                    // render; fall through to the generic tool card.
-                    const question = parseQuestionArgs(tool.arguments);
-                    if (question) {
-                        return (
-                            <QuestionCard
-                                key={tool.id}
-                                tool={tool}
-                                question={question}
-                                isProcessing={isDecisionCall && isSubmitting}
-                                localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
-                                canAnswer={isDecisionCall && isCallStage}
-                                onAnswer={isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined} // eslint-disable-line no-undefined
-                                onSkip={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
-                            />
-                        );
-                    }
-                }
-
                 // Requester-only cancel control for outstanding
                 // AskAnotherUser questions (F5). Observers never see it.
-                const canCancelAsk = props.canApprove &&
-                    tool.name === AskAnotherUserToolName &&
-                    tool.status === ToolCallStatus.Waiting;
+                const canCancelAsk = isCancelableAskCall(tool, props.canApprove);
 
+                // The registry routes each call to its rich card or
+                // QuestionCard, falling back to the generic ToolCard.
                 return (
-                    <ToolCard
-                        key={tool.id}
-                        postID={props.postID}
-                        tool={tool}
-                        isCollapsed={isToolCollapsed(tool)}
-                        isProcessing={(isDecisionCall || isInterruptedAutoRound) && isSubmitting}
-                        localDecision={isDecisionCall ? toolDecisions[tool.id] : undefined} // eslint-disable-line no-undefined
-                        onToggleCollapse={() => toggleCollapse(tool.id)}
-                        onApprove={isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined} // eslint-disable-line no-undefined
-                        onReject={isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined} // eslint-disable-line no-undefined
-                        canExpand={props.canExpand}
-                        showArguments={props.showArguments}
-                        showResults={props.showResults}
-                        approvalStage={props.approvalStage}
-                        isAutoApproved={tool.status === ToolCallStatus.AutoApproved}
-                        onCancelAsk={canCancelAsk ? () => handleAskCancel(tool.id) : undefined} // eslint-disable-line no-undefined
-                        askCancelState={canCancelAsk ? (askCancelStates[tool.id] ?? 'idle') : undefined} // eslint-disable-line no-undefined
-                        askCancelDisabled={canCancelAsk && !botUsername}
-                    />
+                    <React.Fragment key={tool.id}>
+                        {renderToolCall({
+                            tool,
+                            isCollapsed: isToolCollapsed(tool),
+                            isProcessing: (isDecisionCall || isInterruptedAutoRound) && isSubmitting,
+                            localDecision: isDecisionCall ? toolDecisions[tool.id] : undefined, // eslint-disable-line no-undefined
+                            onToggleCollapse: () => toggleCollapse(tool.id),
+                            onApprove: isDecisionCall ? () => handleToolDecision(tool.id, true) : undefined, // eslint-disable-line no-undefined
+                            onReject: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            canExpand: props.canExpand,
+                            showArguments,
+                            showResults,
+                            approvalStage: props.approvalStage,
+                            isAutoApproved: tool.status === ToolCallStatus.AutoApproved,
+                            canAnswer: isDecisionCall && isCallStage,
+                            onAnswer: isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined, // eslint-disable-line no-undefined
+                            onSkip: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            onCancelAsk: canCancelAsk ? () => handleAskCancel(tool.id) : undefined, // eslint-disable-line no-undefined
+                            askCancelState: canCancelAsk ? (askCancelStates[tool.id] ?? 'idle') : undefined, // eslint-disable-line no-undefined
+                            askCancelDisabled: canCancelAsk && !botUsername,
+                        })}
+                    </React.Fragment>
                 );
             })}
 

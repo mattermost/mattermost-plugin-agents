@@ -12,11 +12,14 @@ import {
     doAskUserCancel,
     doAskUserResponse,
     doLoopInAgent,
+    doThreadAnalysis,
+    getChannelAutoReply,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
     searchAllChannels,
     setSiteURL,
+    updateChannelAutoReply,
     updateRead,
 } from './client';
 
@@ -46,16 +49,15 @@ jest.mock('@mattermost/client', () => {
             }
         },
 
-        // Mirrors the real ClientError just enough for callers that branch on
-        // status_code (e.g. the ask-user 409 handling).
+        // Carries status_code like the real ClientError so callers can assert on it.
         ClientError: class extends Error {
             status_code?: number;
             url?: string;
 
-            constructor(baseUrl: string, data: {message: string; status_code?: number; url?: string}) {
-                super(data.message);
-                this.status_code = data.status_code;
-                this.url = data.url;
+            constructor(baseUrl: string, data?: {message?: string; status_code?: number; url?: string}) {
+                super(data?.message ?? '');
+                this.status_code = data?.status_code;
+                this.url = data?.url;
             }
         },
         mockSearchAllChannels,
@@ -324,6 +326,59 @@ describe('doAskUserCancel', () => {
     });
 });
 
+describe('getChannelAutoReply', () => {
+    test('issues a GET to the channel autoreply route and returns the parsed body', async () => {
+        const body = {bot_id: 'bot-1', mode: 'threads'};
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(body)} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).resolves.toEqual(body);
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
+    });
+
+    test('percent-encodes the channel id so it occupies a single path segment', async () => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({bot_id: '', mode: 'off'})} as unknown as Response);
+
+        await getChannelAutoReply('cha/nnel');
+
+        const [url] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/cha%2Fnnel/autoreply`);
+    });
+
+    test.each([403, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(getChannelAutoReply('channel-1')).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('updateChannelAutoReply', () => {
+    test('issues a PUT with exactly the settings payload and resolves without reading the body', async () => {
+        const json = jest.fn();
+        mockFetch.mockResolvedValue({ok: true, status: 200, json} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: 'bot-1', mode: 'root_posts'})).resolves.toBeUndefined();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/channel/channel-1/autoreply`);
+        expect(options).toEqual(expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({bot_id: 'bot-1', mode: 'root_posts'}),
+        }));
+        expect(json).not.toHaveBeenCalled();
+    });
+
+    test.each([403, 413, 500])('throws an error carrying status %d on a non-ok response', async (status) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+    });
+});
+
 describe('getConversation', () => {
     test('requests the conversation route for a well-formed id', async () => {
         await expect(getConversation(WELL_FORMED_ID)).resolves.toEqual({turns: []});
@@ -355,5 +410,36 @@ describe('getConversationContext', () => {
         await expect(getConversationContext(id)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('license denial errors', () => {
+    test('403 responses surface the server error text', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 403,
+            json: () => Promise.resolve({
+                error: 'Thread summarization is available on Professional plans and above.',
+                license_required: 'professional',
+            }),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 403,
+            message: 'Thread summarization is available on Professional plans and above.',
+        });
+    });
+
+    test('non-403 responses keep an empty message', async () => {
+        mockFetch.mockResolvedValue({
+            ok: false,
+            status: 500,
+            json: () => Promise.resolve({error: 'internal'}),
+        } as unknown as Response);
+
+        await expect(doThreadAnalysis('post-1', 'summarize_thread', 'bot')).rejects.toMatchObject({
+            status_code: 500,
+            message: '',
+        });
     });
 });

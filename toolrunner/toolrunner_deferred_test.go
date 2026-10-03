@@ -19,7 +19,7 @@ import (
 // newDeferredToolStore builds a store with a deferred-result tool (backstop
 // resolver) plus any normal tools defined the usual way.
 func newDeferredToolStore(deferredName string, normalTools ...llm.Tool) *llm.ToolStore {
-	store := llm.NewNoTools()
+	store := llm.NewToolStore()
 	store.AddTools(append([]llm.Tool{{
 		Name:           deferredName,
 		Description:    "deferred test tool",

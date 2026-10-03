@@ -42,7 +42,7 @@ jest.mock('react-redux', () => ({
     useDispatch: () => mockDispatch,
 }));
 
-type MockToolCardProps = {
+type MockRenderContext = {
     tool: ToolCall;
     onApprove?: () => void;
     onReject?: () => void;
@@ -52,13 +52,13 @@ type MockToolCardProps = {
     askCancelDisabled?: boolean;
 };
 
-const mockToolCard = jest.fn<null, [MockToolCardProps]>(() => null);
+// Mock the registry so these tests cover ToolApprovalSet's decision logic
+// only; routing is covered by registry.test.tsx.
+const mockRenderToolCall = jest.fn<null, [MockRenderContext]>(() => null);
 
-jest.mock('./tool_card', () => ({
+jest.mock('./tool_renderers/registry', () => ({
     __esModule: true,
-    default: (props: MockToolCardProps) => {
-        return mockToolCard(props);
-    },
+    renderToolCall: (ctx: MockRenderContext) => mockRenderToolCall(ctx),
 }));
 
 function makeTool(overrides: Partial<ToolCall>): ToolCall {
@@ -81,21 +81,19 @@ function renderComponent(toolCalls: ToolCall[], approvalStage: ToolApprovalStage
                 approvalStage={approvalStage}
                 canApprove={canApprove}
                 canExpand={true}
-                showArguments={true}
-                showResults={true}
             />
         </IntlProvider>,
     );
 }
 
-function getToolCardProps(toolID: string): MockToolCardProps {
-    const match = mockToolCard.mock.calls.find(([props]) => props.tool.id === toolID);
+function getToolCardProps(toolID: string): MockRenderContext {
+    const match = mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === toolID);
     expect(match).toBeDefined();
-    return match![0] as MockToolCardProps;
+    return match![0] as MockRenderContext;
 }
 
 beforeEach(() => {
-    mockToolCard.mockClear();
+    mockRenderToolCall.mockClear();
     mockDoToolCall.mockReset();
     mockDoToolCall.mockImplementation(() => Promise.resolve());
     mockDoAskUserCancel.mockReset();
@@ -108,10 +106,10 @@ beforeEach(() => {
 });
 
 // Latest render's props for a tool, so state transitions are observable.
-function getLatestToolCardProps(toolID: string): MockToolCardProps {
-    const matches = mockToolCard.mock.calls.filter(([props]) => props.tool.id === toolID);
+function getLatestToolCardProps(toolID: string): MockRenderContext {
+    const matches = mockRenderToolCall.mock.calls.filter(([props]) => props.tool.id === toolID);
     expect(matches.length).toBeGreaterThan(0);
-    return matches[matches.length - 1][0] as MockToolCardProps;
+    return matches[matches.length - 1][0] as MockRenderContext;
 }
 
 describe('ToolApprovalSet', () => {
@@ -146,7 +144,7 @@ describe('ToolApprovalSet', () => {
             makeTool({id: 'tool_manual'}),
         ]);
 
-        expect(mockToolCard.mock.calls.find(([props]) => props.tool.id === 'tool_marked')).toBeUndefined();
+        expect(mockRenderToolCall.mock.calls.find(([ctx]) => ctx.tool.id === 'tool_marked')).toBeUndefined();
 
         const manualTool = getToolCardProps('tool_manual');
         expect(manualTool.onApprove).toEqual(expect.any(Function));

@@ -277,25 +277,40 @@ func TestListForUser(t *testing.T) {
 	tests := []struct {
 		name          string
 		userID        string
+		includeShared bool
 		expectedNames []string
 	}{
 		{
-			name:   "user A sees own and shared",
-			userID: userA,
+			name:          "user A sees own and shared",
+			userID:        userA,
+			includeShared: true,
 			// Ordered by Name: "A Private", "A Shared", "B Shared"
 			expectedNames: []string{"A Private", "A Shared", "B Shared"},
 		},
 		{
-			name:   "user B sees own and shared",
-			userID: userB,
+			name:          "user B sees own and shared",
+			userID:        userB,
+			includeShared: true,
 			// Ordered by Name: "A Shared", "B Private", "B Shared"
 			expectedNames: []string{"A Shared", "B Private", "B Shared"},
+		},
+		{
+			name:          "user A without shared sees only own prompts",
+			userID:        userA,
+			includeShared: false,
+			expectedNames: []string{"A Private", "A Shared"},
+		},
+		{
+			name:          "user B without shared sees only own prompts",
+			userID:        userB,
+			includeShared: false,
+			expectedNames: []string{"B Private", "B Shared"},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			prompts, listErr := store.ListForUser(tc.userID)
+			prompts, listErr := store.ListForUser(tc.userID, tc.includeShared)
 			require.NoError(t, listErr)
 			require.Len(t, prompts, len(tc.expectedNames))
 
@@ -329,7 +344,7 @@ func TestListForUserExcludesSoftDeleted(t *testing.T) {
 	err = store.Delete(created.ID, userID)
 	require.NoError(t, err)
 
-	prompts, err := store.ListForUser(userID)
+	prompts, err := store.ListForUser(userID, true)
 	require.NoError(t, err)
 	require.Len(t, prompts, 1)
 	require.Equal(t, "Will Keep", prompts[0].Name)
@@ -386,110 +401,6 @@ func TestPinUnpin(t *testing.T) {
 	require.Len(t, pinnedIDs, 1)
 }
 
-func TestGetPinnedForUser(t *testing.T) {
-	dbClient := testDB(t)
-	store := NewStore(dbClient)
-
-	userA := model.NewId()
-	userB := model.NewId()
-
-	p1, err := store.Create(CustomPrompt{
-		CreatorID: userA,
-		Name:      "Prompt 1",
-		Template:  "Template 1",
-		IsShared:  true,
-	})
-	require.NoError(t, err)
-
-	p2, err := store.Create(CustomPrompt{
-		CreatorID: userA,
-		Name:      "Prompt 2",
-		Template:  "Template 2",
-	})
-	require.NoError(t, err)
-
-	// User A pins both
-	err = store.SetPinned(userA, p1.ID, true)
-	require.NoError(t, err)
-	err = store.SetPinned(userA, p2.ID, true)
-	require.NoError(t, err)
-
-	// User B pins only p1
-	err = store.SetPinned(userB, p1.ID, true)
-	require.NoError(t, err)
-
-	tests := []struct {
-		name          string
-		userID        string
-		expectedCount int
-		expectedNames []string
-	}{
-		{
-			name:          "user A has 2 pinned",
-			userID:        userA,
-			expectedCount: 2,
-			expectedNames: []string{"Prompt 1", "Prompt 2"},
-		},
-		{
-			name:          "user B has 1 pinned",
-			userID:        userB,
-			expectedCount: 1,
-			expectedNames: []string{"Prompt 1"},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			pinned, pinnedErr := store.GetPinnedForUser(tc.userID)
-			require.NoError(t, pinnedErr)
-			require.Len(t, pinned, tc.expectedCount)
-
-			names := make([]string, len(pinned))
-			for i, p := range pinned {
-				names[i] = p.Name
-			}
-			require.ElementsMatch(t, tc.expectedNames, names)
-		})
-	}
-}
-
-func TestGetPinnedForUserExcludesSoftDeleted(t *testing.T) {
-	dbClient := testDB(t)
-	store := NewStore(dbClient)
-
-	userID := model.NewId()
-
-	p1, err := store.Create(CustomPrompt{
-		CreatorID: userID,
-		Name:      "Prompt to Delete",
-		Template:  "Template",
-	})
-	require.NoError(t, err)
-
-	p2, err := store.Create(CustomPrompt{
-		CreatorID: userID,
-		Name:      "Prompt to Keep",
-		Template:  "Template",
-	})
-	require.NoError(t, err)
-
-	// Pin both
-	err = store.SetPinned(userID, p1.ID, true)
-	require.NoError(t, err)
-	err = store.SetPinned(userID, p2.ID, true)
-	require.NoError(t, err)
-
-	// Soft-delete p1
-	err = store.Delete(p1.ID, userID)
-	require.NoError(t, err)
-
-	// Only p2 should be returned as pinned
-	pinned, err := store.GetPinnedForUser(userID)
-	require.NoError(t, err)
-	require.Len(t, pinned, 1)
-	require.Equal(t, "Prompt to Keep", pinned[0].Name)
-}
-
 func TestUpdateNonExistent(t *testing.T) {
 	dbClient := testDB(t)
 	store := NewStore(dbClient)
@@ -529,7 +440,7 @@ func TestListForUserEmpty(t *testing.T) {
 	dbClient := testDB(t)
 	store := NewStore(dbClient)
 
-	prompts, err := store.ListForUser(model.NewId())
+	prompts, err := store.ListForUser(model.NewId(), true)
 	require.NoError(t, err)
 	require.NotNil(t, prompts)
 	require.Empty(t, prompts)
@@ -557,9 +468,4 @@ func TestGetPinnedIDsExcludesDeletedPrompts(t *testing.T) {
 	pinnedIDs, err := store.GetPinnedIDs(userID)
 	require.NoError(t, err)
 	require.Empty(t, pinnedIDs, "GetPinnedIDs should exclude deleted prompts")
-
-	// GetPinnedForUser also excludes soft-deleted prompts
-	pinned, err := store.GetPinnedForUser(userID)
-	require.NoError(t, err)
-	require.Empty(t, pinned)
 }

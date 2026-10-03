@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -188,7 +189,7 @@ func (c *Conversations) dispatchAskAnotherUser(ctx context.Context, bot *bots.Bo
 	if target.Id == conv.UserID {
 		return errors.New("the requesting user cannot be the target; use the AskUserQuestion tool to ask them instead")
 	}
-	if accessErr := c.bots.CheckUsageRestrictionsForUser(bot, target.Id); accessErr != nil {
+	if accessErr := c.bots.CheckUsageRestrictionsForUser(ctx, bot, target.Id); accessErr != nil {
 		return fmt.Errorf("%q does not have access to this agent", args.Username)
 	}
 
@@ -631,7 +632,7 @@ func (c *Conversations) HandleAskUserResponse(ctx context.Context, userID string
 	} else {
 		block.Status = conversation.StatusSuccess
 	}
-	block.Shared = conversation.BoolPtr(true)
+	block.Shared = new(true)
 	if persistErr := c.persistBlocks(turn.ID, blocks); persistErr != nil {
 		return "", fmt.Errorf("failed to persist answered status: %w", persistErr)
 	}
@@ -664,8 +665,8 @@ func (c *Conversations) writeAskResultTurn(convID, toolUseID, resultJSON string)
 		ToolUseID: toolUseID,
 		Content:   resultJSON,
 		Status:    conversation.StatusSuccess,
-		Shared:    conversation.BoolPtr(true),
-		DecidedAt: conversation.Int64Ptr(now),
+		Shared:    new(true),
+		DecidedAt: new(now),
 	}}
 	resultContent, marshalErr := json.Marshal(resultBlocks)
 	if marshalErr != nil {
@@ -772,7 +773,13 @@ func (c *Conversations) resumeAfterAskResolution(ctx context.Context, bot *bots.
 	}
 
 	isDM := mmapi.IsDMWith(bot.GetMMBot().UserId, anchorChannel)
-	if followErr := c.streamToolFollowUp(ctx, bot, initiator, anchorChannel, anchorPost, conv, isDM, nil); followErr != nil {
+	// A user rejection in the same batch deferred its follow-up to this
+	// resume, so the rejection guidance must ride along here.
+	userRejectionResults := userRejectionResultIDs(turns)
+	userRejected := slices.ContainsFunc(blocks, func(b conversation.ContentBlock) bool {
+		return isRequesterRejectedToolUse(b, userRejectionResults)
+	})
+	if followErr := c.streamToolFollowUp(ctx, bot, initiator, anchorChannel, anchorPost, conv, isDM, userRejected, nil); followErr != nil {
 		c.mmClient.LogError("Failed to stream ask-user follow-up", "error", followErr, "conversation_id", convID)
 	}
 }
@@ -881,7 +888,7 @@ func (c *Conversations) HandleAskUserCancel(ctx context.Context, userID string, 
 	// content-block status (V2-C5): the canceled call completed with a
 	// valid result — "canceled" lives in the result JSON and the card prop.
 	block.Status = conversation.StatusSuccess
-	block.Shared = conversation.BoolPtr(true)
+	block.Shared = new(true)
 	if persistErr := c.persistBlocks(turn.ID, blocks); persistErr != nil {
 		return fmt.Errorf("failed to persist canceled status: %w", persistErr)
 	}

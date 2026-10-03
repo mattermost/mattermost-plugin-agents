@@ -379,7 +379,7 @@ func (s *persistingTokenSource) refreshUnderLease() (*oauth2.Token, error) {
 func (s *persistingTokenSource) persistRefreshedGrant(refreshed *storedTokenEnvelope) error {
 	var lastErr error
 	backoff := 50 * time.Millisecond
-	for attempt := 0; attempt < 4; attempt++ {
+	for range 4 {
 		won, err := s.manager.casTokenEnvelope(s.userID, s.serverName, s.rawEnvelope, refreshed)
 		if err == nil && won {
 			s.envelope = refreshed

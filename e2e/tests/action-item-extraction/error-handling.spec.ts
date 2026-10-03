@@ -16,9 +16,10 @@ let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.beforeAll(async () => {
+    test.setTimeout(120000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
-}, { timeout: 120000 });
+});
 
 test.beforeEach(async () => {
     // Reset mocks before each test to prevent cross-contamination

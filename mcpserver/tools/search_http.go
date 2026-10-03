@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 )
@@ -24,9 +25,7 @@ type HTTPSemanticSearchService struct {
 func NewHTTPSemanticSearchService(pluginURL string) *HTTPSemanticSearchService {
 	return &HTTPSemanticSearchService{
 		pluginURL: pluginURL,
-		client: &http.Client{
-			Timeout: 30_000_000_000, // 30 seconds in nanoseconds
-		},
+		client:    &http.Client{Timeout: 30 * time.Second},
 	}
 }
 

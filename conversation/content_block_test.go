@@ -53,7 +53,7 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				ServerOrigin: "https://mcp.example.com",
 				Input:        json.RawMessage(`{"city":"NYC"}`),
 				Status:       StatusSuccess,
-				Shared:       BoolPtr(true),
+				Shared:       new(true),
 			},
 			expected: `{"type":"tool_use","id":"tc_01","name":"get_weather","server_origin":"https://mcp.example.com","input":{"city":"NYC"},"status":"success","shared":true}`,
 		},
@@ -64,7 +64,7 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				ToolUseID: "tc_01",
 				Content:   "72F, sunny",
 				Status:    StatusSuccess,
-				Shared:    BoolPtr(true),
+				Shared:    new(true),
 			},
 			expected: `{"type":"tool_result","tool_use_id":"tc_01","content":"72F, sunny","status":"success","shared":true}`,
 		},
@@ -108,9 +108,25 @@ func TestContentBlockMarshalUnmarshal(t *testing.T) {
 				Name:   "read_file",
 				Input:  json.RawMessage(`{"path":"/etc/passwd"}`),
 				Status: StatusPending,
-				Shared: BoolPtr(false),
+				Shared: new(false),
 			},
 			expected: `{"type":"tool_use","id":"tc_02","name":"read_file","input":{"path":"/etc/passwd"},"status":"pending","shared":false}`,
+		},
+		{
+			name: "tool_use block with title/description/mcp_bare_name",
+			block: ContentBlock{
+				Type:         BlockTypeToolUse,
+				ID:           "tc_03",
+				Name:         "mattermost__create_post",
+				ServerOrigin: "embedded://mattermost",
+				MCPBareName:  "create_post",
+				Title:        "Create Post",
+				Description:  "Create a new post in Mattermost.",
+				Input:        json.RawMessage(`{"channel_id":"c1"}`),
+				Status:       StatusPending,
+				Shared:       new(true),
+			},
+			expected: `{"type":"tool_use","id":"tc_03","name":"mattermost__create_post","server_origin":"embedded://mattermost","input":{"channel_id":"c1"},"mcp_bare_name":"create_post","status":"pending","shared":true,"title":"Create Post","description":"Create a new post in Mattermost."}`,
 		},
 		{
 			name: "server_tool_use block",
@@ -147,8 +163,8 @@ func TestContentBlockSliceRoundTrip(t *testing.T) {
 	blocks := []ContentBlock{
 		{Type: BlockTypeThinking, Text: "thinking...", Signature: "sig"},
 		{Type: BlockTypeText, Text: "Hello"},
-		{Type: BlockTypeToolUse, ID: "tc_01", Name: "search", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: BoolPtr(false)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc_01", Content: "result", Status: StatusSuccess, Shared: BoolPtr(true)},
+		{Type: BlockTypeToolUse, ID: "tc_01", Name: "search", Input: json.RawMessage(`{}`), Status: StatusPending, Shared: new(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc_01", Content: "result", Status: StatusSuccess, Shared: new(true)},
 		{Type: BlockTypeFile, Filename: "f.txt", MimeType: "text/plain", Content: "data"},
 		{Type: BlockTypeImage, Filename: "img.png", MimeType: "image/png", FileID: "file1"},
 		{Type: BlockTypeAnnotations, WebSearchContext: &WebSearchContext{Count: 3, Results: json.RawMessage(`[]`), ExecutedQueries: json.RawMessage(`[]`)}},
@@ -185,7 +201,7 @@ func TestContentBlockToolUseWithApprovalMetadataRoundTrip(t *testing.T) {
 		Input:        json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName:  "get_issue",
 		Status:       StatusPending,
-		Shared:       BoolPtr(false),
+		Shared:       new(false),
 	}
 
 	data, err := json.Marshal(block)
@@ -211,10 +227,12 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 		Type:        BlockTypeToolUse,
 		ID:          "tc_private",
 		Name:        "jira__get_issue",
+		Title:       "Get Issue",
+		Description: "Get a Jira issue",
 		Input:       json.RawMessage(`{"key":"MM-1"}`),
 		MCPBareName: "get_issue",
 		Status:      StatusPending,
-		Shared:      BoolPtr(false),
+		Shared:      new(false),
 	}}
 
 	result := FilterForNonRequester(blocks)
@@ -222,6 +240,10 @@ func TestFilterForNonRequesterRedactsApprovalMetadata(t *testing.T) {
 	require.Len(t, result, 1)
 	assert.Nil(t, result[0].Input)
 	assert.Empty(t, result[0].MCPBareName)
+	// Tool identity stays visible to non-requesters, matching redactToolCalls.
+	assert.Equal(t, "Get Issue", result[0].Title)
+	assert.Equal(t, "Get a Jira issue", result[0].Description)
+	assert.Equal(t, "jira__get_issue", result[0].Name)
 	assert.NotNil(t, blocks[0].Input, "original block must not be mutated")
 	assert.Equal(t, "get_issue", blocks[0].MCPBareName, "original block must not be mutated")
 }
@@ -244,10 +266,10 @@ func TestFilterForNonRequester(t *testing.T) {
 		{
 			name: "strips input from tool_use where shared is false",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"secret"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"secret"}`), Status: StatusSuccess, Shared: new(false)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: nil, Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: nil, Status: StatusSuccess, Shared: new(false)},
 			},
 		},
 		{
@@ -262,21 +284,21 @@ func TestFilterForNonRequester(t *testing.T) {
 		{
 			name: "strips content from tool_result where shared is false",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "sensitive data", Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "sensitive data", Status: StatusSuccess, Shared: new(false)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: BoolPtr(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: new(false)},
 			},
 		},
 		{
 			name: "leaves shared=true tool blocks untouched",
 			blocks: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: new(true)},
 			},
 			expected: []ContentBlock{
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "search", Input: json.RawMessage(`{"q":"query"}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "public result", Status: StatusSuccess, Shared: new(true)},
 			},
 		},
 		{
@@ -297,8 +319,6 @@ func TestFilterForNonRequester(t *testing.T) {
 			},
 		},
 		{
-			// Server tools run provider-side with no approval flow; their
-			// activity shares the post text's visibility and is never redacted.
 			name: "leaves server_tool_use untouched",
 			blocks: []ContentBlock{
 				{Type: BlockTypeServerToolUse, ServerTool: &llm.ServerToolUse{
@@ -315,17 +335,17 @@ func TestFilterForNonRequester(t *testing.T) {
 			name: "mixed blocks only private tool blocks are redacted",
 			blocks: []ContentBlock{
 				{Type: BlockTypeText, Text: "response"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{"x":1}`), Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret", Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: json.RawMessage(`{"x":1}`), Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret", Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: new(true)},
 			},
 			expected: []ContentBlock{
 				{Type: BlockTypeText, Text: "response"},
-				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: nil, Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: BoolPtr(false)},
-				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: BoolPtr(true)},
-				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: BoolPtr(true)},
+				{Type: BlockTypeToolUse, ID: "tc1", Name: "tool", Input: nil, Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "", Status: StatusSuccess, Shared: new(false)},
+				{Type: BlockTypeToolUse, ID: "tc2", Name: "tool2", Input: json.RawMessage(`{"y":2}`), Status: StatusSuccess, Shared: new(true)},
+				{Type: BlockTypeToolResult, ToolUseID: "tc2", Content: "public", Status: StatusSuccess, Shared: new(true)},
 			},
 		},
 		{
@@ -348,19 +368,18 @@ func TestFilterForNonRequester(t *testing.T) {
 	}
 }
 
-// TestSanitizeForDisplayServerTool verifies server-tool activity strings are
-// escaped against Unicode bidi/spoofing attacks (web content and sandbox
-// output are attacker-influenced) and that the original blocks are not mutated.
 func TestSanitizeForDisplayServerTool(t *testing.T) {
 	bidi := "safe\u202Eevil"
 	blocks := []ContentBlock{{
 		Type: BlockTypeServerToolUse,
 		ServerTool: &llm.ServerToolUse{
-			ID:      "srv1",
-			Tool:    llm.NativeToolCodeInterpreter,
-			Status:  llm.ServerToolStatusSuccess,
-			Command: bidi,
-			Output:  bidi,
+			ID:            "srv1",
+			Tool:          llm.NativeToolCodeInterpreter,
+			Status:        llm.ServerToolStatusSuccess,
+			Command:       bidi,
+			Output:        bidi,
+			FileIDs:       []string{bidi},
+			ProviderRoute: "anthropic::fallback",
 		},
 	}}
 
@@ -371,14 +390,18 @@ func TestSanitizeForDisplayServerTool(t *testing.T) {
 	assert.NotContains(t, result[0].ServerTool.Command, "\u202E")
 	assert.NotContains(t, result[0].ServerTool.Output, "\u202E")
 	assert.Contains(t, result[0].ServerTool.Command, "safe")
+	assert.NotContains(t, result[0].ServerTool.FileIDs[0], "\u202E")
+	assert.Empty(t, result[0].ServerTool.ProviderRoute, "provider routing is runtime-only")
 	assert.Equal(t, bidi, blocks[0].ServerTool.Command, "original block must not be mutated")
 	assert.Equal(t, bidi, blocks[0].ServerTool.Output, "original block must not be mutated")
+	assert.Equal(t, bidi, blocks[0].ServerTool.FileIDs[0], "original file ids must not share display backing storage")
+	assert.Equal(t, "anthropic::fallback", blocks[0].ServerTool.ProviderRoute)
 }
 
 func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 	original := []ContentBlock{
-		{Type: BlockTypeToolUse, ID: "tc1", Input: json.RawMessage(`{"secret":"val"}`), Status: StatusSuccess, Shared: BoolPtr(false)},
-		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret result", Status: StatusSuccess, Shared: BoolPtr(false)},
+		{Type: BlockTypeToolUse, ID: "tc1", Input: json.RawMessage(`{"secret":"val"}`), Status: StatusSuccess, Shared: new(false)},
+		{Type: BlockTypeToolResult, ToolUseID: "tc1", Content: "secret result", Status: StatusSuccess, Shared: new(false)},
 	}
 
 	originalInputCopy := make(json.RawMessage, len(original[0].Input))
@@ -389,4 +412,44 @@ func TestFilterForNonRequesterDoesNotMutateOriginal(t *testing.T) {
 
 	assert.Equal(t, originalInputCopy, original[0].Input)
 	assert.Equal(t, originalContentCopy, original[1].Content)
+}
+
+func TestSanitizeForDisplaySanitizesTitleAndDescription(t *testing.T) {
+	// U+202E (right-to-left override) is a classic bidi spoofing character.
+	blocks := []ContentBlock{{
+		Type:        BlockTypeToolUse,
+		ID:          "tc1",
+		Name:        "jira__get_issue",
+		Title:       "Get\u202eIssue",
+		Description: "Get\u202ean issue",
+		Input:       json.RawMessage("{\"key\":\"MM\u202e-1\"}"),
+		Status:      StatusPending,
+	}}
+
+	result := SanitizeForDisplay(blocks)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "Get[U+202E]Issue", result[0].Title)
+	assert.Equal(t, "Get[U+202E]an issue", result[0].Description)
+	assert.Contains(t, string(result[0].Input), "[U+202E]")
+
+	// Original is not mutated.
+	assert.Equal(t, "Get\u202eIssue", blocks[0].Title)
+	assert.Equal(t, "Get\u202ean issue", blocks[0].Description)
+}
+
+func TestSanitizeForDisplayLeavesCleanTitleAndDescription(t *testing.T) {
+	blocks := []ContentBlock{{
+		Type:        BlockTypeToolUse,
+		ID:          "tc1",
+		Name:        "jira__get_issue",
+		Title:       "Get Issue",
+		Description: "Get a Jira issue",
+	}}
+
+	result := SanitizeForDisplay(blocks)
+
+	require.Len(t, result, 1)
+	assert.Equal(t, "Get Issue", result[0].Title)
+	assert.Equal(t, "Get a Jira issue", result[0].Description)
 }

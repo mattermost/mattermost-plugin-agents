@@ -166,6 +166,68 @@ func TestResolveUserInteractionAnswer(t *testing.T) {
 	}
 }
 
+func TestAskUserQuestionValidateArguments(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:  "schema-shaped arguments",
+			input: `{"question":"Q?","options":[{"label":"A","description":"d"},{"label":"B"}],"multi_select":true,"allow_free_form":false}`,
+		},
+		{
+			name:    "options as a JSON-encoded string",
+			input:   `{"question":"Q?","options":"[{\"label\":\"A\"}]"}`,
+			wantErr: "failed to parse question arguments",
+		},
+		{
+			name:    "options carrying pseudo-XML markup",
+			input:   `{"question":"Q?","label":"Draft the ticket","options":"<parameter name=\"label\">File a GitHub issue instead"}`,
+			wantErr: "failed to parse question arguments",
+		},
+		{
+			name:    "bare string options",
+			input:   `{"question":"Q?","options":["A","B"]}`,
+			wantErr: "failed to parse question arguments",
+		},
+		{
+			name:    "stringified boolean",
+			input:   `{"question":"Q?","options":[{"label":"A"}],"multi_select":"true"}`,
+			wantErr: "failed to parse question arguments",
+		},
+		{
+			name:    "missing options",
+			input:   `{"question":"Q?"}`,
+			wantErr: "at least one option",
+		},
+		{
+			name:    "empty question",
+			input:   `{"question":" ","options":[{"label":"A"}]}`,
+			wantErr: "question must not be empty",
+		},
+		{
+			name:    "duplicate labels",
+			input:   `{"question":"Q?","options":[{"label":"A"},{"label":"A"}]}`,
+			wantErr: "duplicate option label",
+		},
+	}
+
+	validate := NewAskUserQuestionTool().ValidateArguments
+	require.NotNil(t, validate)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validate(json.RawMessage(tc.input))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.wantErr)
+		})
+	}
+}
+
 func TestAskUserQuestionResolverIsBackstopOnly(t *testing.T) {
 	tool := NewAskUserQuestionTool()
 	require.NotNil(t, tool.Resolver)

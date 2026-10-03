@@ -20,6 +20,11 @@ jest.mock('react-intl', () => {
     };
 });
 
+jest.mock('react-bootstrap', () => ({
+    OverlayTrigger: ({children, overlay}: {children: React.ReactNode; overlay: React.ReactNode}) => <>{children}{overlay}</>,
+    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
+}), {virtual: true});
+
 const baseService: LLMService = {
     id: 'svc-1',
     name: 'Anthropic',
@@ -170,5 +175,19 @@ describe('ReasoningConfigItem thinking budget validation', () => {
         } else {
             expect(screen.queryByText(adaptiveHelpText)).toBeNull();
         }
+    });
+});
+
+describe('ReasoningConfigItem Cohere North', () => {
+    it('shows effort-based reasoning even when useResponsesAPI is false', () => {
+        renderItem(
+            {reasoningEnabled: true, reasoningEffort: 'medium'},
+            {type: 'north', useResponsesAPI: false, defaultModel: ''},
+        );
+
+        expect(screen.getByText('Reasoning')).toBeTruthy();
+        expect(screen.getByText('Reasoning Effort')).toBeTruthy();
+        expect(screen.queryByText('Thinking Budget (tokens)')).toBeNull();
+        expect(screen.queryByText('Native OpenAI Tools')).toBeNull();
     });
 });

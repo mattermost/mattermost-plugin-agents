@@ -80,6 +80,16 @@ func (s *stubVectorStore) DeleteOrphaned(ctx context.Context, nowTime, batchSize
 	return 0, nil
 }
 
+// schemaCheckingStore wraps stubVectorStore with SchemaChecker.
+type schemaCheckingStore struct {
+	stubVectorStore
+	schemaErr error
+}
+
+func (s *schemaCheckingStore) CheckSchema(_ context.Context) error {
+	return s.schemaErr
+}
+
 // stubEmbeddingProvider is a simple test double for EmbeddingProvider
 type stubEmbeddingProvider struct {
 	createEmbeddingFunc       func(ctx context.Context, text string) ([]float32, error)
@@ -369,7 +379,7 @@ func TestCompositeSearch_Search(t *testing.T) {
 		{
 			name:       "successful search with results",
 			query:      "find documents about testing",
-			searchOpts: SearchOptions{Limit: 10, MinScore: 0.5},
+			searchOpts: SearchOptions{Limit: 10},
 			searchFunc: func(ctx context.Context, embedding []float32, opts SearchOptions) ([]SearchResult, error) {
 				return []SearchResult{
 					{Document: PostDocument{PostID: "post1", Content: "testing content"}, Score: 0.9},
@@ -385,7 +395,6 @@ func TestCompositeSearch_Search(t *testing.T) {
 				assert.Equal(t, "find documents about testing", provider.createEmbeddingCalls[0])
 				assert.Len(t, store.searchCalls, 1)
 				assert.Equal(t, 10, store.searchCalls[0].opts.Limit)
-				assert.Equal(t, float32(0.5), store.searchCalls[0].opts.MinScore)
 			},
 		},
 		{
@@ -451,7 +460,7 @@ func TestCompositeSearch_RecencyBias(t *testing.T) {
 	enabled := RecencyBiasSettings{Enabled: true, HalfLifeDays: 7, Floor: 0.7}
 
 	now := time.Now().UnixMilli()
-	createAtDaysAgo := func(days int64) int64 { return now - days*millisPerDay }
+	createAtDaysAgo := func(days int64) int64 { return now - days*MillisPerDay }
 
 	// Raw similarity order: old-strong, fresh-mid, fresh-weak.
 	// Adjusted (half-life 7d, floor 0.7): old-strong 0.80*~0.70=~0.56,
@@ -676,6 +685,56 @@ func TestCompositeSearch_Delete(t *testing.T) {
 			if tt.verify != nil {
 				tt.verify(t, store)
 			}
+		})
+	}
+}
+
+func TestCompositeSearch_SchemaMismatchSkipsProvider(t *testing.T) {
+	schemaErr := errors.New("embedding column type or dimensions do not match configuration; run Full Reindex to recreate the table")
+	opts := chunking.Options{ChunkSize: 1000, ChunkOverlap: 200, ChunkingStrategy: "sentences"}
+	docs := []PostDocument{{PostID: "post1", Content: "live post that would otherwise be embedded"}}
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T, cs *CompositeSearch, store *schemaCheckingStore, provider *stubEmbeddingProvider)
+	}{
+		{
+			name: "store does not call the embedding provider",
+			run: func(t *testing.T, cs *CompositeSearch, store *schemaCheckingStore, provider *stubEmbeddingProvider) {
+				err := cs.Store(context.Background(), docs)
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "Full Reindex")
+				assert.Empty(t, provider.batchCreateEmbeddingsCalls)
+				assert.Empty(t, store.storeCalls)
+			},
+		},
+		{
+			name: "search does not call the embedding provider",
+			run: func(t *testing.T, cs *CompositeSearch, store *schemaCheckingStore, provider *stubEmbeddingProvider) {
+				_, err := cs.Search(context.Background(), "query", SearchOptions{UserID: "user1"})
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "Full Reindex")
+				assert.Empty(t, provider.createEmbeddingCalls)
+				assert.Empty(t, store.searchCalls)
+			},
+		},
+		{
+			name: "clear remains available",
+			run: func(t *testing.T, cs *CompositeSearch, store *schemaCheckingStore, provider *stubEmbeddingProvider) {
+				require.NoError(t, cs.Clear(context.Background()))
+				assert.Equal(t, 1, store.clearCalls)
+				assert.Empty(t, provider.batchCreateEmbeddingsCalls)
+				assert.Empty(t, provider.createEmbeddingCalls)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &schemaCheckingStore{schemaErr: schemaErr}
+			provider := &stubEmbeddingProvider{}
+			cs := NewCompositeSearch(store, provider, opts, RecencyBiasSettings{})
+			tt.run(t, cs, store, provider)
 		})
 	}
 }

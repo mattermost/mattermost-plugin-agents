@@ -100,9 +100,22 @@ func (s *Search) SetConversationService(svc *conversation.Service) {
 	s.conversationService = svc
 }
 
-// Enabled returns true if the search service is enabled and functional
+// Enabled returns true if the search service is enabled, functional, and
+// available at the current license level. Semantic AI search is available at
+// Enterprise and above; a nil checker fails closed.
 func (s *Search) Enabled() bool {
-	return s != nil && s.getSearch != nil && s.getSearch() != nil
+	if s == nil || s.getSearch == nil || s.getSearch() == nil {
+		return false
+	}
+	return s.licenseChecker.Allows(enterprise.CapSemanticSearch)
+}
+
+func (s *Search) checkLicense() error {
+	var checker *enterprise.LicenseChecker
+	if s != nil {
+		checker = s.licenseChecker
+	}
+	return checker.Check(enterprise.CapSemanticSearch)
 }
 
 // checkAvailability gates search while the ANN index is dropped/building.
@@ -111,11 +124,6 @@ func (s *Search) checkAvailability() error {
 		return ErrSearchUnavailable
 	}
 	return nil
-}
-
-// Search performs a semantic search and returns enriched results with channel/user metadata.
-func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
-	return s.executeSearch(ctx, query, opts)
 }
 
 // enrichResults converts raw search results to RAGResults with channel/user metadata.
@@ -182,12 +190,16 @@ func (s *Search) enrichResults(searchResults []embeddings.SearchResult) []RAGRes
 	return ragResults
 }
 
-// executeSearch performs the embedding search and enriches results with metadata.
-// This is the core search operation without any LLM concerns.
-func (s *Search) executeSearch(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
+// Search performs the embedding search and enriches results with channel/user
+// metadata. This is the core search operation without any LLM concerns.
+func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGResult, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, fmt.Errorf("query cannot be empty")
+	}
+
+	if err := s.checkLicense(); err != nil {
+		return nil, err
 	}
 
 	search := s.getSearch()
@@ -204,13 +216,15 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 		limit = 5
 	}
 
-	searchResults, err := search.Search(ctx, query, embeddings.SearchOptions{
+	searchOpts := embeddings.SearchOptions{
 		Limit:     limit,
 		Offset:    opts.Offset,
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
-	})
+	}
+
+	searchResults, err := search.Search(ctx, query, searchOpts)
 	if err != nil {
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
@@ -218,7 +232,7 @@ func (s *Search) executeSearch(ctx context.Context, query string, opts Options) 
 	return s.enrichResults(searchResults), nil
 }
 
-func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, teamID, channelID string, ragResults []RAGResult) *llm.Context {
+func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query string, channelID string, ragResults []RAGResult) *llm.Context {
 	promptCtx := llm.NewContext()
 	promptCtx.RequestingUser = &model.User{Id: userID}
 	if channelID != "" {
@@ -244,7 +258,7 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 		}
 		promptCtx.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, botUserID, bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 	}
-	promptCtx.Parameters = map[string]interface{}{
+	promptCtx.Parameters = map[string]any{
 		"Query":   query,
 		"Results": ragResults,
 	}
@@ -253,12 +267,12 @@ func (s *Search) buildSearchPromptContext(userID string, bot *bots.Bot, query st
 }
 
 // buildPrompt creates an LLM completion request for answering a search query.
-func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, teamID, channelID string, results []RAGResult, operationSubType string) (llm.CompletionRequest, error) {
+func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, channelID string, results []RAGResult, operationSubType string) (llm.CompletionRequest, error) {
 	if s.prompts == nil {
 		return llm.CompletionRequest{}, fmt.Errorf("failed to format prompt: prompts not configured")
 	}
 
-	promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+	promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 
 	systemMessage, err := s.prompts.Format("search_system", promptCtx)
 	if err != nil {
@@ -284,6 +298,10 @@ func (s *Search) buildPrompt(userID string, bot *bots.Bot, query, teamID, channe
 
 // RunSearch initiates a search and sends results to a DM
 func (s *Search) RunSearch(ctx context.Context, userID string, bot *bots.Bot, query, teamID, channelID string, maxResults int) (map[string]string, error) {
+	if err := s.checkLicense(); err != nil {
+		return nil, err
+	}
+
 	// Validate early (before creating posts)
 	if !s.Enabled() {
 		return nil, fmt.Errorf("search functionality is not configured")
@@ -347,7 +365,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 	}()
 
 	// Execute search
-	results, err := s.executeSearch(ctx, query, Options{
+	results, err := s.Search(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -378,7 +396,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 	}
 
 	// Build system prompt from template (contains RAG results)
-	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeStreaming)
+	prompt, err := s.buildPrompt(userID, bot, query, channelID, results, llm.SubTypeStreaming)
 	if err != nil {
 		s.mmclient.LogError("Error building prompt", "error", err)
 		processingError = err
@@ -411,7 +429,7 @@ func (s *Search) processSearch(ctx context.Context, bot *bots.Bot, userID, query
 		// Set ConversationIDProp on response post so streaming turn persistence picks it up
 		responsePost.AddProp(streaming.ConversationIDProp, createResult.ConversationID)
 
-		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
 		if convErr != nil {
 			s.mmclient.LogError("Error getting search conversation", "error", convErr)
@@ -460,7 +478,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	ctx, span := telemetry.Tracer().Start(ctx, "search query")
 	defer span.End()
 
-	results, err := s.executeSearch(ctx, query, Options{
+	results, err := s.Search(ctx, query, Options{
 		Limit:     maxResults,
 		TeamID:    teamID,
 		ChannelID: channelID,
@@ -478,7 +496,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 	}
 
 	// Build system prompt from template (contains RAG results)
-	prompt, err := s.buildPrompt(userID, bot, query, teamID, channelID, results, llm.SubTypeNoStream)
+	prompt, err := s.buildPrompt(userID, bot, query, channelID, results, llm.SubTypeNoStream)
 	if err != nil {
 		return Response{}, err
 	}
@@ -499,7 +517,7 @@ func (s *Search) SearchQuery(ctx context.Context, userID string, bot *bots.Bot, 
 			return Response{}, fmt.Errorf("failed to create search conversation: %w", convErr)
 		}
 
-		promptCtx := s.buildSearchPromptContext(userID, bot, query, teamID, channelID, results)
+		promptCtx := s.buildSearchPromptContext(userID, bot, query, channelID, results)
 		conv, convErr := s.conversationService.GetConversation(createResult.ConversationID)
 		if convErr != nil {
 			return Response{}, fmt.Errorf("failed to get search conversation: %w", convErr)

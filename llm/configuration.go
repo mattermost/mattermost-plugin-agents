@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"slices"
 	"unicode/utf8"
+
+	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
 )
 
 // MaxCustomInstructionsRunes bounds the per-turn LLM system prompt and agent-save
@@ -23,6 +25,36 @@ const DefaultMaxToolTurns = 30
 // MaxAllowedMaxToolTurns caps user-provided MaxToolTurns to keep runaway loops bounded
 // even if a misconfigured agent requests an unreasonably high value.
 const MaxAllowedMaxToolTurns = 250
+
+// StructuredOutputPolicy declares how a service handles a requested
+// JSONOutputFormat schema. It is stored per service because the capability
+// belongs to the provider/model, not to the agent asking for JSON.
+type StructuredOutputPolicy string
+
+const (
+	// StructuredOutputPolicyAuto lets the plugin decide from the service type,
+	// API path, and model (see bifrost.ResolveStructuredOutputCapability).
+	// Anything not positively known to support native schemas uses the prompt
+	// fallback. This is the value an empty/unset policy maps to.
+	StructuredOutputPolicyAuto StructuredOutputPolicy = "auto"
+	// StructuredOutputPolicyNative asserts that the provider/model accepts a
+	// native JSON schema. The admin takes responsibility for the assertion.
+	StructuredOutputPolicyNative StructuredOutputPolicy = "native"
+	// StructuredOutputPolicyPromptFallback always converts the schema into a
+	// prompt instruction and never sends it to the provider.
+	StructuredOutputPolicyPromptFallback StructuredOutputPolicy = "prompt_fallback"
+)
+
+// IsValidStructuredOutputPolicy reports whether the stored value is one the
+// runtime understands. The empty value is valid and means "auto".
+func IsValidStructuredOutputPolicy(policy StructuredOutputPolicy) bool {
+	switch policy {
+	case "", StructuredOutputPolicyAuto, StructuredOutputPolicyNative, StructuredOutputPolicyPromptFallback:
+		return true
+	default:
+		return false
+	}
+}
 
 type ServiceConfig struct {
 	ID           string `json:"id"`
@@ -52,8 +84,9 @@ type ServiceConfig struct {
 	// Otherwise known as maxTokens
 	OutputTokenLimit int `json:"outputTokenLimit"`
 
-	// UseResponsesAPI determines whether to use the new OpenAI Responses API
-	// Only applicable to OpenAI and OpenAI-compatible services
+	// UseResponsesAPI determines whether to use the OpenAI Responses API.
+	// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor
+	// this operator toggle. Other service types ignore it.
 	UseResponsesAPI bool `json:"useResponsesAPI"`
 
 	// FallbackServiceID is the ID of another service to fall back to when this
@@ -65,15 +98,29 @@ type ServiceConfig struct {
 	// LoadTestMockConfig is raw JSON merged by loadtest.ParseProfile for ServiceTypeLoadTestMock.
 	// Nil, empty, or whitespace-only means the default read/search-heavy profile.
 	LoadTestMockConfig json.RawMessage `json:"loadTestMockConfig,omitempty"`
+
+	// StructuredOutputPolicy controls how a requested JSON schema reaches this
+	// service. An empty value means StructuredOutputPolicyAuto, so services
+	// stored before this field existed need no migration.
+	StructuredOutputPolicy StructuredOutputPolicy `json:"structuredOutputPolicy,omitempty"`
+}
+
+// EffectiveStructuredOutputPolicy returns the configured policy, mapping the
+// empty value to auto.
+func (c ServiceConfig) EffectiveStructuredOutputPolicy() StructuredOutputPolicy {
+	if c.StructuredOutputPolicy == "" {
+		return StructuredOutputPolicyAuto
+	}
+	return c.StructuredOutputPolicy
 }
 
 // ServiceUsesResponsesAPI reports whether the Responses API path is used for this service.
-// Direct OpenAI always uses it; OpenAI-compatible and Azure honor the operator toggle.
+// Direct OpenAI and North always use it; OpenAI-compatible and Azure honor the operator toggle.
 // All other service types ignore UseResponsesAPI — a stale flag carried over from a
 // previous service type must not be allowed to route the request through Responses.
 func ServiceUsesResponsesAPI(cfg ServiceConfig) bool {
 	switch cfg.Type {
-	case ServiceTypeOpenAI:
+	case ServiceTypeOpenAI, ServiceTypeNorth:
 		return true
 	case ServiceTypeOpenAICompatible, ServiceTypeAzure:
 		return cfg.UseResponsesAPI
@@ -98,6 +145,9 @@ const (
 	UserAccessLevelAllow
 	UserAccessLevelBlock
 	UserAccessLevelNone
+	// UserAccessLevelAttributeBased makes the ABAC resource policy the sole
+	// user-access gate; UserIDs/TeamIDs are ignored. A missing policy denies.
+	UserAccessLevelAttributeBased
 )
 
 // EnabledMCPTool identifies a single MCP tool on a specific server (config bots and persisted agents).
@@ -150,6 +200,11 @@ type BotConfig struct {
 	// It defaults to true for omitted legacy config.
 	MCPDynamicToolLoading bool `json:"mcpDynamicToolLoading"`
 
+	// UseServiceAccountAuth switches external MCP access for this agent to
+	// admin-configured ServiceAccountHeaders instead of per-user OAuth.
+	// Embedded Mattermost and plugin MCP servers still run as the requesting user.
+	UseServiceAccountAuth bool `json:"useServiceAccountAuth"`
+
 	// ReasoningEnabled determines whether reasoning/thinking is enabled for this bot.
 	// Applicable to OpenAI (with ResponsesAPI), Anthropic, and Gemini / Vertex AI.
 	ReasoningEnabled bool `json:"reasoningEnabled"`
@@ -168,10 +223,19 @@ type BotConfig struct {
 	//   takes priority over ReasoningEffort.
 	ThinkingBudget int `json:"thinkingBudget"`
 
-	// StructuredOutputEnabled controls how a requested JSONOutputFormat schema is handled.
-	// When enabled, the schema is sent natively to the provider to constrain the model's
-	// output. When disabled, the schema is converted into prompt instructions and stripped
-	// from the provider request, for models/APIs without native structured output support.
+	// StructuredOutputEnabled is deprecated and ignored at runtime. Structured
+	// output is decided per service by ServiceConfig.StructuredOutputPolicy
+	// (see EffectiveStructuredOutputPolicy), because the capability belongs to
+	// the provider/model rather than the agent.
+	//
+	// The field is retained so an API payload that still carries it is accepted,
+	// but the current webapp omits it: since this is a plain bool, saving an
+	// agent from the UI clears whatever was stored. Nothing reads it at runtime,
+	// so the only consumer is the activation migration that carries the old
+	// intent over to the service policy
+	// (config.MigrateServiceStructuredOutputPolicies).
+	//
+	// Deprecated: use ServiceConfig.StructuredOutputPolicy.
 	StructuredOutputEnabled bool `json:"structuredOutputEnabled"`
 
 	// MaxToolTurns is the maximum number of LLM-call → tool-execute iterations
@@ -217,7 +281,7 @@ func (c *BotConfig) Validate() error {
 	if c.ChannelAccessLevel < ChannelAccessLevelAll || c.ChannelAccessLevel > ChannelAccessLevelNone {
 		return errors.New("channelAccessLevel is out of range")
 	}
-	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelNone {
+	if c.UserAccessLevel < UserAccessLevelAll || c.UserAccessLevel > UserAccessLevelAttributeBased {
 		return errors.New("userAccessLevel is out of range")
 	}
 	if utf8.RuneCountInString(c.CustomInstructions) > MaxCustomInstructionsRunes {
@@ -245,6 +309,22 @@ func (c BotConfig) EffectiveMaxToolTurns() int {
 // descriptive error is useful.
 func (c *BotConfig) IsValid() bool {
 	return c.Validate() == nil
+}
+
+// ServiceLookup returns a by-ID lookup over services, suitable for
+// ResolveFallbackChain. Duplicate IDs resolve to the first entry, matching how
+// the configuration itself is read.
+func ServiceLookup(services []ServiceConfig) func(id string) (ServiceConfig, bool) {
+	byID := make(map[string]ServiceConfig, len(services))
+	for _, svc := range services {
+		if _, exists := byID[svc.ID]; !exists {
+			byID[svc.ID] = svc
+		}
+	}
+	return func(id string) (ServiceConfig, bool) {
+		svc, ok := byID[id]
+		return svc, ok
+	}
 }
 
 // ResolveFallbackChain walks the fallback chain starting from the service
@@ -292,6 +372,12 @@ func IsValidService(service ServiceConfig) bool {
 		return false
 	}
 
+	// An unrecognized structured-output policy is a configuration error: the
+	// runtime would have to guess whether a schema may be sent natively.
+	if !IsValidStructuredOutputPolicy(service.StructuredOutputPolicy) {
+		return false
+	}
+
 	// Service-specific validation
 	switch service.Type {
 	case ServiceTypeOpenAI:
@@ -304,6 +390,8 @@ func IsValidService(service ServiceConfig) bool {
 		return service.APIKey != ""
 	case ServiceTypeCohere:
 		return service.APIKey != ""
+	case ServiceTypeNorth:
+		return service.APIKey != "" && service.APIURL != ""
 	case ServiceTypeBedrock:
 		// Bedrock requires AWS region
 		// API key is optional as AWS credentials can come from environment/IAM role
@@ -324,7 +412,8 @@ func IsValidService(service ServiceConfig) bool {
 		}
 		return json.Valid([]byte(service.VertexAuthCredentials))
 	case ServiceTypeLoadTestMock:
-		return isValidLoadTestMockConfig(service.LoadTestMockConfig)
+		_, err := profile.Parse(service.LoadTestMockConfig)
+		return err == nil
 	default:
 		return false
 	}

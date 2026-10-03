@@ -23,6 +23,9 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Mirrors config.AgentInactiveReason on the backend.
+export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
+
 // UserAgent matches the JSON serialization of *llm.BotConfig from the backend.
 // The backend API (GET /agents, GET /agents/:id, POST /agents, PUT /agents/:id)
 // returns this shape.
@@ -62,11 +65,21 @@ export type UserAgent = {
     enabledMCPTools: EnabledTool[] | null;
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading?: boolean;
+    useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
     thinkingBudget: number;
-    structuredOutputEnabled: boolean;
     maxToolTurns: number;
+
+    /**
+     * @deprecated Structured output is configured per service
+     * (LLMService.structuredOutputPolicy), not per agent. The backend still
+     * returns this field for older clients; the UI ignores it.
+     */
+    structuredOutputEnabled?: boolean;
+
+    // Only on GET /agents; absent when the agent is running.
+    inactiveReason?: AgentInactiveReason;
 
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
@@ -103,6 +116,9 @@ export type CreateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+
+    // Required so payload builders can't silently drop it on full-replace PUT.
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -110,7 +126,6 @@ export type CreateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 
@@ -133,6 +148,7 @@ export type UpdateAgentRequest = {
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     mcpDynamicToolLoading: boolean;
+    useServiceAccountAuth: boolean;
     model?: string;
     enableVision?: boolean;
     disableTools?: boolean;
@@ -140,7 +156,6 @@ export type UpdateAgentRequest = {
     reasoningEnabled?: boolean;
     reasoningEffort?: string;
     thinkingBudget?: number;
-    structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
 }
 

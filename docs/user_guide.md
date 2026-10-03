@@ -47,6 +47,20 @@ If multiple agents are configured for your Mattermost workspace, select your pre
 
 You can also @mention a specific agent by name in channels.
 
+### Channel auto-reply
+
+Channel members with permission to manage channel settings can configure one agent to reply automatically in a channel, without being @mentioned. Auto-reply supports three modes, matching the options in the channel settings UI:
+
+- **Off** (default): The agent replies only when @mentioned or in direct messages.
+- **Top-level posts only**: The agent automatically replies to each new top-level post, starting a thread. Further replies in that thread still require an @mention (or the "loop in" link).
+- **Threads too**: Everything above, plus the agent automatically replies to every non-bot reply in the channel's threads.
+
+To configure auto-reply, select the channel name to open the channel dropdown, select **Channel Settings**, and open the **Agents** tab. Choose the auto-reply mode and the auto-replying agent, then select **Save**. The tab appears only in public and private channels (not direct or group messages), only for users with the channel-management permission, and only when at least one agent is available in the channel.
+
+An automatic reply behaves exactly as if you had @mentioned the agent: the same tool permissions, usage restrictions, and conversation model apply, using the posting user's permissions. Posts from webhooks and system messages never trigger auto-replies, and posts from other bots don't either unless the integration explicitly opts in with the `activate_ai` post property. The "you must @mention an agent" reminder still works alongside auto-reply: when the agent does not reply automatically — for example a thread reply in a channel using the **Top-level posts only** mode — replying to an agent's thread without a mention shows the usual reminder.
+
+> **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
+
 ### Use custom prompt templates
 
 Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
@@ -98,13 +112,15 @@ On web and desktop, start a new chat in the Agents right-hand pane and open the 
 
 Depending on your workspace configuration, available tools in direct messages, and in channels when enabled by your system admin, can include:
 
-- Mattermost MCP tools, including tools to search posts, find users, discover available agents, and, when the Channel Automation plugin is installed and your permissions allow it, manage channel automations. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
+- Mattermost MCP tools, including tools to search posts, find users, and discover available agents. These tools are available through embedded MCP by default when your workspace and agent tool settings allow them
 - MCP tools provided by compatible installed Mattermost plugins that register tools with Agents, after an admin enables those plugin tools
 - MCP tools provided by separately configured remote MCP servers, after an admin enables them
 
 Tool availability depends on your user permissions, provider connection status, workspace configuration, and context.
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
+
+Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
 
 ### Answer a question an agent asks you
 
@@ -130,7 +146,7 @@ Agents can also attach created files to posts they make on your behalf. When you
 
 ### Summarize discussion threads
 
-Summarizing a discussion thread requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+Summarizing a discussion thread is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize a discussion thread:
 
@@ -144,7 +160,7 @@ This is particularly useful for catching up on long discussions, creating meetin
 
 ### Summarize unread channels
 
-Summarizing unread Mattermost channels requires a license. See [license requirements](admin_guide.md#license-requirements) for details.
+Summarizing unread Mattermost channels is available at Professional and above. See [license requirements](admin_guide.md#license-requirements) for details.
 
 To summarize unread Mattermost channels:
 
@@ -158,7 +174,7 @@ For more flexible channel analysis options, including **Ask Agents about this ch
 
 ## Search with AI
 
-You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search requires a license (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
+You can enhance Mattermost [search](https://docs.mattermost.com/collaborate/search-for-messages.html) with AI capabilities. Semantic AI search is available at Enterprise and above (see [license requirements](admin_guide.md#license-requirements)), and AI search is an [experimental](https://docs.mattermost.com/manage/feature-labels.html#experimental) feature.
 
 Open the Agents pane from the right sidebar and use natural language to search for content (such as "find discussions about the new product launch"). The AI will find semantically relevant results, even if they don't contain the exact keywords, and results respect your permissions so you'll only see content you have access to.
 
@@ -168,7 +184,7 @@ Contact your system admin if this feature isn't available for your Mattermost in
 
 ## Analyze images
 
-For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content.
+For AI models with vision capabilities, attach an image file to your message when chatting with an Agent or @mentioning an Agent in a channel to ask questions about the image or request analysis. The Agent responds based on the visual content. Images that exceed the provider's documented maximum dimensions are omitted and replaced with a short note so the rest of the conversation can continue.
 
 In channel threads, a later @mention can also include image attachments from earlier posts in the same thread when those posts are part of the thread context.
 
@@ -185,7 +201,7 @@ To summarize a Mattermost call recording:
 
 The meeting summary is generated and shared as a direct message with the person who requested the meeting summary.
 
-Both call recordings and recorded meeting summarization require a license. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
+Both call recordings and recorded meeting summarization are available at Enterprise and above. See [license requirements](admin_guide.md#license-requirements) for details. Contact your system admin if these features aren't available for your Mattermost instance.
 
 
 ## Summarize Zoom meetings in Mattermost
