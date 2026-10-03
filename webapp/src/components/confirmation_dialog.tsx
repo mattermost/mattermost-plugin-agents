@@ -108,12 +108,14 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             }
             const first = focusables[0];
             const last = focusables[focusables.length - 1];
+            const active = document.activeElement;
+            const outside = !dialog.contains(active);
             if (e.shiftKey) {
-                if (document.activeElement === first) {
+                if (active === first || outside) {
                     e.preventDefault();
                     last.focus();
                 }
-            } else if (document.activeElement !== first) {
+            } else if (active === last || outside) {
                 e.preventDefault();
                 first.focus();
             }

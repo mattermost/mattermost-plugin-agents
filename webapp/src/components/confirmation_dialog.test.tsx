@@ -73,6 +73,32 @@ describe('ConfirmationDialog', () => {
         expect(onCancel).toHaveBeenCalledTimes(1);
     });
 
+    describe('Tab trap with managed accessibility', () => {
+        beforeEach(() => {
+            // jsdom has no layout, so offsetParent is always null and every control looks hidden.
+            jest.spyOn(HTMLElement.prototype, 'offsetParent', 'get').mockReturnValue(document.body);
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        it.each([
+            {name: 'Tab from a middle control moves naturally', from: 'Cancel', shiftKey: false, wraps: false, to: 'Cancel'},
+            {name: 'Tab from the last control wraps to the first', from: 'Delete', shiftKey: false, wraps: true, to: 'Close'},
+            {name: 'Shift+Tab from a middle control moves naturally', from: 'Cancel', shiftKey: true, wraps: false, to: 'Cancel'},
+            {name: 'Shift+Tab from the first control wraps to the last', from: 'Close', shiftKey: true, wraps: true, to: 'Delete'},
+        ])('$name', ({from, shiftKey, wraps, to}) => {
+            renderDialog({managedAccessibility: true});
+            screen.getByRole('button', {name: from}).focus();
+
+            const notPrevented = fireEvent.keyDown(document.activeElement as Element, {key: 'Tab', shiftKey});
+
+            expect(notPrevented).toBe(!wraps);
+            expect(document.activeElement).toBe(screen.getByRole('button', {name: to}));
+        });
+    });
+
     it('close icon button cancels', () => {
         const {onCancel} = renderDialog();
 
