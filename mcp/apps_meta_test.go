@@ -266,8 +266,8 @@ func TestIsUIResourceMIMEType(t *testing.T) {
 func TestUIClientCapabilities(t *testing.T) {
 	caps := uiClientCapabilities()
 	require.NotNil(t, caps)
-	require.NotNil(t, caps.RootsV2)
-	require.True(t, caps.RootsV2.ListChanged)
+	require.NotNil(t, caps.RootsV2)           //nolint:staticcheck // SA1019: matches the SDK's own default
+	require.True(t, caps.RootsV2.ListChanged) //nolint:staticcheck // SA1019: matches the SDK's own default
 	require.Equal(t, map[string]any{
 		"mimeTypes": []any{UIResourceMIMEType},
 	}, caps.Extensions[UIExtensionID])
