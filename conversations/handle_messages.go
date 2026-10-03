@@ -394,7 +394,8 @@ func (c *Conversations) handleMentionViaConversation(
 	// Channel mention: isDM=false gates auto-exec to auto_run_everywhere only.
 	autoExec := c.shouldAutoExecuteTool(llmContext, false)
 	progress.Advance(responseProgressConnectingProvider)
-	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(), *completionRequest,
+	result, runErr := c.runToolLoop(ctx, bot.LLM(), bot.GetConfig().EffectiveMaxToolTurns(),
+		c.newDeferredDispatcherForConversation(bot, convResult.Conversation, ""), *completionRequest,
 		func(tc llm.ToolCall) bool {
 			if !allowToolsInChannel {
 				return false
@@ -608,21 +609,16 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 	return nil
 }
 
-// publishConversationUpdated nudges open clients to refetch a conversation
+// publishConversationPostUpdated nudges open clients to refetch a conversation
 // whose turns changed without an accompanying post stream (e.g. an
 // asynchronously executed tool batch whose results await a share decision).
 // The conversation content API redacts unshared content for non-requesters,
 // so a channel-scoped refetch nudge leaks nothing.
-func (c *Conversations) publishConversationUpdated(conv *store.Conversation, post *model.Post) {
+func (c *Conversations) publishConversationPostUpdated(conv *store.Conversation, post *model.Post) {
 	if conv == nil || post == nil || c.mmClient == nil {
 		return
 	}
-	c.mmClient.PublishWebSocketEvent("conversation_updated", map[string]interface{}{
-		"conversation_id": conv.ID,
-	}, &model.WebsocketBroadcast{
-		ChannelId:           post.ChannelId,
-		ReliableClusterSend: true,
-	})
+	c.publishConversationUpdated(conv.ID, post.ChannelId)
 }
 
 func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {

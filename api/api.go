@@ -57,6 +57,7 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
+	EnableAskAnotherUser() bool
 
 	// GetServices returns a snapshot of the stored service configurations, in
 	// configuration order. The bridge service endpoints operate on this
@@ -407,6 +408,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	postRouter.POST("/regenerate", a.handleRegenerate)
 	postRouter.POST("/tool_call", a.handleToolCall)
 	postRouter.POST("/tool_result", a.handleToolResult)
+	postRouter.POST("/ask_user_response", a.handleAskUserResponse)
+	postRouter.POST("/ask_user_cancel", a.handleAskUserCancel)
 	postRouter.POST("/postback_summary", a.handlePostbackSummary)
 	postRouter.POST("/loop_in_agent", a.handleLoopInAgent)
 

@@ -324,7 +324,8 @@ func (c *Conversations) regenerateViaConversation(
 	// even if the new run creates none; nil could be treated as "no change".
 	post.FileIds = []string{}
 
-	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv), *completionReq,
+	runResult, runErr := c.runToolLoop(ctx, bot.LLM(), maxToolTurnsForConversation(bot.GetConfig().EffectiveMaxToolTurns(), conv),
+		c.newDeferredDispatcherForConversation(bot, conv, post.Id), *completionReq,
 		c.shouldAutoExecuteTool(llmContext, isDM),
 		conv.ID,
 		func(turns []toolrunner.ToolTurn) bool { return isDM || c.allToolsAutoRunEverywhere(turns, llmContext) },

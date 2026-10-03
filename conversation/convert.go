@@ -101,14 +101,15 @@ func BlocksToPost(
 				arguments = unsharedToolUseArgumentsRedaction
 			}
 			toolCall := llm.ToolCall{
-				ID:           block.ID,
-				Name:         block.Name,
-				ServerOrigin: block.ServerOrigin,
-				Arguments:    arguments,
-				MCPBareName:  block.MCPBareName,
-				Status:       StatusFromString(block.Status),
-				Title:        block.Title,
-				Description:  block.Description,
+				ID:             block.ID,
+				Name:           block.Name,
+				ServerOrigin:   block.ServerOrigin,
+				Arguments:      arguments,
+				MCPBareName:    block.MCPBareName,
+				Status:         StatusFromString(block.Status),
+				Title:          block.Title,
+				Description:    block.Description,
+				DeferredResult: block.DeferredResult,
 			}
 			if redactToolUse {
 				toolCall.MCPBareName = ""
@@ -294,6 +295,8 @@ func StatusFromString(s string) llm.ToolCallStatus {
 		return llm.ToolCallStatusSuccess
 	case StatusAutoApproved:
 		return llm.ToolCallStatusAutoApproved
+	case StatusWaiting:
+		return llm.ToolCallStatusWaiting
 	default:
 		return llm.ToolCallStatusPending
 	}
@@ -314,6 +317,8 @@ func StatusToString(s llm.ToolCallStatus) string {
 		return StatusSuccess
 	case llm.ToolCallStatusAutoApproved:
 		return StatusAutoApproved
+	case llm.ToolCallStatusWaiting:
+		return StatusWaiting
 	default:
 		return StatusPending
 	}

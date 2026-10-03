@@ -56,6 +56,10 @@ func (c *fakeStreamingClient) GetChannel(channelID string) (*model.Channel, erro
 	return channel, nil
 }
 
+func (c *fakeStreamingClient) GetChannelStats(_ string) (*model.ChannelStats, error) {
+	return nil, fmt.Errorf("not implemented")
+}
+
 func (c *fakeStreamingClient) GetConfig() *model.Config {
 	locale := "en"
 	return &model.Config{

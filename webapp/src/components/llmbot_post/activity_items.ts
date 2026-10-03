@@ -62,6 +62,7 @@ export function isTerminalToolStatus(status: ToolCallStatus): boolean {
         return true;
     case ToolCallStatus.Pending:
     case ToolCallStatus.Accepted:
+    case ToolCallStatus.Waiting:
         return false;
     default: {
         const exhaustive: never = status;

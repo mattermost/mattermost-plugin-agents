@@ -28,6 +28,7 @@ export const StatusRejected = 'rejected' as const;
 export const StatusError = 'error' as const;
 export const StatusSuccess = 'success' as const;
 export const StatusAutoApproved = 'auto_approved' as const;
+export const StatusWaiting = 'waiting' as const;
 
 export type ToolCallStatus =
     | typeof StatusPending
@@ -35,7 +36,8 @@ export type ToolCallStatus =
     | typeof StatusRejected
     | typeof StatusError
     | typeof StatusSuccess
-    | typeof StatusAutoApproved;
+    | typeof StatusAutoApproved
+    | typeof StatusWaiting;
 
 export interface Citation {
     type: string;
@@ -106,6 +108,10 @@ export interface ContentBlock {
     // description is not rendered yet.
     title?: string;
     description?: string;
+
+    // True for a deferred-result tool call (e.g. AskAnotherUser): dispatched as a
+    // side effect, result arrives out-of-band. Mirrors conversation.ContentBlock.
+    deferred_result?: boolean;
 
     // ToolResult fields
     tool_use_id?: string;

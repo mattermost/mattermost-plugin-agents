@@ -206,7 +206,7 @@ func TestGetToolsWaitForAsyncWorkCatalog(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			provider := NewMMToolProvider(nil, nil)
+			provider := NewMMToolProvider(nil, nil, nil)
 			if tt.scheduler {
 				provider.SetScheduleWake(func(string, string, time.Duration) error { return nil })
 			}

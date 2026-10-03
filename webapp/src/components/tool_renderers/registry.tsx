@@ -11,6 +11,7 @@ import React from 'react';
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
 import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
+import {type AskCancelState} from '../ask_another_user_tool';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
 import DelegationCard, {isAskAgentToolCall} from '../delegation/delegation_card';
@@ -44,6 +45,11 @@ export interface ToolRenderContext {
     // approvals inside the ask_agent card. Omitted when the viewer cannot
     // approve.
     renderDelegatedApprovals?: (delegationID: string) => React.ReactNode;
+
+    // Requester-side cancel of a waiting AskAnotherUser call.
+    onCancelAsk?: () => void;
+    askCancelState?: AskCancelState;
+    askCancelDisabled?: boolean;
 }
 
 interface RendererEntry {

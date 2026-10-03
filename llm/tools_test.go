@@ -302,6 +302,10 @@ func TestIsResolvedToolCallBatch(t *testing.T) {
 		// rejected-approval turn, and the annotation decorator must reset its
 		// builder at exactly the same boundaries.
 		{name: "rejected call keeps the batch unresolved", statuses: []ToolCallStatus{ToolCallStatusSuccess, ToolCallStatusRejected}, want: false},
+		// Waiting batches must be retained by the streaming accumulator (and
+		// later persisted by finalizeTurn) rather than treated as executed.
+		{name: "waiting call alone is not resolved", statuses: []ToolCallStatus{ToolCallStatusWaiting}, want: false},
+		{name: "waiting call mixed with terminal statuses is not resolved", statuses: []ToolCallStatus{ToolCallStatusWaiting, ToolCallStatusError, ToolCallStatusSuccess}, want: false},
 	}
 
 	for _, tt := range tests {

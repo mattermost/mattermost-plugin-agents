@@ -43,6 +43,7 @@ var toolCallFieldPolicies = map[string]toolCallFieldPolicy{
 	"status":             {blockJSON: "status", visibleToNonRequester: true},
 	"user_interaction":   {blockJSON: "user_interaction", visibleToNonRequester: true},
 	"would_auto_execute": {blockJSON: "would_auto_execute", visibleToNonRequester: true},
+	"deferred_result":    {blockJSON: "deferred_result", visibleToNonRequester: true},
 
 	// Private payloads: persisted (for the requester) but redacted for others.
 	"arguments":     {blockJSON: "input", visibleToNonRequester: false},
@@ -67,6 +68,7 @@ func fullyPopulatedToolCall() llm.ToolCall {
 		MCPBareName:      "create_post",
 		UserInteraction:  llm.UserInteractionSelect,
 		WouldAutoExecute: true,
+		DeferredResult:   true,
 		ServerOrigin:     "embedded://mattermost",
 	}
 }
