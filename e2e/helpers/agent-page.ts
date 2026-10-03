@@ -206,6 +206,14 @@ export class AgentPageHelper {
         return this.getDiscardChangesDialog().getByRole('button', { name: 'Keep editing' });
     }
 
+    getRenameDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Change agent username?' });
+    }
+
+    getRenameConfirmButton(): Locator {
+        return this.getRenameDialog().getByRole('button', { name: 'Change username' });
+    }
+
     // --- MCPs Tab ---
 
     getMCPSearchInput(): Locator {
