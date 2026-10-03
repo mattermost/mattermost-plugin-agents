@@ -75,6 +75,10 @@ type MCPTool struct {
 	Schema      *jsonschema.Schema
 	Resolver    MCPToolResolver
 
+	// Meta is attached verbatim as the tool's `_meta` (e.g. MCP Apps
+	// `ui.resourceUri`). Nil for ordinary tools.
+	Meta mcp.Meta
+
 	// ReadOnly is true when the tool only retrieves data. State-changing tools
 	// are available at Enterprise and above.
 	ReadOnly bool
@@ -112,6 +116,13 @@ type MattermostToolProvider struct {
 	searchService           SemanticSearchService // Optional semantic search service, can be nil
 	fileContentService      FileContentService    // Optional file content service for read_file, can be nil
 	allowStateChangingTools func() bool           // Evaluated per request; nil fails closed
+	enableDemoApps          bool                  // Registers demo MCP Apps tools/resources (embedded only)
+}
+
+// SetEnableDemoApps selects the demo MCP Apps tool group for mcpTools/ProvideTools.
+// Config-time gate: tools are omitted entirely when false.
+func (p *MattermostToolProvider) SetEnableDemoApps(enabled bool) {
+	p.enableDemoApps = enabled
 }
 
 // NewMattermostToolProvider creates a new tool provider.
@@ -164,6 +175,10 @@ func (p *MattermostToolProvider) mcpTools() []MCPTool {
 		groups = append(groups, p.getDevUserTools, p.getDevPostTools, p.getDevTeamTools)
 	}
 
+	if p.enableDemoApps {
+		groups = append(groups, p.getDemoAppTools)
+	}
+
 	var mcpTools []MCPTool
 	for _, group := range groups {
 		mcpTools = append(mcpTools, group()...)
@@ -194,6 +209,10 @@ func (p *MattermostToolProvider) ProvideTools(mcpServer *mcp.Server) {
 	// State-changing tools are listed and callable when allowStateChangingTools
 	// reports they are available (Enterprise and above).
 	mcpServer.AddReceivingMiddleware(stateChangingToolsMiddleware(stateChanging, p.allowStateChangingTools))
+
+	if p.enableDemoApps {
+		p.registerDemoAppResources(mcpServer)
+	}
 }
 
 // stateChangingAllowed reports whether state-changing tools are available.
@@ -275,6 +294,9 @@ func (p *MattermostToolProvider) registerDynamicTool(server *mcp.Server, mcpTool
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint: mcpTool.ReadOnly,
 		},
+	}
+	if mcpTool.Meta != nil {
+		tool.Meta = mcpTool.Meta
 	}
 
 	// Set the InputSchema from the MCPTool schema

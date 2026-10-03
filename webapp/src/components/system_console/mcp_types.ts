@@ -25,6 +25,7 @@ export type MCPEmbeddedServerConfig = {
     id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs
     enabled: boolean;
     tool_configs?: MCPToolConfig[];
+    enableDemoApps?: boolean;
 };
 
 // Mirrors config.PluginServerConfig (json:"plugin_servers").

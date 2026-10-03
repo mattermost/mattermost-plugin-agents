@@ -27,8 +27,9 @@ type EmbeddedMCPServer struct {
 // searchService and fileContentService are optional and can be nil when the
 // corresponding capability is unavailable.
 // allowStateChangingTools is a runtime predicate evaluated per request; a nil
-// predicate means state-changing tools are not available.
-func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) (*EmbeddedMCPServer, error) {
+// predicate means state-changing tools are not available. enableDemoApps
+// registers the demo MCP Apps tools and resources.
+func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogService, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool, enableDemoApps bool) (*EmbeddedMCPServer, error) {
 	// Get site URL from plugin configuration
 	siteURL := ""
 	if config := pluginAPI.Configuration.GetConfig(); config != nil && config.ServiceSettings.SiteURL != nil {
@@ -54,6 +55,7 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 			MMInternalServerURL: internalServerURL,
 			DevMode:             false,
 		},
+		EnableDemoApps: enableDemoApps,
 	}
 
 	// Create a logger adapter that routes MCP server logs through the plugin's logging system

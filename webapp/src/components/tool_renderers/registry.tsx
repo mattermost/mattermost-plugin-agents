@@ -34,6 +34,11 @@ export interface ToolRenderContext {
     approvalStage: ToolApprovalStage;
     isAutoApproved: boolean;
 
+    // MCP Apps wiring, forwarded to the card shell.
+    postID?: string;
+    requesterUserID?: string;
+    appsEligible?: boolean;
+
     // User-interaction (question) wiring.
     canAnswer: boolean;
     onAnswer?: (selections: string[], custom: string) => void;

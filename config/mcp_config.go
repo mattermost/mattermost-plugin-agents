@@ -119,6 +119,10 @@ type MCPEmbeddedServerConfig struct {
 	ID          string          `json:"id,omitempty"`
 	Enabled     bool            `json:"enabled"`
 	ToolConfigs []MCPToolConfig `json:"tool_configs,omitempty"`
+	// EnableDemoApps registers the built-in demo MCP Apps tools/resources
+	// (e.g. preview_post) on the embedded server. Intended for demos, QA,
+	// and e2e; default false.
+	EnableDemoApps bool `json:"enableDemoApps,omitempty"`
 }
 
 // MCPConfig contains the configuration for the MCP servers

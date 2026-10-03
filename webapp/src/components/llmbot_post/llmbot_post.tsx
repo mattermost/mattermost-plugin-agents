@@ -662,6 +662,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
                 reasoningLoading={isLiveRound && isReasoningLoading}
                 reasoningCollapsed={!expandedReasoning[round.id]}
                 onToggleReasoning={toggleReasoning}
+                appsEligible={!isLiveRound && !round.id.startsWith('live-')}
+                requesterUserID={knownConversation?.user_id}
             />
         );
     }, [
@@ -676,6 +678,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
         isReasoningLoading,
         expandedReasoning,
         toggleReasoning,
+        knownConversation?.user_id,
     ]);
 
     // Tool-only posts leave post.message empty, so precontent stays true on

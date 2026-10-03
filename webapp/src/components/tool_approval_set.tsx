@@ -65,6 +65,8 @@ interface ToolApprovalSetProps {
     approvalStage: ToolApprovalStage;
     canApprove: boolean;
     canExpand: boolean;
+    requesterUserID?: string;
+    appsEligible?: boolean;
 }
 
 // Define a type for tool decisions
@@ -311,6 +313,9 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             canAnswer: isDecisionCall && isCallStage,
                             onAnswer: isDecisionCall ? (selections, custom) => handleQuestionAnswer(tool.id, selections, custom) : undefined, // eslint-disable-line no-undefined
                             onSkip: isDecisionCall ? () => handleToolDecision(tool.id, false) : undefined, // eslint-disable-line no-undefined
+                            postID: props.postID,
+                            requesterUserID: props.requesterUserID,
+                            appsEligible: props.appsEligible,
                         })}
                     </React.Fragment>
                 );

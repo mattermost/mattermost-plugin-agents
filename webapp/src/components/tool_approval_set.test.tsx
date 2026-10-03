@@ -26,6 +26,9 @@ type MockRenderContext = {
     onApprove?: () => void;
     onReject?: () => void;
     isAutoApproved?: boolean;
+    postID?: string;
+    requesterUserID?: string;
+    appsEligible?: boolean;
 };
 
 // Mock the registry so these tests cover ToolApprovalSet's decision logic
@@ -99,6 +102,28 @@ describe('ToolApprovalSet', () => {
 
         expect(getToolCardProps('tool_auto').isAutoApproved).toBe(true);
         expect(getToolCardProps('tool_pending').isAutoApproved).toBe(false);
+    });
+
+    test('forwards MCP Apps wiring to the renderer', () => {
+        render(
+            <IntlProvider locale='en'>
+                <ToolApprovalSet
+                    postID='post_1'
+                    conversationID='conv_1'
+                    toolCalls={[makeTool({id: 'tool_app', status: ToolCallStatus.Success})]}
+                    approvalStage='done'
+                    canApprove={false}
+                    canExpand={false}
+                    requesterUserID='requester_1'
+                    appsEligible={true}
+                />
+            </IntlProvider>,
+        );
+
+        const props = getToolCardProps('tool_app');
+        expect(props.postID).toBe('post_1');
+        expect(props.requesterUserID).toBe('requester_1');
+        expect(props.appsEligible).toBe(true);
     });
 
     test('hides pending tools that passed the auto-execution policy', () => {

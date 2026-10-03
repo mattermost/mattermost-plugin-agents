@@ -27,7 +27,13 @@ export interface SystemConsolePluginConfig {
         servers?: MCPServerConfig[] | null;
         embeddedServer?: {
             enabled?: boolean;
+            enableDemoApps?: boolean;
             tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;
+        };
+        apps?: {
+            enabled?: boolean;
+            sandboxURL?: string;
+            allowInsecureSameOriginSandbox?: boolean;
         };
     };
 }

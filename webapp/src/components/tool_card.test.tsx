@@ -13,6 +13,11 @@ jest.mock('react-bootstrap', () => ({
     Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
 }), {virtual: true});
 
+jest.mock('./mcp_apps/mcp_app_view', () => ({
+    __esModule: true,
+    default: () => <div data-testid='mcp-app-view-mock'/>,
+}));
+
 function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
     return {
         id: 'tool_1',
@@ -30,18 +35,21 @@ function renderComponent(
         onApprove?: () => void;
         onReject?: () => void;
         approvalStage?: ToolApprovalStage;
+        isCollapsed?: boolean;
+        appsEligible?: boolean;
     } = {},
 ) {
     return render(
         <IntlProvider locale='en'>
             <ToolCard
                 tool={tool}
-                isCollapsed={false}
+                isCollapsed={extra.isCollapsed ?? false}
                 isProcessing={false}
                 onToggleCollapse={jest.fn()}
                 canExpand={false}
                 showArguments={true}
                 showResults={extra.showResults ?? false}
+                postID='post_1'
                 {...extra}
             />
         </IntlProvider>,
@@ -132,5 +140,48 @@ describe('ToolCard pending state', () => {
 
         expect(screen.queryByRole('button', {name: 'Accept'})).toBeNull();
         expect(screen.queryByRole('button', {name: 'Reject'})).toBeNull();
+    });
+});
+
+describe('ToolCard MCP Apps mounting', () => {
+    const appTool = makeTool({
+        status: ToolCallStatus.Success,
+        ui_meta: {resource_uri: 'ui://mattermost/preview-post.html'},
+    });
+
+    test('renders MCPAppView when eligible with ui_meta and Success', () => {
+        renderComponent(appTool, {appsEligible: true});
+        expect(screen.getByTestId('mcp-app-view-mock')).not.toBeNull();
+    });
+
+    test('renders MCPAppView even when collapsed', () => {
+        renderComponent(appTool, {appsEligible: true, isCollapsed: true});
+        expect(screen.getByTestId('mcp-app-view-mock')).not.toBeNull();
+    });
+
+    test('does not render for Pending status', () => {
+        renderComponent(makeTool({
+            status: ToolCallStatus.Pending,
+            ui_meta: {resource_uri: 'ui://mattermost/preview-post.html'},
+        }), {appsEligible: true});
+        expect(screen.queryByTestId('mcp-app-view-mock')).toBeNull();
+    });
+
+    test('does not render for Error status', () => {
+        renderComponent(makeTool({
+            status: ToolCallStatus.Error,
+            ui_meta: {resource_uri: 'ui://mattermost/preview-post.html'},
+        }), {appsEligible: true});
+        expect(screen.queryByTestId('mcp-app-view-mock')).toBeNull();
+    });
+
+    test('does not render when ui_meta is missing', () => {
+        renderComponent(makeTool({status: ToolCallStatus.Success}), {appsEligible: true});
+        expect(screen.queryByTestId('mcp-app-view-mock')).toBeNull();
+    });
+
+    test('does not render when appsEligible is false', () => {
+        renderComponent(appTool, {appsEligible: false});
+        expect(screen.queryByTestId('mcp-app-view-mock')).toBeNull();
     });
 });

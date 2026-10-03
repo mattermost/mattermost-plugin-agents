@@ -14,6 +14,7 @@ import {toolDisplayName} from '@/utils/tool_identity';
 import {ToolApprovalStage, ToolCall, ToolCallStatus} from '../tool_types';
 import {ToolArgumentsRaw, ToolResultBody, hasInspectableArguments} from '../tool_arguments';
 import ToolStatusIcon from '../tool_status_icon';
+import MCPAppView from '../mcp_apps/mcp_app_view';
 
 import LoadingSpinner from '../assets/loading_spinner';
 import IconCheckCircle from '../assets/icon_check_circle';
@@ -313,6 +314,12 @@ export interface ToolCardShellProps {
     approvalStage?: ToolApprovalStage;
     isAutoApproved?: boolean;
 
+    // MCP Apps: the app renders only for persisted rounds (appsEligible) of a
+    // successful call whose tool declares ui_meta.
+    postID?: string;
+    requesterUserID?: string;
+    appsEligible?: boolean;
+
     // The arguments body: the generic field list or a rich card's rendering.
     children?: React.ReactNode;
 }
@@ -339,6 +346,9 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
     showResults,
     approvalStage = 'call',
     isAutoApproved = false,
+    postID,
+    requesterUserID,
+    appsEligible = false,
     children,
 }) => {
     const {formatMessage} = useIntl();
@@ -499,6 +509,14 @@ const ToolCardShell: React.FC<ToolCardShellProps> = ({
                     </AutoApprovedBadge>
                 )}
             </ToolCallHeader>
+
+            {appsEligible && postID && tool.ui_meta?.resource_uri && isSuccess && (
+                <MCPAppView
+                    postID={postID}
+                    tool={tool}
+                    requesterUserID={requesterUserID}
+                />
+            )}
 
             {!isCollapsed && (
                 <>

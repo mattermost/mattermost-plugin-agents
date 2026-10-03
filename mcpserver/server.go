@@ -33,10 +33,15 @@ func newPluginCallbackServices(mmServerURL string) (*tools.HTTPSemanticSearchSer
 // searchService and fileContentService are optional and can be nil when the
 // corresponding capability is unavailable.
 // allowStateChangingTools is evaluated per request; a nil predicate means
-// state-changing tools are not available.
-func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool) {
+// state-changing tools are not available. enableDemoApps selects the demo
+// MCP Apps tool group on the same provider (no second registration lane).
+func (s *MattermostMCPServer) registerTools(accessMode tools.AccessMode, searchService tools.SemanticSearchService, fileContentService tools.FileContentService, allowStateChangingTools func() bool, enableDemoApps bool) {
 	toolProvider := tools.NewMattermostToolProvider(s.authProvider, s.logger, s.config, accessMode, searchService, fileContentService, allowStateChangingTools)
+	toolProvider.SetEnableDemoApps(enableDemoApps)
 	toolProvider.ProvideTools(s.mcpServer)
+	if enableDemoApps {
+		s.logger.Info("Registered demo MCP Apps tools")
+	}
 }
 
 // GetMCPServer returns the underlying MCP server for testing purposes

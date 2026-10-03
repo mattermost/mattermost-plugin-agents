@@ -458,28 +458,33 @@ func (p *Plugin) OnActivate() error {
 	// have the legacy toggle stored as false.
 	fileContentService := files.New(mmClient)
 	var (
-		embeddedMu     sync.Mutex
-		embeddedServer *EmbeddedMCPServer
+		embeddedMu       sync.Mutex
+		embeddedServer   *EmbeddedMCPServer
+		embeddedDemoApps bool
 	)
 	// ensureEmbeddedMCPServer builds the embedded server once and reuses it.
-	// The constructor reads Mattermost server config and injected services, not
-	// plugin MCP config, so a plugin-config update must not force every
-	// embedded session to reconnect; only a construction failure is retried.
+	// Apart from EnableDemoApps, the constructor reads Mattermost server config
+	// and injected services, not plugin MCP config, so a plugin-config update
+	// must not force every embedded session to reconnect; the server is rebuilt
+	// only when EnableDemoApps changes or a previous construction failed.
 	// The result is a nil interface, not a typed nil pointer, when the server
 	// is unavailable, so callers skip embedded sessions entirely.
 	ensureEmbeddedMCPServer := func() mcp.EmbeddedMCPServer {
 		embeddedMu.Lock()
 		defer embeddedMu.Unlock()
 
-		if embeddedServer == nil {
+		enableDemoApps := p.configuration.MCP().EmbeddedServer.EnableDemoApps
+		if embeddedServer == nil || embeddedDemoApps != enableDemoApps {
 			created, embeddedErr := NewEmbeddedMCPServer(pluginAPI, pluginAPI.Log, searchService, fileContentService, func() bool {
 				return licenseChecker.Allows(enterprise.CapStateChangingTools)
-			})
+			}, enableDemoApps)
 			if embeddedErr != nil {
 				pluginAPI.Log.Error("Failed to create embedded MCP server", "error", embeddedErr)
+				embeddedServer = nil
 				return nil
 			}
 			embeddedServer = created
+			embeddedDemoApps = enableDemoApps
 			pluginAPI.Log.Info("Embedded MCP server created successfully")
 		}
 		return embeddedServer
