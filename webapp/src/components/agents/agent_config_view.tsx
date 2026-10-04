@@ -323,12 +323,21 @@ const AgentConfigView = (props: Props) => {
 
     const handleVersionRestored = useCallback((restored: UserAgent) => {
         const restoredDraft = agentToDraft(restored);
+
+        // Switching access away from attribute-based deletes the agent's
+        // policy, so a restored attribute-based version has none until one
+        // is created on the Access tab.
+        const needsAccessPolicy = restoredDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
+            baselineDraft.userAccessLevel !== UserAccessLevel.AttributeBased;
         setDraft(restoredDraft);
         setBaselineDraft(cloneDraft(restoredDraft));
         setAvatarFile(null);
         setErrors({});
+        if (needsAccessPolicy) {
+            setActiveTab('access');
+        }
         onRestored?.(restored);
-    }, [onRestored]);
+    }, [baselineDraft.userAccessLevel, onRestored]);
 
     const handleExport = useCallback(async () => {
         if (!agent || exporting) {
@@ -535,6 +544,7 @@ const AgentConfigView = (props: Props) => {
                             agentId={agent.id}
                             services={services}
                             isDirty={isDirty}
+                            currentUserAccessLevel={baselineDraft.userAccessLevel}
                             onRestored={handleVersionRestored}
                         />
                     )}

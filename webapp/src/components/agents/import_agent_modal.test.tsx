@@ -318,6 +318,36 @@ describe('ImportAgentModal', () => {
         expect((screen.getByLabelText('Create a new agent') as HTMLInputElement).checked).toBe(true);
     });
 
+    test.each([
+        {name: 'the user switches to update mode', canCreate: true, existingAgent: null},
+        {name: 'update is the only mode', canCreate: false, existingAgent: null},
+        {
+            name: 'the matching agent is not manageable',
+            canCreate: false,
+            existingAgent: {id: 'agent_9', displayName: 'Theirs', username: 'release-helper', canManage: false},
+        },
+    ])('requires choosing the agent to update when $name', async ({canCreate, existingAgent}) => {
+        mockImport.mockResolvedValue({id: 'agent_2'} as UserAgent);
+        renderModal({canCreate});
+        await loadPreview(makePreview({existingAgent, mcpServers: []}, {autoEnableNewMCPTools: true}));
+
+        if (canCreate) {
+            fireEvent.click(screen.getByLabelText('Update an existing agent'));
+        }
+
+        expect((screen.getByLabelText('Agent to update') as HTMLSelectElement).value).toBe('');
+        expect(importButton().disabled).toBe(true);
+        fireEvent.click(importButton());
+        expect(mockImport).not.toHaveBeenCalled();
+
+        fireEvent.change(screen.getByLabelText('Agent to update'), {target: {value: 'agent_2'}});
+        expect(importButton().disabled).toBe(false);
+        fireEvent.click(importButton());
+
+        await waitFor(() => expect(mockImport).toHaveBeenCalledTimes(1));
+        expect(mockImport.mock.calls[0][0]).toEqual(expect.objectContaining({mode: 'update', agentID: 'agent_2'}));
+    });
+
     test('create mode is unavailable when the user cannot create agents', async () => {
         renderModal({canCreate: false});
 

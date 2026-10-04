@@ -140,7 +140,11 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
                 initialMode = 'update';
             }
             setMode(initialMode);
-            setTargetAgentId(manageableExisting?.id ?? manageableAgents[0]?.id ?? '');
+
+            // Only the agent the document names is a safe default; any other
+            // target must be chosen explicitly so one click never overwrites
+            // an unrelated agent.
+            setTargetAgentId(manageableExisting?.id ?? '');
             setUsername(result.document.agent.name ?? '');
             setDisplayName(result.document.agent.displayName ?? '');
             setModel('');
@@ -425,6 +429,12 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
                                         disabled={submitting}
                                         onChange={(e) => setTargetAgentId(e.target.value)}
                                     >
+                                        <option
+                                            value=''
+                                            disabled={true}
+                                        >
+                                            {intl.formatMessage({defaultMessage: 'Select an agent...'})}
+                                        </option>
                                         {manageableAgents.map((a) => (
                                             <option
                                                 key={a.id}

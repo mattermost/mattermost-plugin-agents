@@ -73,8 +73,24 @@ export function changedFieldLabel(intl: IntlShape, field: string): string {
     case 'maxToolTurns':
         return intl.formatMessage({defaultMessage: 'Max tool turns'});
     default:
+        return humanizeFieldKey(field);
+    }
+}
+
+// humanizeFieldKey turns a camelCase key into sentence case, keeping
+// acronyms: "maxFileSize" -> "Max file size", "botUserID" -> "Bot user ID".
+export function humanizeFieldKey(field: string): string {
+    const words = field.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g);
+    if (!words) {
         return field;
     }
+    return words.map((word, i) => {
+        if (word.length > 1 && word === word.toUpperCase()) {
+            return word;
+        }
+        const lower = word.toLowerCase();
+        return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    }).join(' ');
 }
 
 // changedFieldLabels returns de-duplicated, human-readable labels (several raw

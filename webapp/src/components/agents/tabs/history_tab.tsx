@@ -11,6 +11,7 @@ import {getAgentVersion, getAgentVersions, getProfilesByIds, restoreAgentVersion
 import {AgentVersionDetail, AgentVersionList, ServiceInfo, UserAgent} from '@/types/agents';
 import {PrimaryButton} from '@/components/assets/buttons';
 import ConfirmationDialog from '@/components/confirmation_dialog';
+import {UserAccessLevel} from '@/components/system_console/bot';
 
 import {changedFieldLabels, versionSourceLabel} from '../agent_version_labels';
 import VersionSnapshot from '../version_snapshot';
@@ -23,6 +24,9 @@ type Props = {
 
     /** True when the editor has unsaved changes that a restore would discard. */
     isDirty: boolean;
+
+    /** The saved agent's user access level, which a restore replaces. */
+    currentUserAccessLevel: UserAccessLevel;
 
     /** Called with the agent returned by the restore endpoint. */
     onRestored: (agent: UserAgent) => void;
@@ -48,7 +52,11 @@ function formatTimestamp(intl: IntlShape, timestamp: number): string {
     });
 }
 
-const HistoryTab = ({agentId, services, isDirty, onRestored}: Props) => {
+function hasVersions(list: AgentVersionList): boolean {
+    return list.versions.length > 0 && list.currentVersion > 0;
+}
+
+const HistoryTab = ({agentId, services, isDirty, currentUserAccessLevel, onRestored}: Props) => {
     const intl = useIntl();
 
     // Effects below must not re-run when a new intl object is created.
@@ -80,8 +88,12 @@ const HistoryTab = ({agentId, services, isDirty, onRestored}: Props) => {
             setListError('');
             const result = await getAgentVersions(agentId);
             const versions = result.versions ?? [];
-            setList({...result, versions});
+            const next = {...result, versions};
+            setList(next);
             setSelected((prev) => {
+                if (!hasVersions(next)) {
+                    return null;
+                }
                 if (selectNewest || prev === null || !versions.some((v) => v.version === prev)) {
                     return result.currentVersion;
                 }
@@ -204,8 +216,18 @@ const HistoryTab = ({agentId, services, isDirty, onRestored}: Props) => {
         );
     }
 
+    if (!hasVersions(list)) {
+        return (
+            <Muted data-testid='version-history-empty'>
+                <FormattedMessage defaultMessage='No versions recorded yet. Saving the agent creates the first version.'/>
+            </Muted>
+        );
+    }
+
     const selectedSummary = list.versions.find((v) => v.version === selected);
     const isCurrentSelected = selected !== null && selected === list.currentVersion;
+    const restoresRemovedPolicy = detail?.config?.userAccessLevel === UserAccessLevel.AttributeBased &&
+        currentUserAccessLevel !== UserAccessLevel.AttributeBased;
 
     return (
         <Layout>
@@ -319,6 +341,11 @@ const HistoryTab = ({agentId, services, isDirty, onRestored}: Props) => {
                                 {version: selected ?? 0},
                             )}
                         </p>
+                        {restoresRemovedPolicy && (
+                            <WarningText role='alert'>
+                                <FormattedMessage defaultMessage='This version uses attribute-based access. Its access policy was removed when access was changed, so nobody will be able to use the agent until you create a new policy on the Access tab.'/>
+                            </WarningText>
+                        )}
                         {isDirty && (
                             <WarningText role='alert'>
                                 <FormattedMessage defaultMessage='You have unsaved changes in the editor. Restoring will discard them.'/>
@@ -452,6 +479,10 @@ const WarningText = styled.p`
     margin: 0;
     font-weight: 600;
     color: var(--dnd-indicator, #D24B4E);
+
+    & + & {
+        margin-top: 8px;
+    }
 `;
 
 export default HistoryTab;

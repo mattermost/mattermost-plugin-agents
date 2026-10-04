@@ -55,7 +55,7 @@ const VersionSnapshot = ({config, services}: Props) => {
         userAccess = intl.formatMessage({defaultMessage: 'No users'});
         break;
     case UserAccessLevel.AttributeBased:
-        userAccess = intl.formatMessage({defaultMessage: 'Attribute-based (access policy)'});
+        userAccess = intl.formatMessage({defaultMessage: 'Attribute-based (policy not stored in versions)'});
         break;
     default:
         userAccess = intl.formatMessage({defaultMessage: 'All users'});

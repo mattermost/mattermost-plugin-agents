@@ -914,12 +914,12 @@ describe('AgentConfigView history and export', () => {
         return {...summary, config: {...existingAgent, customInstructions}};
     }
 
-    function renderEdit(onRestored = jest.fn()) {
+    function renderEdit(onRestored = jest.fn(), agent: UserAgent = existingAgent) {
         render(
             <IntlProvider locale='en'>
                 <AgentConfigView
                     mode='edit'
-                    agent={existingAgent}
+                    agent={agent}
                     services={services}
                     onBack={jest.fn()}
                     onSaved={jest.fn()}
@@ -1090,6 +1090,56 @@ describe('AgentConfigView history and export', () => {
 
         expect(await screen.findByText('The AI service for this version no longer exists.')).not.toBeNull();
         expect(onRestored).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'no versions', list: {currentVersion: 0, versions: []}},
+        {name: 'a null version list', list: {currentVersion: 0, versions: null}},
+        {name: 'no current version', list: {currentVersion: 0, versions: versionList.versions}},
+    ])('History tab shows an empty state and requests no version for $name', async ({list}) => {
+        mockGetAgentVersions.mockResolvedValue(list as unknown as AgentVersionList);
+        renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+
+        expect(await screen.findByText('No versions recorded yet. Saving the agent creates the first version.')).not.toBeNull();
+        expect(screen.queryByTestId('version-list')).toBeNull();
+        expect(mockGetAgentVersion).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'warns and opens the Access tab when restoring attribute-based access the agent no longer has', currentLevel: 0, expectWarning: true},
+        {name: 'does not warn when the agent still uses attribute-based access', currentLevel: 4, expectWarning: false},
+    ])('restoring an attribute-based version $name', async ({currentLevel, expectWarning}) => {
+        const agent: UserAgent = {...existingAgent, userAccessLevel: currentLevel};
+        mockGetAgentVersion.mockImplementation(async (_id, version) => {
+            const summary = versionList.versions.find((v) => v.version === version)!;
+            return {...summary, config: {...agent, userAccessLevel: version === 1 ? 4 : currentLevel}};
+        });
+        const restored: UserAgent = {...agent, userAccessLevel: 4};
+        mockRestoreAgentVersion.mockResolvedValue(restored);
+        renderEdit(jest.fn(), agent);
+
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        fireEvent.click(within(list).getByText('Version 1'));
+        expect(await screen.findByText('Attribute-based (policy not stored in versions)')).not.toBeNull();
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+        const warning = within(dialog).queryByText(/nobody will be able to use the agent until you create a new policy on the Access tab/);
+        expect(warning !== null).toBe(expectWarning);
+
+        fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
+        await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
+
+        if (expectWarning) {
+            expect(await screen.findByRole('button', {name: 'Switch user access to everyone'})).not.toBeNull();
+            expect(screen.queryByTestId('version-list')).toBeNull();
+        } else {
+            expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
+            expect(screen.queryByRole('button', {name: 'Switch user access to everyone'})).toBeNull();
+        }
     });
 
     test('Export downloads the agent file via the export helper', async () => {
