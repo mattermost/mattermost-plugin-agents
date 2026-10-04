@@ -5,6 +5,7 @@ import { test, expect, Page } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
+import { MockMCPTool, registerMCPToolsServerMocks } from 'helpers/mcp-tools-mock';
 import {
     RunAgentContainer,
     agentAdminUsername, agentAdminPassword,
@@ -20,10 +21,21 @@ import { mattermostAIAdminConfigApiFromClient, mattermostAIPluginRoutes } from '
 const embeddedMattermostOrigin = 'embedded://mattermost';
 
 // A remote MCP server configured on the instance but disabled, so nothing tries
-// to connect to it; import still treats it as a mapping target.
+// to connect to it; import still offers it as a mapping target to system admins.
 const jiraServerName = 'Jira';
 const jiraOrigin = 'https://mcp.example.com/mcp';
 const goneOrigin = 'https://gone.example.com/mcp';
+
+// An enabled MCP server served by the Smocker container. Its configured BaseURL
+// keeps a trailing slash, which the normalized origin used for matching drops.
+const trackerServerName = 'Tracker';
+const trackerMockPath = '/mcp-tools/';
+const trackerOrigin = `http://openai:8080${trackerMockPath}`;
+const trackerNormalizedOrigin = trackerOrigin.replace(/\/$/, '');
+const trackerTools: MockMCPTool[] = [
+    { name: 'create_issue', description: 'Create an issue' },
+    { name: 'search_issues', description: 'Search issues' },
+];
 
 const avatarFixture = path.join(__dirname, '..', '..', '..', 'assets', 'bot_icon.png');
 
@@ -113,10 +125,14 @@ test.describe('Agent versioning, export and import', () => {
     test.beforeAll(async () => {
         test.setTimeout(180000);
         mattermost = await RunAgentContainer({
-            mcpServers: [{ name: jiraServerName, enabled: false, baseURL: jiraOrigin }],
+            mcpServers: [
+                { name: jiraServerName, enabled: false, baseURL: jiraOrigin },
+                { name: trackerServerName, enabled: true, baseURL: trackerOrigin },
+            ],
         });
         openAIMock = await RunOpenAIMocks(mattermost.network);
         await openAIMock.addCompletionMock(responseTest);
+        await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
     });
 
     test.afterAll(async () => {
@@ -496,6 +512,7 @@ test.describe('Agent versioning, export and import', () => {
         expect(groups[embeddedMattermostOrigin]).toMatchObject({ autoTargetOrigin: embeddedMattermostOrigin });
         expect(preview.body.availableMCPServers).toEqual(expect.arrayContaining([
             { origin: jiraOrigin, name: jiraServerName },
+            { origin: trackerOrigin, name: trackerServerName },
             { origin: embeddedMattermostOrigin, name: 'Mattermost' },
         ]));
 
@@ -505,6 +522,28 @@ test.describe('Agent versioning, export and import', () => {
             displayName: 'MCP Mapping API',
             serviceID: mockServiceId,
         };
+
+        // A manager who is not a system admin is offered only the servers their
+        // MCPs tab lists, so the disabled Jira server is neither shown nor accepted.
+        const regularToken = (await mattermost.getClient(agentRegularUsername, agentRegularPassword)).getToken();
+        const regularPreview = await agentApi.previewAgentImport(regularToken, doc);
+        expect(regularPreview.status).toBe(200);
+        const regularOrigins = regularPreview.body.availableMCPServers.map((s) => s.origin);
+        expect(regularOrigins).toEqual(expect.arrayContaining([trackerOrigin, embeddedMattermostOrigin]));
+        expect(regularOrigins).not.toContain(jiraOrigin);
+        const regularGroups = Object.fromEntries(regularPreview.body.mcpServers.map((s) => [s.sourceOrigin, s]));
+        expect(regularGroups[jiraOrigin]).toMatchObject({ autoTargetOrigin: '' });
+        const regularImport = await agentApi.importAgent(regularToken, {
+            ...createBase,
+            username: 'mcpmappingregular',
+            mcpServerMappings: [
+                { sourceOrigin: goneOrigin, targetOrigin: '' },
+                { sourceOrigin: jiraOrigin, targetOrigin: jiraOrigin },
+            ],
+        });
+        expect(regularImport.status).toBe(400);
+        expect(regularImport.body.error).toContain('not configured');
+        expect(await findAgentByName(agentApi, token, 'mcpmappingregular')).toBeUndefined();
 
         const unmapped = await agentApi.importAgent(token, { ...createBase, username: 'mcpmappingapi' });
         expect(unmapped.status).toBe(400);
@@ -679,5 +718,55 @@ test.describe('Agent versioning, export and import', () => {
             { server_origin: embeddedMattermostOrigin, tool_name: 'read_post' },
             { server_origin: jiraOrigin, tool_name: 'create_issue' },
         ]);
+    });
+
+    test('tools imported for a server configured with a trailing slash stay enabled through an editor save', async ({ page }) => {
+        test.setTimeout(90000);
+        const agentApi = new AgentAPIHelper(mattermost.url());
+        const token = await adminToken();
+        const doc = exportDocument({
+            name: 'trackerimport',
+            displayName: 'Tracker Import',
+            customInstructions: 'Uses tools from a server configured with a trailing slash.',
+            mcpTools: [{ serverOrigin: trackerNormalizedOrigin, serverName: 'Tracker Elsewhere', toolName: 'create_issue' }],
+        });
+
+        const preview = await agentApi.previewAgentImport(token, doc);
+        expect(preview.status).toBe(200);
+        expect(preview.body.mcpServers).toEqual([
+            expect.objectContaining({ sourceOrigin: trackerNormalizedOrigin, autoTargetOrigin: trackerOrigin }),
+        ]);
+
+        const imported = await agentApi.importAgent(token, {
+            document: doc,
+            mode: 'create',
+            username: 'trackerimport',
+            displayName: 'Tracker Import',
+            serviceID: mockServiceId,
+        });
+        expect(imported.status).toBe(201);
+        const expectedTools = [{ server_origin: trackerOrigin, tool_name: 'create_issue' }];
+        expect(sortTools(imported.body.enabledMCPTools)).toEqual(expectedTools);
+
+        const agentPage = await loginToAgents(page);
+        await agentPage.openAgentEditor('Tracker Import');
+        await agentPage.getModalTab('MCPs').click();
+        const trackerHeader = page.getByRole('button', { name: new RegExp(`^${trackerServerName}, 1 of 2 tools enabled`) });
+        await expect(trackerHeader).toBeVisible({ timeout: 30000 });
+        await trackerHeader.click();
+        await expect(page.getByRole('button', { name: `Disable tool create_issue on ${trackerServerName}` }))
+            .toHaveAttribute('aria-checked', 'true');
+        await expect(page.getByRole('button', { name: `Enable tool search_issues on ${trackerServerName}` }))
+            .toHaveAttribute('aria-checked', 'false');
+
+        // Saving an unrelated edit sends the reconciled tool list back to the server.
+        await agentPage.getModalTab('Configuration').click();
+        await agentPage.getCustomInstructionsInput().fill('Edited after the import.');
+        await agentPage.getModalSaveButton().click();
+        await agentPage.waitForModalClosed();
+
+        const saved = await agentApi.getAgent(token, imported.body.id);
+        expect(saved.customInstructions).toBe('Edited after the import.');
+        expect(sortTools(saved.enabledMCPTools)).toEqual(expectedTools);
     });
 });

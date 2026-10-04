@@ -190,7 +190,7 @@ The dirty-state check considers both form fields and a queued avatar upload, so 
 
 ## Version history
 
-Every successful save of an agent creates a new numbered version: 1, 2, 3, and so on. The agent always runs its latest version; there are no drafts or pinned versions. Creating, editing, restoring, and importing an agent each add a version, and so do a few internal writes (for example, the legacy bot migration), which are labeled **System**. Agents that existed before version history was introduced get a version 1, labeled **Initial version**, when the plugin activates.
+Every successful save of an agent creates a new numbered version: 1, 2, 3, and so on. The agent always runs its latest version; there are no drafts or pinned versions. Creating, editing, restoring, and importing an agent each add a version, and so do a few internal writes (for example, the legacy bot migration), which are labeled **System**. Agents that existed before version history was introduced get a version 1, labeled **Initial version**, when the plugin activates. If an agent's stored configuration changes outside the editor (for example, an internal migration), a **System** version records that change before the next save, so the next editor is never credited with it.
 
 To view the history, open an existing agent in the editor and select the **History** tab. Each entry shows the version number, when it was saved, who saved it, how it was produced, and which settings changed compared with the previous version (setting names only). Select a version to see a read-only view of its full configuration.
 
@@ -199,6 +199,7 @@ To roll back, select a version and choose **Restore this version**, then confirm
 - The version's AI service must still exist. If it has since been deleted, the restore is rejected; restore a different version or edit the agent instead.
 - License gates, access validation, and the service account rules in [What's editable vs locked](#whats-editable-vs-locked) apply as if you had made the same edit by hand.
 - The username never changes.
+- Versions do not store attribute-based access policies. Switching an agent away from attribute-based access deletes its policy, so restoring an earlier attribute-based version leaves the agent with no policy and nobody can use it. The confirmation warns about this, and after the restore the editor opens the **Access** tab so you can create a new policy.
 
 Only users who can manage the agent can see its history, because versions include the agent's custom instructions. Versions are kept when an agent is deleted and are never pruned. Restores are recorded in the server audit log as `restoreAgentVersion` (agent, version number, and changed setting names only).
 
@@ -228,8 +229,9 @@ Select **Import agent** on the **Agents** page and choose an exported file. User
 
 Each MCP server referenced in the file must be mapped to an MCP server on this server, or its tools removed:
 
-- A server whose URL matches an MCP server configured on this server (ignoring surrounding whitespace and a trailing `/`) is mapped automatically. Configured servers count even when they are disabled; the embedded Mattermost server counts only when it is enabled.
+- A server whose URL matches an MCP server available to you on this server (ignoring surrounding whitespace and a trailing `/`) is mapped automatically. The imported tools are stored under that server's URL exactly as it is configured here.
 - Otherwise, pick the server to use, or choose **Remove these tools**. Import is blocked until every server is mapped or removed. Tools keep their names on the chosen server.
+- Available servers are the ones your **MCPs** tab lists: enabled servers your access policies allow, and the embedded Mattermost server when it is enabled. System administrators can also map to disabled servers.
 - When the file turns on **Automatically enable all MCP tools**, no mapping is needed: the agent gets every MCP tool on this server, as it would at runtime.
 
 An import adds a new version labeled **Imported**, and is recorded in the server audit log as `importAgent` (agent, and whether it created or updated an agent; never the file contents). Viewing history, exporting, and previewing an import are read-only and are not audited.
