@@ -158,7 +158,7 @@ const Row = ({label, children}: {label: string; children: React.ReactNode}) => (
 
 const Grid = styled.dl`
     display: grid;
-    grid-template-columns: minmax(auto, 180px) 1fr;
+    grid-template-columns: minmax(auto, 180px) minmax(0, 1fr);
     gap: 12px 16px;
     margin: 0;
     font-size: 14px;
@@ -174,16 +174,19 @@ const Value = styled.dd`
     margin: 0;
     min-width: 0;
     color: var(--center-channel-color);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
 `;
 
 const Instructions = styled.pre`
     margin: 0;
+    min-width: 0;
     padding: 8px 12px;
     max-height: 280px;
     overflow: auto;
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
     font-family: inherit;
     font-size: 13px;
     line-height: 20px;

@@ -708,7 +708,8 @@ const InstructionsPreview = styled.div`
     max-height: 96px;
     overflow: auto;
     white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
     font-size: 12px;
     line-height: 16px;
     border-radius: 4px;
@@ -767,7 +768,8 @@ const MappingOrigin = styled.div`
     font-size: 12px;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.72);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
 `;
 
 export default ImportAgentModal;
