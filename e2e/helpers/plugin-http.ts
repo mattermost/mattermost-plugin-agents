@@ -157,6 +157,19 @@ export class PluginRoutesApi {
         return response.json();
     }
 
+    /** Sends the request and returns the response as-is, for tests that assert on error statuses. */
+    async request(method: string, path: string, token: string, body?: unknown): Promise<Response> {
+        const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+        if (body !== undefined) {
+            headers['Content-Type'] = 'application/json';
+        }
+        return fetch(this.pluginUrl(path), {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+    }
+
     async deleteRequest(path: string, token: string): Promise<void> {
         const response = await fetch(this.pluginUrl(path), {
             method: 'DELETE',

@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {render, screen} from '@testing-library/react';
+import {fireEvent, render, screen} from '@testing-library/react';
 
 import {AgentInactiveReason, ServiceInfo, UserAgent} from '@/types/agents';
 
@@ -121,6 +121,7 @@ describe('AgentRow inactive badge', () => {
                 canManage={false}
                 onEdit={noop}
                 onDelete={noop}
+                onExport={noop}
             />,
         );
 
@@ -143,9 +144,53 @@ describe('AgentRow inactive badge', () => {
                 canManage={true}
                 onEdit={noop}
                 onDelete={noop}
+                onExport={noop}
             />,
         );
 
         expect(screen.queryByText('Read only')).toBeNull();
+    });
+});
+
+describe('AgentRow overflow menu', () => {
+    test('offers Export to managers and calls onExport without opening the editor', () => {
+        const onExport = jest.fn();
+        const onEdit = jest.fn();
+        const agent = makeAgent();
+        render(
+            <AgentRow
+                agent={agent}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={true}
+                onEdit={onEdit}
+                onDelete={noop}
+                onExport={onExport}
+            />,
+        );
+
+        fireEvent.click(screen.getByRole('button', {name: 'Agent actions'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Export'}));
+
+        expect(onExport).toHaveBeenCalledWith(agent);
+        expect(onEdit).not.toHaveBeenCalled();
+        expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
+    });
+
+    test('has no actions menu, and so no Export, for read-only rows', () => {
+        render(
+            <AgentRow
+                agent={makeAgent()}
+                services={[availableService]}
+                servicesLoaded={true}
+                canManage={false}
+                onEdit={noop}
+                onDelete={noop}
+                onExport={noop}
+            />,
+        );
+
+        expect(screen.queryByRole('button', {name: 'Agent actions'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
     });
 });

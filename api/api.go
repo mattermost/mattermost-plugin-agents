@@ -73,6 +73,9 @@ type MCPClientManager interface {
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess
+	// GetServerAccess returns the policy and plugin snapshots of userID's
+	// catalog without contacting any server; Tools is always empty.
+	GetServerAccess(ctx context.Context, userID string) mcp.CatalogAccess
 	RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error)
 	GetConfig() mcp.Config
 
@@ -97,13 +100,20 @@ type ConfigStore interface {
 
 // AgentStore provides CRUD access to user-created agents in the database.
 type AgentStore interface {
-	CreateAgent(cfg *llm.BotConfig) error
+	// CreateAgent and UpdateAgent record every write as a new agent version.
+	CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	GetAgent(id string) (*llm.BotConfig, error)
 	ListAgents() ([]*llm.BotConfig, error)
 	ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error)
 	CountActiveAgents() (int, error)
-	UpdateAgent(cfg *llm.BotConfig) error
+	UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error
 	DeleteAgent(id string) error
+
+	ListAgentVersions(agentID string) ([]store.AgentVersion, error)
+	// GetAgentVersion returns nil, nil when the version does not exist.
+	GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error)
+	// GetLatestAgentVersion returns 0 when the agent has no versions.
+	GetLatestAgentVersion(agentID string) (int, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -360,10 +370,17 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.GET("", a.handleListAgents)
 	// Register /models/fetch before /:agentid routes so "models" is never captured as :agentid.
 	agentRouter.POST("/models/fetch", a.handleFetchModelsForService)
+	// Static import routes, likewise registered before /:agentid.
+	agentRouter.POST("/import/preview", a.handlePreviewAgentImport)
+	agentRouter.POST("/import", a.handleImportAgent)
 	agentRouter.GET("/:agentid", a.handleGetAgent)
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
 	agentRouter.POST("/:agentid/avatar", a.handleUploadAgentAvatar)
+	agentRouter.GET("/:agentid/versions", a.handleListAgentVersions)
+	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
+	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
+	agentRouter.GET("/:agentid/export", a.handleExportAgent)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)

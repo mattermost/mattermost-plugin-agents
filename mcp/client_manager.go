@@ -449,6 +449,25 @@ func (m *ClientManager) GetCatalogAccessWithSelection(ctx context.Context, req C
 	return m.getCatalogAccess(ctx, req, selection, false)
 }
 
+// GetServerAccess returns the policy and plugin snapshots GetCatalogAccess
+// uses for userID's catalog, without contacting any server or listing tools.
+func (m *ClientManager) GetServerAccess(ctx context.Context, userID string) CatalogAccess {
+	if userID == "" {
+		return CatalogAccess{Errors: &Errors{Errors: []error{ErrCatalogInvokerRequired}}}
+	}
+
+	m.lifecycleMu.RLock()
+	defer m.lifecycleMu.RUnlock()
+	if m.closed {
+		return CatalogAccess{}
+	}
+	plugins := m.snapshotEnabledPluginServers()
+	return CatalogAccess{
+		DeniedOrigins: m.deniedMCPServerOrigins(ctx, userID, m.config, m.embeddedClient, plugins),
+		PluginServers: plugins,
+	}
+}
+
 func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest, selection ToolSelection, forceRefresh bool) CatalogAccess {
 	if err := req.validate(); err != nil {
 		return CatalogAccess{Errors: &Errors{Errors: []error{err}}}

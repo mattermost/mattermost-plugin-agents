@@ -10,7 +10,17 @@ import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
 import {PluginConfig} from '@/components/system_console/plugin_config_types';
 import type {ToolAnswer} from '@/components/tool_types';
 import type {Composition, ConversationResponse} from '@/types/conversation';
-import {UserAgent, CreateAgentRequest, UpdateAgentRequest, ServiceInfo} from '@/types/agents';
+import {
+    UserAgent,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+    ServiceInfo,
+    AgentVersionList,
+    AgentVersionDetail,
+    AgentExportDocument,
+    AgentImportPreview,
+    AgentImportRequest,
+} from '@/types/agents';
 import {isValidId} from '@/utils/ids';
 
 import manifest from './manifest';
@@ -1058,6 +1068,125 @@ export async function deleteAgent(id: string): Promise<void> {
         status_code: response.status,
         url,
     });
+}
+
+async function agentErrorFromResponse(response: Response, url: string): Promise<ClientError> {
+    return new ClientError(Client4.url, {
+        message: await readAgentErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function getAgentVersions(agentId: string): Promise<AgentVersionList> {
+    const url = `${agentRoute(agentId)}/versions`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export async function getAgentVersion(agentId: string, version: number): Promise<AgentVersionDetail> {
+    const url = `${agentRoute(agentId)}/versions/${encodeURIComponent(String(version))}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export async function restoreAgentVersion(agentId: string, version: number): Promise<UserAgent> {
+    const url = `${agentRoute(agentId)}/versions/${encodeURIComponent(String(version))}/restore`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export type AgentExportFile = {
+    blob: Blob;
+
+    // Filename from Content-Disposition, or null when the header is absent.
+    filename: string | null;
+}
+
+// parseContentDispositionFilename handles both filename*=UTF-8''... and filename="...".
+export function parseContentDispositionFilename(header: string | null): string | null {
+    if (!header) {
+        return null;
+    }
+    const extended = (/filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/).exec(header);
+    if (extended) {
+        try {
+            return decodeURIComponent(extended[1].trim());
+        } catch {
+            // Fall through to the plain filename parameter.
+        }
+    }
+    const quoted = (/filename\s*=\s*"([^"]+)"/).exec(header);
+    if (quoted) {
+        return quoted[1];
+    }
+    const bare = (/filename\s*=\s*([^;]+)/).exec(header);
+    return bare ? bare[1].trim() : null;
+}
+
+export async function exportAgent(agentId: string): Promise<AgentExportFile> {
+    const url = `${agentRoute(agentId)}/export`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return {
+            blob: await response.blob(),
+            filename: parseContentDispositionFilename(response.headers.get('Content-Disposition')),
+        };
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export async function previewAgentImport(document: AgentExportDocument): Promise<AgentImportPreview> {
+    const url = `${baseRoute()}/agents/import/preview`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({document}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export async function importAgent(request: AgentImportRequest): Promise<UserAgent> {
+    const url = `${baseRoute()}/agents/import`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify(request),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
 }
 
 export async function uploadAgentAvatar(agentId: string, file: File): Promise<void> {

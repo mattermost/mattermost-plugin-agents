@@ -286,6 +286,39 @@ func TestGetCatalogAccessSkipsDeniedServers(t *testing.T) {
 	assert.Zero(t, requests.Load())
 }
 
+func TestGetServerAccessEvaluatesPolicyWithoutConnecting(t *testing.T) {
+	var requests atomic.Int32
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(httpServer.Close)
+
+	checker := &stubServerAccessChecker{denied: map[string]bool{accessDeniedID: true, accessPluginSrvID: true}}
+	m := newAccessTestManager(t, checker)
+	m.config.Servers = []ServerConfig{
+		{ID: accessAllowedID, Name: "Allowed", Enabled: true, BaseURL: httpServer.URL + "/"},
+		{ID: accessDeniedID, Name: "Denied", Enabled: true, BaseURL: accessDeniedOrigin + "/"},
+	}
+
+	access := m.GetServerAccess(context.Background(), "user-1")
+
+	assert.Equal(t, map[string]bool{accessDeniedOrigin: true, accessPluginOrigin: true}, access.DeniedOrigins)
+	require.Len(t, access.PluginServers, 1)
+	assert.Equal(t, accessPluginID, access.PluginServers[0].PluginID)
+	assert.Empty(t, access.Tools)
+	assert.Nil(t, access.Errors)
+	assert.Zero(t, requests.Load(), "server access must not contact any server")
+	require.NotEmpty(t, checker.users)
+	for _, user := range checker.users {
+		assert.Equal(t, "user-1", user)
+	}
+
+	empty := m.GetServerAccess(context.Background(), "")
+	require.NotNil(t, empty.Errors, "a missing user must fail closed")
+	assert.Empty(t, empty.PluginServers)
+}
+
 func newRemoteAccessTestManager(t *testing.T, servers []ServerConfig, checker ServerAccessChecker, httpClient *http.Client) *ClientManager {
 	t.Helper()
 	mockAPI := &plugintest.API{}

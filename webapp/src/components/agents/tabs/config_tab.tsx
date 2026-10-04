@@ -45,6 +45,9 @@ type Props = {
     draft: AgentDraft;
     onChange: (updates: Partial<AgentDraft>) => void;
     onAvatarChange: (file: File | null) => void;
+
+    /** The avatar upload that the next save will apply, if any. */
+    avatarFile?: File | null;
     botUserId?: string;
     services: ServiceInfo[];
     errors?: Record<string, string>;
@@ -290,6 +293,7 @@ const ConfigTab = (props: Props) => {
                 <AvatarItem
                     botusername={draft.username}
                     avatarOwnerKey={props.botUserId}
+                    pendingFile={props.avatarFile ?? null}
                     changedAvatar={(image: File) => onAvatarChange(image)}
                 />
                 <SelectionItem

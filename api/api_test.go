@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -269,6 +270,13 @@ func (m *mockMCPClientManager) GetCatalogAccess(ctx context.Context, req mcp.Cat
 	return m.catalogAccess(req)
 }
 
+func (m *mockMCPClientManager) GetServerAccess(_ context.Context, userID string) mcp.CatalogAccess {
+	access := m.catalogAccess(mcp.UserCatalogRequest(userID))
+	access.Tools = nil
+	access.Errors = nil
+	return access
+}
+
 func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	access := m.GetCatalogAccess(ctx, req)
 	return access.Tools, access.Errors
@@ -511,10 +519,91 @@ type mockAgentStore struct {
 
 	// updateErrs, when non-empty, pops errors on consecutive UpdateAgent calls.
 	updateErrs []error
+
+	// versions holds each agent's versions, oldest first, recorded with the
+	// same rules as the real store.
+	versions map[string][]store.AgentVersionDetail
 }
 
 func newMockAgentStore() *mockAgentStore {
-	return &mockAgentStore{agents: make(map[string]*llm.BotConfig)}
+	return &mockAgentStore{
+		agents:   make(map[string]*llm.BotConfig),
+		versions: make(map[string][]store.AgentVersionDetail),
+	}
+}
+
+func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
+	snap := *cloneBotConfig(cfg)
+	snap.BotUserID = ""
+	snap.CreatorID = ""
+	snap.CreateAt, snap.UpdateAt, snap.DeleteAt = 0, 0, 0
+	nilIfEmpty := func(s []string) []string {
+		if len(s) == 0 {
+			return nil
+		}
+		return s
+	}
+	snap.ChannelIDs = nilIfEmpty(snap.ChannelIDs)
+	snap.UserIDs = nilIfEmpty(snap.UserIDs)
+	snap.TeamIDs = nilIfEmpty(snap.TeamIDs)
+	snap.AdminUserIDs = nilIfEmpty(snap.AdminUserIDs)
+	snap.EnabledNativeTools = nilIfEmpty(snap.EnabledNativeTools)
+	if len(snap.EnabledMCPTools) == 0 {
+		snap.EnabledMCPTools = nil
+	}
+	return snap
+}
+
+// recordVersion appends cfg as the next version of its agent. Agents seeded
+// directly into agents (no versions yet) first get prev recorded as version 1.
+func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.AgentVersionMeta) {
+	history := m.versions[cfg.ID]
+	if len(history) == 0 && prev != nil {
+		history = append(history, store.AgentVersionDetail{
+			AgentVersion: store.AgentVersion{Version: 1, Source: store.AgentVersionSourceInitial, CreateAt: prev.UpdateAt, ChangedFields: []string{}},
+			Config:       mockVersionSnapshot(prev),
+		})
+	}
+	snap := mockVersionSnapshot(cfg)
+	changed := []string{}
+	if len(history) > 0 {
+		changed = audit.ChangedJSONKeys(history[len(history)-1].Config, snap)
+	}
+	history = append(history, store.AgentVersionDetail{
+		AgentVersion: store.AgentVersion{
+			Version:             len(history) + 1,
+			CreatedBy:           meta.ActorID,
+			CreateAt:            cfg.UpdateAt,
+			Source:              meta.Source,
+			RestoredFromVersion: meta.RestoredFromVersion,
+			ChangedFields:       changed,
+		},
+		Config: snap,
+	})
+	m.versions[cfg.ID] = history
+}
+
+func (m *mockAgentStore) ListAgentVersions(agentID string) ([]store.AgentVersion, error) {
+	history := m.versions[agentID]
+	out := make([]store.AgentVersion, 0, len(history))
+	for i := len(history) - 1; i >= 0; i-- {
+		out = append(out, history[i].AgentVersion)
+	}
+	return out, nil
+}
+
+func (m *mockAgentStore) GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error) {
+	history := m.versions[agentID]
+	if version < 1 || version > len(history) {
+		return nil, nil
+	}
+	detail := history[version-1]
+	detail.Config = *cloneBotConfig(&detail.Config)
+	return &detail, nil
+}
+
+func (m *mockAgentStore) GetLatestAgentVersion(agentID string) (int, error) {
+	return len(m.versions[agentID]), nil
 }
 
 // cloneBotConfig returns a deep copy so API callers cannot mutate mock store internals via returned pointers.
@@ -544,12 +633,13 @@ func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 	return &dst
 }
 
-func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	cfg.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
 	now := time.Now().UnixMilli()
 	cfg.CreateAt = now
 	cfg.UpdateAt = now
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, nil, meta)
 	return nil
 }
 
@@ -594,7 +684,7 @@ func (m *mockAgentStore) CountActiveAgents() (int, error) {
 	return count, nil
 }
 
-func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
+func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig, meta store.AgentVersionMeta) error {
 	if len(m.updateErrs) > 0 {
 		err := m.updateErrs[0]
 		m.updateErrs = m.updateErrs[1:]
@@ -611,6 +701,7 @@ func (m *mockAgentStore) UpdateAgent(cfg *llm.BotConfig) error {
 	}
 	cfg.UpdateAt = time.Now().UnixMilli()
 	m.agents[cfg.ID] = cloneBotConfig(cfg)
+	m.recordVersion(cfg, existing, meta)
 	return nil
 }
 

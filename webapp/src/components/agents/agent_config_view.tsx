@@ -24,12 +24,15 @@ import ConfirmationDialog from '@/components/confirmation_dialog';
 import {useIsLicensedFor} from '@/license';
 import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
+import {downloadAgentExport} from '@/utils/download_agent_export';
 
+import {agentUsernameError} from './agent_username';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
+import HistoryTab from './tabs/history_tab';
 
-type Tab = 'config' | 'access' | 'mcps';
+type Tab = 'config' | 'access' | 'mcps' | 'history';
 
 type Mode = 'create' | 'edit';
 
@@ -195,12 +198,13 @@ type Props = {
     services: ServiceInfo[]; // pre-fetched from parent
     onBack: () => void;
     onSaved: (agent: UserAgent) => void; // called after successful create or update
+    onRestored?: (agent: UserAgent) => void; // called after a version was restored; the editor stays open
 }
 
 const DISCARD_CHANGES_TITLE_ID = 'discard-agent-changes-title';
 
 const AgentConfigView = (props: Props) => {
-    const {mode, agent, services, onBack, onSaved} = props;
+    const {mode, agent, services, onBack, onSaved, onRestored} = props;
     const intl = useIntl();
 
     // Parent owns the manage_system check via useCurrentUserHasSystemPermission.
@@ -228,6 +232,7 @@ const AgentConfigView = (props: Props) => {
     const [baselineDraft, setBaselineDraft] = useState<AgentDraft>(initialDraft);
     const [avatarFile, setAvatarFile] = useState<File | null>(null);
     const [saving, setSaving] = useState(false);
+    const [exporting, setExporting] = useState(false);
     const [errors, setErrors] = useState<Record<string, string>>({});
     const [showDiscardDialog, setShowDiscardDialog] = useState(false);
     const showDiscardDialogRef = useRef(false);
@@ -316,15 +321,47 @@ const AgentConfigView = (props: Props) => {
         setBaselineDraft((prev) => ({...prev, enabledTools: [...next]}));
     }, []);
 
+    const handleVersionRestored = useCallback((restored: UserAgent) => {
+        const restoredDraft = agentToDraft(restored);
+
+        // Switching access away from attribute-based deletes the agent's
+        // policy, so a restored attribute-based version has none until one
+        // is created on the Access tab.
+        const needsAccessPolicy = restoredDraft.userAccessLevel === UserAccessLevel.AttributeBased &&
+            baselineDraft.userAccessLevel !== UserAccessLevel.AttributeBased;
+        setDraft(restoredDraft);
+        setBaselineDraft(cloneDraft(restoredDraft));
+        setAvatarFile(null);
+        setErrors({});
+        if (needsAccessPolicy) {
+            setActiveTab('access');
+        }
+        onRestored?.(restored);
+    }, [baselineDraft.userAccessLevel, onRestored]);
+
+    const handleExport = useCallback(async () => {
+        if (!agent || exporting) {
+            return;
+        }
+        setExporting(true);
+        try {
+            await downloadAgentExport(agent.id, agent.name);
+        } catch (e: any) {
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
+            setErrors({general: message || intl.formatMessage({defaultMessage: 'Failed to export agent. Please try again.'})});
+        } finally {
+            setExporting(false);
+        }
+    }, [agent, exporting, intl]);
+
     const validate = useCallback((): Record<string, string> => {
         const errs: Record<string, string> = {};
         if (!draft.displayName.trim()) {
             errs.displayName = intl.formatMessage({defaultMessage: 'Display name is required'});
         }
-        if (!draft.username.trim()) {
-            errs.username = intl.formatMessage({defaultMessage: 'Username is required'});
-        } else if (!(/^[a-z][a-z0-9.\-_]*$/).test(draft.username)) {
-            errs.username = intl.formatMessage({defaultMessage: 'Username must start with a letter and contain only lowercase letters, numbers, periods, hyphens, and underscores'});
+        const usernameError = agentUsernameError(intl, draft.username);
+        if (usernameError) {
+            errs.username = usernameError;
         }
         if (!draft.serviceId) {
             errs.serviceId = intl.formatMessage({defaultMessage: 'AI Service is required'});
@@ -413,6 +450,15 @@ const AgentConfigView = (props: Props) => {
                         </BackButton>
                         <ViewTitle>{title}</ViewTitle>
                     </HeaderLeading>
+                    {mode === 'edit' && agent && (
+                        <ExportButton
+                            type='button'
+                            onClick={handleExport}
+                            disabled={exporting || saving}
+                        >
+                            {exporting ? <FormattedMessage defaultMessage='Exporting...'/> : <FormattedMessage defaultMessage='Export'/>}
+                        </ExportButton>
+                    )}
                 </ViewHeader>
 
                 <TabsContainer>
@@ -440,6 +486,14 @@ const AgentConfigView = (props: Props) => {
                     >
                         <FormattedMessage defaultMessage='MCPs'/>
                     </TabButton>
+                    {mode === 'edit' && agent && (
+                        <TabButton
+                            $active={activeTab === 'history'}
+                            onClick={() => setActiveTab('history')}
+                        >
+                            <FormattedMessage defaultMessage='History'/>
+                        </TabButton>
+                    )}
                 </TabsContainer>
 
                 <ViewBody>
@@ -455,6 +509,7 @@ const AgentConfigView = (props: Props) => {
                             draft={draft}
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
+                            avatarFile={avatarFile}
                             botUserId={agent?.botUserID}
                             services={services}
                             errors={errors}
@@ -484,24 +539,36 @@ const AgentConfigView = (props: Props) => {
                             onReconcileEnabledTools={reconcileEnabledTools}
                         />
                     )}
+                    {activeTab === 'history' && mode === 'edit' && agent && (
+                        <HistoryTab
+                            agentId={agent.id}
+                            services={services}
+                            isDirty={isDirty}
+                            currentUserAccessLevel={baselineDraft.userAccessLevel}
+                            onRestored={handleVersionRestored}
+                        />
+                    )}
                 </ViewBody>
 
-                <ViewFooter>
-                    <CancelButton
-                        type='button'
-                        onClick={requestBack}
-                        disabled={saving}
-                    >
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </CancelButton>
-                    <SaveButton
-                        onClick={handleSave}
-                        disabled={saving}
-                    >
-                        {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
-                        }
-                    </SaveButton>
-                </ViewFooter>
+                {/* History is read-only; a restore saves on its own. */}
+                {activeTab !== 'history' && (
+                    <ViewFooter>
+                        <CancelButton
+                            type='button'
+                            onClick={requestBack}
+                            disabled={saving}
+                        >
+                            <FormattedMessage defaultMessage='Cancel'/>
+                        </CancelButton>
+                        <SaveButton
+                            onClick={handleSave}
+                            disabled={saving}
+                        >
+                            {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
+                            }
+                        </SaveButton>
+                    </ViewFooter>
+                )}
             </ViewContainer>
             <ConfirmationDialog
                 show={showDiscardDialog}
@@ -652,6 +719,11 @@ const ViewFooter = styled.div`
 
 const CancelButton = styled(TertiaryButton)`
     height: 40px;
+`;
+
+const ExportButton = styled(TertiaryButton)`
+    height: 40px;
+    flex-shrink: 0;
 `;
 
 const SaveButton = styled(PrimaryButton)`

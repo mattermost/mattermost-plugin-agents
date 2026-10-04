@@ -210,6 +210,17 @@ func (p *Plugin) OnActivate() error {
 		return fmt.Errorf("failed to run ABAC ID migrations: %w", err)
 	}
 
+	// Runs after the ID migration so agent versions record the remapped
+	// service IDs. Not fatal: the next update of an agent records its prior
+	// state first anyway.
+	backfilled, backfillErr := p.store.BackfillAgentVersions()
+	if backfilled > 0 {
+		pluginAPI.Log.Info("Backfilled agent versions", "count", backfilled)
+	}
+	if backfillErr != nil {
+		pluginAPI.Log.Error("Failed to backfill versions of some agents", "error", backfillErr.Error())
+	}
+
 	// Runs after the ID migration (it matches agents to services by ID) and
 	// before runtime config is loaded, so every node — including a follower
 	// that found nothing left to migrate — loads the migrated policies and

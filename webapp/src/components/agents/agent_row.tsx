@@ -6,6 +6,7 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
     DotsHorizontalIcon,
+    ExportVariantIcon,
     PencilOutlineIcon,
     TrashCanOutlineIcon,
 } from '@mattermost/compass-icons/components';
@@ -24,10 +25,11 @@ type Props = {
     canManage: boolean;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
+    onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete} = props;
+    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
@@ -89,6 +91,11 @@ const AgentRow = (props: Props) => {
         onDelete(agent);
     }, [agent, onDelete]);
 
+    const handleExport = useCallback(() => {
+        setMenuOpen(false);
+        onExport(agent);
+    }, [agent, onExport]);
+
     const handleRowActivate = useCallback(() => {
         if (!canManage || menuOpen) {
             return;
@@ -118,6 +125,11 @@ const AgentRow = (props: Props) => {
         e.stopPropagation();
         handleEdit();
     }, [handleEdit]);
+
+    const handleMenuItemExport = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleExport();
+    }, [handleExport]);
 
     const handleMenuItemDelete = useCallback((e: React.MouseEvent) => {
         e.stopPropagation();
@@ -206,6 +218,13 @@ const AgentRow = (props: Props) => {
                             >
                                 <PencilOutlineIcon size={16}/>
                                 <FormattedMessage defaultMessage='Edit'/>
+                            </MenuItem>
+                            <MenuItem
+                                type='button'
+                                onClick={handleMenuItemExport}
+                            >
+                                <ExportVariantIcon size={16}/>
+                                <FormattedMessage defaultMessage='Export'/>
                             </MenuItem>
                             <MenuItemDanger
                                 type='button'
