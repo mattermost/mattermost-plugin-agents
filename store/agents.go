@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -130,16 +131,31 @@ func (r *agentRow) toBotConfig() (*llm.BotConfig, error) {
 	return cfg, nil
 }
 
-// CreateAgent inserts a new user agent into the database.
+// CreateAgent inserts a new user agent into the database together with its
+// version 1, recorded with meta, in one transaction.
 // It generates the ID and sets CreateAt/UpdateAt timestamps automatically.
-func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
+func (s *Store) CreateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+	if err = validateAgentVersionMeta(meta); err != nil {
+		return err
+	}
+
 	cfg.ID = model.NewId()
 	now := model.GetMillis()
 	cfg.CreateAt = now
 	cfg.UpdateAt = now
 	cfg.DeleteAt = 0
 
-	_, err := s.db.Exec(
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin agent create transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.Exec(
 		`INSERT INTO Agents_UserAgents (
 			ID, BotUserID, CreatorID, DisplayName, Username, ServiceID,
 			CustomInstructions, ChannelAccessLevel, ChannelIDs,
@@ -182,6 +198,13 @@ func (s *Store) CreateAgent(cfg *llm.BotConfig) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create agent: %w", err)
+	}
+
+	if err = insertAgentVersionTx(tx, cfg.ID, 1, agentVersionSnapshot(cfg), meta, nil, now); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent create: %w", err)
 	}
 
 	return nil
@@ -267,18 +290,47 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 	return agents, nil
 }
 
-// UpdateAgent updates an existing agent's mutable fields.
+// UpdateAgent updates an existing agent's mutable fields and records the
+// result as its next version, with meta, in one transaction. An agent that
+// has no versions yet first gets its pre-update state recorded as version 1.
 // It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
-func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
+func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
+	if err = validateAgentVersionMeta(meta); err != nil {
+		return err
+	}
+
+	tx, err := s.db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin agent update transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	current, err := lockActiveAgentTx(tx, cfg.ID)
+	if err != nil {
+		return err
+	}
+	if current == nil {
+		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+
+	latest, latestConfig, err := ensureInitialAgentVersionTx(tx, current)
+	if err != nil {
+		return err
+	}
+
 	// Millisecond timestamps can collide when create and update run in the same ms; ensure UpdateAt advances.
 	now := model.GetMillis()
-	if now <= cfg.UpdateAt {
-		now = cfg.UpdateAt + 1
+	if floor := max(cfg.UpdateAt, current.UpdateAt); now <= floor {
+		now = floor + 1
 	}
 	cfg.UpdateAt = now
 
-	result, err := s.db.Exec(
+	result, err := tx.Exec(
 		`UPDATE Agents_UserAgents SET
 			DisplayName = $1,
 			Username = $2,
@@ -341,6 +393,15 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig) error {
 	}
 	if rowsAffected == 0 {
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
+	}
+
+	snapshot := agentVersionSnapshot(cfg)
+	changed := audit.ChangedJSONKeys(json.RawMessage(latestConfig), snapshot)
+	if err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changed, now); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit agent update: %w", err)
 	}
 
 	return nil
