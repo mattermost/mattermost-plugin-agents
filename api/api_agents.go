@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -352,34 +353,88 @@ func (a *API) refreshBotsAndNotify() error {
 	return ensureErr
 }
 
+// requestFieldsFromConfig returns the request fields that reproduce cfg's
+// request-controlled configuration when applied.
+func requestFieldsFromConfig(cfg *llm.BotConfig) AgentRequestFields {
+	return AgentRequestFields{
+		DisplayName:             cfg.DisplayName,
+		ServiceID:               cfg.ServiceID,
+		CustomInstructions:      cfg.CustomInstructions,
+		ChannelAccessLevel:      int(cfg.ChannelAccessLevel),
+		ChannelIDs:              cfg.ChannelIDs,
+		UserAccessLevel:         int(cfg.UserAccessLevel),
+		UserIDs:                 cfg.UserIDs,
+		TeamIDs:                 cfg.TeamIDs,
+		AdminUserIDs:            cfg.AdminUserIDs,
+		EnabledMCPTools:         cfg.EnabledMCPTools,
+		AutoEnableNewMCPTools:   cfg.AutoEnableNewMCPTools,
+		MCPDynamicToolLoading:   cfg.MCPDynamicToolLoading,
+		UseServiceAccountAuth:   cfg.UseServiceAccountAuth,
+		Model:                   cfg.Model,
+		EnableVision:            cfg.EnableVision,
+		DisableTools:            cfg.DisableTools,
+		EnabledNativeTools:      cfg.EnabledNativeTools,
+		ReasoningEnabled:        cfg.ReasoningEnabled,
+		ReasoningEffort:         cfg.ReasoningEffort,
+		ThinkingBudget:          cfg.ThinkingBudget,
+		StructuredOutputEnabled: cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated field is still persisted verbatim
+		MaxToolTurns:            cfg.MaxToolTurns,
+	}
+}
+
+// bindAgentRequestJSON binds the JSON body, capped at MaxAgentRequestBodyBytes,
+// into dst. It writes the abort response (413 or 400) and returns false on failure.
+func bindAgentRequestJSON(c *gin.Context, dst any) bool {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
+	if err := c.ShouldBindJSON(dst); err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
+			return false
+		}
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return false
+	}
+	return true
+}
+
+// checkCanCreateAgent enforces the create permission and the agent quota. It
+// writes the abort response and returns false when creation must be blocked.
+func (a *API) checkCanCreateAgent(c *gin.Context, userID string) bool {
+	if !canCreateAgent(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to create agents"))
+		return false
+	}
+	return a.checkAgentCreateQuota(c)
+}
+
 // handleCreateAgent handles POST /agents: creates the bot user and persisted agent config.
 func (a *API) handleCreateAgent(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 
-	if !canCreateAgent(a.pluginAPI, userID) {
-		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to create agents"))
+	if !a.checkCanCreateAgent(c, userID) {
 		return
 	}
-
-	if !a.checkAgentCreateQuota(c) {
-		return
-	}
-
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
 
 	var req CreateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
-			return
-		}
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindAgentRequestJSON(c, &req) {
 		return
 	}
 
+	agent, ok := a.createAgent(c, userID, req, store.AgentVersionMeta{ActorID: userID, Source: store.AgentVersionSourceCreate})
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusCreated, agent)
+}
+
+// createAgent validates req and creates the bot account and the agent, whose
+// first version is recorded with meta. The caller must already have passed
+// checkCanCreateAgent. It writes the abort response and returns false on
+// failure; on success bots are refreshed and the caller writes the response.
+func (a *API) createAgent(c *gin.Context, userID string, req CreateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
 	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
-		return
+		return nil, false
 	}
 
 	// Identify the requested agent as soon as the body is bound so
@@ -390,28 +445,28 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	if !validUsernameRe.MatchString(req.Username) {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores"))
-		return
+		return nil, false
 	}
 
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
-		return
+		return nil, false
 	}
 
 	proposed := buildAgentConfigForCreate(req, userID, "")
 	if !a.checkAgentLicenseGates(c, *proposed, nil) {
-		return
+		return nil, false
 	}
 
 	// Validate the built config before creating the Mattermost bot account so an
 	// invalid request does not leave an orphan bot user behind.
 	if err := proposed.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
-		return
+		return nil, false
 	}
 
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, proposed, nil); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
-		return
+		return nil, false
 	}
 
 	mmBot := &model.Bot{
@@ -423,20 +478,20 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 		var appErr *model.AppError
 		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
 			abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
-			return
+			return nil, false
 		}
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
-		return
+		return nil, false
 	}
 
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
-	if err := a.agentStore.CreateAgent(agent); err != nil {
+	if err := a.agentStore.CreateAgent(agent, meta); err != nil {
 		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
 			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
 		}
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
-		return
+		return nil, false
 	}
 
 	// Both IDs exist only after the bot account and agent config are persisted.
@@ -444,7 +499,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	audit.AddParam(auditRec(c), "bot_user_id", mmBot.UserId)
 
 	_ = a.refreshBotsAndNotify()
-	c.JSON(http.StatusCreated, agent)
+	return agent, true
 }
 
 // agentListItem is an agent as listed on GET /agents, with the reason it is
@@ -560,37 +615,42 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, MaxAgentRequestBodyBytes)
-
 	var req UpdateAgentRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
-			abortAgentRequest(c, http.StatusRequestEntityTooLarge, fmt.Errorf("request body too large: %w", err))
-			return
-		}
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+	if !bindAgentRequestJSON(c, &req) {
 		return
 	}
 
+	updated, ok := a.updateAgent(c, userID, cfg, req, store.AgentVersionMeta{ActorID: userID, Source: store.AgentVersionSourceUpdate})
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, updated)
+}
+
+// updateAgent validates req against the stored agent cfg (already loaded
+// through loadManageableAgent) and persists the update as a new version
+// recorded with meta. It writes the abort response and returns false on
+// failure; on success bots are refreshed and the caller writes the response.
+func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req UpdateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
 	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
 	proposed := *cfg
 	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
 
 	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
-		return
+		return nil, false
 	}
 
 	if req.usernameProvided && req.Username != cfg.Name {
 		abortAgentRequest(c, http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
-		return
+		return nil, false
 	}
 	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
-		return
+		return nil, false
 	}
 
 	if !a.checkAgentLicenseGates(c, proposed, cfg) {
-		return
+		return nil, false
 	}
 
 	// Snapshot the stored config for the audit field diff, then adopt the
@@ -606,17 +666,17 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 
 	if err := cfg.Validate(); err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
-		return
+		return nil, false
 	}
 
 	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
 		abortAgentRequest(c, statusForAccessErr(err), err)
-		return
+		return nil, false
 	}
 
-	if err := a.agentStore.UpdateAgent(cfg); err != nil {
+	if err := a.agentStore.UpdateAgent(cfg, meta); err != nil {
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to update agent: %w", err))
-		return
+		return nil, false
 	}
 
 	// Switching away from attribute-based access: delete the agent policy.
@@ -629,11 +689,11 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		auditPolicyMutation(c, accesscontrol.ResourceTypeAgent, cfg.ID)
 
 		if err := a.accessChecker.DeletePolicy(c.Request.Context(), userID, accesscontrol.ResourceTypeAgent, cfg.ID); err != nil && !errors.Is(err, accesscontrol.ErrPolicyNotFound) {
-			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
+			if rollbackErr := a.agentStore.UpdateAgent(&prev, store.SystemAgentVersionMeta()); rollbackErr != nil {
 				a.pluginAPI.Log.Error("Failed to rollback agent after access policy deletion failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "delete_error", err.Error())
 			}
 			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
-			return
+			return nil, false
 		}
 	}
 
@@ -648,7 +708,7 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, cfg)
+	return cfg, true
 }
 
 // handleDeleteAgent handles DELETE /agents/:agentid (soft-delete and deactivate bot).
