@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -292,8 +291,9 @@ func (s *Store) ListAgentsByCreator(creatorID string) ([]*llm.BotConfig, error) 
 
 // UpdateAgent updates an existing agent's mutable fields and records the
 // result as its next version, with meta, in one transaction. An agent that
-// has no versions yet first gets its pre-update state recorded as version 1.
-// It sets UpdateAt automatically. The caller must supply the full agent struct
+// has no versions yet first gets its pre-update state recorded as version 1,
+// and one whose pre-update state differs from its latest version gets that
+// state recorded as a "system" version first. It sets UpdateAt automatically. The caller must supply the full agent struct
 // (read-modify-write pattern). Does NOT update ID, CreatorID, BotUserID, CreateAt, or DeleteAt.
 func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err error) {
 	if err = validateAgentVersionMeta(meta); err != nil {
@@ -318,7 +318,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 		return fmt.Errorf("agent %q not found or already deleted", cfg.ID)
 	}
 
-	latest, latestConfig, err := ensureInitialAgentVersionTx(tx, current)
+	latest, latestConfig, _, err := ensureCurrentAgentVersionTx(tx, current)
 	if err != nil {
 		return err
 	}
@@ -396,8 +396,7 @@ func (s *Store) UpdateAgent(cfg *llm.BotConfig, meta AgentVersionMeta) (err erro
 	}
 
 	snapshot := agentVersionSnapshot(cfg)
-	changed := audit.ChangedJSONKeys(json.RawMessage(latestConfig), snapshot)
-	if err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changed, now); err != nil {
+	if err = insertAgentVersionTx(tx, cfg.ID, latest+1, snapshot, meta, changedVersionFields(latestConfig, snapshot), now); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err != nil {

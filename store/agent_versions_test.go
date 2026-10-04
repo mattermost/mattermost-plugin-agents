@@ -4,6 +4,7 @@
 package store
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -169,6 +170,14 @@ func TestAgentVersionChangedFields(t *testing.T) {
 			},
 			expected: []string{"enabledMCPTools"},
 		},
+		{
+			name: "deprecated structured output flag is not reported",
+			mutate: func(cfg *llm.BotConfig) {
+				cfg.StructuredOutputEnabled = !cfg.StructuredOutputEnabled //nolint:staticcheck // deprecated field still persisted
+				cfg.Model = "other-model"
+			},
+			expected: []string{"model"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,6 +199,21 @@ func TestAgentVersionChangedFields(t *testing.T) {
 			assert.Equal(t, tt.expected, v2.ChangedFields)
 		})
 	}
+}
+
+func TestChangedVersionFieldsIgnoresUnversionedKeys(t *testing.T) {
+	next := llm.BotConfig{Name: "agent", StructuredOutputEnabled: false} //nolint:staticcheck // deprecated field still persisted
+	prevJSON, err := json.Marshal(next)
+	require.NoError(t, err)
+	var prev map[string]any
+	require.NoError(t, json.Unmarshal(prevJSON, &prev))
+	prev["service"] = map[string]any{"id": "svc-1", "type": "openai"}
+	prev["structuredOutputEnabled"] = true
+	prev["displayName"] = "Old Name"
+	raw, err := json.Marshal(prev)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"displayName"}, changedVersionFields(string(raw), next))
 }
 
 func TestAgentVersionWritesAreTransactional(t *testing.T) {
@@ -413,4 +437,103 @@ func TestAgentVersionUnversionedAgents(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "before", v1.Config.CustomInstructions)
 	})
+}
+
+// setAgentServiceIDDirectly rewrites an agent row without recording a
+// version, the way the service ID migration does.
+func setAgentServiceIDDirectly(t *testing.T, s *Store, agentID, serviceID string) {
+	t.Helper()
+	_, err := s.db.Exec(`UPDATE Agents_UserAgents SET ServiceID = $1 WHERE ID = $2`, serviceID, agentID)
+	require.NoError(t, err)
+}
+
+func TestAgentVersionRowDrift(t *testing.T) {
+	t.Run("update first records a row that changed without a version", func(t *testing.T) {
+		s := setupVersionTestStore(t)
+		agent := testAgent("creator-1", "drifted", "Drifted")
+		require.NoError(t, s.CreateAgent(agent, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceCreate}))
+		setAgentServiceIDDirectly(t, s, agent.ID, "svc-remapped")
+
+		cfg, err := s.GetAgent(agent.ID)
+		require.NoError(t, err)
+		cfg.CustomInstructions = "edited"
+		require.NoError(t, s.UpdateAgent(cfg, AgentVersionMeta{ActorID: "editor-1", Source: AgentVersionSourceUpdate}))
+
+		versions, err := s.ListAgentVersions(agent.ID)
+		require.NoError(t, err)
+		require.Equal(t, []int{3, 2, 1}, versionNumbers(versions))
+		assert.Equal(t, AgentVersionSourceSystem, versions[1].Source)
+		assert.Empty(t, versions[1].CreatedBy)
+		assert.Equal(t, []string{"serviceID"}, versions[1].ChangedFields)
+		assert.Equal(t, AgentVersionSourceUpdate, versions[0].Source)
+		assert.Equal(t, "editor-1", versions[0].CreatedBy)
+		assert.Equal(t, []string{"customInstructions"}, versions[0].ChangedFields, "the editor's version lists only the editor's change")
+
+		v2, err := s.GetAgentVersion(agent.ID, 2)
+		require.NoError(t, err)
+		assert.Equal(t, "svc-remapped", v2.Config.ServiceID)
+		assert.Equal(t, "Be helpful and concise", v2.Config.CustomInstructions)
+	})
+
+	t.Run("update of an unchanged row records only the new version", func(t *testing.T) {
+		s := setupVersionTestStore(t)
+		agent := testAgent("creator-1", "in-sync", "In Sync")
+		require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
+		agent.CustomInstructions = "edited"
+		require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
+
+		versions, err := s.ListAgentVersions(agent.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []int{2, 1}, versionNumbers(versions))
+	})
+
+	t.Run("backfill records a row that changed without a version once", func(t *testing.T) {
+		s := setupVersionTestStore(t)
+		drifted := testAgent("creator-1", "drifted", "Drifted")
+		require.NoError(t, s.CreateAgent(drifted, SystemAgentVersionMeta()))
+		inSync := testAgent("creator-1", "in-sync", "In Sync")
+		require.NoError(t, s.CreateAgent(inSync, SystemAgentVersionMeta()))
+		setAgentServiceIDDirectly(t, s, drifted.ID, "svc-remapped")
+
+		backfilled, err := s.BackfillAgentVersions()
+		require.NoError(t, err)
+		assert.Equal(t, 1, backfilled)
+		again, err := s.BackfillAgentVersions()
+		require.NoError(t, err)
+		assert.Zero(t, again)
+
+		versions, err := s.ListAgentVersions(drifted.ID)
+		require.NoError(t, err)
+		require.Equal(t, []int{2, 1}, versionNumbers(versions))
+		assert.Equal(t, AgentVersionSourceSystem, versions[0].Source)
+		assert.Equal(t, []string{"serviceID"}, versions[0].ChangedFields)
+
+		inSyncVersions, err := s.ListAgentVersions(inSync.ID)
+		require.NoError(t, err)
+		assert.Equal(t, []int{1}, versionNumbers(inSyncVersions))
+	})
+}
+
+func TestBackfillAgentVersionsContinuesPastFailures(t *testing.T) {
+	s := setupVersionTestStore(t)
+	const broken = "legacyagent000000000000001"
+	insertUnversionedAgent(t, s, broken, "legacy-broken", "", 0)
+	insertUnversionedAgent(t, s, "legacyagent000000000000002", "legacy-two", "", 0)
+	insertUnversionedAgent(t, s, "legacyagent000000000000003", "legacy-three", "", 0)
+	_, err := s.db.Exec(`UPDATE Agents_UserAgents SET ChannelIDs = 'not json' WHERE ID = $1`, broken)
+	require.NoError(t, err)
+
+	backfilled, err := s.BackfillAgentVersions()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), broken)
+	assert.Equal(t, 2, backfilled, "agents after the failing one are still backfilled")
+
+	for _, id := range []string{"legacyagent000000000000002", "legacyagent000000000000003"} {
+		versions, listErr := s.ListAgentVersions(id)
+		require.NoError(t, listErr)
+		assert.Equal(t, []int{1}, versionNumbers(versions))
+	}
+	brokenVersions, err := s.ListAgentVersions(broken)
+	require.NoError(t, err)
+	assert.Empty(t, brokenVersions)
 }

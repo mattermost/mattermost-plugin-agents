@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -118,6 +120,22 @@ func agentVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	return snap
 }
 
+// ignoredVersionFields are BotConfig keys never reported in ChangedFields:
+// service is not part of a snapshot, and structuredOutputEnabled is
+// deprecated and ignored at runtime (saving from the UI clears it).
+var ignoredVersionFields = map[string]bool{
+	"service":                 true,
+	"structuredOutputEnabled": true,
+}
+
+// changedVersionFields returns the BotConfig keys of next that differ from
+// the snapshot JSON prev, excluding ignoredVersionFields.
+func changedVersionFields(prev string, next llm.BotConfig) []string {
+	return slices.DeleteFunc(audit.ChangedJSONKeys(json.RawMessage(prev), next), func(key string) bool {
+		return ignoredVersionFields[key]
+	})
+}
+
 func validateAgentVersionMeta(meta AgentVersionMeta) error {
 	switch meta.Source {
 	case AgentVersionSourceInitial, AgentVersionSourceCreate, AgentVersionSourceUpdate,
@@ -223,6 +241,39 @@ func ensureInitialAgentVersionTx(tx *sqlx.Tx, current *llm.BotConfig) (int, stri
 	return 1, string(configJSON), nil
 }
 
+// ensureCurrentAgentVersionTx makes sure the latest version of current (the
+// locked, pre-write row) records that row. An agent without versions gets
+// version 1 (source "initial"); one whose row differs from its latest
+// version, because something wrote the row without recording a version,
+// gets the row recorded as the next version (source "system") so that
+// history never attributes those changes to the next writer. It returns the
+// latest version number, that version's raw config JSON, and whether it
+// wrote a version.
+func ensureCurrentAgentVersionTx(tx *sqlx.Tx, current *llm.BotConfig) (int, string, bool, error) {
+	latest, latestConfig, err := latestAgentVersionTx(tx, current.ID)
+	if err != nil {
+		return 0, "", false, err
+	}
+	if latest == 0 {
+		latest, latestConfig, err = ensureInitialAgentVersionTx(tx, current)
+		return latest, latestConfig, err == nil, err
+	}
+
+	snapshot := agentVersionSnapshot(current)
+	changed := changedVersionFields(latestConfig, snapshot)
+	if len(changed) == 0 {
+		return latest, latestConfig, false, nil
+	}
+	if err = insertAgentVersionTx(tx, current.ID, latest+1, snapshot, SystemAgentVersionMeta(), changed, current.UpdateAt); err != nil {
+		return 0, "", false, err
+	}
+	configJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		return 0, "", false, fmt.Errorf("failed to marshal agent version config: %w", err)
+	}
+	return latest + 1, string(configJSON), true, nil
+}
+
 // ListAgentVersions returns the versions of agentID, newest first. Deleted
 // agents keep their versions; callers gate access on the agent itself.
 func (s *Store) ListAgentVersions(agentID string) ([]AgentVersion, error) {
@@ -291,33 +342,33 @@ func (s *Store) GetLatestAgentVersion(agentID string) (int, error) {
 	return latest, nil
 }
 
-// BackfillAgentVersions records version 1 (source "initial") from the current
-// row for every active agent that has no versions, returning how many it
-// wrote. Idempotent and safe to run concurrently on several nodes: each agent
-// is handled in its own transaction under the same row lock as UpdateAgent,
-// and agents that already have a version are skipped.
+// BackfillAgentVersions makes the latest version of every active agent
+// record its current row: agents without versions get version 1 (source
+// "initial"), and agents whose row differs from their latest version get the
+// row recorded as a "system" version. It returns how many agents it wrote a
+// version for. An agent that fails does not stop the others; the returned
+// error joins every per-agent failure. Idempotent and safe to run concurrently
+// on several nodes: each agent is handled in its own transaction under the
+// same row lock as UpdateAgent.
 func (s *Store) BackfillAgentVersions() (int, error) {
 	var agentIDs []string
-	err := s.db.Select(&agentIDs,
-		`SELECT a.ID FROM Agents_UserAgents a
-		WHERE a.DeleteAt = 0
-		AND NOT EXISTS (SELECT 1 FROM Agents_AgentVersions v WHERE v.AgentID = a.ID)`,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("failed to find agents without versions: %w", err)
+	if err := s.db.Select(&agentIDs, `SELECT ID FROM Agents_UserAgents WHERE DeleteAt = 0 ORDER BY ID`); err != nil {
+		return 0, fmt.Errorf("failed to list agents for version backfill: %w", err)
 	}
 
 	backfilled := 0
+	var errs []error
 	for _, agentID := range agentIDs {
-		wrote, backfillErr := s.backfillAgentVersion(agentID)
-		if backfillErr != nil {
-			return backfilled, backfillErr
+		wrote, err := s.backfillAgentVersion(agentID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("agent %q: %w", agentID, err))
+			continue
 		}
 		if wrote {
 			backfilled++
 		}
 	}
-	return backfilled, nil
+	return backfilled, errors.Join(errs...)
 }
 
 func (s *Store) backfillAgentVersion(agentID string) (wrote bool, err error) {
@@ -339,16 +390,13 @@ func (s *Store) backfillAgentVersion(agentID string) (wrote bool, err error) {
 		// Deleted since the candidate scan.
 		return false, tx.Rollback()
 	}
-	latest, _, err := latestAgentVersionTx(tx, agentID)
+	// Another node that got here first leaves nothing to write.
+	_, _, wrote, err = ensureCurrentAgentVersionTx(tx, current)
 	if err != nil {
 		return false, err
 	}
-	if latest > 0 {
-		// Another node or a concurrent update got there first.
+	if !wrote {
 		return false, tx.Rollback()
-	}
-	if _, _, err = ensureInitialAgentVersionTx(tx, current); err != nil {
-		return false, err
 	}
 	if err = tx.Commit(); err != nil {
 		return false, fmt.Errorf("failed to commit agent version backfill: %w", err)
