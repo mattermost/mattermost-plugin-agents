@@ -17,6 +17,7 @@ import {
     AgentImportRequest,
     ServiceInfo,
     UserAgent,
+    DefaultMaxToolTurns,
     codePointLength,
 } from '@/types/agents';
 
@@ -103,6 +104,9 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
 
     const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+
+        // Let choosing the same file again (e.g. after fixing it) fire another change.
+        e.target.value = '';
         if (!file) {
             return;
         }
@@ -298,7 +302,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
                                     ) : (
                                         intl.formatMessage(
                                             {defaultMessage: 'Tools: enabled, up to {turns} tool turns'},
-                                            {turns: doc.maxToolTurns},
+                                            {turns: doc.maxToolTurns > 0 ? doc.maxToolTurns : DefaultMaxToolTurns},
                                         )
                                     )}
                                 </SummaryLine>

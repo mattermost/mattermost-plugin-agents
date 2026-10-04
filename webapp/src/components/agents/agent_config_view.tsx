@@ -500,6 +500,7 @@ const AgentConfigView = (props: Props) => {
                             draft={draft}
                             onChange={updateDraft}
                             onAvatarChange={setAvatarFile}
+                            avatarFile={avatarFile}
                             botUserId={agent?.botUserID}
                             services={services}
                             errors={errors}
@@ -539,22 +540,25 @@ const AgentConfigView = (props: Props) => {
                     )}
                 </ViewBody>
 
-                <ViewFooter>
-                    <CancelButton
-                        type='button'
-                        onClick={requestBack}
-                        disabled={saving}
-                    >
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </CancelButton>
-                    <SaveButton
-                        onClick={handleSave}
-                        disabled={saving}
-                    >
-                        {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
-                        }
-                    </SaveButton>
-                </ViewFooter>
+                {/* History is read-only; a restore saves on its own. */}
+                {activeTab !== 'history' && (
+                    <ViewFooter>
+                        <CancelButton
+                            type='button'
+                            onClick={requestBack}
+                            disabled={saving}
+                        >
+                            <FormattedMessage defaultMessage='Cancel'/>
+                        </CancelButton>
+                        <SaveButton
+                            onClick={handleSave}
+                            disabled={saving}
+                        >
+                            {saving ? <FormattedMessage defaultMessage='Saving...'/> : <FormattedMessage defaultMessage='Save'/>
+                            }
+                        </SaveButton>
+                    </ViewFooter>
+                )}
             </ViewContainer>
             <ConfirmationDialog
                 show={showDiscardDialog}

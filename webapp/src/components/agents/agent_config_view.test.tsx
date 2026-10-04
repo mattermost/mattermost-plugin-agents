@@ -87,13 +87,23 @@ jest.mock('./tabs/config_tab', () => ({
     default: ({
         draft,
         onChange,
+        onAvatarChange,
+        avatarFile,
         errors = {},
     }: {
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
+        onAvatarChange: (file: File | null) => void;
+        avatarFile?: File | null;
         errors?: Record<string, string>;
     }) => (
         <>
+            <input
+                aria-label='Bot avatar'
+                type='file'
+                onChange={(e) => onAvatarChange(e.target.files?.[0] ?? null)}
+            />
+            <div data-testid='pending-avatar'>{avatarFile?.name ?? ''}</div>
             <input
                 aria-label='Display Name'
                 value={draft.displayName}
@@ -1012,6 +1022,44 @@ describe('AgentConfigView history and export', () => {
         expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('original instructions');
 
         // Baseline was reset too: leaving the editor must not prompt to discard.
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test('History tab hides the editor Save and Cancel buttons', async () => {
+        renderEdit();
+        expect(screen.getByRole('button', {name: 'Save'})).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        await screen.findByTestId('version-list');
+        expect(screen.queryByRole('button', {name: 'Save'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Cancel'})).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        expect(screen.getByRole('button', {name: 'Save'})).not.toBeNull();
+        expect(screen.getByRole('button', {name: 'Cancel'})).not.toBeNull();
+    });
+
+    test('restore discards a pending avatar upload along with the other edits', async () => {
+        mockRestoreAgentVersion.mockResolvedValue({...existingAgent, customInstructions: 'original instructions'});
+        renderEdit();
+
+        const avatar = new File(['x'], 'new-avatar.png', {type: 'image/png'});
+        fireEvent.change(screen.getByLabelText('Bot avatar'), {target: {files: [avatar]}});
+        expect(screen.getByTestId('pending-avatar').textContent).toBe('new-avatar.png');
+
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+        expect(within(dialog).getByText(/unsaved changes in the editor/)).not.toBeNull();
+        fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
+        expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        expect(screen.getByTestId('pending-avatar').textContent).toBe('');
         fireEvent.keyDown(document, {key: 'Escape'});
         expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });

@@ -163,6 +163,31 @@ describe('ImportAgentModal', () => {
         expect(within(summary).getByText('MCP tools: 2 tools')).not.toBeNull();
     });
 
+    test.each([
+        {maxToolTurns: 12, expected: 'Tools: enabled, up to 12 tool turns'},
+        {maxToolTurns: 0, expected: 'Tools: enabled, up to 30 tool turns'},
+    ])('summarizes maxToolTurns $maxToolTurns as the effective limit', async ({maxToolTurns, expected}) => {
+        renderModal();
+
+        await loadPreview(makePreview({}, {maxToolTurns}));
+
+        expect(within(screen.getByTestId('import-summary')).getByText(expected)).not.toBeNull();
+    });
+
+    test('previews a file again when the same file is chosen after an error', async () => {
+        renderModal();
+        mockPreview.mockRejectedValueOnce({message: 'Unsupported schemaVersion 9'});
+        chooseFile(JSON.stringify(makeDocument()));
+        expect(await screen.findByText('Unsupported schemaVersion 9')).not.toBeNull();
+
+        const input = screen.getByTestId('import-agent-file-input') as HTMLInputElement;
+        expect(input.value).toBe('');
+
+        await loadPreview(makePreview());
+        expect(mockPreview).toHaveBeenCalledTimes(2);
+        expect(screen.queryByText('Unsupported schemaVersion 9')).toBeNull();
+    });
+
     test('preselects auto-matched MCP servers and keeps Import disabled until every row is resolved', async () => {
         const {onImported} = renderModal();
         mockImport.mockResolvedValue({id: 'new', name: 'release-helper', displayName: 'Release Helper'} as UserAgent);
