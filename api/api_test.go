@@ -270,6 +270,13 @@ func (m *mockMCPClientManager) GetCatalogAccess(ctx context.Context, req mcp.Cat
 	return m.catalogAccess(req)
 }
 
+func (m *mockMCPClientManager) GetServerAccess(_ context.Context, userID string) mcp.CatalogAccess {
+	access := m.catalogAccess(mcp.UserCatalogRequest(userID))
+	access.Tools = nil
+	access.Errors = nil
+	return access
+}
+
 func (m *mockMCPClientManager) GetTools(ctx context.Context, req mcp.CatalogRequest) ([]llm.Tool, *mcp.Errors) {
 	access := m.GetCatalogAccess(ctx, req)
 	return access.Tools, access.Errors

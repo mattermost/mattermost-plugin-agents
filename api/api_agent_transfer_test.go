@@ -25,6 +25,9 @@ const (
 	jiraOrigin       = "https://jira.example.com/mcp"
 	newTrackerOrigin = "https://new.example.com/mcp"
 	oldTrackerOrigin = "https://old.example.com/mcp"
+	disabledOrigin   = "https://off.example.com/mcp"
+	// slashOrigin is configured with a trailing slash; its tools carry it as is.
+	slashOrigin = "https://slash.example.com/mcp/"
 
 	plantedHeaderSecret = "planted-mcp-header-secret"
 	plantedClientSecret = "planted-mcp-client-secret"
@@ -47,9 +50,14 @@ func setupTransferTestEnvironment(t *testing.T) *TestEnvironment {
 				ServiceAccountHeaders: map[string]string{"Authorization": plantedSASecret},
 			},
 			{ID: "new-id", Name: "New Tracker", Enabled: true, BaseURL: newTrackerOrigin},
+			{ID: "off-id", Name: "Disabled Tracker", Enabled: false, BaseURL: disabledOrigin},
+			{ID: "slash-id", Name: "Slash Tracker", Enabled: true, BaseURL: slashOrigin},
 		},
 		EmbeddedServer: config.MCPEmbeddedServerConfig{Enabled: true},
 	}
+	// The user-facing MCP catalog reads the same plugin configuration.
+	e.config.mcpConfig = cfgStore.cfg.MCP
+	e.mcp.embeddedServer = &stubEmbeddedServer{}
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 	return e
@@ -162,6 +170,7 @@ func TestPreviewAgentImport(t *testing.T) {
 		e := setupTransferTestEnvironment(t)
 		defer e.Cleanup(t)
 		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+		e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false)
 		e.agentStore.agents["agent-1"] = fullyConfiguredAgent()
 		records := e.CaptureAuditRecords()
 
@@ -179,6 +188,7 @@ func TestPreviewAgentImport(t *testing.T) {
 		assert.Equal(t, []agentexport.Server{
 			{Origin: jiraOrigin, Name: "Jira"},
 			{Origin: newTrackerOrigin, Name: "New Tracker"},
+			{Origin: slashOrigin, Name: "Slash Tracker"},
 			{Origin: config.MCPEmbeddedServerOrigin, Name: "Mattermost"},
 		}, resp.AvailableMCPServers)
 		require.NotNil(t, resp.ExistingAgent)
@@ -351,6 +361,7 @@ func TestImportAgentCreate(t *testing.T) {
 			e := setupTransferTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "imported-bot-user"}, nil).Maybe()
 
 			recorder := doRequest(e.api, http.MethodPost, "/agents/import", tt.body, testUserID)
@@ -476,6 +487,7 @@ func TestImportAgentUpdate(t *testing.T) {
 			defer e.Cleanup(t)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 			original := fullyConfiguredAgent()
 			e.agentStore.agents[original.ID] = original
 			if tt.setup != nil {
@@ -595,6 +607,7 @@ func TestAuditImportAgent(t *testing.T) {
 			e := setupTransferTestEnvironment(t)
 			defer e.Cleanup(t)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
 			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "imported-bot-user"}, nil).Maybe()
 			e.agentStore.agents["agent-1"] = fullyConfiguredAgent()
 			records := e.CaptureAuditRecords()
@@ -611,6 +624,181 @@ func TestAuditImportAgent(t *testing.T) {
 			raw, err := json.Marshal(rec)
 			require.NoError(t, err)
 			assert.NotContains(t, string(raw), plantedInstructions, "audit record must never carry the document or instructions")
+		})
+	}
+}
+
+// visibilityDocument references a disabled server, a server configured with a
+// trailing slash, a server a policy may deny, and the embedded server.
+func visibilityDocument() agentexport.Document {
+	return exportDocument(
+		agentexport.MCPTool{ServerOrigin: disabledOrigin, ServerName: "Disabled Tracker", ToolName: "d"},
+		agentexport.MCPTool{ServerOrigin: "https://slash.example.com/mcp", ServerName: "Slash Tracker", ToolName: "s"},
+		agentexport.MCPTool{ServerOrigin: newTrackerOrigin, ServerName: "New Tracker", ToolName: "n"},
+		agentexport.MCPTool{ServerOrigin: config.MCPEmbeddedServerOrigin, ServerName: "Mattermost", ToolName: "e"},
+	)
+}
+
+func TestPreviewAgentImportMCPServerVisibility(t *testing.T) {
+	tests := []struct {
+		name          string
+		sysadmin      bool
+		setup         func(e *TestEnvironment)
+		wantAvailable []agentexport.Server
+		// wantAutoTargets is each document server's AutoTargetOrigin, in document order.
+		wantAutoTargets []string
+	}{
+		{
+			name:     "system admins see every configured server, including disabled and denied ones",
+			sysadmin: true,
+			setup: func(e *TestEnvironment) {
+				e.mcp.deniedOrigins = map[string]bool{newTrackerOrigin: true}
+			},
+			wantAvailable: []agentexport.Server{
+				{Origin: jiraOrigin, Name: "Jira"},
+				{Origin: newTrackerOrigin, Name: "New Tracker"},
+				{Origin: disabledOrigin, Name: "Disabled Tracker"},
+				{Origin: slashOrigin, Name: "Slash Tracker"},
+				{Origin: config.MCPEmbeddedServerOrigin, Name: "Mattermost"},
+			},
+			wantAutoTargets: []string{disabledOrigin, slashOrigin, newTrackerOrigin, config.MCPEmbeddedServerOrigin},
+		},
+		{
+			name: "other managers see only the enabled servers their policy allows",
+			setup: func(e *TestEnvironment) {
+				e.mcp.deniedOrigins = map[string]bool{newTrackerOrigin: true}
+			},
+			wantAvailable: []agentexport.Server{
+				{Origin: jiraOrigin, Name: "Jira"},
+				{Origin: slashOrigin, Name: "Slash Tracker"},
+				{Origin: config.MCPEmbeddedServerOrigin, Name: "Mattermost"},
+			},
+			wantAutoTargets: []string{"", slashOrigin, "", config.MCPEmbeddedServerOrigin},
+		},
+		{
+			name: "other managers do not see the embedded server when it is not running",
+			setup: func(e *TestEnvironment) {
+				e.mcp.embeddedServer = nil
+			},
+			wantAvailable: []agentexport.Server{
+				{Origin: jiraOrigin, Name: "Jira"},
+				{Origin: newTrackerOrigin, Name: "New Tracker"},
+				{Origin: slashOrigin, Name: "Slash Tracker"},
+			},
+			wantAutoTargets: []string{"", slashOrigin, newTrackerOrigin, ""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupTransferTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tt.sysadmin)
+			if tt.setup != nil {
+				tt.setup(e)
+			}
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents/import/preview", map[string]any{"document": visibilityDocument()}, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+
+			var resp importAgentPreviewResponse
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+			assert.Equal(t, tt.wantAvailable, resp.AvailableMCPServers)
+			autoTargets := make([]string, 0, len(resp.MCPServers))
+			for _, group := range resp.MCPServers {
+				autoTargets = append(autoTargets, group.AutoTargetOrigin)
+			}
+			assert.Equal(t, tt.wantAutoTargets, autoTargets)
+		})
+	}
+}
+
+func TestImportAgentMCPServerVisibility(t *testing.T) {
+	removeOthers := []agentexport.ServerMapping{
+		{SourceOrigin: newTrackerOrigin, TargetOrigin: ""},
+		{SourceOrigin: config.MCPEmbeddedServerOrigin, TargetOrigin: ""},
+	}
+
+	tests := []struct {
+		name          string
+		sysadmin      bool
+		denied        map[string]bool
+		mappings      []agentexport.ServerMapping
+		wantStatus    int
+		errorContains string
+		wantTools     []llm.EnabledMCPTool
+	}{
+		{
+			name:       "system admins may keep tools of a disabled server",
+			sysadmin:   true,
+			mappings:   removeOthers,
+			wantStatus: http.StatusCreated,
+			wantTools: []llm.EnabledMCPTool{
+				{ServerOrigin: disabledOrigin, ToolName: "d"},
+				{ServerOrigin: slashOrigin, ToolName: "s"},
+			},
+		},
+		{
+			name:          "other managers must map a disabled server's tools",
+			mappings:      removeOthers,
+			wantStatus:    http.StatusBadRequest,
+			errorContains: "must be mapped",
+		},
+		{
+			name:          "other managers cannot target a disabled server explicitly",
+			mappings:      append([]agentexport.ServerMapping{{SourceOrigin: disabledOrigin, TargetOrigin: disabledOrigin}}, removeOthers...),
+			wantStatus:    http.StatusBadRequest,
+			errorContains: "is not configured on this server",
+		},
+		{
+			name:   "other managers cannot target a server their policy denies",
+			denied: map[string]bool{newTrackerOrigin: true},
+			mappings: []agentexport.ServerMapping{
+				{SourceOrigin: disabledOrigin, TargetOrigin: newTrackerOrigin},
+				{SourceOrigin: newTrackerOrigin, TargetOrigin: ""},
+				{SourceOrigin: config.MCPEmbeddedServerOrigin, TargetOrigin: ""},
+			},
+			wantStatus:    http.StatusBadRequest,
+			errorContains: "is not configured on this server",
+		},
+		{
+			name:       "visible servers keep their configured origin",
+			mappings:   append([]agentexport.ServerMapping{{SourceOrigin: disabledOrigin, TargetOrigin: "https://slash.example.com/mcp"}}, removeOthers...),
+			wantStatus: http.StatusCreated,
+			wantTools: []llm.EnabledMCPTool{
+				{ServerOrigin: slashOrigin, ToolName: "d"},
+				{ServerOrigin: slashOrigin, ToolName: "s"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupTransferTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(tt.sysadmin)
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "imported-bot-user"}, nil).Maybe()
+			e.mcp.deniedOrigins = tt.denied
+
+			recorder := doRequest(e.api, http.MethodPost, "/agents/import", map[string]any{
+				"document": visibilityDocument(), "mode": "create",
+				"username": "imported-agent", "displayName": "Imported Agent", "serviceID": "svc-1",
+				"mcpServerMappings": tt.mappings,
+			}, testUserID)
+			require.Equal(t, tt.wantStatus, recorder.Result().StatusCode, recorder.Body.String())
+
+			if tt.errorContains != "" {
+				var errResp agentErrorResponse
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &errResp))
+				assert.Contains(t, errResp.Error, tt.errorContains)
+				assert.Empty(t, e.agentStore.agents)
+				return
+			}
+			var created llm.BotConfig
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
+			assert.Equal(t, tt.wantTools, e.agentStore.agents[created.ID].EnabledMCPTools)
 		})
 	}
 }

@@ -133,7 +133,7 @@ func (a *API) handlePreviewAgentImport(c *gin.Context) {
 		return
 	}
 
-	available := agentexport.Servers(a.pluginConfigOrEmpty().MCP)
+	available := a.importTargetMCPServers(c, userID)
 	resp := importAgentPreviewResponse{
 		Document:            doc,
 		MCPServers:          doc.ServerGroups(available),
@@ -193,7 +193,7 @@ func (a *API) handleImportAgent(c *gin.Context) {
 			abortAgentRequest(c, http.StatusBadRequest, errors.New("username, displayName and serviceID are required to create an agent"))
 			return
 		}
-		tools, ok := a.resolveImportMCPTools(c, doc, req.MCPServerMappings)
+		tools, ok := a.resolveImportMCPTools(c, userID, doc, req.MCPServerMappings)
 		if !ok {
 			return
 		}
@@ -213,7 +213,7 @@ func (a *API) handleImportAgent(c *gin.Context) {
 		if !ok {
 			return
 		}
-		tools, ok := a.resolveImportMCPTools(c, doc, req.MCPServerMappings)
+		tools, ok := a.resolveImportMCPTools(c, userID, doc, req.MCPServerMappings)
 		if !ok {
 			return
 		}
@@ -230,13 +230,36 @@ func (a *API) handleImportAgent(c *gin.Context) {
 	}
 }
 
-func (a *API) resolveImportMCPTools(c *gin.Context, doc agentexport.Document, mappings []agentexport.ServerMapping) ([]llm.EnabledMCPTool, bool) {
-	tools, err := doc.ResolveMCPTools(mappings, agentexport.Servers(a.pluginConfigOrEmpty().MCP))
+func (a *API) resolveImportMCPTools(c *gin.Context, userID string, doc agentexport.Document, mappings []agentexport.ServerMapping) ([]llm.EnabledMCPTool, bool) {
+	tools, err := doc.ResolveMCPTools(mappings, a.importTargetMCPServers(c, userID))
 	if err != nil {
 		abortAgentRequest(c, http.StatusBadRequest, err)
 		return nil, false
 	}
 	return tools, true
+}
+
+// importTargetMCPServers lists the MCP servers userID may map imported tools
+// to. System admins may target every configured server, including disabled
+// ones; everyone else exactly the servers their own tool catalog shows, so an
+// import never reveals or grants a server the caller cannot see.
+func (a *API) importTargetMCPServers(c *gin.Context, userID string) []agentexport.Server {
+	if isSystemAdmin(a.pluginAPI, userID) {
+		return agentexport.Servers(a.pluginConfigOrEmpty().MCP)
+	}
+	if a.mcpClientManager == nil {
+		return []agentexport.Server{}
+	}
+	access := a.mcpClientManager.GetServerAccess(c.Request.Context(), userID)
+	if access.Errors != nil {
+		return []agentexport.Server{}
+	}
+	visible := a.userVisibleMCPServers(access)
+	servers := make([]agentexport.Server, 0, len(visible))
+	for _, s := range visible {
+		servers = append(servers, agentexport.Server{Origin: s.BaseURL, Name: s.Name})
+	}
+	return agentexport.UniqueServers(servers)
 }
 
 // applyImportedMission overwrites the fields an export document carries.

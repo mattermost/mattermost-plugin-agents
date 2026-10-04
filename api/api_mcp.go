@@ -131,8 +131,6 @@ func (a *API) handleRefreshUserMCPTools(c *gin.Context) {
 }
 
 func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess, serviceAccount bool) UserMCPToolsResponse {
-	mcpCfg := a.config.MCP()
-
 	// Group tools by ServerOrigin
 	toolsByOrigin := make(map[string][]llm.Tool, len(access.Tools))
 	for _, t := range access.Tools {
@@ -147,18 +145,10 @@ func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess,
 	}
 
 	oauthManager := a.mcpClientManager.GetOAuthManager()
-	servers := make([]UserMCPServerInfo, 0, len(mcpCfg.Servers)+1)
-	denied := access.DeniedOrigins
-
-	for i := range mcpCfg.Servers {
-		serverConfig := &mcpCfg.Servers[i]
-		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
-			continue
-		}
-		if denied[llm.NormalizeMCPServerOrigin(serverConfig.BaseURL)] {
-			continue
-		}
-
+	visible := a.userVisibleMCPServers(access)
+	servers := make([]UserMCPServerInfo, 0, len(visible))
+	for i := range visible {
+		serverConfig := &visible[i]
 		servers = append(servers, a.buildUserMCPServerInfo(
 			userID,
 			oauthManager,
@@ -169,59 +159,60 @@ func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess,
 		))
 	}
 
+	return UserMCPToolsResponse{Servers: servers}
+}
+
+// userVisibleMCPServers lists the MCP servers a user's tool catalog shows, in
+// catalog order: enabled external servers, the embedded server when it runs,
+// then enabled plugin servers, minus those access denies. BaseURL is the
+// origin the server's tools carry. access supplies the policy and plugin
+// snapshots; plugin servers come from access.PluginServers, never the live
+// registry, so the list matches the snapshot policy was evaluated against.
+func (a *API) userVisibleMCPServers(access mcp.CatalogAccess) []mcp.ServerConfig {
+	mcpCfg := a.config.MCP()
+	denied := access.DeniedOrigins
+	servers := make([]mcp.ServerConfig, 0, len(mcpCfg.Servers)+1+len(access.PluginServers))
+
+	for _, serverConfig := range mcpCfg.Servers {
+		if !serverConfig.Enabled || serverConfig.BaseURL == "" {
+			continue
+		}
+		if denied[llm.NormalizeMCPServerOrigin(serverConfig.BaseURL)] {
+			continue
+		}
+		servers = append(servers, serverConfig)
+	}
+
 	if a.mcpClientManager.GetEmbeddedServer() != nil && !denied[mcp.EmbeddedClientKey] {
 		toolConfigs := mcpCfg.EmbeddedServer.ToolConfigs
 		if len(toolConfigs) == 0 {
 			toolConfigs = mcp.SeedVettedToolConfigs(mcp.EmbeddedClientKey)
 		}
-
-		embeddedConfig := &mcp.ServerConfig{
+		servers = append(servers, mcp.ServerConfig{
 			Name:        mcp.EmbeddedServerName,
 			Enabled:     true,
 			BaseURL:     mcp.EmbeddedClientKey,
 			ToolConfigs: toolConfigs,
-		}
-
-		servers = append(servers, a.buildUserMCPServerInfo(
-			userID,
-			oauthManager,
-			embeddedConfig,
-			toolsByOrigin[mcp.EmbeddedClientKey],
-			authErrorsByOrigin,
-			serviceAccount,
-		))
+		})
 	}
 
-	// Reuse the request-scoped plugin snapshot used by policy evaluation,
-	// connection planning, and tool filtering.
 	for _, cfg := range access.PluginServers {
 		if !cfg.Enabled {
 			continue
 		}
-
 		origin := config.PluginServerOrigin(cfg.PluginID)
 		if denied[origin] {
 			continue
 		}
-
-		pluginConfig := &mcp.ServerConfig{
+		servers = append(servers, mcp.ServerConfig{
 			Name:        cfg.Name,
 			Enabled:     true,
 			BaseURL:     origin,
 			ToolConfigs: cfg.ToolConfigs,
-		}
-
-		servers = append(servers, a.buildUserMCPServerInfo(
-			userID,
-			oauthManager,
-			pluginConfig,
-			toolsByOrigin[origin],
-			authErrorsByOrigin,
-			serviceAccount,
-		))
+		})
 	}
 
-	return UserMCPToolsResponse{Servers: servers}
+	return servers
 }
 
 func (a *API) buildUserMCPServerInfo(

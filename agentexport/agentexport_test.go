@@ -51,9 +51,9 @@ func TestServers(t *testing.T) {
 		expected []Server
 	}{
 		{
-			name: "all configured servers with normalized origins",
+			name: "all configured servers with their configured origins, deduplicated on normalized origin",
 			expected: []Server{
-				{Origin: "https://jira.example.com/mcp", Name: "Jira"},
+				{Origin: "https://jira.example.com/mcp/", Name: "Jira"},
 				{Origin: "https://off.example.com/mcp", Name: "Disabled"},
 				{Origin: "https://unnamed.example.com", Name: "https://unnamed.example.com"},
 				{Origin: config.MCPEmbeddedServerOrigin, Name: "Mattermost"},
@@ -65,7 +65,7 @@ func TestServers(t *testing.T) {
 			name:   "disabled embedded server is not offered",
 			mutate: func(cfg *config.MCPConfig) { cfg.EmbeddedServer.Enabled = false },
 			expected: []Server{
-				{Origin: "https://jira.example.com/mcp", Name: "Jira"},
+				{Origin: "https://jira.example.com/mcp/", Name: "Jira"},
 				{Origin: "https://off.example.com/mcp", Name: "Disabled"},
 				{Origin: "https://unnamed.example.com", Name: "https://unnamed.example.com"},
 				{Origin: "plugin://com.example.plugin", Name: "Example"},
@@ -266,7 +266,7 @@ func TestServerGroups(t *testing.T) {
 
 	groups := doc.ServerGroups([]Server{{Origin: "https://jira.example.com/mcp/", Name: "Local Jira"}})
 	assert.Equal(t, []ServerGroup{
-		{SourceOrigin: "https://jira.example.com/mcp", SourceName: "Jira", ToolNames: []string{"create_issue", "get_issue"}, AutoTargetOrigin: "https://jira.example.com/mcp"},
+		{SourceOrigin: "https://jira.example.com/mcp", SourceName: "Jira", ToolNames: []string{"create_issue", "get_issue"}, AutoTargetOrigin: "https://jira.example.com/mcp/"},
 		{SourceOrigin: "https://gone.example.com", SourceName: "https://gone.example.com", ToolNames: []string{"a"}, AutoTargetOrigin: ""},
 	}, groups)
 
@@ -279,6 +279,7 @@ func TestResolveMCPTools(t *testing.T) {
 	available := []Server{
 		{Origin: "https://jira.example.com/mcp", Name: "Jira"},
 		{Origin: "https://new.example.com/mcp", Name: "New"},
+		{Origin: "https://slash.example.com/mcp/", Name: "Trailing slash"},
 		{Origin: config.MCPEmbeddedServerOrigin, Name: "Mattermost"},
 	}
 	tools := []MCPTool{
@@ -325,6 +326,18 @@ func TestResolveMCPTools(t *testing.T) {
 			},
 		},
 		{
+			name: "explicit mapping matches a trailing-slash server on normalized origin",
+			mappings: []ServerMapping{
+				{SourceOrigin: "https://old.example.com/mcp", TargetOrigin: "https://slash.example.com/mcp"},
+				{SourceOrigin: "https://gone.example.com", TargetOrigin: ""},
+			},
+			expected: []llm.EnabledMCPTool{
+				{ServerOrigin: "https://jira.example.com/mcp", ToolName: "create_issue"},
+				{ServerOrigin: "https://slash.example.com/mcp/", ToolName: "create_issue"},
+				{ServerOrigin: "https://slash.example.com/mcp/", ToolName: "search"},
+			},
+		},
+		{
 			name: "mapping to a server that is not configured is rejected",
 			mappings: []ServerMapping{
 				{SourceOrigin: "https://old.example.com/mcp", TargetOrigin: "https://elsewhere.example.com"},
@@ -358,4 +371,22 @@ func TestResolveMCPTools(t *testing.T) {
 			assert.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+// The editor and the runtime match an agent's allowlist against the origin a
+// server's tools carry, which is its BaseURL exactly as configured.
+func TestResolveMCPToolsAutoMapsToConfiguredOrigin(t *testing.T) {
+	doc := validDocument()
+	doc.Agent.MCPTools = []MCPTool{{ServerOrigin: "https://jira.example.com/mcp", ServerName: "Jira", ToolName: "create_issue"}}
+	doc, err := doc.Normalize()
+	require.NoError(t, err)
+
+	available := Servers(config.MCPConfig{Servers: []config.MCPServerConfig{
+		{Name: "Jira", BaseURL: "https://jira.example.com/mcp/", Enabled: true},
+	}})
+	require.Equal(t, "https://jira.example.com/mcp/", doc.ServerGroups(available)[0].AutoTargetOrigin)
+
+	got, err := doc.ResolveMCPTools(nil, available)
+	require.NoError(t, err)
+	assert.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com/mcp/", ToolName: "create_issue"}}, got)
 }

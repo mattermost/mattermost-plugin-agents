@@ -75,8 +75,9 @@ type MCPTool struct {
 	ToolName     string `json:"toolName"`
 }
 
-// Server is an MCP server configured on this instance, identified by the
-// origin its tools carry at runtime.
+// Server is an MCP server configured on this instance. Origin is the origin
+// exactly as configured, which is what its tools carry at runtime and what an
+// agent's allowlist must store; servers are matched on its normalized form.
 type Server struct {
 	Origin string `json:"origin"`
 	Name   string `json:"name"`
@@ -87,8 +88,8 @@ type ServerGroup struct {
 	SourceOrigin string   `json:"sourceOrigin"`
 	SourceName   string   `json:"sourceName"`
 	ToolNames    []string `json:"toolNames"`
-	// AutoTargetOrigin is the server on this instance with the same
-	// normalized origin, or "" when there is none.
+	// AutoTargetOrigin is the configured origin of the server on this
+	// instance with the same normalized origin, or "" when there is none.
 	AutoTargetOrigin string `json:"autoTargetOrigin"`
 }
 
@@ -113,27 +114,11 @@ func invalidf(format string, args ...any) error {
 // when it is enabled), plus the embedded Mattermost server when enabled.
 func Servers(cfg config.MCPConfig) []Server {
 	servers := make([]Server, 0, len(cfg.Servers)+len(cfg.PluginServers)+1)
-	seen := make(map[string]struct{}, cap(servers))
-	add := func(origin, name string) {
-		origin = llm.NormalizeMCPServerOrigin(origin)
-		if origin == "" {
-			return
-		}
-		if _, ok := seen[origin]; ok {
-			return
-		}
-		seen[origin] = struct{}{}
-		if strings.TrimSpace(name) == "" {
-			name = origin
-		}
-		servers = append(servers, Server{Origin: origin, Name: name})
-	}
-
 	for _, s := range cfg.Servers {
-		add(s.BaseURL, s.Name)
+		servers = append(servers, Server{Origin: s.BaseURL, Name: s.Name})
 	}
 	if cfg.EmbeddedServer.Enabled {
-		add(config.MCPEmbeddedServerOrigin, embeddedServerName)
+		servers = append(servers, Server{Origin: config.MCPEmbeddedServerOrigin, Name: embeddedServerName})
 	}
 	for _, p := range cfg.PluginServers {
 		if p.PluginID == "" {
@@ -143,9 +128,32 @@ func Servers(cfg config.MCPConfig) []Server {
 		if strings.TrimSpace(name) == "" {
 			name = p.PluginID
 		}
-		add(config.PluginServerOrigin(p.PluginID), name)
+		servers = append(servers, Server{Origin: config.PluginServerOrigin(p.PluginID), Name: name})
 	}
-	return servers
+	return UniqueServers(servers)
+}
+
+// UniqueServers drops servers without an origin and every server whose
+// normalized origin repeats an earlier one, and names unnamed servers after
+// their origin. Origins are kept as given.
+func UniqueServers(servers []Server) []Server {
+	unique := make([]Server, 0, len(servers))
+	seen := make(map[string]struct{}, len(servers))
+	for _, s := range servers {
+		key := llm.NormalizeMCPServerOrigin(s.Origin)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if strings.TrimSpace(s.Name) == "" {
+			s.Name = key
+		}
+		unique = append(unique, s)
+	}
+	return unique
 }
 
 // New builds the export document for agent at version. servers resolves the
@@ -153,7 +161,7 @@ func Servers(cfg config.MCPConfig) []Server {
 func New(agent *llm.BotConfig, version int, servers []Server, exportedAt int64) Document {
 	names := make(map[string]string, len(servers))
 	for _, s := range servers {
-		names[s.Origin] = s.Name
+		names[llm.NormalizeMCPServerOrigin(s.Origin)] = s.Name
 	}
 
 	tools := make([]MCPTool, 0, len(agent.EnabledMCPTools))
@@ -234,17 +242,13 @@ func (d *Document) normalizeTools() {
 // appearance, and pairs each group with the same-origin server in available.
 // d must be normalized.
 func (d Document) ServerGroups(available []Server) []ServerGroup {
-	availableSet := originSet(available)
+	configured := configuredOrigins(available)
 	var groups []ServerGroup
 	index := make(map[string]int)
 	for _, t := range d.Agent.MCPTools {
 		i, ok := index[t.ServerOrigin]
 		if !ok {
-			auto := ""
-			if _, exists := availableSet[t.ServerOrigin]; exists {
-				auto = t.ServerOrigin
-			}
-			groups = append(groups, ServerGroup{SourceOrigin: t.ServerOrigin, AutoTargetOrigin: auto, ToolNames: []string{}})
+			groups = append(groups, ServerGroup{SourceOrigin: t.ServerOrigin, AutoTargetOrigin: configured[t.ServerOrigin], ToolNames: []string{}})
 			i = len(groups) - 1
 			index[t.ServerOrigin] = i
 		}
@@ -267,15 +271,16 @@ func (d Document) ServerGroups(available []Server) []ServerGroup {
 // ResolveMCPTools returns the MCP tool allowlist d grants on this instance.
 // Per document server, an explicit mapping wins; otherwise the same-origin
 // server in available is used; otherwise the server must be mapped or
-// removed. Tools keep their names on the target server. In auto-enable mode
-// the allowlist is unused, so mappings are ignored and nil is returned.
+// removed. Targets match available servers on normalized origin, and tools
+// keep their names but take the target's configured origin. In auto-enable
+// mode the allowlist is unused, so mappings are ignored and nil is returned.
 // d must be normalized. Every error wraps ErrInvalidDocument.
 func (d Document) ResolveMCPTools(mappings []ServerMapping, available []Server) ([]llm.EnabledMCPTool, error) {
 	if d.Agent.AutoEnableNewMCPTools {
 		return nil, nil
 	}
 
-	availableSet := originSet(available)
+	configured := configuredOrigins(available)
 	explicit := make(map[string]string, len(mappings))
 	for _, m := range mappings {
 		explicit[llm.NormalizeMCPServerOrigin(m.SourceOrigin)] = llm.NormalizeMCPServerOrigin(m.TargetOrigin)
@@ -288,9 +293,11 @@ func (d Document) ResolveMCPTools(mappings []ServerMapping, available []Server) 
 		case mapped && target == "":
 			// Removed: none of this server's tools are kept.
 		case mapped:
-			if _, ok := availableSet[target]; !ok {
+			origin, ok := configured[target]
+			if !ok {
 				return nil, invalidf("MCP server %q is not configured on this server", target)
 			}
+			target = origin
 		case g.AutoTargetOrigin != "":
 			target = g.AutoTargetOrigin
 		default:
@@ -316,10 +323,15 @@ func (d Document) ResolveMCPTools(mappings []ServerMapping, available []Server) 
 	return tools, nil
 }
 
-func originSet(servers []Server) map[string]struct{} {
-	set := make(map[string]struct{}, len(servers))
+// configuredOrigins maps each normalized origin in servers to the first
+// server's configured origin.
+func configuredOrigins(servers []Server) map[string]string {
+	origins := make(map[string]string, len(servers))
 	for _, s := range servers {
-		set[llm.NormalizeMCPServerOrigin(s.Origin)] = struct{}{}
+		key := llm.NormalizeMCPServerOrigin(s.Origin)
+		if _, ok := origins[key]; key != "" && !ok {
+			origins[key] = s.Origin
+		}
 	}
-	return set
+	return origins
 }

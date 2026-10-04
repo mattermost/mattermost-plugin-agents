@@ -73,6 +73,9 @@ type MCPClientManager interface {
 	GetEmbeddedServer() mcp.EmbeddedMCPServer
 	EnsureMCPSessionID(userID string) (sessionID string, created bool, err error)
 	GetCatalogAccess(ctx context.Context, req mcp.CatalogRequest) mcp.CatalogAccess
+	// GetServerAccess returns the policy and plugin snapshots of userID's
+	// catalog without contacting any server; Tools is always empty.
+	GetServerAccess(ctx context.Context, userID string) mcp.CatalogAccess
 	RefreshCatalogAccess(ctx context.Context, req mcp.CatalogRequest) (mcp.CatalogAccess, error)
 	GetConfig() mcp.Config
 
