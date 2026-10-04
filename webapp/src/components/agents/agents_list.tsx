@@ -1,11 +1,11 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
-import {PlusIcon, MagnifyIcon} from '@mattermost/compass-icons/components';
+import {PlusIcon, MagnifyIcon, ImportIcon} from '@mattermost/compass-icons/components';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
 import {OverlayTrigger, Tooltip} from 'react-bootstrap';
 
@@ -13,15 +13,19 @@ import {GlobalState} from '@mattermost/types/store';
 
 import {getAgents, getServices, deleteAgent as deleteAgentAPI} from '@/client';
 import {userHasSystemPermission} from '@/utils/permissions';
-import {PrimaryButton} from '@/components/assets/buttons';
+import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
+import {downloadAgentExport} from '@/utils/download_agent_export';
 import {UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
+import ImportAgentModal, {ImportedAgentResult} from './import_agent_modal';
 
 type Tab = 'all' | 'yours';
+
+type Notice = {kind: 'success' | 'error'; message: string};
 
 const AgentsList = () => {
     const intl = useIntl();
@@ -55,6 +59,8 @@ const AgentsList = () => {
     const [viewMode, setViewMode] = useState<'create' | 'edit'>('create');
     const [editingAgent, setEditingAgent] = useState<UserAgent | null>(null);
     const [activeAgentCount, setActiveAgentCount] = useState<number | null>(null);
+    const [importOpen, setImportOpen] = useState(false);
+    const [notice, setNotice] = useState<Notice | null>(null);
 
     const serverAgentCount = activeAgentCount ?? agents.length;
     const createQuotaReached = agentLimit !== null && serverAgentCount >= agentLimit;
@@ -160,6 +166,49 @@ const AgentsList = () => {
         return Boolean(!a.creatorID && hasManageSystem);
     }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
 
+    const manageableAgents = useMemo(
+        () => agents.filter(userCanManageAgent),
+        [agents, userCanManageAgent],
+    );
+    const canImportAgent = userCanCreateAgent || manageableAgents.length > 0;
+
+    const handleExportAgent = useCallback(async (agent: UserAgent) => {
+        setNotice(null);
+        try {
+            await downloadAgentExport(agent.id, agent.name);
+        } catch (e: any) {
+            const message = (typeof e?.message === 'string' ? e.message : '').trim();
+            setNotice({
+                kind: 'error',
+                message: message || intl.formatMessage({defaultMessage: 'Failed to export agent.'}),
+            });
+        }
+    }, [intl]);
+
+    const handleImportOpen = useCallback(() => {
+        setNotice(null);
+        setImportOpen(true);
+    }, []);
+
+    const handleImportClose = useCallback(() => {
+        setImportOpen(false);
+    }, []);
+
+    const handleImported = useCallback(({agent, mode}: ImportedAgentResult) => {
+        setImportOpen(false);
+        setNotice({
+            kind: 'success',
+            message: mode === 'create' ? intl.formatMessage(
+                {defaultMessage: 'Imported agent {name}.'},
+                {name: agent.displayName || agent.name},
+            ) : intl.formatMessage(
+                {defaultMessage: 'Updated agent {name} from the imported file.'},
+                {name: agent.displayName || agent.name},
+            ),
+        });
+        fetchAgents();
+    }, [fetchAgents, intl]);
+
     const filteredAgents = agents.filter((a) => {
         if (activeTab === 'yours' && a.creatorID !== currentUserId) {
             return false;
@@ -181,6 +230,7 @@ const AgentsList = () => {
                         services={services}
                         onBack={handleViewBack}
                         onSaved={handleViewSaved}
+                        onRestored={fetchAgents}
                     />
                 </ContentColumn>
             </ConfigViewFrame>
@@ -200,37 +250,48 @@ const AgentsList = () => {
                                 <FormattedMessage defaultMessage='Agents are AI assistants in your workspace. Mention @username in a channel or direct message to chat with one.'/>
                             </Subtitle>
                         </TitleRow>
-                        {userCanCreateAgent && (
-                            createQuotaReached ? (
-                                <OverlayTrigger
-                                    placement='bottom'
-                                    overlay={
-                                        <Tooltip id='create-agent-quota-tooltip'>
-                                            {createQuotaMessage}
-                                        </Tooltip>
-                                    }
+                        <HeaderActions>
+                            {userCanCreateAgent && (
+                                createQuotaReached ? (
+                                    <OverlayTrigger
+                                        placement='bottom'
+                                        overlay={
+                                            <Tooltip id='create-agent-quota-tooltip'>
+                                                {createQuotaMessage}
+                                            </Tooltip>
+                                        }
+                                    >
+                                        {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
+                                        <CreateButtonWrapper>
+                                            <CreateButton
+                                                onClick={handleCreateAgent}
+                                                disabled={true}
+                                            >
+                                                <PlusIcon size={16}/>
+                                                <FormattedMessage defaultMessage='Create agent'/>
+                                            </CreateButton>
+                                        </CreateButtonWrapper>
+                                    </OverlayTrigger>
+                                ) : (
+                                    <CreateButton
+                                        onClick={handleCreateAgent}
+                                        disabled={createButtonDisabled}
+                                    >
+                                        <PlusIcon size={16}/>
+                                        <FormattedMessage defaultMessage='Create agent'/>
+                                    </CreateButton>
+                                )
+                            )}
+                            {canImportAgent && (
+                                <ImportButton
+                                    onClick={handleImportOpen}
+                                    disabled={loading}
                                 >
-                                    {/* Wrapper receives hover events; a disabled button does not fire them itself. */}
-                                    <CreateButtonWrapper>
-                                        <CreateButton
-                                            onClick={handleCreateAgent}
-                                            disabled={true}
-                                        >
-                                            <PlusIcon size={16}/>
-                                            <FormattedMessage defaultMessage='Create agent'/>
-                                        </CreateButton>
-                                    </CreateButtonWrapper>
-                                </OverlayTrigger>
-                            ) : (
-                                <CreateButton
-                                    onClick={handleCreateAgent}
-                                    disabled={createButtonDisabled}
-                                >
-                                    <PlusIcon size={16}/>
-                                    <FormattedMessage defaultMessage='Create agent'/>
-                                </CreateButton>
-                            )
-                        )}
+                                    <ImportIcon size={16}/>
+                                    <FormattedMessage defaultMessage='Import agent'/>
+                                </ImportButton>
+                            )}
+                        </HeaderActions>
                     </Header>
 
                     <TabBar>
@@ -276,6 +337,15 @@ const AgentsList = () => {
                         <ErrorContainer>{error}</ErrorContainer>
                     )}
 
+                    {notice && (
+                        <NoticeBanner
+                            $kind={notice.kind}
+                            role={notice.kind === 'error' ? 'alert' : 'status'}
+                        >
+                            {notice.message}
+                        </NoticeBanner>
+                    )}
+
                     {servicesError && !error && (
                         <ServicesWarningBanner>{servicesError}</ServicesWarningBanner>
                     )}
@@ -310,6 +380,7 @@ const AgentsList = () => {
                                     canManage={userCanManageAgent(agent)}
                                     onEdit={handleEdit}
                                     onDelete={handleDeleteRequest}
+                                    onExport={handleExportAgent}
                                 />
                             ))}
                         </AgentListContainer>
@@ -323,6 +394,17 @@ const AgentsList = () => {
                     confirmPending={deleteInFlight}
                     onConfirm={handleDeleteConfirm}
                     onCancel={handleDeleteCancel}
+                />
+            )}
+
+            {importOpen && (
+                <ImportAgentModal
+                    services={services}
+                    manageableAgents={manageableAgents}
+                    canCreate={userCanCreateAgent}
+                    createDisabledReason={createQuotaReached ? createQuotaMessage : ''}
+                    onClose={handleImportClose}
+                    onImported={handleImported}
                 />
             )}
 
@@ -456,6 +538,31 @@ const Subtitle = styled.p`
     line-height: 20px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
     margin: 0;
+`;
+
+const HeaderActions = styled.div`
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+`;
+
+const ImportButton = styled(TertiaryButton)`
+    gap: 8px;
+    flex-shrink: 0;
+`;
+
+const NoticeBanner = styled.div<{$kind: 'success' | 'error'}>`
+    display: flex;
+    align-items: center;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    color: ${({$kind}) => ($kind === 'error' ? 'var(--dnd-indicator, #D24B4E)' : 'var(--center-channel-color)')};
+    background: ${({$kind}) => ($kind === 'error' ? 'rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.08)' : 'rgba(var(--online-indicator-rgb, 6, 214, 160), 0.08)')};
+    border: 1px solid ${({$kind}) => ($kind === 'error' ? 'rgba(var(--dnd-indicator-rgb, 210, 75, 78), 0.3)' : 'rgba(var(--online-indicator-rgb, 6, 214, 160), 0.4)')};
 `;
 
 const CreateButtonWrapper = styled.div`

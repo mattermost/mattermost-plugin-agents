@@ -472,6 +472,7 @@ export const StyledSelect = styled.select`
 `;
 
 type SelectFieldProps = {
+    id?: string;
     value: string;
     onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
     disabled?: boolean;
@@ -483,6 +484,7 @@ export const SelectField = (props: SelectFieldProps) => {
     return (
         <SelectFieldWrapper $maxWidth={props.maxWidth}>
             <StyledSelect
+                id={props.id}
                 value={props.value}
                 onChange={props.onChange}
                 disabled={props.disabled}

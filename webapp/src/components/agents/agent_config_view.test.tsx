@@ -2,11 +2,12 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {createAgent, updateAgent} from '@/client';
-import {EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
+import {createAgent, getAgentVersion, getAgentVersions, getProfilesByIds, restoreAgentVersion, updateAgent} from '@/client';
+import {AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
+import {downloadAgentExport} from '@/utils/download_agent_export';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
 import AgentConfigView, {AgentDraft} from './agent_config_view';
@@ -26,6 +27,7 @@ jest.mock('react-intl', () => {
                 );
             },
             formatNumber: (value: number) => new Intl.NumberFormat('en').format(value),
+            formatDate: (value: number) => new Date(value).toISOString().slice(0, 10),
         }),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
     };
@@ -44,6 +46,14 @@ jest.mock('@/client', () => ({
     updateAgent: jest.fn(),
     uploadAgentAvatar: jest.fn(),
     getUserMCPTools: jest.fn(),
+    getAgentVersions: jest.fn(),
+    getAgentVersion: jest.fn(),
+    restoreAgentVersion: jest.fn(),
+    getProfilesByIds: jest.fn(),
+}));
+
+jest.mock('@/utils/download_agent_export', () => ({
+    downloadAgentExport: jest.fn(),
 }));
 
 jest.mock('@/utils/access_control', () => ({
@@ -59,9 +69,15 @@ const mockedUseCurrentUserHasSystemPermission = useCurrentUserHasSystemPermissio
 jest.mock('@/components/system_console/bot', () => ({
     ChannelAccessLevel: {
         All: 0,
+        Allow: 1,
+        Block: 2,
+        None: 3,
     },
     UserAccessLevel: {
         All: 0,
+        Allow: 1,
+        Block: 2,
+        None: 3,
         AttributeBased: 4,
     },
 }));
@@ -857,5 +873,192 @@ describe('AgentConfigView', () => {
         fireEvent.click(screen.getByLabelText('Use service accounts'));
         expect(screen.queryByText(serviceAccountFieldsBanner)).toBeNull();
         expect((screen.getByRole('button', {name: 'Save'}) as HTMLButtonElement).disabled).toBe(false);
+    });
+});
+
+describe('AgentConfigView history and export', () => {
+    const mockGetAgentVersions = getAgentVersions as jest.MockedFunction<typeof getAgentVersions>;
+    const mockGetAgentVersion = getAgentVersion as jest.MockedFunction<typeof getAgentVersion>;
+    const mockRestoreAgentVersion = restoreAgentVersion as jest.MockedFunction<typeof restoreAgentVersion>;
+    const mockGetProfilesByIds = getProfilesByIds as jest.MockedFunction<typeof getProfilesByIds>;
+    const mockDownloadAgentExport = downloadAgentExport as jest.MockedFunction<typeof downloadAgentExport>;
+
+    const existingAgent: UserAgent = {
+        ...savedAgent,
+        id: 'agent_1',
+        name: 'existingagent',
+        displayName: 'Existing Agent',
+        customInstructions: 'current instructions',
+    };
+
+    const versionList: AgentVersionList = {
+        currentVersion: 2,
+        versions: [
+            {version: 2, createdBy: 'user_1', createAt: 1759600000000, source: 'update', restoredFromVersion: 0, changedFields: ['customInstructions']},
+            {version: 1, createdBy: '', createAt: 1759500000000, source: 'initial', restoredFromVersion: 0, changedFields: []},
+        ],
+    };
+
+    function versionDetail(version: number, customInstructions: string): AgentVersionDetail {
+        const summary = versionList.versions.find((v) => v.version === version)!;
+        return {...summary, config: {...existingAgent, customInstructions}};
+    }
+
+    function renderEdit(onRestored = jest.fn()) {
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={existingAgent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={jest.fn()}
+                    onRestored={onRestored}
+                />
+            </IntlProvider>,
+        );
+        return {onRestored};
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
+        mockGetAgentVersions.mockResolvedValue(versionList);
+        mockGetAgentVersion.mockImplementation(async (_id, version) => (
+            version === 2 ? versionDetail(2, 'current instructions') : versionDetail(1, 'original instructions')
+        ));
+        mockGetProfilesByIds.mockResolvedValue([{id: 'user_1', username: 'alice', first_name: 'Alice', last_name: 'Smith', nickname: ''}] as never);
+    });
+
+    test('offers the History tab and Export only for existing agents', () => {
+        renderView();
+        expect(screen.queryByRole('button', {name: 'History'})).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Export'})).toBeNull();
+    });
+
+    test('History tab lists versions newest first and badges the current one', async () => {
+        renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+
+        const list = await screen.findByTestId('version-list');
+        await waitFor(() => expect(within(list).getByText(/Alice Smith/)).not.toBeNull());
+
+        const items = within(list).getAllByRole('listitem');
+        expect(items).toHaveLength(2);
+        expect(within(items[0]).getByText('Version 2')).not.toBeNull();
+        expect(within(items[0]).getByText('Current')).not.toBeNull();
+        expect(within(items[0]).getByText('Edited')).not.toBeNull();
+        expect(within(items[0]).getByText('Changed: Custom instructions')).not.toBeNull();
+        expect(within(items[1]).getByText('Version 1')).not.toBeNull();
+        expect(within(items[1]).queryByText('Current')).toBeNull();
+        expect(within(items[1]).getByText('Initial version')).not.toBeNull();
+        expect(within(items[1]).getByText(/^System/)).not.toBeNull();
+    });
+
+    test('selecting a version shows its instructions read-only', async () => {
+        renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+
+        fireEvent.click(within(list).getByText('Version 1'));
+
+        const instructions = await screen.findByTestId('version-snapshot-instructions');
+        await waitFor(() => expect(instructions.textContent).toBe('original instructions'));
+        expect(instructions.tagName).toBe('PRE');
+        expect(screen.getByText('Mock Service')).not.toBeNull();
+        expect(screen.getByRole('button', {name: 'Restore this version'})).not.toBeNull();
+    });
+
+    test('does not offer restore for the current version', async () => {
+        renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        await screen.findByTestId('version-snapshot');
+
+        expect(screen.queryByRole('button', {name: 'Restore this version'})).toBeNull();
+    });
+
+    test('restore confirms, warns about unsaved changes, then resets draft and baseline', async () => {
+        const restored: UserAgent = {...existingAgent, displayName: 'Restored Agent', customInstructions: 'original instructions'};
+        mockRestoreAgentVersion.mockResolvedValue(restored);
+        const {onRestored} = renderEdit();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'Unsaved edit'}});
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+        expect(within(dialog).getByText(/unsaved changes in the editor/)).not.toBeNull();
+        expect(mockRestoreAgentVersion).not.toHaveBeenCalled();
+
+        mockGetAgentVersions.mockResolvedValue({
+            currentVersion: 3,
+            versions: [
+                {version: 3, createdBy: 'user_1', createAt: 1759700000000, source: 'restore', restoredFromVersion: 1, changedFields: ['customInstructions']},
+                ...versionList.versions,
+            ],
+        });
+        fireEvent.click(within(dialog).getByRole('button', {name: 'Restore'}));
+
+        await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
+        await waitFor(() => expect(onRestored).toHaveBeenCalledWith(restored));
+        expect(await screen.findByText('Version 1 was restored as the current version.')).not.toBeNull();
+        await waitFor(() => expect(screen.getByText('Restored from version 1')).not.toBeNull());
+
+        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        expect((screen.getByLabelText('Display Name') as HTMLInputElement).value).toBe('Restored Agent');
+        expect((screen.getByLabelText('Custom instructions') as HTMLTextAreaElement).value).toBe('original instructions');
+
+        // Baseline was reset too: leaving the editor must not prompt to discard.
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
+    });
+
+    test('restore confirmation omits the discard warning when the editor is clean', async () => {
+        renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        const dialog = screen.getByRole('dialog', {name: 'Restore this version?'});
+
+        expect(within(dialog).queryByText(/unsaved changes/)).toBeNull();
+    });
+
+    test('shows the server error when restore fails and leaves the draft alone', async () => {
+        mockRestoreAgentVersion.mockRejectedValue({message: 'The AI service for this version no longer exists.'});
+        const {onRestored} = renderEdit();
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        fireEvent.click(within(screen.getByRole('dialog', {name: 'Restore this version?'})).getByRole('button', {name: 'Restore'}));
+
+        expect(await screen.findByText('The AI service for this version no longer exists.')).not.toBeNull();
+        expect(onRestored).not.toHaveBeenCalled();
+    });
+
+    test('Export downloads the agent file via the export helper', async () => {
+        mockDownloadAgentExport.mockImplementation(() => Promise.resolve());
+        renderEdit();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Export'}));
+
+        await waitFor(() => expect(mockDownloadAgentExport).toHaveBeenCalledWith('agent_1', 'existingagent'));
+    });
+
+    test('Export shows the server error when the download fails', async () => {
+        mockDownloadAgentExport.mockRejectedValue({message: 'You do not have permission to export this agent.'});
+        renderEdit();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Export'}));
+
+        expect(await screen.findByText('You do not have permission to export this agent.')).not.toBeNull();
     });
 });
