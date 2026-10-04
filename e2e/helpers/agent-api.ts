@@ -28,6 +28,7 @@ export interface CreateAgentRequest {
     adminUserIDs?: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth?: boolean;
     enabledNativeTools?: string[];
     model?: string;
@@ -64,6 +65,7 @@ export interface AgentResponse {
     enabledNativeTools: string[];
     enabledMCPTools?: EnabledTool[];
     autoEnableNewMCPTools: boolean;
+    mcpDynamicToolLoading?: boolean;
     useServiceAccountAuth: boolean;
     reasoningEnabled: boolean;
     reasoningEffort: string;
@@ -99,6 +101,7 @@ export function mergeAgentIntoUpdate(
         adminUserIDs: agent.adminUserIDs ?? [],
         enabledMCPTools: agent.enabledMCPTools ?? [],
         autoEnableNewMCPTools: agent.autoEnableNewMCPTools,
+        mcpDynamicToolLoading: agent.mcpDynamicToolLoading ?? true,
         useServiceAccountAuth: agent.useServiceAccountAuth,
         enabledNativeTools: agent.enabledNativeTools,
         model: agent.model,
@@ -111,6 +114,92 @@ export function mergeAgentIntoUpdate(
         maxToolTurns: agent.maxToolTurns,
     };
     return { ...base, ...overrides };
+}
+
+// Mirrors store.AgentVersion / store.AgentVersionDetail.
+export type AgentVersionSource = 'initial' | 'create' | 'update' | 'restore' | 'import' | 'system';
+
+export interface AgentVersionSummary {
+    version: number;
+    createdBy: string;
+    createAt: number;
+    source: AgentVersionSource;
+    restoredFromVersion: number;
+    changedFields: string[];
+}
+
+export interface AgentVersionList {
+    currentVersion: number;
+    versions: AgentVersionSummary[];
+}
+
+export interface AgentVersionDetail extends AgentVersionSummary {
+    config: Partial<AgentResponse>;
+}
+
+// Mirrors agentexport.Document (schemaVersion 1).
+export interface AgentExportMCPTool {
+    serverOrigin: string;
+    serverName: string;
+    toolName: string;
+}
+
+export interface AgentExportDocument {
+    kind: string;
+    schemaVersion: number;
+    exportedAt: number;
+    agentVersion: number;
+    agent: {
+        name: string;
+        displayName: string;
+        customInstructions: string;
+        disableTools: boolean;
+        maxToolTurns: number;
+        mcpDynamicToolLoading: boolean;
+        autoEnableNewMCPTools: boolean;
+        mcpTools: AgentExportMCPTool[];
+    };
+}
+
+export interface AgentImportPreview {
+    document: AgentExportDocument;
+    mcpServers: Array<{
+        sourceOrigin: string;
+        sourceName: string;
+        toolNames: string[];
+        autoTargetOrigin: string;
+    }>;
+    availableMCPServers: Array<{ origin: string; name: string }>;
+    existingAgent?: { id: string; displayName: string; username: string; canManage: boolean } | null;
+}
+
+export interface AgentImportRequest {
+    document: AgentExportDocument;
+    mode: 'create' | 'update';
+    agentID?: string;
+    username?: string;
+    displayName?: string;
+    serviceID?: string;
+    model?: string;
+    mcpServerMappings?: Array<{ sourceOrigin: string; targetOrigin: string }>;
+}
+
+/** Status and parsed JSON body of a plugin response, for asserting on error paths. */
+export interface RawJSONResponse<T> {
+    status: number;
+    headers: Headers;
+    body: T;
+}
+
+async function toRawJSON<T>(response: Response): Promise<RawJSONResponse<T>> {
+    const text = await response.text();
+    let body: unknown = text;
+    try {
+        body = JSON.parse(text);
+    } catch {
+        // Keep the raw text for non-JSON bodies.
+    }
+    return { status: response.status, headers: response.headers, body: body as T };
 }
 
 /**
@@ -150,6 +239,32 @@ export class AgentAPIHelper {
         const current = await this.getAgent(token, agentId);
         const body = mergeAgentIntoUpdate(current, overrides);
         return this.routes.putJson(`agents/${agentId}`, token, body) as Promise<AgentResponse>;
+    }
+
+    async getAgentVersions(token: string, agentId: string): Promise<AgentVersionList> {
+        return this.routes.getJson(`agents/${agentId}/versions`, token) as Promise<AgentVersionList>;
+    }
+
+    async getAgentVersion(token: string, agentId: string, version: number): Promise<AgentVersionDetail> {
+        return this.routes.getJson(`agents/${agentId}/versions/${version}`, token) as Promise<AgentVersionDetail>;
+    }
+
+    async exportAgent(token: string, agentId: string): Promise<RawJSONResponse<AgentExportDocument>> {
+        return toRawJSON(await this.routes.request('GET', `agents/${agentId}/export`, token));
+    }
+
+    async previewAgentImport(
+        token: string,
+        document: AgentExportDocument,
+    ): Promise<RawJSONResponse<AgentImportPreview & { error?: string }>> {
+        return toRawJSON(await this.routes.request('POST', 'agents/import/preview', token, { document }));
+    }
+
+    async importAgent(
+        token: string,
+        req: AgentImportRequest,
+    ): Promise<RawJSONResponse<AgentResponse & { error?: string }>> {
+        return toRawJSON(await this.routes.request('POST', 'agents/import', token, req));
     }
 
     async deleteAgent(token: string, agentId: string): Promise<void> {

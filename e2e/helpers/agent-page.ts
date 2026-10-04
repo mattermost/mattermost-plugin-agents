@@ -101,6 +101,21 @@ export class AgentPageHelper {
         await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
+    /** Click Export in the agent row actions menu (opens the menu first). */
+    async clickExportAction(displayName: string): Promise<void> {
+        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
+            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
+        );
+        await rowScope.getByRole('button', { name: 'Export', exact: true }).click();
+    }
+
+    /** Open the editor for an existing agent from its row actions menu. */
+    async openAgentEditor(displayName: string): Promise<void> {
+        await this.openAgentActions(displayName);
+        await this.clickEditAction(displayName);
+        await this.waitForModal();
+    }
+
     // --- Config View Locators ---
 
     getModal(): Locator {
@@ -115,7 +130,7 @@ export class AgentPageHelper {
         return this.page.getByRole('button', {name: 'Back to agents'});
     }
 
-    getModalTab(tabName: 'Configuration' | 'Access' | 'MCPs'): Locator {
+    getModalTab(tabName: 'Configuration' | 'Access' | 'MCPs' | 'History'): Locator {
         return this.page.getByRole('button', {name: tabName, exact: true});
     }
 
@@ -215,6 +230,120 @@ export class AgentPageHelper {
     getToolToggles(): Locator {
         // Tool toggles are custom button elements styled as switches
         return this.page.locator('button[class*="Toggle"]');
+    }
+
+    // --- Editor header ---
+
+    /** Export button in the editor header (existing agents only). */
+    getEditorExportButton(): Locator {
+        return this.page.getByRole('button', { name: 'Export', exact: true });
+    }
+
+    /** The avatar preview image on the Configuration tab. */
+    getAvatarPreview(): Locator {
+        return this.getExactLabel('Bot avatar').locator('xpath=following-sibling::*[1]//img[1]');
+    }
+
+    /** Hidden file input behind the avatar "Upload Image" button. */
+    getAvatarFileInput(): Locator {
+        return this.getExactLabel('Bot avatar').locator('xpath=following-sibling::*[1]//input[@type="file"]');
+    }
+
+    // --- History Tab ---
+
+    getVersionList(): Locator {
+        return this.page.getByTestId('version-list');
+    }
+
+    /** All version entries, newest first. */
+    getVersionItems(): Locator {
+        return this.getVersionList().getByRole('button');
+    }
+
+    getVersionItem(version: number): Locator {
+        return this.getVersionList().getByRole('button', { name: new RegExp(`^Version ${version}(?!\\d)`) });
+    }
+
+    getVersionSnapshot(): Locator {
+        return this.page.getByTestId('version-snapshot');
+    }
+
+    getVersionSnapshotInstructions(): Locator {
+        return this.page.getByTestId('version-snapshot-instructions');
+    }
+
+    getRestoreVersionButton(): Locator {
+        return this.page.getByRole('button', { name: 'Restore this version' });
+    }
+
+    getRestoreDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Restore this version?' });
+    }
+
+    getRestoreConfirmButton(): Locator {
+        return this.getRestoreDialog().getByRole('button', { name: 'Restore', exact: true });
+    }
+
+    async openHistoryVersion(version: number): Promise<void> {
+        await this.getModalTab('History').click();
+        await this.getVersionItem(version).click();
+        await expect(this.getVersionItem(version)).toHaveAttribute('aria-current', 'true');
+        await this.getVersionSnapshot().waitFor({ state: 'visible', timeout: 10000 });
+    }
+
+    // --- Import Modal ---
+
+    getImportButton(): Locator {
+        return this.page.getByRole('button', { name: 'Import agent' });
+    }
+
+    getImportDialog(): Locator {
+        return this.page.getByRole('dialog', { name: 'Import agent' });
+    }
+
+    getImportSummary(): Locator {
+        return this.getImportDialog().getByTestId('import-summary');
+    }
+
+    getImportModeRadio(mode: 'create' | 'update'): Locator {
+        const label = mode === 'create' ? 'Create a new agent' : 'Update an existing agent';
+        return this.getImportDialog().getByRole('radio', { name: label });
+    }
+
+    getImportUsernameInput(): Locator {
+        return this.getImportDialog().getByLabel('Username', { exact: true });
+    }
+
+    getImportDisplayNameInput(): Locator {
+        return this.getImportDialog().getByLabel('Display name', { exact: true });
+    }
+
+    getImportServiceSelect(): Locator {
+        return this.getImportDialog().getByLabel('AI service', { exact: true });
+    }
+
+    getImportTargetAgentSelect(): Locator {
+        return this.getImportDialog().getByLabel('Agent to update', { exact: true });
+    }
+
+    /** The MCP mapping select for a document server, labelled by its source name. */
+    getImportMCPMappingSelect(sourceName: string): Locator {
+        return this.getImportDialog().getByTestId('import-mcp-mappings').getByLabel(sourceName, { exact: true });
+    }
+
+    getImportSubmitButton(): Locator {
+        return this.getImportDialog().getByRole('button', { name: /^Import$|^Importing/ });
+    }
+
+    async openImportModal(): Promise<void> {
+        await this.getImportButton().click();
+        await this.getImportDialog().waitFor({ state: 'visible', timeout: 10000 });
+    }
+
+    /** Choose an export file in the import modal and wait for the server preview. */
+    async chooseImportFile(file: string | { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
+        await this.getImportDialog().getByTestId('import-agent-file-input').setInputFiles(file);
+        await this.getImportSummary().waitFor({ state: 'visible', timeout: 10000 });
     }
 
     // --- Convenience Methods ---
