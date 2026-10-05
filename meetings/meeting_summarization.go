@@ -195,13 +195,15 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			}
 		}
 
+		ctx := stdcontext.Background()
 		requestContext := s.contextBuilder.BuildLLMContextUserRequest(
+			ctx,
 			bot,
 			requestingUser,
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
+		summaryStream, err := s.SummarizeTranscription(ctx, bot, text, requestContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -212,7 +214,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		if err := s.streamingService.StreamToNewPost(ctx, bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -265,13 +267,15 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to upload transcript: %w", err)
 		}
 
+		ctx := stdcontext.Background()
 		llmContext := s.contextBuilder.BuildLLMContextUserRequest(
+			ctx,
 			bot,
 			requestingUser,
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
+		summaryStream, err := s.SummarizeTranscription(ctx, bot, transcription, llmContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -280,7 +284,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
-		ctx, err := s.streamingService.GetStreamingContext(stdcontext.Background(), transcriptPost.Id)
+		ctx, err = s.streamingService.GetStreamingContext(ctx, transcriptPost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to get post streaming context: %w", err)
 		}

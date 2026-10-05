@@ -44,6 +44,9 @@ type Context struct {
 	BotModel           string
 	BotServiceType     string
 	CustomInstructions string
+	// ReferenceDocuments is the formatted text of the agent's reference
+	// documents, rendered right after CustomInstructions.
+	ReferenceDocuments string
 
 	// ToolAuthMode records the identity mode the tool catalog was built with
 	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.

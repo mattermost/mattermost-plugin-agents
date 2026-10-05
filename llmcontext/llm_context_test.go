@@ -253,7 +253,7 @@ func searchTools(t *testing.T, store *llm.ToolStore, query string) mcp.SearchToo
 func buildToolsContext(builder *Builder, bot *bots.Bot, opts ...llm.ContextOption) *llm.Context {
 	allOpts := append([]llm.ContextOption{}, opts...)
 	allOpts = append(allOpts, builder.WithLLMContextTools(stdcontext.Background(), bot))
-	return builder.BuildLLMContextUserRequest(bot, testUser(), testChannel(), allOpts...)
+	return builder.BuildLLMContextUserRequest(stdcontext.Background(), bot, testUser(), testChannel(), allOpts...)
 }
 
 func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
@@ -275,6 +275,7 @@ func TestWithLLMContextToolsCallsMCPProvider(t *testing.T) {
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
 	context := builder.BuildLLMContextUserRequest(
+		stdcontext.Background(),
 		newTestBot(),
 		user,
 		channel,
@@ -305,6 +306,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
 	context := builder.BuildLLMContextUserRequest(
+		stdcontext.Background(),
 		newTestBot(),
 		user,
 		channel,
@@ -353,6 +355,7 @@ func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) 
 	channel := &model.Channel{Id: "channel-id", Type: model.ChannelTypeDirect}
 
 	context := builder.BuildLLMContextUserRequest(
+		stdcontext.Background(),
 		bot,
 		user,
 		channel,
@@ -391,6 +394,7 @@ func TestGetToolsStoreServiceAccountSelection(t *testing.T) {
 	)
 
 	context := builder.BuildLLMContextUserRequest(
+		stdcontext.Background(),
 		bot,
 		&model.User{Id: requestingUserID, Username: "test-user", Locale: "en"},
 		testChannel(),
@@ -426,6 +430,7 @@ func TestGetToolsStoreServiceAccountEmptyBotUserSkipsMCP(t *testing.T) {
 	)
 
 	context := builder.BuildLLMContextUserRequest(
+		stdcontext.Background(),
 		bot,
 		&model.User{Id: "user-id", Username: "test-user", Locale: "en"},
 		testChannel(),

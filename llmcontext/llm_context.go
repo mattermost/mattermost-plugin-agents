@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -39,6 +40,14 @@ type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
 }
 
+// AgentDocumentTextSource loads the extracted text of agent reference
+// documents.
+type AgentDocumentTextSource interface {
+	// AgentDocumentTexts returns the text of every document in ids that
+	// exists, keyed by ID.
+	AgentDocumentTexts(ctx stdcontext.Context, ids []string) (map[string]string, error)
+}
+
 // Builder builds contexts for LLM requests
 type Builder struct {
 	pluginAPI       *pluginapi.Client
@@ -46,6 +55,7 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 	licenseChecker  *enterprise.LicenseChecker
+	agentDocuments  AgentDocumentTextSource
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -70,13 +80,20 @@ func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemet
 	b.mcpDynamicToolTelemetry = telemetry
 }
 
+// SetAgentDocumentSource sets where agent reference document texts are
+// loaded from. Without one, contexts carry no reference documents.
+func (b *Builder) SetAgentDocumentSource(source AgentDocumentTextSource) {
+	b.agentDocuments = source
+}
+
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
-func (b *Builder) BuildLLMContextUserRequest(bot *bots.Bot, requestingUser *model.User, channel *model.Channel, opts ...llm.ContextOption) *llm.Context {
+func (b *Builder) BuildLLMContextUserRequest(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, channel *model.Channel, opts ...llm.ContextOption) *llm.Context {
 	allOpts := []llm.ContextOption{
 		b.WithLLMContextServerInfo(),
 		b.WithLLMContextRequestingUser(requestingUser),
 		b.WithLLMContextChannel(channel),
 		b.WithLLMContextBot(bot),
+		b.WithLLMContextAgentDocuments(ctx, bot),
 	}
 	allOpts = append(allOpts, opts...)
 
@@ -463,6 +480,12 @@ func (b *Builder) logWarn(message string, keyValuePairs ...any) {
 	}
 }
 
+func (b *Builder) logError(message string, keyValuePairs ...any) {
+	if b != nil && b.pluginAPI != nil {
+		b.pluginAPI.Log.Error(message, keyValuePairs...)
+	}
+}
+
 func (b *Builder) logDebug(message string, keyValuePairs ...any) {
 	if b != nil && b.pluginAPI != nil {
 		b.pluginAPI.Log.Debug(message, keyValuePairs...)
@@ -552,5 +575,41 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 		c.SetBotFields(bot.GetConfig().DisplayName, bot.GetConfig().Name, bot.BotUserID(), bot.GetService().DefaultModel, bot.GetService().Type, bot.GetConfig().CustomInstructions)
 		c.ToolCatalog.MCPDynamicToolLoading = bot.GetConfig().MCPDynamicToolLoading
 		c.ToolRuntime.MCPDynamicToolTelemetry = b.mcpDynamicToolTelemetry
+	}
+}
+
+// WithLLMContextAgentDocuments adds the text of bot's reference documents,
+// which prompts render after the custom instructions. A document whose text
+// cannot be loaded is logged and left out rather than failing the request.
+func (b *Builder) WithLLMContextAgentDocuments(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
+	return func(c *llm.Context) {
+		if bot == nil || b.agentDocuments == nil {
+			return
+		}
+		cfg := bot.GetConfig()
+		if len(cfg.Documents) == 0 {
+			return
+		}
+
+		ids := make([]string, 0, len(cfg.Documents))
+		for _, doc := range cfg.Documents {
+			ids = append(ids, doc.ID)
+		}
+		texts, err := b.agentDocuments.AgentDocumentTexts(ctx, ids)
+		if err != nil {
+			b.logError("Failed to load agent reference documents", "agent_id", cfg.ID, "error", err.Error())
+			return
+		}
+
+		entries := make([]format.AgentDocumentEntry, 0, len(cfg.Documents))
+		for _, doc := range cfg.Documents {
+			text, ok := texts[doc.ID]
+			if !ok {
+				b.logWarn("Skipping missing agent reference document", "agent_id", cfg.ID, "document_id", doc.ID)
+				continue
+			}
+			entries = append(entries, format.AgentDocumentEntry{Name: doc.Name, Text: text})
+		}
+		c.ReferenceDocuments = format.AgentReferenceDocuments(entries)
 	}
 }

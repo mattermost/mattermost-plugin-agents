@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -74,6 +76,9 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			c.DisabledToolsInfo = []llm.ToolInfo{{Name: "Jira", Description: "Read tickets"}}
 		},
 		func(c *llm.Context) { c.CustomInstructions = "Be concise." },
+		func(c *llm.Context) {
+			c.ReferenceDocuments = format.AgentReferenceDocuments([]format.AgentDocumentEntry{{Name: "faq.md", Text: "Q: A?"}})
+		},
 		func(c *llm.Context) {
 			if c.RequestingUser != nil {
 				c.RequestingUser.FirstName = "Pat"
@@ -335,6 +340,55 @@ func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
 				assert.Contains(t, output, "NOT visible to the user")
 			} else {
 				assert.NotContains(t, output, guidance)
+			}
+		})
+	}
+}
+
+func TestStandardPersonalityReferenceDocuments(t *testing.T) {
+	documents := format.AgentReferenceDocuments([]format.AgentDocumentEntry{
+		{Name: "handbook.pdf", Text: "Refunds are accepted within 30 days."},
+	})
+	tests := []struct {
+		name               string
+		customInstructions string
+		referenceDocuments string
+		contains           []string
+		notContains        []string
+	}{
+		{
+			name:               "documents follow the custom instructions",
+			customInstructions: "Answer questions about the store.",
+			referenceDocuments: documents,
+			contains:           []string{"Answer questions about the store.\nThe agent administrators provided the following reference documents.", "<document name=\"handbook.pdf\">\nRefunds are accepted within 30 days.\n</document>"},
+		},
+		{
+			name:               "documents without custom instructions",
+			referenceDocuments: documents,
+			contains:           []string{"Refunds are accepted within 30 days."},
+		},
+		{
+			name:               "no documents",
+			customInstructions: "Answer questions about the store.",
+			notContains:        []string{"reference documents", "<document"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
+				BotName:            "agent",
+				CustomInstructions: tt.customInstructions,
+				ReferenceDocuments: tt.referenceDocuments,
+				RequestingUser:     &model.User{Username: "requester"},
+			})
+			for _, expected := range tt.contains {
+				assert.Contains(t, output, expected)
+			}
+			for _, unexpected := range tt.notContains {
+				assert.NotContains(t, output, unexpected)
+			}
+			if tt.referenceDocuments != "" {
+				assert.Less(t, strings.Index(output, "reference documents"), strings.Index(output, "The user making the request"), "documents come before the requesting user section")
 			}
 		})
 	}

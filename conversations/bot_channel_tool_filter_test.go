@@ -168,6 +168,7 @@ func buildChannelFollowUpStrictContext(t *testing.T, builder *llmcontext.Builder
 	allOpts = append(allOpts, builder.WithLLMContextTools(context.Background(), bot))
 
 	return builder.BuildLLMContextUserRequest(
+		context.Background(),
 		bot,
 		&model.User{Id: "user-id", Username: "user", Locale: "en"},
 		&model.Channel{Id: "channel-id", TeamId: "team-id", Type: model.ChannelTypeOpen},
@@ -558,6 +559,7 @@ func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
 			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
 			bot := channelFollowUpTestBot()
 			llmContext := builder.BuildLLMContextUserRequest(
+				context.Background(),
 				bot,
 				&model.User{Id: "user-id", Username: "user", Locale: "en"},
 				&model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
