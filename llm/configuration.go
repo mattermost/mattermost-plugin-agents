@@ -156,12 +156,28 @@ type EnabledMCPTool struct {
 	ToolName     string `json:"tool_name"`
 }
 
+// AgentDocument references an immutable reference document attached to an
+// agent. The content and extracted text live in the document store under ID;
+// everything except Name is copied from that stored document when an agent is
+// saved and is never taken from a client.
+type AgentDocument struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MimeType  string `json:"mimeType"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+	TextRunes int    `json:"textRunes"`
+}
+
 type BotConfig struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
 	DisplayName        string `json:"displayName"`
 	CustomInstructions string `json:"customInstructions"`
-	ServiceID          string `json:"serviceID"`
+	// Documents are the agent's reference documents, whose extracted text is
+	// added to the system prompt after CustomInstructions.
+	Documents []AgentDocument `json:"documents"`
+	ServiceID string          `json:"serviceID"`
 
 	// Model is the optional model override for this bot.
 	// If not specified, the service's DefaultModel will be used.
