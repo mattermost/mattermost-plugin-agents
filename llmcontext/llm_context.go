@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -580,7 +582,9 @@ func (b *Builder) WithLLMContextBot(bot *bots.Bot) llm.ContextOption {
 
 // WithLLMContextAgentDocuments adds the text of bot's reference documents,
 // which prompts render after the custom instructions. A document whose text
-// cannot be loaded is logged and left out rather than failing the request.
+// cannot be loaded, or would take the total text over
+// agentdocs.MaxTotalTextRunes, is logged and left out rather than failing
+// the request.
 func (b *Builder) WithLLMContextAgentDocuments(ctx stdcontext.Context, bot *bots.Bot) llm.ContextOption {
 	return func(c *llm.Context) {
 		if bot == nil || b.agentDocuments == nil {
@@ -602,12 +606,19 @@ func (b *Builder) WithLLMContextAgentDocuments(ctx stdcontext.Context, bot *bots
 		}
 
 		entries := make([]format.AgentDocumentEntry, 0, len(cfg.Documents))
+		remaining := agentdocs.MaxTotalTextRunes
 		for _, doc := range cfg.Documents {
 			text, ok := texts[doc.ID]
 			if !ok {
 				b.logWarn("Skipping missing agent reference document", "agent_id", cfg.ID, "document_id", doc.ID)
 				continue
 			}
+			runes := utf8.RuneCountInString(text)
+			if runes > remaining {
+				b.logWarn("Skipping agent reference document over the extracted text budget", "agent_id", cfg.ID, "document_id", doc.ID, "text_runes", runes, "remaining_runes", remaining)
+				continue
+			}
+			remaining -= runes
 			entries = append(entries, format.AgentDocumentEntry{Name: doc.Name, Text: text})
 		}
 		c.ReferenceDocuments = format.AgentReferenceDocuments(entries)

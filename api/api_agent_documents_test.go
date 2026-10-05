@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -20,6 +21,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/agentexport"
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
+	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -810,6 +813,18 @@ func TestImportAgentDocuments(t *testing.T) {
 			wantTexts:      []string{"# Guide"},
 		},
 		{
+			name: "documents with identical content are referenced once, under the first name",
+			mode: "update",
+			document: withDocuments(
+				exportedDocument("first.txt", agentdocs.MimeTypeText, "Same text"),
+				exportedDocument("second.txt", agentdocs.MimeTypeText, "Same text"),
+				exportedDocument("same-as-markdown.md", agentdocs.MimeTypeMarkdown, "Same text"),
+			),
+			expectedStatus: http.StatusOK,
+			wantNames:      []string{"first.txt", "same-as-markdown.md"},
+			wantTexts:      []string{"Same text", "Same text"},
+		},
+		{
 			name:           "update with an empty document list removes the agent's documents",
 			mode:           "update",
 			document:       withDocuments(),
@@ -908,6 +923,136 @@ func TestImportAgentDocuments(t *testing.T) {
 			}
 			assert.Equal(t, tt.wantNames, names)
 			assert.Equal(t, tt.wantTexts, texts)
+		})
+	}
+}
+
+// Two managers uploading the same file give an agent two documents with
+// identical bytes; on import both resolve to one document of the importer.
+func TestExportImportAgentWithIdenticalDocuments(t *testing.T) {
+	for _, mode := range []string{"create", "update"} {
+		t.Run(mode, func(t *testing.T) {
+			e := setupTransferTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, mock.Anything).Return(false).Maybe()
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "imported-bot-user"}, nil).Maybe()
+
+			const content = "Shared policy text"
+			mine := seedAgentDocument(t, e, "policy.txt", content, testUserID)
+			theirs := seedAgentDocument(t, e, "policy.txt", content, otherUserID)
+			require.NotEqual(t, mine.ID, theirs.ID)
+			mine.Name, theirs.Name = "Policy (mine).txt", "Policy (theirs).txt"
+			agent := fullyConfiguredAgent()
+			agent.Documents = []llm.AgentDocument{theirs, mine}
+			e.agentStore.agents[agent.ID] = agent
+
+			recorder := doRequest(e.api, http.MethodGet, "/agents/agent-1/export", nil, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+			var exported agentexport.Document
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &exported))
+			require.Len(t, exported.Agent.Documents, 2)
+
+			body := map[string]any{"document": exported, "mode": mode}
+			if mode == "create" {
+				body["username"], body["displayName"], body["serviceID"] = "imported-agent", "Imported Agent", "svc-1"
+			} else {
+				body["agentID"] = agent.ID
+			}
+			recorder = doRequest(e.api, http.MethodPost, "/agents/import", body, testUserID)
+			require.Less(t, recorder.Result().StatusCode, 300, recorder.Body.String())
+
+			var result llm.BotConfig
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+			require.Len(t, result.Documents, 1)
+			assert.Equal(t, mine.ID, result.Documents[0].ID, "the importer's own copy is reused")
+			assert.Equal(t, "Policy (theirs).txt", result.Documents[0].Name, "the first occurrence keeps its name")
+			assert.Equal(t, result.Documents, e.agentStore.agents[result.ID].Documents)
+		})
+	}
+}
+
+// Stored documents are never deleted, so an import that is rejected, or a
+// file whose schema version predates documents, must not store any.
+func TestImportAgentStoresNoDocumentsUnlessImported(t *testing.T) {
+	documentFile := func(schemaVersion int) agentexport.Document {
+		doc := exportDocument()
+		doc.SchemaVersion = schemaVersion
+		doc.Agent.Documents = []agentexport.AgentDocument{exportedDocument("guide.md", agentdocs.MimeTypeMarkdown, "# Guide")}
+		return doc
+	}
+
+	tests := []struct {
+		name           string
+		mode           string
+		schemaVersion  int
+		username       string
+		serviceID      string
+		canCreate      bool
+		level          *enterprise.Level
+		mutateAgent    func(agent *llm.BotConfig)
+		expectedStatus int
+		errorContains  string
+	}{
+		{name: "create without permission to create agents", mode: "create", expectedStatus: http.StatusForbidden, errorContains: "permission to create agents"},
+		{name: "create beyond the agent quota", mode: "create", canCreate: true, level: new(enterprise.LevelUnlicensed), expectedStatus: http.StatusForbidden},
+		{name: "create with an invalid username", mode: "create", canCreate: true, username: "Bad Name", expectedStatus: http.StatusBadRequest, errorContains: "invalid username"},
+		{name: "create with a taken username", mode: "create", canCreate: true, username: takenUsername, expectedStatus: http.StatusConflict, errorContains: "already taken"},
+		{name: "create with an unknown service", mode: "create", canCreate: true, serviceID: "missing-service", expectedStatus: http.StatusBadRequest},
+		{name: "create on a service the license does not activate", mode: "create", canCreate: true, serviceID: "svc-2", level: new(enterprise.LevelProfessional), expectedStatus: http.StatusForbidden},
+		{name: "update of an agent the user cannot manage", mode: "update", mutateAgent: func(a *llm.BotConfig) { a.CreatorID = otherUserID }, expectedStatus: http.StatusForbidden},
+		{name: "update of an agent whose service was removed", mode: "update", mutateAgent: func(a *llm.BotConfig) { a.ServiceID = "missing-service" }, expectedStatus: http.StatusBadRequest},
+		{name: "update of an agent whose configuration is invalid", mode: "update", mutateAgent: func(a *llm.BotConfig) { a.ChannelIDs = []string{"bad\x00id"} }, expectedStatus: http.StatusBadRequest, errorContains: "channelIDs[0]"},
+		{name: "schema version 1 create ignores documents", mode: "create", schemaVersion: 1, canCreate: true, expectedStatus: http.StatusCreated},
+		{name: "schema version 1 update ignores documents", mode: "update", schemaVersion: 1, expectedStatus: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupTransferTestEnvironment(t)
+			defer e.Cleanup(t)
+			if tt.level != nil {
+				e.api.licenseChecker = enterprise.NewLicenseChecker(e.client)
+				e.OverrideLicense(enterprisetest.LicenseFor(*tt.level))
+			}
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(tt.canCreate)
+			e.mockAPI.On("HasPermissionTo", testUserID, mock.Anything).Return(false).Maybe()
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "imported-bot-user"}, nil).Maybe()
+			cfgStore := e.api.configStore.(*mockConfigStore)
+			cfgStore.cfg.Services = append(cfgStore.cfg.Services, llm.ServiceConfig{ID: "svc-2", Name: "Second", Type: "openai", APIKey: "test-key"})
+
+			agent := fullyConfiguredAgent()
+			if tt.mutateAgent != nil {
+				tt.mutateAgent(agent)
+			}
+			e.agentStore.agents[agent.ID] = agent
+			agentBefore := *agent
+
+			schemaVersion := cmp.Or(tt.schemaVersion, agentexport.DocumentsSchemaVersion)
+			body := map[string]any{"document": documentFile(schemaVersion), "mode": tt.mode}
+			if tt.mode == "create" {
+				body["username"] = cmp.Or(tt.username, "imported-agent")
+				body["displayName"] = "Imported Agent"
+				body["serviceID"] = cmp.Or(tt.serviceID, "svc-1")
+			} else {
+				body["agentID"] = agent.ID
+			}
+			recorder := doRequest(e.api, http.MethodPost, "/agents/import", body, testUserID)
+			require.Equal(t, tt.expectedStatus, recorder.Result().StatusCode, recorder.Body.String())
+			if tt.errorContains != "" {
+				assert.Contains(t, decodeAgentError(t, recorder), tt.errorContains)
+			}
+
+			assert.Empty(t, e.agentStore.documents, "no document is stored")
+			if recorder.Result().StatusCode >= 300 {
+				e.mockAPI.AssertNotCalled(t, "CreateBot", mock.Anything)
+				assert.Len(t, e.agentStore.agents, 1, "a rejected import creates no agent")
+				assert.Equal(t, agentBefore, *e.agentStore.agents[agent.ID], "a rejected import changes no agent")
+				return
+			}
+			var result llm.BotConfig
+			require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &result))
+			assert.Empty(t, result.Documents)
 		})
 	}
 }

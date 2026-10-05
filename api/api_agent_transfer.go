@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 const (
@@ -233,6 +234,14 @@ func (a *API) handleImportAgent(c *gin.Context) {
 		if !ok {
 			return
 		}
+		// Stored documents are never deleted, so everything that can reject
+		// the import is checked before they are stored.
+		if _, ok = a.validateAgentCreate(c, userID, a.importCreateRequest(req, doc, tools, nil)); !ok {
+			return
+		}
+		if !a.checkAgentUsernameAvailable(c, req.Username) {
+			return
+		}
 		documents, ok := a.storeImportedDocuments(c, userID, doc.Agent.Documents)
 		if !ok {
 			return
@@ -257,11 +266,16 @@ func (a *API) handleImportAgent(c *gin.Context) {
 		if !ok {
 			return
 		}
+		fields := requestFieldsFromConfig(stored)
+		applyImportedMission(&fields, doc, tools, nil)
+		if _, _, ok = a.validateAgentUpdate(c, userID, stored, UpdateAgentRequest{AgentRequestFields: fields}); !ok {
+			return
+		}
 		documents, ok := a.storeImportedDocuments(c, userID, doc.Agent.Documents)
 		if !ok {
 			return
 		}
-		fields := requestFieldsFromConfig(stored)
+		fields = requestFieldsFromConfig(stored)
 		applyImportedMission(&fields, doc, tools, documents)
 		agent, ok := a.updateAgent(c, userID, stored, UpdateAgentRequest{AgentRequestFields: fields}, meta)
 		if !ok {
@@ -272,6 +286,21 @@ func (a *API) handleImportAgent(c *gin.Context) {
 	default:
 		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("mode must be %q or %q", agentImportModeCreate, agentImportModeUpdate))
 	}
+}
+
+// checkAgentUsernameAvailable aborts with 409 when username is already taken
+// by a user or bot.
+func (a *API) checkAgentUsernameAvailable(c *gin.Context, username string) bool {
+	_, err := a.pluginAPI.User.GetByUsername(username)
+	switch {
+	case errors.Is(err, pluginapi.ErrNotFound):
+		return true
+	case err == nil:
+		abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", username))
+	default:
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to look up username %q: %w", username, err))
+	}
+	return false
 }
 
 func (a *API) resolveImportMCPTools(c *gin.Context, userID string, doc agentexport.Document, mappings []agentexport.ServerMapping) ([]llm.EnabledMCPTool, bool) {

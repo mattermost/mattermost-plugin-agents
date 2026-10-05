@@ -1308,6 +1308,59 @@ func TestUpdateAgentInvalidServiceID(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode)
 }
 
+// Postgres jsonb cannot hold NUL, and version snapshots are immutable, so
+// control characters in identifier lists are rejected on every save.
+func TestSaveAgentRejectsControlCharactersInIdentifierLists(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		fields map[string]any
+	}{
+		{name: "create with NUL in an MCP tool name", method: http.MethodPost, fields: map[string]any{
+			"enabledMCPTools": []llm.EnabledMCPTool{{ServerOrigin: "embedded://mattermost", ToolName: "read\x00post"}},
+		}},
+		{name: "update with NUL in an MCP server origin", method: http.MethodPut, fields: map[string]any{
+			"enabledMCPTools": []llm.EnabledMCPTool{{ServerOrigin: "embedded://matter\x00most", ToolName: "read_post"}},
+		}},
+		{name: "update with NUL in a channel id", method: http.MethodPut, fields: map[string]any{
+			"channelAccessLevel": int(llm.ChannelAccessLevelAllow), "channelIDs": []string{"channel\x00"},
+		}},
+		{name: "create with a newline in an admin id", method: http.MethodPost, fields: map[string]any{
+			"adminUserIDs": []string{"admin\nid"},
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, mock.Anything).Return(false).Maybe()
+			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(&model.Bot{UserId: "bot-user-id-created"}, nil).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			stored := &llm.BotConfig{
+				ID: "agent-1", CreatorID: testUserID, BotUserID: "bot-1",
+				DisplayName: "Agent", Name: "my-agent", ServiceID: "svc-1",
+			}
+			e.agentStore.agents["agent-1"] = stored
+			storedBefore := *stored
+
+			path, body := "/agents", createAgentBody(tt.fields)
+			if tt.method == http.MethodPut {
+				path, body = "/agents/agent-1", updateAgentBodyFromStored(stored, tt.fields)
+			}
+			recorder := doRequest(e.api, tt.method, path, body, testUserID)
+			require.Equal(t, http.StatusBadRequest, recorder.Result().StatusCode, recorder.Body.String())
+			assert.Contains(t, recorder.Body.String(), "contains control characters")
+			e.mockAPI.AssertNotCalled(t, "CreateBot", mock.Anything)
+			assert.Len(t, e.agentStore.agents, 1)
+			assert.Equal(t, storedBefore, *e.agentStore.agents["agent-1"])
+		})
+	}
+}
+
 func TestUpdateAgentFlipsAutoEnableOff(t *testing.T) {
 	e := setupAgentTestEnvironment(t)
 	defer e.Cleanup(t)

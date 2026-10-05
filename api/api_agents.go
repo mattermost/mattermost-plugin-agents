@@ -442,6 +442,49 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 // checkCanCreateAgent. It writes the abort response and returns false on
 // failure; on success bots are refreshed and the caller writes the response.
 func (a *API) createAgent(c *gin.Context, userID string, req CreateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
+	documents, ok := a.validateAgentCreate(c, userID, req)
+	if !ok {
+		return nil, false
+	}
+
+	mmBot := &model.Bot{
+		Username:    req.Username,
+		DisplayName: req.DisplayName,
+		Description: "User-created AI agent",
+	}
+	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
+		var appErr *model.AppError
+		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
+			abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
+			return nil, false
+		}
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
+		return nil, false
+	}
+
+	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
+	agent.Documents = documents
+
+	if err := a.agentStore.CreateAgent(agent, meta); err != nil {
+		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
+			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
+		}
+		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
+		return nil, false
+	}
+
+	// Both IDs exist only after the bot account and agent config are persisted.
+	audit.AddParam(auditRec(c), audit.KeyAgentID, agent.ID)
+	audit.AddParam(auditRec(c), "bot_user_id", mmBot.UserId)
+
+	_ = a.refreshBotsAndNotify()
+	return agent, true
+}
+
+// validateAgentCreate runs every check createAgent makes before it creates
+// anything and returns the resolved documents of req. It writes the abort
+// response and returns false when req would be rejected.
+func (a *API) validateAgentCreate(c *gin.Context, userID string, req CreateAgentRequest) ([]llm.AgentDocument, bool) {
 	if req.UseServiceAccountAuth && !isSystemAdmin(a.pluginAPI, userID) {
 		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
 		return nil, false
@@ -484,39 +527,7 @@ func (a *API) createAgent(c *gin.Context, userID string, req CreateAgentRequest,
 		abortAgentRequest(c, statusForAccessErr(err), err)
 		return nil, false
 	}
-
-	mmBot := &model.Bot{
-		Username:    req.Username,
-		DisplayName: req.DisplayName,
-		Description: "User-created AI agent",
-	}
-	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
-		var appErr *model.AppError
-		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
-			abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
-			return nil, false
-		}
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
-		return nil, false
-	}
-
-	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
-	agent.Documents = documents
-
-	if err := a.agentStore.CreateAgent(agent, meta); err != nil {
-		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
-			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
-		}
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
-		return nil, false
-	}
-
-	// Both IDs exist only after the bot account and agent config are persisted.
-	audit.AddParam(auditRec(c), audit.KeyAgentID, agent.ID)
-	audit.AddParam(auditRec(c), "bot_user_id", mmBot.UserId)
-
-	_ = a.refreshBotsAndNotify()
-	return agent, true
+	return documents, true
 }
 
 // agentListItem is an agent as listed on GET /agents, with the reason it is
@@ -649,51 +660,10 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 // recorded with meta. It writes the abort response and returns false on
 // failure; on success bots are refreshed and the caller writes the response.
 func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req UpdateAgentRequest, meta store.AgentVersionMeta) (*llm.BotConfig, bool) {
-	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
-	proposed := *cfg
-	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
-
-	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
-		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
-		return nil, false
-	}
-
-	if req.usernameProvided && req.Username != cfg.Name {
-		abortAgentRequest(c, http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
-		return nil, false
-	}
-	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
-		return nil, false
-	}
-
-	documents, ok := a.resolveAgentDocuments(c, userID, cfg.ID, req.Documents)
-	if !ok {
-		return nil, false
-	}
-	proposed.Documents = documents
-
-	if !a.checkAgentLicenseGates(c, proposed, cfg) {
-		return nil, false
-	}
-
-	// Snapshot the stored config for the audit field diff, then adopt the
-	// already-applied proposed update (apply-then-compare ACL above).
+	// Snapshot the stored config for the audit field diff and rollback.
 	prev := *cfg
-	cfg = &proposed
-
-	// Audit which fields the update changed — never their values, since
-	// customInstructions carries prompt content.
-	// Field names only — the agent config carries prompt content
-	// (customInstructions), so the record never says what values changed to.
-	audit.AddParam(auditRec(c), "changed_fields", audit.ChangedJSONKeys(&prev, cfg))
-
-	if err := cfg.Validate(); err != nil {
-		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
-		return nil, false
-	}
-
-	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, cfg, &prev); err != nil {
-		abortAgentRequest(c, statusForAccessErr(err), err)
+	cfg, displayNameChanged, ok := a.validateAgentUpdate(c, userID, &prev, req)
+	if !ok {
 		return nil, false
 	}
 
@@ -732,6 +702,53 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 	}
 
 	return cfg, true
+}
+
+// validateAgentUpdate runs every check updateAgent makes before it persists
+// anything and returns the stored agent cfg with req applied. It writes the
+// abort response and returns false when req would be rejected.
+func (a *API) validateAgentUpdate(c *gin.Context, userID string, cfg *llm.BotConfig, req UpdateAgentRequest) (*llm.BotConfig, bool, bool) {
+	// Shallow copy is safe: applyAgentUpdateRequest replaces slice headers rather than mutating elements.
+	proposed := *cfg
+	displayNameChanged := applyAgentUpdateRequest(&proposed, req)
+
+	if serviceAccountChangeNeedsAdmin(*cfg, proposed) && !isSystemAdmin(a.pluginAPI, userID) {
+		abortAgentRequest(c, http.StatusForbidden, errServiceAccountAuthRequiresAdmin)
+		return nil, false, false
+	}
+
+	if req.usernameProvided && req.Username != cfg.Name {
+		abortAgentRequest(c, http.StatusBadRequest, errors.New("username cannot be changed after the agent is created"))
+		return nil, false, false
+	}
+	if _, ok := a.validateAgentServiceID(c, req.ServiceID); !ok {
+		return nil, false, false
+	}
+
+	documents, ok := a.resolveAgentDocuments(c, userID, cfg.ID, req.Documents)
+	if !ok {
+		return nil, false, false
+	}
+	proposed.Documents = documents
+
+	if !a.checkAgentLicenseGates(c, proposed, cfg) {
+		return nil, false, false
+	}
+
+	// Field names only — the agent config carries prompt content
+	// (customInstructions), so the record never says what values changed to.
+	audit.AddParam(auditRec(c), "changed_fields", audit.ChangedJSONKeys(cfg, &proposed))
+
+	if err := proposed.Validate(); err != nil {
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("invalid agent configuration: %w", err))
+		return nil, false, false
+	}
+
+	if err := a.accessChecker.ValidateAgentWrite(c.Request.Context(), userID, &proposed, cfg); err != nil {
+		abortAgentRequest(c, statusForAccessErr(err), err)
+		return nil, false, false
+	}
+	return &proposed, displayNameChanged, true
 }
 
 // handleDeleteAgent handles DELETE /agents/:agentid (soft-delete and deactivate bot).

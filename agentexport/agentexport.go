@@ -239,9 +239,14 @@ func (d Document) Normalize() (Document, error) {
 		}
 	}
 
-	documents, err := normalizeDocuments(d.Agent.Documents)
-	if err != nil {
-		return Document{}, err
+	// Documents from before DocumentsSchemaVersion cannot carry reference
+	// documents, so anything under that key is ignored rather than imported.
+	documents := []AgentDocument{}
+	if d.SchemaVersion >= DocumentsSchemaVersion {
+		var err error
+		if documents, err = normalizeDocuments(d.Agent.Documents); err != nil {
+			return Document{}, err
+		}
 	}
 
 	d.Agent.MCPTools = append([]MCPTool(nil), d.Agent.MCPTools...)

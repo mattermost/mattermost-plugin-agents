@@ -215,6 +215,18 @@ func TestNormalize(t *testing.T) {
 			},
 		},
 		{
+			name: "schema version 1 ignores documents, even invalid ones",
+			mutate: func(d *Document) {
+				d.SchemaVersion = 1
+				tampered := exportedDocument("a.txt", "text")
+				tampered.Content = []byte("tampered")
+				d.Agent.Documents = []AgentDocument{exportedDocument("handbook.txt", "text"), tampered}
+			},
+			check: func(t *testing.T, d Document) {
+				assert.Equal(t, []AgentDocument{}, d.Agent.Documents)
+			},
+		},
+		{
 			name: "documents are kept with trimmed names and lower-case checksums",
 			mutate: func(d *Document) {
 				doc := exportedDocument("  handbook.txt ", "text")

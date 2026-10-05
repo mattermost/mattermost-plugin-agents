@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
@@ -46,6 +47,7 @@ func newDocumentsTestBuilder(t *testing.T, source AgentDocumentTextSource) *Buil
 	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
 	mockAPI.On("GetLicense").Return(&model.License{SkuShortName: model.LicenseShortSkuEnterprise}).Maybe()
 	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
+	mockAPI.On("LogWarn", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe().Return()
 	t.Cleanup(func() { mockAPI.AssertExpectations(t) })
 
@@ -58,7 +60,18 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 	handbook := llm.AgentDocument{ID: "doc-handbook", Name: "handbook.pdf"}
 	faq := llm.AgentDocument{ID: "doc-faq", Name: "faq.md"}
 	missing := llm.AgentDocument{ID: "doc-missing", Name: "gone.txt"}
-	texts := map[string]string{"doc-handbook": "Handbook text", "doc-faq": "FAQ text"}
+	// Documents saved under a larger budget, or whose stored text changed,
+	// can exceed the limit at runtime; it counts runes, not bytes.
+	large := llm.AgentDocument{ID: "doc-large", Name: "large.txt"}
+	rest := llm.AgentDocument{ID: "doc-rest", Name: "rest.txt"}
+	over := llm.AgentDocument{ID: "doc-over", Name: "over.txt"}
+	largeText := strings.Repeat("é", agentdocs.MaxTotalTextRunes-len("Handbook text"))
+	restText := strings.Repeat("r", agentdocs.MaxTotalTextRunes/2)
+	texts := map[string]string{
+		"doc-handbook": "Handbook text", "doc-faq": "FAQ text",
+		"doc-large": largeText, "doc-rest": restText,
+		"doc-over": strings.Repeat("o", agentdocs.MaxTotalTextRunes+1),
+	}
 
 	tests := []struct {
 		name      string
@@ -79,6 +92,27 @@ func TestWithLLMContextAgentDocuments(t *testing.T) {
 			documents: []llm.AgentDocument{handbook, missing},
 			source:    &fakeAgentDocumentSource{texts: texts},
 			want:      []format.AgentDocumentEntry{{Name: "handbook.pdf", Text: "Handbook text"}},
+			wantLoads: 1,
+		},
+		{
+			name:      "documents filling the budget exactly are all rendered",
+			documents: []llm.AgentDocument{handbook, large},
+			source:    &fakeAgentDocumentSource{texts: texts},
+			want:      []format.AgentDocumentEntry{{Name: "handbook.pdf", Text: "Handbook text"}, {Name: "large.txt", Text: largeText}},
+			wantLoads: 1,
+		},
+		{
+			name:      "documents that no longer fit the budget are skipped, later ones that fit are kept",
+			documents: []llm.AgentDocument{rest, large, over, faq},
+			source:    &fakeAgentDocumentSource{texts: texts},
+			want:      []format.AgentDocumentEntry{{Name: "rest.txt", Text: restText}, {Name: "faq.md", Text: "FAQ text"}},
+			wantLoads: 1,
+		},
+		{
+			name:      "a single document over the budget is skipped",
+			documents: []llm.AgentDocument{over},
+			source:    &fakeAgentDocumentSource{texts: texts},
+			want:      []format.AgentDocumentEntry{},
 			wantLoads: 1,
 		},
 		{

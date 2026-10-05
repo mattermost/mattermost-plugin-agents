@@ -246,8 +246,10 @@ func extractAgentDocument(c *gin.Context, rawName, mimeType string, data []byte,
 
 // storeImportedDocuments extracts and stores the documents of an import
 // document for userID and returns the references to save on the agent, in
-// document order. The extracted-text budget is checked before anything is
-// stored. It writes the abort response and returns false on failure.
+// document order. Documents with the same content and type are stored once
+// for userID, so only the first of them is referenced, with its name. The
+// extracted-text budget is checked before anything is stored. It writes the
+// abort response and returns false on failure.
 func (a *API) storeImportedDocuments(c *gin.Context, userID string, docs []agentexport.AgentDocument) ([]AgentDocumentRef, bool) {
 	extracted := make([]*store.AgentDocument, 0, len(docs))
 	budget := make([]llm.AgentDocument, 0, len(docs))
@@ -265,11 +267,16 @@ func (a *API) storeImportedDocuments(c *gin.Context, userID string, docs []agent
 	}
 
 	refs := make([]AgentDocumentRef, 0, len(extracted))
+	seen := make(map[string]bool, len(extracted))
 	for _, doc := range extracted {
 		if err := a.agentStore.SaveAgentDocument(doc); err != nil {
 			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to save document: %w", err))
 			return nil, false
 		}
+		if seen[doc.ID] {
+			continue
+		}
+		seen[doc.ID] = true
 		refs = append(refs, AgentDocumentRef{ID: doc.ID, Name: doc.Name})
 	}
 	return refs, true

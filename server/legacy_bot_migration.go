@@ -103,6 +103,9 @@ func migrateLegacyConfigBotsToUserAgents(api plugin.API, pluginAPI *pluginapi.Cl
 		ua.CreateAt = 0
 		ua.UpdateAt = 0
 		ua.DeleteAt = 0
+		// Config bots never had reference documents; anything here bypassed
+		// the document reference and limit checks of agent saves.
+		ua.Documents = nil
 
 		// Config bots predate per-agent MCP tool gating — they had access to every
 		// MCP tool. Preserve that by auto-enabling new MCP tools for migrated agents.

@@ -60,8 +60,14 @@ func setupTransferTestEnvironment(t *testing.T) *TestEnvironment {
 	e.mcp.embeddedServer = &stubEmbeddedServer{}
 	mockLicensed(e.mockAPI)
 	e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+	e.mockAPI.On("GetUserByUsername", takenUsername).Return(&model.User{Id: "taken-user", Username: takenUsername}, nil).Maybe()
+	e.mockAPI.On("GetUserByUsername", mock.MatchedBy(func(username string) bool { return username != takenUsername })).
+		Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing", nil, "", http.StatusNotFound)).Maybe()
 	return e
 }
+
+// takenUsername belongs to an existing user in setupTransferTestEnvironment.
+const takenUsername = "taken-agent"
 
 func exportDocument(tools ...agentexport.MCPTool) agentexport.Document {
 	return agentexport.Document{
