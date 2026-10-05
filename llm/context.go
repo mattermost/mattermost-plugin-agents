@@ -34,6 +34,10 @@ type Context struct {
 	Channel *model.Channel
 	Thread  []Post // Normalized posts that already have been formatted. nil if not in a thread or a root post
 
+	// ChannelContext is the optional context channel members attached for
+	// agents working in Channel. nil when the channel has none.
+	ChannelContext *ChannelContext
+
 	// User that is making the request
 	RequestingUser *model.User
 
@@ -57,6 +61,16 @@ type Context struct {
 	ToolCatalog ToolCatalogContext
 	// ToolRuntime holds non-prompt tool execution state for this turn.
 	ToolRuntime ToolRuntimeContext
+}
+
+// ChannelContext is background that channel members attached for agents
+// working in a channel: the channel's instructions and the posts pinned to
+// agent context. Channel members wrote it, so prompts must present it as
+// optional and lower-trust than the agent's own instructions.
+type ChannelContext struct {
+	Instructions string
+	// PinnedPosts is already formatted for the prompt by the format package.
+	PinnedPosts string
 }
 
 // ToolCatalogContext holds request-scoped tool catalog build inputs.
