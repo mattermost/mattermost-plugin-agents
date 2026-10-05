@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
@@ -61,6 +62,7 @@ type TestEnvironment struct {
 	agentStore        *mockAgentStore
 	mcp               *mockMCPClientManager
 	autoReplyStore    *fakeChannelAutoReplyStore
+	channelContext    *fakeChannelContextStore
 }
 
 // testConfigImpl is a minimal implementation of Config for testing
@@ -418,6 +420,70 @@ func (f *fakeChannelAutoReplyStore) Delete(channelID string) error {
 	return nil
 }
 
+// fakeChannelContextStore is a hand-rolled in-memory implementation of
+// ChannelContextStore. Injectable errors exercise the handlers' status-code
+// mapping; they may wrap channelcontext.ErrValidation or ErrPinLimitReached.
+type fakeChannelContextStore struct {
+	instructions map[string]string
+	pins         map[string][]channelcontext.PinnedPost
+	setCalls     []string
+	pinCalls     []string
+	unpinCalls   []string
+	getErr       error
+	setErr       error
+	listErr      error
+	pinErr       error
+	unpinErr     error
+}
+
+func newFakeChannelContextStore() *fakeChannelContextStore {
+	return &fakeChannelContextStore{
+		instructions: make(map[string]string),
+		pins:         make(map[string][]channelcontext.PinnedPost),
+	}
+}
+
+func (f *fakeChannelContextStore) GetInstructions(channelID string) (string, error) {
+	return f.instructions[channelID], f.getErr
+}
+
+func (f *fakeChannelContextStore) SetInstructions(channel *model.Channel, instructions, _ string) (string, error) {
+	if f.setErr != nil {
+		return "", f.setErr
+	}
+	instructions = strings.TrimSpace(instructions)
+	f.setCalls = append(f.setCalls, instructions)
+	f.instructions[channel.Id] = instructions
+	return instructions, nil
+}
+
+func (f *fakeChannelContextStore) ListPinnedPosts(channelID string) ([]channelcontext.PinnedPost, error) {
+	return f.pins[channelID], f.listErr
+}
+
+func (f *fakeChannelContextStore) PinPost(channel *model.Channel, postID, pinnedBy string) error {
+	if f.pinErr != nil {
+		return f.pinErr
+	}
+	f.pinCalls = append(f.pinCalls, postID)
+	f.pins[channel.Id] = append(f.pins[channel.Id], channelcontext.PinnedPost{
+		Pin:  channelcontext.Pin{ChannelID: channel.Id, PostID: postID, PinnedBy: pinnedBy, PinnedAt: 1},
+		Post: &model.Post{Id: postID, ChannelId: channel.Id, UserId: "author", Message: "pinned message", CreateAt: 1},
+	})
+	return nil
+}
+
+func (f *fakeChannelContextStore) UnpinPost(channelID, postID string) error {
+	if f.unpinErr != nil {
+		return f.unpinErr
+	}
+	f.unpinCalls = append(f.unpinCalls, postID)
+	f.pins[channelID] = slices.DeleteFunc(f.pins[channelID], func(p channelcontext.PinnedPost) bool {
+		return p.PostID == postID
+	})
+	return nil
+}
+
 type fakeMCPOAuthClusterNotifier struct {
 	calls []string
 	err   error
@@ -762,6 +828,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 	agentStore := newMockAgentStore()
 	mcpMgr := newTestMCPClientManager(t)
 	autoReplyStore := newFakeChannelAutoReplyStore()
+	channelContextStore := newFakeChannelContextStore()
 
 	allowAnyPluginAPILogging(mockAPI)
 
@@ -820,6 +887,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		autoReplyStore,
+		channelContextStore,
 		newPassthroughAccessChecker(),
 	)
 
@@ -833,6 +901,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		agentStore:        agentStore,
 		mcp:               mcpMgr,
 		autoReplyStore:    autoReplyStore,
+		channelContext:    channelContextStore,
 	}
 }
 
