@@ -175,16 +175,22 @@ func (s *Store) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
 // had: its current references first, then those of its versions, newest
 // version first. A document can appear more than once.
 func (s *Store) ListAgentDocumentReferences(agentID string) ([]llm.AgentDocument, error) {
-	var lists []string
-	err := s.db.Select(&lists,
-		`SELECT refs FROM (
-			SELECT Documents AS refs, 0 AS ord, 0 AS version
+	// Version snapshots are decoded in Go rather than cast to jsonb: jsonb
+	// rejects \u0000, which a snapshot may legitimately contain, and snapshots
+	// are immutable, so a cast failure would break the agent permanently.
+	var rows []struct {
+		Refs      string `db:"refs"`
+		IsVersion bool   `db:"isversion"`
+	}
+	err := s.db.Select(&rows,
+		`SELECT refs, isversion FROM (
+			SELECT Documents AS refs, FALSE AS isversion, 0 AS version
 			FROM Agents_UserAgents WHERE ID = $1
 			UNION ALL
-			SELECT COALESCE(Config::jsonb -> 'documents', '[]'::jsonb)::text, 1, Version
+			SELECT Config, TRUE, Version
 			FROM Agents_AgentVersions WHERE AgentID = $1
 		) refs
-		ORDER BY ord, version DESC`,
+		ORDER BY isversion, version DESC`,
 		agentID,
 	)
 	if err != nil {
@@ -192,12 +198,20 @@ func (s *Store) ListAgentDocumentReferences(agentID string) ([]llm.AgentDocument
 	}
 
 	var refs []llm.AgentDocument
-	for _, raw := range lists {
-		if raw == "" || raw == "null" {
+	for _, row := range rows {
+		if row.Refs == "" || row.Refs == "null" {
 			continue
 		}
 		var docs []llm.AgentDocument
-		if err := json.Unmarshal([]byte(raw), &docs); err != nil {
+		if row.IsVersion {
+			var snapshot struct {
+				Documents []llm.AgentDocument `json:"documents"`
+			}
+			if err := json.Unmarshal([]byte(row.Refs), &snapshot); err != nil {
+				return nil, fmt.Errorf("failed to parse version document references of agent %q: %w", agentID, err)
+			}
+			docs = snapshot.Documents
+		} else if err := json.Unmarshal([]byte(row.Refs), &docs); err != nil {
 			return nil, fmt.Errorf("failed to parse document references of agent %q: %w", agentID, err)
 		}
 		refs = append(refs, docs...)

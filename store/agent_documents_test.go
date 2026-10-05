@@ -189,6 +189,29 @@ func TestAgentDocumentReferences(t *testing.T) {
 	})
 }
 
+// Version snapshots are immutable, so one holding a value Postgres jsonb
+// cannot represent (\u0000) must not break document references forever.
+func TestAgentDocumentReferencesWithNULInSnapshot(t *testing.T) {
+	s := setupVersionTestStore(t)
+	handbook := saveTestDocument(t, s, "creator-1", "handbook.txt", "Handbook text")
+
+	agent := testAgent("creator-1", "nul-agent", "NUL Agent")
+	agent.Documents = []llm.AgentDocument{documentRef(handbook, "Handbook")}
+	agent.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "https://mcp.example.com", ToolName: "bad\x00tool"}}
+	require.NoError(t, s.CreateAgent(agent, AgentVersionMeta{ActorID: "creator-1", Source: AgentVersionSourceCreate}))
+
+	var raw string
+	require.NoError(t, s.db.Get(&raw, `SELECT Config FROM Agents_AgentVersions WHERE AgentID = $1`, agent.ID))
+	require.Contains(t, raw, `\u0000`, "the snapshot holds an escaped NUL")
+
+	refs, err := s.ListAgentDocumentReferences(agent.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []llm.AgentDocument{
+		documentRef(handbook, "Handbook"), // current row
+		documentRef(handbook, "Handbook"), // version 1
+	}, refs)
+}
+
 // Snapshots recorded before agents had documents lack the key; that must not
 // read as a change, or every agent would get a spurious version on upgrade.
 func TestAgentVersionSnapshotsWithoutDocuments(t *testing.T) {
