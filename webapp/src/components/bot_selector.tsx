@@ -6,7 +6,11 @@ import {FormattedMessage} from 'react-intl';
 
 import styled from 'styled-components';
 
-import {CheckIcon, ChevronDownIcon} from '@mattermost/compass-icons/components';
+import {ChevronDownIcon} from '@mattermost/compass-icons/components';
+
+import {Button} from '@mattermost/compass-ui/components/button';
+import {MenuGroupHeading} from '@mattermost/compass-ui/components/menu-group-heading';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {LLMBot} from '@/bots';
 
@@ -14,7 +18,6 @@ import {getProfilePictureUrl} from '@/client';
 
 import {AGENTS_ROUTE} from './agents/agents_page';
 import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
-import {GrayPill} from './pill';
 
 type DropdownBotSelectorProps = {
     bots: LLMBot[]
@@ -43,11 +46,17 @@ export const DropdownBotSelector = (props: DropdownBotSelectorProps) => {
     );
 };
 
-const BotPill = styled(GrayPill)`
+const BotPill = styled.div`
+	display: flex;
+	align-items: center;
+	border-radius: 4px;
 	font-size: 12px;
+	font-weight: 600;
+	line-height: 16px;
 	padding: 2px 6px;
-	gap: 0;
 	max-width: 128px;
+	color: var(--center-channel-color);
+	background: rgba(var(--center-channel-color-rgb), 0.08);
 
 	svg {
 		flex-shrink: 0;
@@ -90,10 +99,10 @@ export const BotDropdown = (props: BotDropdownProps) => {
             testId={props.testId}
         >
             <MenuHeader>
-                <MenuInfoMessage>
-                    <FormattedMessage defaultMessage='Choose an Agent'/>
-                </MenuInfoMessage>
-                <ManageLink
+                <MenuGroupHeading label={<FormattedMessage defaultMessage='Choose an Agent'/>}/>
+                <Button
+                    emphasis='link'
+                    size='x-small'
                     onClick={(e) => {
                         e.preventDefault();
                         if (window.WebappUtils?.browserHistory?.push) {
@@ -104,26 +113,26 @@ export const BotDropdown = (props: BotDropdownProps) => {
                     }}
                 >
                     <FormattedMessage defaultMessage='Manage'/>
-                </ManageLink>
+                </Button>
             </MenuHeader>
             <BotList>
                 {props.bots.map((bot) => {
-                    const botProfileURL = getProfilePictureUrl(bot.id, bot.lastIconUpdate);
                     return (
-                        <StyledDropdownMenuItem
+                        <DropdownMenuItem
                             key={bot.displayName}
+                            label={bot.displayName}
+                            leading={(
+                                <UserAvatar
+                                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                                    alt={bot.displayName}
+                                    size='24'
+                                />
+                            )}
+                            selected={props.activeBot?.id === bot.id}
                             onClick={() => {
                                 props.setActiveBot(bot);
                             }}
-                        >
-                            <BotIconDropdownItem
-                                src={botProfileURL}
-                            />
-                            {bot.displayName}
-                            {props.activeBot && (props.activeBot.id === bot.id) && (
-                                <StyledCheckIcon/>
-                            )}
-                        </StyledDropdownMenuItem>
+                        />
                     );
                 })}
             </BotList>
@@ -147,58 +156,13 @@ const BotList = styled.div`
 	min-height: 0;
 `;
 
-const StyledCheckIcon = styled(CheckIcon)`
-	margin-left: auto;
-	color: var(--button-bg);
-`;
-
-const StyledDropdownMenuItem = styled(DropdownMenuItem)`
-	padding: 8px 16px;
-`;
-
 const MenuHeader = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
 	justify-content: space-between;
 	gap: 8px;
-	padding: 6px 20px;
-`;
-
-const MenuInfoMessage = styled.div`
-	color: rgba(var(--center-channel-color-rgb), 0.56);
-	font-size: 12px;
-	font-weight: 600;
-	line-height: 16px;
-	letter-spacing: 0.48px;
-	text-transform: uppercase;
-`;
-
-const ManageLink = styled.button.attrs({type: 'button'})`
-    appearance: none;
-    padding: 0;
-    border: 0;
-    background: none;
-
-    && {
-        color: var(--button-bg);
-        font-size: 12px;
-        font-weight: 600;
-        line-height: 16px;
-        text-decoration: none;
-        cursor: pointer;
-    }
-
-    &&:hover {
-        text-decoration: underline;
-    }
-`;
-
-const BotIconDropdownItem = styled.img`
-	border-radius: 50%;
-    width: 24px;
-    height: 24px;
-	margin-right: 8px;
+	padding-right: 16px;
 `;
 
 const SelectMessage = styled.div`

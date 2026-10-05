@@ -60,7 +60,7 @@ jest.mock('../../client', () => ({
 
 jest.mock('./mcp_tools_viewer', () => ({
     __esModule: true,
-    default: () => null,
+    default: () => <div data-testid='mcp-tools-viewer'/>,
 }));
 
 jest.mock('../access_control/console_policy_section', () => ({
@@ -252,6 +252,35 @@ describe('MCPServers service account headers', () => {
         expect(screen.getByPlaceholderText('Header name (e.g. Authorization)')).not.toBeNull();
         expect(screen.getByPlaceholderText('Header value (e.g. Bearer token)')).not.toBeNull();
         expect(screen.getByText(/Do not repeat the header name in the value/)).not.toBeNull();
+    });
+});
+
+describe('MCPServers tabs', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsLicensedFor.mockReturnValue(true);
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
+    });
+
+    test('switches between the configuration and tools views', () => {
+        renderServers(makeMCPConfig([existingServer]));
+
+        const configTab = screen.getByRole('tab', {name: 'Configuration'});
+        const toolsTab = screen.getByRole('tab', {name: 'Tools'});
+        expect(configTab.getAttribute('aria-selected')).toBe('true');
+        expect(screen.getByText('Jira')).not.toBeNull();
+        expect(screen.queryByTestId('mcp-tools-viewer')).toBeNull();
+
+        fireEvent.click(toolsTab);
+
+        expect(toolsTab.getAttribute('aria-selected')).toBe('true');
+        expect(screen.getByTestId('mcp-tools-viewer')).not.toBeNull();
+        expect(screen.queryByText('Jira')).toBeNull();
+
+        fireEvent.click(configTab);
+
+        expect(screen.getByText('Jira')).not.toBeNull();
+        expect(screen.queryByTestId('mcp-tools-viewer')).toBeNull();
     });
 });
 

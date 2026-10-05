@@ -265,8 +265,8 @@ describe('McpsTab', () => {
         const saToggle = screen.getByRole('checkbox', {name: serviceAccountToggleName});
         expect((saToggle as HTMLInputElement).disabled).toBe(false);
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
+        expect((serverToggle as HTMLInputElement).disabled).toBe(true);
     });
 
     // The setting must stay reachable even when the catalog renders no servers.
@@ -394,8 +394,8 @@ describe('McpsTab', () => {
         expect(screen.queryByText('Not connected')).toBeNull();
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(true);
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
+        expect((serverToggle as HTMLInputElement).disabled).toBe(true);
         expect(serverToggle.getAttribute('aria-checked')).toBe('false');
 
         fireEvent.click(serverToggle);
@@ -403,8 +403,8 @@ describe('McpsTab', () => {
         expect(onReconcileEnabledTools).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', {name: /Press to expand or collapse tools/}));
-        const toolToggle = await screen.findByRole('button', {name: toolToggleName});
-        expect((toolToggle as HTMLButtonElement).disabled).toBe(true);
+        const toolToggle = await screen.findByRole('switch', {name: toolToggleName});
+        expect((toolToggle as HTMLInputElement).disabled).toBe(true);
         expect(toolToggle.getAttribute('aria-checked')).toBe('false');
 
         fireEvent.click(toolToggle);
@@ -506,9 +506,9 @@ describe('McpsTab', () => {
         expect(screen.getByText('Connected')).not.toBeNull();
         expect(screen.queryByText('Unavailable')).toBeNull();
 
-        const serverToggle = screen.getByRole('button', {name: serverToggleName});
+        const serverToggle = screen.getByRole('switch', {name: serverToggleName});
         expect(serverToggle.getAttribute('aria-checked')).toBe('true');
-        expect((serverToggle as HTMLButtonElement).disabled).toBe(false);
+        expect((serverToggle as HTMLInputElement).disabled).toBe(false);
     });
 
     test('keeps Not connected for an unauthenticated user-mode server without SA headers', async () => {

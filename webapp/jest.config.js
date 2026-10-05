@@ -23,6 +23,8 @@ module.exports = {
         // is evaluated in order and '^src/(.*)$' would otherwise match asset
         // imports like 'src/../../assets/bot_icon.png' first.
         '\\.(svg|png|jpg|jpeg|gif|webp)$': '<rootDir>/tests/svg_mock.js',
+        '\\.css$': 'identity-obj-proxy',
+        '^@mattermost/compass-ui/styles': 'identity-obj-proxy',
         '^@/(.*)$': '<rootDir>/src/$1',
         '^src/(.*)$': '<rootDir>/src/$1',
     },

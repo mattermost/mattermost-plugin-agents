@@ -103,7 +103,7 @@ test.describe.serial('MCP Panel', () => {
             await systemConsole.navigateToPluginConfig(mattermost.url());
 
             const callbackField = page.getByLabel(/MCP OAuth Callback URL/i);
-            const callbackRow = callbackField.locator('xpath=..');
+            const callbackRow = callbackField.locator('xpath=ancestor::*[.//button][1]');
             await callbackField.scrollIntoViewIfNeeded();
 
             // The URL must be the SiteURL the server reports plus the plugin OAuth callback path.

@@ -21,6 +21,10 @@ function dismissMenu() {
     document.getElementById('backdropForMenuComponent')?.click();
 }
 
+const MenuContent = styled.div`
+    padding: var(--spacing-s) 0;
+`;
+
 const AgentSelectorWrapper = styled.div`
     padding: 0 4px;
     margin-bottom: 4px;
@@ -105,7 +109,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
     const showBotSelector = !isBotDMChannel && bots.length > 0;
 
     return (
-        <>
+        <MenuContent>
             {showBotSelector && (
                 <AgentSelectorWrapper>
                     <DropdownBotSelector
@@ -141,7 +145,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
                 <CogOutlineIcon size={16}/>
                 <span><FormattedMessage defaultMessage='Manage prompts'/></span>
             </StyledMenuItem>
-        </>
+        </MenuContent>
     );
 };
 

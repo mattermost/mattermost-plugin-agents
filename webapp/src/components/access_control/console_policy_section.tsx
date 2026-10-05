@@ -109,9 +109,9 @@ const ConsolePolicySection = (props: Props) => {
 // --- Styled Components ---
 
 const SectionContainer = styled.div<{$collapsed: boolean}>`
-    margin-top: 16px;
+    margin-top: 4px;
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
-    padding-top: 12px;
+    padding-top: 8px;
     ${({$collapsed}) => $collapsed && `
         position: relative;
         overflow: hidden;

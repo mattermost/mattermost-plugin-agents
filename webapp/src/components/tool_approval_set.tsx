@@ -5,6 +5,9 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {ErrorMessage} from '@mattermost/compass-ui/components/error-message';
+
 import {doToolCall, doToolResult} from '@/client';
 import {invalidateConversation} from '@/hooks/use_conversation';
 
@@ -35,26 +38,6 @@ const StatusBar = styled.div`
 const BatchButtonContainer = styled.div`
     display: flex;
     gap: 8px;
-`;
-
-const BatchButton = styled.button`
-    background: rgba(var(--button-bg-rgb), 0.08);
-    color: var(--button-bg);
-    border: none;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.12);
-    }
-
-    &:active {
-        background: rgba(var(--button-bg-rgb), 0.16);
-    }
 `;
 
 // Tool call interfaces
@@ -241,7 +224,7 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
     }
 
     if (error) {
-        return <div className='error'>{error}</div>;
+        return <ErrorMessage message={error}/>;
     }
 
     // The "N tools need decisions" bar and batch buttons only make sense for
@@ -338,24 +321,26 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                         />
                     </div>
                     <BatchButtonContainer>
-                        <BatchButton
-                            type='button'
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
                             onClick={() => handleBatchDecision(true)}
                         >
                             <FormattedMessage
                                 id='ai.tool_call.accept_all'
                                 defaultMessage='Accept all'
                             />
-                        </BatchButton>
-                        <BatchButton
-                            type='button'
+                        </Button>
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
                             onClick={() => handleBatchDecision(false)}
                         >
                             <FormattedMessage
                                 id='ai.tool_call.reject_all'
                                 defaultMessage='Reject all'
                             />
-                        </BatchButton>
+                        </Button>
                     </BatchButtonContainer>
                 </StatusBar>
             )}
@@ -370,15 +355,16 @@ const ToolApprovalSet: React.FC<ToolApprovalSetProps> = (props) => {
                             />
                         </div>
                     ) : (
-                        <BatchButton
-                            type='button'
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
                             onClick={() => submitDecisions([])}
                         >
                             <FormattedMessage
                                 id='ai.tool_call.run_tools'
                                 defaultMessage='Run tools'
                             />
-                        </BatchButton>
+                        </Button>
                     )}
                 </StatusBar>
             )}

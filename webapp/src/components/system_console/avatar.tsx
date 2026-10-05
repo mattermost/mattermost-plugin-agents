@@ -8,9 +8,9 @@ import {FormattedMessage} from 'react-intl';
 //@ts-ignore it exists
 import aiIcon from 'src/../../assets/bot_icon.png';
 
-import {getBotProfilePictureUrl} from '@/client';
+import {Button} from '@mattermost/compass-ui/components/button';
 
-import {TertiaryButton} from '../assets/buttons';
+import {getBotProfilePictureUrl} from '@/client';
 
 import {FormRow, ItemLabel} from './item';
 
@@ -107,21 +107,22 @@ const AvatarItem = (props: AvatarItemProps) => {
             <ItemLabel><FormattedMessage defaultMessage='Bot avatar'/></ItemLabel>
             <AvatarSelectorContainer>
                 <Avatar src={icon}/>
-                <TertiaryButton
+                <HiddenInput
+                    ref={hiddenInput}
+                    type='file'
+                    accept='.jpeg,.jpg,.png,.gif' // From the MM server requirements
+                    onChange={onUploadChange}
+                />
+                <Button
+                    emphasis='tertiary'
                     onClick={() => {
                         if (hiddenInput.current) {
                             hiddenInput.current.click();
                         }
                     }}
                 >
-                    <HiddenInput
-                        ref={hiddenInput}
-                        type='file'
-                        accept='.jpeg,.jpg,.png,.gif' // From the MM server requirements
-                        onChange={onUploadChange}
-                    />
                     <FormattedMessage defaultMessage='Upload Image'/>
-                </TertiaryButton>
+                </Button>
             </AvatarSelectorContainer>
         </FormRow>
     );
@@ -143,7 +144,7 @@ const AvatarSelectorContainer = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 16px;
+	gap: var(--spacing-l);
 `;
 
 export default AvatarItem;

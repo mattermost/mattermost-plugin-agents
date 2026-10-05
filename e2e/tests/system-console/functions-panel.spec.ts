@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
+import { chooseCompassOption } from 'helpers/compass-select';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
@@ -93,19 +94,17 @@ test.describe.serial('AI Functions Panel', () => {
         const functionsPanel = systemConsole.getFunctionsPanel();
         await functionsPanel.scrollIntoViewIfNeeded();
 
-        // Locate the 'Default agent' dropdown field by looking for combobox near "Default agent" text
-        // This is the first combobox on the page (in the AI Functions section)
-        const defaultBotDropdown = page.getByRole('combobox').first();
+        const defaultBotDropdown = page.getByRole('combobox', { name: 'Default bot', exact: true });
 
         // Verify the dropdown is visible and enabled
         await expect(defaultBotDropdown).toBeVisible();
         await expect(defaultBotDropdown).toBeEnabled();
 
         // Verify the dropdown shows 'Primary Assistant' as the current selection
-        await expect(defaultBotDropdown).toHaveValue(/primaryassistant|Primary Assistant/i);
+        await expect(defaultBotDropdown).toHaveText(/Primary Assistant/i);
 
         // Select 'Secondary Bot' from the dropdown
-        await defaultBotDropdown.selectOption({ label: 'Secondary Bot' });
+        await chooseCompassOption(defaultBotDropdown, 'Secondary Bot');
 
         // Click the Save button at the bottom of the page
         const saveButton = systemConsole.getSaveButton();
@@ -118,8 +117,8 @@ test.describe.serial('AI Functions Panel', () => {
         await page.reload();
 
         // Verify the 'Default agent' dropdown now shows 'Secondary Bot' as selected
-        const reloadedDropdown = page.getByRole('combobox').first();
-        await expect(reloadedDropdown).toHaveValue(/secondarybot|Secondary Bot/i);
+        const reloadedDropdown = page.getByRole('combobox', { name: 'Default bot', exact: true });
+        await expect(reloadedDropdown).toHaveText(/Secondary Bot/i);
 
         await openAIMock.stop();
         await mattermost.stop();

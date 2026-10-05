@@ -5,7 +5,7 @@ import React from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
-import {ItemLabel, HelpText, FormRow, FieldControlRow, InlineCheckbox, SelectField} from './item';
+import {CompactItemLabel, HelpText, FormRow, CompactFieldControlRow, InlineCheckbox, SelectField} from './item';
 import {LLMBotConfig} from './bot';
 import {LLMService} from './service';
 
@@ -52,6 +52,13 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
     if (!props.service) {
         return null;
     }
+
+    const reasoningEffortOptions = [
+        {value: 'minimal', label: intl.formatMessage({defaultMessage: 'Minimal'})},
+        {value: 'low', label: intl.formatMessage({defaultMessage: 'Low'})},
+        {value: 'medium', label: intl.formatMessage({defaultMessage: 'Medium'})},
+        {value: 'high', label: intl.formatMessage({defaultMessage: 'High'})},
+    ];
 
     // Determine if this service supports reasoning.
     //   - OpenAI direct and Cohere North always use the Responses API.
@@ -103,20 +110,20 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
 
     return (
         <FormRow>
-            <ItemLabel>
+            <CompactItemLabel>
                 <Horizontal>
                     {headerLabel}
                 </Horizontal>
-            </ItemLabel>
+            </CompactItemLabel>
             <ReasoningContainer>
-                <FieldControlRow>
+                <CompactFieldControlRow>
                     <InlineCheckbox
                         testId='reasoning-enable'
                         label={intl.formatMessage({defaultMessage: 'Enable'})}
                         checked={reasoningEnabled}
                         onChange={(checked) => props.onChange({...props.bot, reasoningEnabled: checked})}
                     />
-                </FieldControlRow>
+                </CompactFieldControlRow>
 
                 {reasoningEnabled && (
                     <>
@@ -185,21 +192,10 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                     <SelectField
                                         maxWidth='200px'
                                         value={reasoningEffort}
-                                        onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                    >
-                                        <option value='minimal'>
-                                            {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                        </option>
-                                        <option value='low'>
-                                            {intl.formatMessage({defaultMessage: 'Low'})}
-                                        </option>
-                                        <option value='medium'>
-                                            {intl.formatMessage({defaultMessage: 'Medium'})}
-                                        </option>
-                                        <option value='high'>
-                                            {intl.formatMessage({defaultMessage: 'High'})}
-                                        </option>
-                                    </SelectField>
+                                        options={reasoningEffortOptions}
+                                        ariaLabel={intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                        onChange={(effort) => props.onChange({...props.bot, reasoningEffort: effort})}
+                                    />
                                     <HelpText>
                                         {intl.formatMessage({
                                             defaultMessage: 'Effort level maps to Gemini 3.0+ thinkingLevel and is estimated as a budget for Gemini 2.5 models. Ignored when a thinking budget is set above.',
@@ -217,21 +213,10 @@ const ReasoningConfigItem = (props: ReasoningConfigItemProps) => {
                                 <SelectField
                                     maxWidth='200px'
                                     value={reasoningEffort}
-                                    onChange={(e) => props.onChange({...props.bot, reasoningEffort: e.target.value})}
-                                >
-                                    <option value='minimal'>
-                                        {intl.formatMessage({defaultMessage: 'Minimal'})}
-                                    </option>
-                                    <option value='low'>
-                                        {intl.formatMessage({defaultMessage: 'Low'})}
-                                    </option>
-                                    <option value='medium'>
-                                        {intl.formatMessage({defaultMessage: 'Medium'})}
-                                    </option>
-                                    <option value='high'>
-                                        {intl.formatMessage({defaultMessage: 'High'})}
-                                    </option>
-                                </SelectField>
+                                    options={reasoningEffortOptions}
+                                    ariaLabel={intl.formatMessage({defaultMessage: 'Reasoning Effort'})}
+                                    onChange={(effort) => props.onChange({...props.bot, reasoningEffort: effort})}
+                                />
                                 <HelpText>
                                     {intl.formatMessage({
                                         defaultMessage: 'Controls how much computational effort the model spends on reasoning. Higher effort levels produce more thorough responses but take longer and cost more. Minimal is fastest, High is most thorough.',
@@ -250,19 +235,19 @@ const Horizontal = styled.div`
     display: flex;
     flex-direction: row;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ReasoningContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--spacing-m);
 `;
 
 const ConfigField = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const FieldLabel = styled.label`

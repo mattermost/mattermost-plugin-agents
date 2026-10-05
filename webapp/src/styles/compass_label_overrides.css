@@ -1,0 +1,10 @@
+/*
+ * Mattermost/Bootstrap form CSS bolds all <label>s. Compass Checkbox and Radio
+ * render as labels and don't set font-weight yet, so they inherit bold.
+ * Remove once upstream compass-ui sets font-weight on these roots.
+ */
+label[class*='_checkbox_'],
+label[class*='_radio_'] {
+	font-weight: 400;
+	margin-bottom: 0;
+}

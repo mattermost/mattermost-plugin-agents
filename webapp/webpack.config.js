@@ -75,6 +75,20 @@ const config = {
                 type: 'json',
             },
             {
+
+                // Plugins ship a single main.js, so CSS is injected at runtime.
+                // @mattermost/compass-ui class names are pre-hashed; re-hashing
+                // them via CSS modules would break the component styles.
+                test: /\.css$/,
+                use: [
+                    'style-loader',
+                    {
+                        loader: 'css-loader',
+                        options: {modules: false},
+                    },
+                ],
+            },
+            {
                 test: /\.(png|eot|tiff|svg|woff2|woff|ttf|gif|mp3|jpg|jpeg)$/,
                 type: 'asset/inline',
             },

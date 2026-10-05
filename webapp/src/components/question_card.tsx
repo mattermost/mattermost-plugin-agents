@@ -6,8 +6,11 @@ import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {CheckIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
 
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
+
 import {ToolCall, ToolCallStatus} from './tool_types';
-import LoadingSpinner from './assets/loading_spinner';
 
 // Parsed shape of the AskUserQuestion tool arguments. Mirrors
 // mmtools.AskUserQuestionArgs on the server.
@@ -224,25 +227,9 @@ const FreeFormToggle = styled.button<{$disabled: boolean}>`
     cursor: ${(props) => (props.$disabled ? 'default' : 'pointer')};
 `;
 
-const FreeFormInput = styled.input`
+const FreeFormInput = styled(TextInput)`
     flex: 1;
     min-width: 0;
-    padding: 6px 10px;
-    font-size: 14px;
-    line-height: 20px;
-    color: var(--center-channel-color);
-    background: var(--center-channel-bg);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.24);
-    border-radius: 4px;
-
-    &:focus {
-        outline: none;
-        border-color: var(--button-bg);
-    }
-
-    &::placeholder {
-        color: rgba(var(--center-channel-color-rgb), 0.42);
-    }
 `;
 
 const Footer = styled.div`
@@ -267,31 +254,6 @@ const FooterButtons = styled.div`
     margin-left: auto;
 `;
 
-const FooterButton = styled.button<{$primary: boolean}>`
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 8px 16px;
-    border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 16px;
-    cursor: pointer;
-    background: ${(props) => (props.$primary ? 'var(--button-bg)' : 'rgba(var(--button-bg-rgb), 0.08)')};
-    color: ${(props) => (props.$primary ? 'var(--button-color)' : 'var(--button-bg)')};
-
-    &:hover:not(:disabled) {
-        background: ${(props) => (props.$primary ? 'rgba(var(--button-bg-rgb), 0.88)' : 'rgba(var(--button-bg-rgb), 0.12)')};
-    }
-
-    &:disabled {
-        cursor: default;
-        opacity: 0.5;
-    }
-`;
-
 const StatusLine = styled.div`
     display: flex;
     align-items: center;
@@ -309,11 +271,6 @@ const AnsweredIcon = styled(CheckIcon)`
 
 const SkippedIcon = styled(CloseCircleOutlineIcon)`
     color: var(--dnd-indicator);
-`;
-
-const ProcessingSpinner = styled(LoadingSpinner)`
-    width: 12px;
-    height: 12px;
 `;
 
 interface QuestionCardProps {
@@ -395,7 +352,10 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
         if (isProcessing || (hasLocalDecision && isPending)) {
             return (
                 <StatusLine>
-                    <ProcessingSpinner/>
+                    <Spinner
+                        size='12'
+                        aria-hidden={true}
+                    />
                     <FormattedMessage
                         id='ai.question.submitting'
                         defaultMessage='Submitting…'
@@ -486,6 +446,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                                 )}
                             </FreeFormToggle>
                             <FreeFormInput
+                                size='small'
                                 value={shownCustomText}
                                 placeholder={formatMessage({
                                     id: 'ai.question.something_else',
@@ -531,19 +492,19 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         </SelectedCount>
                     )}
                     <FooterButtons>
-                        <FooterButton
-                            type='button'
-                            $primary={false}
+                        <Button
+                            emphasis='tertiary'
+                            size='small'
                             onClick={onSkip}
                         >
                             <FormattedMessage
                                 id='ai.question.skip'
                                 defaultMessage='Skip'
                             />
-                        </FooterButton>
-                        <FooterButton
-                            type='button'
-                            $primary={true}
+                        </Button>
+                        <Button
+                            emphasis='primary'
+                            size='small'
                             disabled={!canSubmit}
                             onClick={() => onAnswer?.(selections, customAnswered ? trimmedCustom : '')}
                         >
@@ -551,7 +512,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                                 id='ai.question.accept'
                                 defaultMessage='Accept'
                             />
-                        </FooterButton>
+                        </Button>
                     </FooterButtons>
                 </Footer>
             )}

@@ -5,77 +5,27 @@ import React, {useEffect} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 
-import {CloseIcon} from '@mattermost/compass-icons/components';
+import {Button} from '@mattermost/compass-ui/components/button';
+import {Modal} from '@mattermost/compass-ui/components/modal';
+import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 import {DatePicker} from '@/mm_webapp';
 
-const ModalContainer = styled.div`
-    background-color: var(--center-channel-bg);
-    border-radius: 12px;
-    width: 600px;
+const Sheet = styled.div`
     display: flex;
-    flex-direction: column;
-    box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.12);
+    max-width: calc(100vw - 32px);
 `;
 
-const ModalHeader = styled.div`
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 24px 32px;
-`;
-
-const HeaderContent = styled.div`
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-`;
-
-const ModalTitle = styled.h2`
-    font-family: 'Metropolis', sans-serif;
-    font-weight: 600;
-    font-size: 22px;
-    line-height: 28px;
-    color: var(--center-channel-color);
-    margin: 0;
-`;
-
-const ModalSubtitle = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 12px;
-    line-height: 20px;
-    border-left: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    padding-left: 12px;
-`;
-
-const CloseButton = styled.button`
-    width: 40px;
-    height: 40px;
-    padding: 0;
-    background: none;
-    border: none;
-    cursor: pointer;
-    border-radius: 4px;
-    color: rgba(var(--center-channel-color-rgb), 0.56);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-
-    &:hover {
-        background: rgba(var(--center-channel-color-rgb), 0.08);
-        color: rgba(var(--center-channel-color-rgb), 0.72);
+// The host DatePicker's calendar is not portaled, so the dialog must not clip it.
+const SummarizeModal = styled(Modal)`
+    && {
+        max-width: 100%;
+        overflow: visible;
     }
 `;
 
 const ModalBody = styled.div`
-    padding: 0 32px 24px;
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -114,69 +64,6 @@ const DateLabel = styled.label`
     z-index: 1;
 `;
 
-const DateInput = styled.input`
-    width: 100%;
-    padding: 10px 16px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background-color: var(--center-channel-bg);
-    color: var(--center-channel-color);
-    font-family: 'Open Sans', sans-serif;
-    font-size: 14px;
-    line-height: 20px;
-    outline: none;
-
-    &:focus {
-        border-color: var(--button-bg);
-        box-shadow: 0 0 0 1px var(--button-bg);
-    }
-
-    &::-webkit-calendar-picker-indicator {
-        filter: invert(0.5);
-        cursor: pointer;
-    }
-`;
-
-const ModalFooter = styled.div`
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    padding: 24px 32px;
-    gap: 8px;
-`;
-
-const CancelButton = styled.button`
-    background: rgba(var(--button-bg-rgb), 0.08);
-    color: var(--button-bg);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.12);
-    }
-`;
-
-const SummarizeButton = styled.button`
-    background: var(--button-bg);
-    color: var(--button-color);
-    border: none;
-    border-radius: 4px;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
-    cursor: pointer;
-    font-family: 'Open Sans', sans-serif;
-
-    &:hover {
-        background: rgba(var(--button-bg-rgb), 0.88);
-    }
-`;
-
 interface Props {
     show: boolean;
     onClose: () => void;
@@ -184,7 +71,8 @@ interface Props {
     channelName?: string;
 }
 
-const SUMMARIZE_CHANNEL_TITLE_ID = 'summarize-channel-title';
+const START_DATE_INPUT_ID = 'summarize-range-start-date';
+const END_DATE_INPUT_ID = 'summarize-range-end-date';
 
 // Helper to format Date to YYYY-MM-DD string
 const formatDateToString = (date: Date | null): string => {
@@ -272,10 +160,11 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
         // Fallback to native date input for older Mattermost versions
         return (
             <>
-                <DateLabel>
+                <DateLabel htmlFor={START_DATE_INPUT_ID}>
                     <FormattedMessage defaultMessage='Start date'/>
                 </DateLabel>
-                <DateInput
+                <TextInput
+                    id={START_DATE_INPUT_ID}
                     type='date'
                     value={formatDateToString(startDate)}
                     onChange={(e) => setStartDate(parseDateString(e.target.value))}
@@ -309,10 +198,11 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
         // Fallback to native date input for older Mattermost versions
         return (
             <>
-                <DateLabel>
+                <DateLabel htmlFor={END_DATE_INPUT_ID}>
                     <FormattedMessage defaultMessage='End date'/>
                 </DateLabel>
-                <DateInput
+                <TextInput
+                    id={END_DATE_INPUT_ID}
                     type='date'
                     value={formatDateToString(endDate)}
                     onChange={(e) => setEndDate(parseDateString(e.target.value))}
@@ -327,53 +217,52 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
             onBackdropClick={onClose}
             zIndex={2000}
         >
-            <ModalContainer
+            <Sheet
                 className={MODAL_SHEET_CLASS}
                 onClick={handleModalClick}
-                role='dialog'
-                aria-modal='true'
-                aria-labelledby={SUMMARIZE_CHANNEL_TITLE_ID}
             >
-                <ModalHeader>
-                    <HeaderContent>
-                        <ModalTitle id={SUMMARIZE_CHANNEL_TITLE_ID}>
-                            <FormattedMessage defaultMessage='Summarize channel'/>
-                        </ModalTitle>
-                        {channelName && (
-                            <ModalSubtitle>
-                                {channelName}
-                            </ModalSubtitle>
-                        )}
-                    </HeaderContent>
-                    <CloseButton
-                        onClick={onClose}
-                        aria-label={intl.formatMessage({defaultMessage: 'Close'})}
-                    >
-                        <CloseIcon size={24}/>
-                    </CloseButton>
-                </ModalHeader>
-                <ModalBody>
-                    <Description>
-                        <FormattedMessage defaultMessage='Select a date range to summarize messages in this channel.'/>
-                    </Description>
-                    <DateInputsContainer>
-                        <DateInputGroup>
-                            {renderStartDateInput()}
-                        </DateInputGroup>
-                        <DateInputGroup>
-                            {renderEndDateInput()}
-                        </DateInputGroup>
-                    </DateInputsContainer>
-                </ModalBody>
-                <ModalFooter>
-                    <CancelButton onClick={onClose}>
-                        <FormattedMessage defaultMessage='Cancel'/>
-                    </CancelButton>
-                    <SummarizeButton onClick={handleSummarize}>
-                        <FormattedMessage defaultMessage='Summarize'/>
-                    </SummarizeButton>
-                </ModalFooter>
-            </ModalContainer>
+                <SummarizeModal
+                    size='small'
+                    title={<FormattedMessage defaultMessage='Summarize channel'/>}
+                    subtitle={channelName}
+                    subtitlePlacement='beside'
+                    onClose={onClose}
+                    closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                    headerDivider={false}
+                    footerDivider={false}
+                    scrollable={false}
+                    footer={(
+                        <>
+                            <Button
+                                emphasis='tertiary'
+                                onClick={onClose}
+                            >
+                                <FormattedMessage defaultMessage='Cancel'/>
+                            </Button>
+                            <Button
+                                emphasis='primary'
+                                onClick={handleSummarize}
+                            >
+                                <FormattedMessage defaultMessage='Summarize'/>
+                            </Button>
+                        </>
+                    )}
+                >
+                    <ModalBody>
+                        <Description>
+                            <FormattedMessage defaultMessage='Select a date range to summarize messages in this channel.'/>
+                        </Description>
+                        <DateInputsContainer>
+                            <DateInputGroup>
+                                {renderStartDateInput()}
+                            </DateInputGroup>
+                            <DateInputGroup>
+                                {renderEndDateInput()}
+                            </DateInputGroup>
+                        </DateInputsContainer>
+                    </ModalBody>
+                </SummarizeModal>
+            </Sheet>
         </AnimatedModalShell>
     );
 };

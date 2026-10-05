@@ -7,16 +7,17 @@ import {useIntl, type IntlShape} from 'react-intl';
 
 import {TrashCanOutlineIcon, ChevronDownIcon, ChevronUpIcon} from '@mattermost/compass-icons/components';
 
-import IconAI from '../assets/icon_ai';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {Icon} from '@mattermost/compass-ui/components/icon';
 
-import {ButtonIcon} from '../assets/buttons';
+import IconAI from '../assets/icon_ai';
 
 import {fetchModels} from '../../client';
 import {useIsLicensedFor} from '@/license';
 
 import ConsolePolicySection from '../access_control/console_policy_section';
 
-import {BooleanItem, ItemList, SelectionItem, SelectionItemOption, TextItem, ComboboxItem} from './item';
+import {BooleanItem, ItemList, SelectionItem, TextItem, ComboboxItem} from './item';
 import {LicenseChip} from './enterprise_chip';
 
 export type LLMService = {
@@ -290,8 +291,7 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Service type'})}
                 value={props.service.type}
-                onChange={(e) => {
-                    const nextType = e.target.value;
+                onChange={(nextType) => {
                     props.onChange({
                         ...props.service,
                         type: nextType,
@@ -299,20 +299,21 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                         useResponsesAPI: (nextType === 'openai' || nextType === 'north') ? true : props.service.useResponsesAPI,
                     });
                 }}
-            >
-                <SelectionItemOption value='openai'>{'OpenAI'}</SelectionItemOption>
-                <SelectionItemOption value='anthropic'>{'Anthropic'}</SelectionItemOption>
-                <SelectionItemOption value='gemini'>{'Google Gemini'}</SelectionItemOption>
-                <SelectionItemOption value='vertex'>{'Google Vertex AI'}</SelectionItemOption>
-                <SelectionItemOption value='bedrock'>{'AWS Bedrock'}</SelectionItemOption>
-                <SelectionItemOption value='openaicompatible'>{'OpenAI Compatible'}</SelectionItemOption>
-                <SelectionItemOption value='azure'>{'Azure'}</SelectionItemOption>
-                <SelectionItemOption value='cohere'>{'Cohere'}</SelectionItemOption>
-                <SelectionItemOption value='north'>{'Cohere North'}</SelectionItemOption>
-                <SelectionItemOption value='mistral'>{'Mistral'}</SelectionItemOption>
-                <SelectionItemOption value='scale'>{scaleAIToDisplayName(intl)}</SelectionItemOption>
-                <SelectionItemOption value='asage'>{'asksage (Experimental)'}</SelectionItemOption>
-            </SelectionItem>
+                options={[
+                    {value: 'openai', label: 'OpenAI'},
+                    {value: 'anthropic', label: 'Anthropic'},
+                    {value: 'gemini', label: 'Google Gemini'},
+                    {value: 'vertex', label: 'Google Vertex AI'},
+                    {value: 'bedrock', label: 'AWS Bedrock'},
+                    {value: 'openaicompatible', label: 'OpenAI Compatible'},
+                    {value: 'azure', label: 'Azure'},
+                    {value: 'cohere', label: 'Cohere'},
+                    {value: 'north', label: 'Cohere North'},
+                    {value: 'mistral', label: 'Mistral'},
+                    {value: 'scale', label: scaleAIToDisplayName(intl)},
+                    {value: 'asage', label: 'asksage (Experimental)'},
+                ]}
+            />
             {(type === 'openaicompatible' || type === 'azure' || type === 'asage' || type === 'scale' || type === 'north') && (
                 <TextItem
                     label={apiURLLabel}
@@ -472,47 +473,34 @@ export const ServiceFields = (props: ServiceFieldsProps) => {
                 extra={!fallbackLicensed && (
                     <LicenseChip capability='model_fallback'/>
                 )}
-                onChange={(e) => {
-                    if (!fallbackLicensed && e.target.value !== '') {
+                onChange={(fallbackServiceID) => {
+                    if (!fallbackLicensed && fallbackServiceID !== '') {
                         return;
                     }
-                    props.onChange({...props.service, fallbackServiceID: e.target.value});
+                    props.onChange({...props.service, fallbackServiceID});
                 }}
                 helptext={intl.formatMessage({defaultMessage: 'If this service is unavailable, requests will automatically fall back to the selected service. Fallback chains are supported (e.g., Service A → Service B → Service C).'})}
-            >
-                <SelectionItemOption value=''>
-                    {intl.formatMessage({defaultMessage: 'No fallback'})}
-                </SelectionItemOption>
-                {(props.services ?? []).
+                options={[
+                    {value: '', label: intl.formatMessage({defaultMessage: 'No fallback'})},
+                    ...(props.services ?? []).
 
-                    // ID-less entries were added this session and aren't
-                    // addressable as fallbacks until the config is saved.
-                    filter((s) => s.id && s.id !== props.service.id).
-                    map((s) => (
-                        <SelectionItemOption
-                            key={s.id}
-                            value={s.id}
-                        >
-                            {s.name || serviceTypeToDisplayName(intl, s.type)}
-                        </SelectionItemOption>
-                    ))}
-            </SelectionItem>
+                        // ID-less entries were added this session and aren't
+                        // addressable as fallbacks until the config is saved.
+                        filter((s) => s.id && s.id !== props.service.id).
+                        map((s) => ({value: s.id, label: s.name || serviceTypeToDisplayName(intl, s.type)})),
+                ]}
+            />
             <SelectionItem
                 label={intl.formatMessage({defaultMessage: 'Structured output'})}
                 value={normalizeStructuredOutputPolicy(props.service.structuredOutputPolicy)}
-                onChange={(e) => props.onChange({...props.service, structuredOutputPolicy: e.target.value})}
+                onChange={(structuredOutputPolicy) => props.onChange({...props.service, structuredOutputPolicy})}
                 helptext={intl.formatMessage({defaultMessage: '"Auto" sends a requested JSON schema natively only when this provider, model, and API path are positively known to support it, and otherwise falls back to prompt-based JSON instructions. The policy is combined across this service\'s fallback chain, so marking one service as natively supported does not force native mode when another service in the chain needs the prompt-based strategy.'})}
-            >
-                <SelectionItemOption value={StructuredOutputPolicyAuto}>
-                    {intl.formatMessage({defaultMessage: 'Auto (recommended)'})}
-                </SelectionItemOption>
-                <SelectionItemOption value={StructuredOutputPolicyNative}>
-                    {intl.formatMessage({defaultMessage: 'Native supported'})}
-                </SelectionItemOption>
-                <SelectionItemOption value={StructuredOutputPolicyPromptFallback}>
-                    {intl.formatMessage({defaultMessage: 'Prompt fallback'})}
-                </SelectionItemOption>
-            </SelectionItem>
+                options={[
+                    {value: StructuredOutputPolicyAuto, label: intl.formatMessage({defaultMessage: 'Auto (recommended)'})},
+                    {value: StructuredOutputPolicyNative, label: intl.formatMessage({defaultMessage: 'Native supported'})},
+                    {value: StructuredOutputPolicyPromptFallback, label: intl.formatMessage({defaultMessage: 'Prompt fallback'})},
+                ]}
+            />
         </>
     );
 };
@@ -531,7 +519,7 @@ const Service = (props: Props) => {
     return (
         <ServiceContainer>
             <HeaderContainer onClick={() => setOpen((o) => !o)}>
-                <IconAI/>
+                <HeaderIconAI/>
                 <Title>
                     <NameText>
                         {props.service.name || serviceTypeToDisplayName(intl, props.service.type)}
@@ -546,15 +534,28 @@ const Service = (props: Props) => {
                     )}
                 </Title>
                 <Spacer/>
-                <ButtonIcon
-                    onClick={(e) => {
-                        e.stopPropagation();
-                        props.onDelete();
-                    }}
-                >
-                    <TrashIcon/>
-                </ButtonIcon>
-                {open ? <ChevronUpIcon/> : <ChevronDownIcon/>}
+                <HeaderActions>
+                    <IconButton
+                        icon={<Icon glyph={<TrashCanOutlineIcon/>}/>}
+                        aria-label={intl.formatMessage({defaultMessage: 'Delete service'})}
+                        size='small'
+                        destructive={true}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            props.onDelete();
+                        }}
+                    />
+                    <IconButton
+                        icon={<Icon glyph={open ? <ChevronUpIcon/> : <ChevronDownIcon/>}/>}
+                        aria-label={open ? intl.formatMessage({defaultMessage: 'Collapse service'}) : intl.formatMessage({defaultMessage: 'Expand service'})}
+                        aria-expanded={open}
+                        size='small'
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setOpen((o) => !o);
+                        }}
+                    />
+                </HeaderActions>
             </HeaderContainer>
             {open && (
                 <ItemListContainer>
@@ -581,7 +582,7 @@ const Service = (props: Props) => {
 };
 
 const ItemListContainer = styled.div`
-	padding: 24px 20px;
+	padding: var(--spacing-xxl) var(--spacing-xl);
 	padding-right: 76px;
 `;
 
@@ -589,17 +590,17 @@ const Title = styled.div`
 	display: flex;
 	flex-direction: row;
 	align-items: center;
-	gap: 8px;
+	gap: var(--spacing-xs);
 `;
 
 const NameText = styled.div`
-	font-size: 14px;
-	font-weight: 600;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-semibold);
 `;
 
 const ServiceTypeText = styled.div`
-	font-size: 14px;
-	font-weight: 400;
+	font-size: var(--font-size-100);
+	font-weight: var(--font-weight-regular);
 	color: rgba(var(--center-channel-color-rgb), 0.72);
 `;
 
@@ -607,28 +608,27 @@ const Spacer = styled.div`
 	flex-grow: 1;
 `;
 
-const TrashIcon = styled(TrashCanOutlineIcon)`
-	width: 16px;
-	height: 16px;
-	color: #D24B4E;
-`;
-
 const VerticalDivider = styled.div`
 	width: 1px;
 	border-left: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-	height: 24px;
+	height: var(--spacing-xxl);
 `;
 
 const ServiceContainer = styled.div`
 	display: flex;
 	flex-direction: column;
 
-	border-radius: 4px;
+	border-radius: var(--radius-s);
 	border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
 
 	&:hover {
-		box-shadow: 0px 2px 3px 0px rgba(0, 0, 0, 0.08);
+		box-shadow: var(--elevation-1);
 	}
+`;
+
+const HeaderIconAI = styled(IconAI)`
+	color: rgba(var(--center-channel-color-rgb), 0.64);
+	flex-shrink: 0;
 `;
 
 const HeaderContainer = styled.div`
@@ -636,9 +636,16 @@ const HeaderContainer = styled.div`
 	flex-direction: row;
 	justify-content: space-between;
 	align-items: center;
-	gap: 16px;
-	padding: 12px 16px 12px 20px;
+	gap: var(--spacing-l);
+	padding: var(--spacing-m) var(--spacing-l) var(--spacing-m) var(--spacing-xl);
 	cursor: pointer;
+`;
+
+const HeaderActions = styled.div`
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	gap: var(--spacing-xxxs);
 `;
 
 export default Service;

@@ -41,8 +41,9 @@ jest.mock('@/client', () => ({
 jest.mock('./dot_menu', () => ({
     __esModule: true,
     default: ({children}: {children: React.ReactNode}) => <div data-testid='unreads-menu'>{children}</div>,
+    DotMenuButton: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
     DropdownMenu: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-    DropdownMenuItem: ({children}: {children: React.ReactNode}) => <button type='button'>{children}</button>,
+    DropdownMenuItem: ({label}: {label: React.ReactNode}) => <button type='button'>{label}</button>,
 }));
 
 jest.mock('./bot_selector', () => ({

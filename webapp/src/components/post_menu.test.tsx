@@ -45,7 +45,7 @@ jest.mock('./dot_menu', () => ({
     __esModule: true,
     default: ({children}: {children: React.ReactNode}) => <div data-testid='ai-actions-menu'>{children}</div>,
     DropdownMenu: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
-    DropdownMenuItem: ({children}: {children: React.ReactNode}) => <button type='button'>{children}</button>,
+    DropdownMenuItem: ({label}: {label: React.ReactNode}) => <button type='button'>{label}</button>,
 }));
 
 jest.mock('./bot_selector', () => ({

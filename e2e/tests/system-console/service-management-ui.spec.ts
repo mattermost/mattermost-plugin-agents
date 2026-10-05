@@ -5,6 +5,7 @@ import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { SystemConsoleHelper } from 'helpers/system-console';
+import { chooseCompassOption } from 'helpers/compass-select';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
 import RunSystemConsoleContainer, { adminUsername, adminPassword } from 'helpers/system-console-container';
 
@@ -75,8 +76,8 @@ test.describe('Service Management', () => {
         await serviceNameInput.fill('My Test Service');
 
         // Service Type dropdown - select Anthropic
-        const serviceTypeDropdown = serviceCard.getByRole('combobox').first();
-        await serviceTypeDropdown.selectOption('anthropic');
+        const serviceTypeDropdown = serviceCard.getByRole('combobox', { name: 'Service type', exact: true });
+        await chooseCompassOption(serviceTypeDropdown, 'Anthropic');
         await page.waitForTimeout(500);
 
         // API Key

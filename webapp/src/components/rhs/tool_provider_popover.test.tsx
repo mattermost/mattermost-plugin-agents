@@ -133,7 +133,7 @@ describe('ToolProviderPopover', () => {
         expect(screen.queryByRole('button', {name: 'Connect'})).toBeNull();
         expect(screen.queryByText('Not connected')).toBeNull();
 
-        const toggle = screen.getByRole('checkbox');
+        const toggle = screen.getByRole('switch');
         expect((toggle as HTMLInputElement).checked).toBe(false);
         expect((toggle as HTMLInputElement).disabled).toBe(true);
         expect(mockUpdateUserToolPreferences).not.toHaveBeenCalled();
@@ -206,7 +206,7 @@ describe('ToolProviderPopover', () => {
         await screen.findByText('n8n');
 
         expect(screen.queryByText('Unavailable')).toBeNull();
-        const toggle = screen.getByRole('checkbox');
+        const toggle = screen.getByRole('switch');
         expect((toggle as HTMLInputElement).checked).toBe(true);
         expect((toggle as HTMLInputElement).disabled).toBe(false);
     });
