@@ -116,6 +116,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	// Build LLM context with default tools enabled
 	llmContext := a.contextBuilder.BuildLLMContextUserRequest(
+		c.Request.Context(),
 		bot,
 		user,
 		channel,
@@ -249,6 +250,7 @@ func (a *API) handleInterval(c *gin.Context) {
 
 	// Interval summaries disable tools, so skip MCP/tool initialization entirely.
 	context := a.contextBuilder.BuildLLMContextUserRequest(
+		c.Request.Context(),
 		bot,
 		user,
 		channel,

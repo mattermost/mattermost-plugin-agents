@@ -364,7 +364,12 @@ func TestRequestFieldsFromConfigRoundTrip(t *testing.T) {
 		MaxToolTurns:            5,
 	}
 
+	fields := requestFieldsFromConfig(&cfg)
 	var applied llm.BotConfig
-	requestFieldsFromConfig(&cfg).applyTo(&applied)
+	fields.applyTo(&applied)
 	assert.Equal(t, cfg, applied, "every request-controlled field must survive a restore")
+
+	// Documents are re-resolved from the stored documents rather than applied.
+	cfg.Documents = []llm.AgentDocument{{ID: "doc-1", Name: "handbook.pdf", MimeType: "application/pdf", Size: 3, SHA256: "abc", TextRunes: 2}}
+	assert.Equal(t, []AgentDocumentRef{{ID: "doc-1", Name: "handbook.pdf"}}, requestFieldsFromConfig(&cfg).Documents)
 }

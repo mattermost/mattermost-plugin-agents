@@ -173,6 +173,7 @@ func updateAgentBodyFromStored(cfg *llm.BotConfig, overrides map[string]any) map
 		"thinkingBudget":          cfg.ThinkingBudget,
 		"structuredOutputEnabled": cfg.StructuredOutputEnabled, //nolint:staticcheck // deprecated but still accepted on the wire
 		"maxToolTurns":            cfg.MaxToolTurns,
+		"documents":               documentRefs(cfg.Documents),
 	}
 	maps.Copy(body, overrides)
 	return body

@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +17,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
@@ -523,13 +526,80 @@ type mockAgentStore struct {
 	// versions holds each agent's versions, oldest first, recorded with the
 	// same rules as the real store.
 	versions map[string][]store.AgentVersionDetail
+
+	// documents holds stored reference documents by ID.
+	documents map[string]*store.AgentDocument
 }
 
 func newMockAgentStore() *mockAgentStore {
 	return &mockAgentStore{
-		agents:   make(map[string]*llm.BotConfig),
-		versions: make(map[string][]store.AgentVersionDetail),
+		agents:    make(map[string]*llm.BotConfig),
+		versions:  make(map[string][]store.AgentVersionDetail),
+		documents: make(map[string]*store.AgentDocument),
 	}
+}
+
+func (m *mockAgentStore) SaveAgentDocument(doc *store.AgentDocument) error {
+	sum := sha256.Sum256(doc.Content)
+	doc.SHA256 = hex.EncodeToString(sum[:])
+	doc.Size = int64(len(doc.Content))
+	doc.TextRunes = utf8.RuneCountInString(doc.ExtractedText)
+	for _, existing := range m.documents {
+		if existing.SHA256 == doc.SHA256 && existing.CreatedBy == doc.CreatedBy && existing.MimeType == doc.MimeType {
+			doc.ID, doc.CreateAt = existing.ID, existing.CreateAt
+			return nil
+		}
+	}
+	doc.ID = model.NewId()
+	doc.CreateAt = time.Now().UnixMilli()
+	stored := *doc
+	stored.Content = append([]byte(nil), doc.Content...)
+	m.documents[doc.ID] = &stored
+	return nil
+}
+
+func (m *mockAgentStore) GetAgentDocument(id string) (*store.AgentDocument, error) {
+	doc, ok := m.documents[id]
+	if !ok {
+		return nil, nil
+	}
+	out := *doc
+	out.Content = append([]byte(nil), doc.Content...)
+	return &out, nil
+}
+
+func (m *mockAgentStore) GetAgentDocumentInfos(ids []string) (map[string]*store.AgentDocument, error) {
+	out := make(map[string]*store.AgentDocument, len(ids))
+	for _, id := range ids {
+		if doc, ok := m.documents[id]; ok {
+			info := *doc
+			info.Content, info.ExtractedText = nil, ""
+			out[id] = &info
+		}
+	}
+	return out, nil
+}
+
+func (m *mockAgentStore) GetAgentDocumentTexts(ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	for _, id := range ids {
+		if doc, ok := m.documents[id]; ok {
+			out[id] = doc.ExtractedText
+		}
+	}
+	return out, nil
+}
+
+func (m *mockAgentStore) ListAgentDocumentReferences(agentID string) ([]llm.AgentDocument, error) {
+	var refs []llm.AgentDocument
+	if cfg, ok := m.agents[agentID]; ok {
+		refs = append(refs, cfg.Documents...)
+	}
+	history := m.versions[agentID]
+	for i := len(history) - 1; i >= 0; i-- {
+		refs = append(refs, history[i].Config.Documents...)
+	}
+	return refs, nil
 }
 
 func mockVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
@@ -630,6 +700,8 @@ func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 	if len(src.EnabledNativeTools) > 0 {
 		dst.EnabledNativeTools = append([]string(nil), src.EnabledNativeTools...)
 	}
+	// Like the real store, documents are always a list, never null.
+	dst.Documents = append([]llm.AgentDocument{}, src.Documents...)
 	return &dst
 }
 

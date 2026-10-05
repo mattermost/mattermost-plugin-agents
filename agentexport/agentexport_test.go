@@ -4,10 +4,13 @@
 package agentexport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/stretchr/testify/assert"
@@ -26,6 +29,11 @@ func validDocument() Document {
 			MaxToolTurns:       30,
 		},
 	}
+}
+
+func exportedDocument(name, content string) AgentDocument {
+	sum := sha256.Sum256([]byte(content))
+	return AgentDocument{Name: name, MimeType: agentdocs.MimeTypeText, Size: int64(len(content)), SHA256: hex.EncodeToString(sum[:]), Content: []byte(content)}
 }
 
 func TestServers(t *testing.T) {
@@ -120,7 +128,8 @@ func TestNewCarriesOnlyTransferableFields(t *testing.T) {
 		UpdateAt:     2,
 	}
 
-	doc := New(agent, 7, []Server{{Origin: "https://jira.example.com/mcp", Name: "Jira"}}, 1234)
+	documents := []AgentDocument{exportedDocument("handbook.txt", "handbook text")}
+	doc := New(agent, 7, []Server{{Origin: "https://jira.example.com/mcp", Name: "Jira"}}, 1234, documents)
 
 	assert.Equal(t, Document{
 		Kind:          Kind,
@@ -139,6 +148,7 @@ func TestNewCarriesOnlyTransferableFields(t *testing.T) {
 				{ServerOrigin: config.MCPEmbeddedServerOrigin, ServerName: "Mattermost", ToolName: "search_posts"},
 				{ServerOrigin: "https://gone.example.com", ServerName: "", ToolName: "x"},
 			},
+			Documents: documents,
 		},
 	}, doc)
 
@@ -149,11 +159,29 @@ func TestNewCarriesOnlyTransferableFields(t *testing.T) {
 	}
 }
 
-func TestNewAlwaysHasMCPToolsArray(t *testing.T) {
-	doc := New(&llm.BotConfig{Name: "a"}, 1, nil, 0)
+func TestNewAlwaysHasMCPToolsAndDocumentsArrays(t *testing.T) {
+	doc := New(&llm.BotConfig{Name: "a"}, 1, nil, 0, nil)
 	raw, err := json.Marshal(doc)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"mcpTools":[]`)
+	assert.Contains(t, string(raw), `"documents":[]`)
+	assert.Contains(t, string(raw), `"schemaVersion":2`)
+}
+
+func TestDocumentContentIsBase64(t *testing.T) {
+	doc := New(&llm.BotConfig{Name: "a"}, 1, nil, 0, []AgentDocument{exportedDocument("a.txt", "hello")})
+	raw, err := json.Marshal(doc)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"content":"aGVsbG8="`)
+
+	var decoded Document
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, []byte("hello"), decoded.Agent.Documents[0].Content)
+
+	stripped, err := json.Marshal(decoded.WithoutDocumentContent())
+	require.NoError(t, err)
+	assert.NotContains(t, string(stripped), "content")
+	assert.Equal(t, []byte("hello"), decoded.Agent.Documents[0].Content, "stripping does not modify the original")
 }
 
 func TestNormalize(t *testing.T) {
@@ -170,8 +198,94 @@ func TestNormalize(t *testing.T) {
 		},
 		{
 			name:      "unsupported schema version",
-			mutate:    func(d *Document) { d.SchemaVersion = 2 },
-			errSubstr: "unsupported agent export schema version 2",
+			mutate:    func(d *Document) { d.SchemaVersion = 3 },
+			errSubstr: "unsupported agent export schema version 3",
+		},
+		{
+			name:      "schema version 0",
+			mutate:    func(d *Document) { d.SchemaVersion = 0 },
+			errSubstr: "unsupported agent export schema version 0",
+		},
+		{
+			name:   "schema version 1 without documents is accepted",
+			mutate: func(d *Document) { d.SchemaVersion = 1 },
+			check: func(t *testing.T, d Document) {
+				assert.Equal(t, 1, d.SchemaVersion)
+				assert.Empty(t, d.Agent.Documents)
+			},
+		},
+		{
+			name: "documents are kept with trimmed names and lower-case checksums",
+			mutate: func(d *Document) {
+				doc := exportedDocument("  handbook.txt ", "text")
+				doc.SHA256 = strings.ToUpper(doc.SHA256)
+				d.Agent.Documents = []AgentDocument{doc}
+			},
+			check: func(t *testing.T, d Document) {
+				want := exportedDocument("handbook.txt", "text")
+				assert.Equal(t, []AgentDocument{want}, d.Agent.Documents)
+			},
+		},
+		{
+			name: "document checksum mismatch",
+			mutate: func(d *Document) {
+				doc := exportedDocument("a.txt", "text")
+				doc.Content = []byte("tampered")
+				doc.Size = int64(len(doc.Content))
+				d.Agent.Documents = []AgentDocument{doc}
+			},
+			errSubstr: `reference document "a.txt" does not match its sha256 checksum`,
+		},
+		{
+			name: "document size mismatch",
+			mutate: func(d *Document) {
+				doc := exportedDocument("a.txt", "text")
+				doc.Size++
+				d.Agent.Documents = []AgentDocument{doc}
+			},
+			errSubstr: `reference document "a.txt" is 4 bytes but its size says 5`,
+		},
+		{
+			name: "document of an unsupported type",
+			mutate: func(d *Document) {
+				doc := exportedDocument("a.docx", "text")
+				doc.MimeType = "application/msword"
+				d.Agent.Documents = []AgentDocument{doc}
+			},
+			errSubstr: `unsupported type "application/msword"`,
+		},
+		{
+			name: "document without content",
+			mutate: func(d *Document) {
+				d.Agent.Documents = []AgentDocument{exportedDocument("a.txt", "")}
+			},
+			errSubstr: `reference document "a.txt" has no content`,
+		},
+		{
+			name: "document with an invalid name",
+			mutate: func(d *Document) {
+				d.Agent.Documents = []AgentDocument{exportedDocument("../a.txt", "text")}
+			},
+			errSubstr: "reference document 1: document name",
+		},
+		{
+			name: "too many documents",
+			mutate: func(d *Document) {
+				for range agentdocs.MaxDocumentsPerAgent + 1 {
+					d.Agent.Documents = append(d.Agent.Documents, exportedDocument("a.txt", "text"))
+				}
+			},
+			errSubstr: "at most 20 reference documents",
+		},
+		{
+			name: "documents over the total size limit",
+			mutate: func(d *Document) {
+				big := strings.Repeat("a", agentdocs.MaxDocumentBytes)
+				for range 3 {
+					d.Agent.Documents = append(d.Agent.Documents, exportedDocument("big.txt", big))
+				}
+			},
+			errSubstr: "exceed the limit of 26214400 bytes in total",
 		},
 		{
 			name:      "oversized instructions",

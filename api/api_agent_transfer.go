@@ -23,6 +23,11 @@ const (
 	agentImportModeUpdate = "update"
 )
 
+// MaxAgentImportBodyBytes caps import and import preview JSON bodies, which
+// carry the base64-encoded content of up to MaxTotalBytesPerAgent of
+// reference documents.
+const MaxAgentImportBodyBytes = 40 << 20 // 40 MiB
+
 // ImportAgentPreviewRequest is the JSON body for POST /agents/import/preview.
 type ImportAgentPreviewRequest struct {
 	Document agentexport.Document `json:"document"`
@@ -38,10 +43,19 @@ type importExistingAgent struct {
 
 // importAgentPreviewResponse is the body of POST /agents/import/preview.
 type importAgentPreviewResponse struct {
+	// Document is the normalized document without its documents' content.
 	Document            agentexport.Document      `json:"document"`
 	MCPServers          []agentexport.ServerGroup `json:"mcpServers"`
 	AvailableMCPServers []agentexport.Server      `json:"availableMCPServers"`
 	ExistingAgent       *importExistingAgent      `json:"existingAgent"`
+	Documents           []importPreviewDocument   `json:"documents"`
+}
+
+// importPreviewDocument summarizes a reference document of an import document.
+type importPreviewDocument struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Size     int64  `json:"size"`
 }
 
 // ImportAgentRequest is the JSON body for POST /agents/import. Username,
@@ -75,7 +89,12 @@ func (a *API) handleExportAgent(c *gin.Context) {
 		return
 	}
 
-	doc := agentexport.New(cfg, version, agentexport.Servers(a.pluginConfigOrEmpty().MCP), model.GetMillis())
+	documents, ok := a.exportAgentDocuments(c, cfg)
+	if !ok {
+		return
+	}
+
+	doc := agentexport.New(cfg, version, agentexport.Servers(a.pluginConfigOrEmpty().MCP), model.GetMillis(), documents)
 	// Usernames are limited to [a-z0-9._-]; dropping quote characters keeps
 	// the quoted form valid even for unexpected legacy values.
 	filename := strings.NewReplacer(`"`, "", `\`, "").Replace(fmt.Sprintf("%s-v%d.agent.json", cfg.Name, version))
@@ -83,25 +102,38 @@ func (a *API) handleExportAgent(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, doc)
 }
 
+// canCreateOrManageAnyAgent reports whether userID may create agents or
+// manages at least one agent.
+func (a *API) canCreateOrManageAnyAgent(userID string) (bool, error) {
+	if canCreateAgent(a.pluginAPI, userID) {
+		return true, nil
+	}
+	agents, err := a.agentStore.ListAgents()
+	if err != nil {
+		return false, fmt.Errorf("failed to list agents: %w", err)
+	}
+	for _, agent := range agents {
+		if canManageAgent(a.pluginAPI, agent, userID) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // checkCanImportAgent allows users who may create agents or manage at least
 // one agent; mode-specific checks happen later. It writes the abort response
 // and returns false when the caller may not import.
 func (a *API) checkCanImportAgent(c *gin.Context, userID string) bool {
-	if canCreateAgent(a.pluginAPI, userID) {
-		return true
-	}
-	agents, err := a.agentStore.ListAgents()
+	allowed, err := a.canCreateOrManageAnyAgent(userID)
 	if err != nil {
-		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to list agents: %w", err))
+		abortAgentRequest(c, http.StatusInternalServerError, err)
 		return false
 	}
-	for _, agent := range agents {
-		if canManageAgent(a.pluginAPI, agent, userID) {
-			return true
-		}
+	if !allowed {
+		abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to import agents"))
+		return false
 	}
-	abortAgentRequest(c, http.StatusForbidden, errors.New("user does not have permission to import agents"))
-	return false
+	return true
 }
 
 // normalizeImportDocument validates doc, aborting with 400 when it is not a
@@ -125,7 +157,7 @@ func (a *API) handlePreviewAgentImport(c *gin.Context) {
 	}
 
 	var req ImportAgentPreviewRequest
-	if !bindAgentRequestJSON(c, &req) {
+	if !bindAgentRequestJSONWithLimit(c, &req, MaxAgentImportBodyBytes) {
 		return
 	}
 	doc, ok := normalizeImportDocument(c, req.Document)
@@ -135,9 +167,13 @@ func (a *API) handlePreviewAgentImport(c *gin.Context) {
 
 	available := a.importTargetMCPServers(c, userID)
 	resp := importAgentPreviewResponse{
-		Document:            doc,
+		Document:            doc.WithoutDocumentContent(),
 		MCPServers:          doc.ServerGroups(available),
 		AvailableMCPServers: available,
+		Documents:           make([]importPreviewDocument, 0, len(doc.Agent.Documents)),
+	}
+	for _, d := range doc.Agent.Documents {
+		resp.Documents = append(resp.Documents, importPreviewDocument{Name: d.Name, MimeType: d.MimeType, Size: d.Size})
 	}
 
 	if doc.Agent.Name != "" {
@@ -173,7 +209,7 @@ func (a *API) handleImportAgent(c *gin.Context) {
 	}
 
 	var req ImportAgentRequest
-	if !bindAgentRequestJSON(c, &req) {
+	if !bindAgentRequestJSONWithLimit(c, &req, MaxAgentImportBodyBytes) {
 		return
 	}
 	audit.AddParam(auditRec(c), "mode", audit.TruncateID(req.Mode))
@@ -197,7 +233,11 @@ func (a *API) handleImportAgent(c *gin.Context) {
 		if !ok {
 			return
 		}
-		agent, ok := a.createAgent(c, userID, a.importCreateRequest(req, doc, tools), meta)
+		documents, ok := a.storeImportedDocuments(c, userID, doc.Agent.Documents)
+		if !ok {
+			return
+		}
+		agent, ok := a.createAgent(c, userID, a.importCreateRequest(req, doc, tools, documents), meta)
 		if !ok {
 			return
 		}
@@ -217,8 +257,12 @@ func (a *API) handleImportAgent(c *gin.Context) {
 		if !ok {
 			return
 		}
+		documents, ok := a.storeImportedDocuments(c, userID, doc.Agent.Documents)
+		if !ok {
+			return
+		}
 		fields := requestFieldsFromConfig(stored)
-		applyImportedMission(&fields, doc, tools)
+		applyImportedMission(&fields, doc, tools, documents)
 		agent, ok := a.updateAgent(c, userID, stored, UpdateAgentRequest{AgentRequestFields: fields}, meta)
 		if !ok {
 			return
@@ -262,14 +306,20 @@ func (a *API) importTargetMCPServers(c *gin.Context, userID string) []agentexpor
 	return agentexport.UniqueServers(servers)
 }
 
-// applyImportedMission overwrites the fields an export document carries.
-func applyImportedMission(fields *AgentRequestFields, doc agentexport.Document, tools []llm.EnabledMCPTool) {
+// applyImportedMission overwrites the fields an export document carries;
+// documents are the document's reference documents as stored on import.
+// Documents from before DocumentsSchemaVersion say nothing about reference
+// documents, so they leave fields.Documents as it is.
+func applyImportedMission(fields *AgentRequestFields, doc agentexport.Document, tools []llm.EnabledMCPTool, documents []AgentDocumentRef) {
 	fields.CustomInstructions = doc.Agent.CustomInstructions
 	fields.DisableTools = doc.Agent.DisableTools
 	fields.MaxToolTurns = doc.Agent.MaxToolTurns
 	fields.MCPDynamicToolLoading = doc.Agent.MCPDynamicToolLoading
 	fields.AutoEnableNewMCPTools = doc.Agent.AutoEnableNewMCPTools
 	fields.EnabledMCPTools = tools
+	if doc.SchemaVersion >= agentexport.DocumentsSchemaVersion {
+		fields.Documents = documents
+	}
 }
 
 // importCreateRequest builds the create request for an imported agent: the
@@ -277,7 +327,7 @@ func applyImportedMission(fields *AgentRequestFields, doc agentexport.Document, 
 // import, with every other field at the defaults of a new agent created in
 // the UI (everyone may use it, no extra admins, vision and reasoning on,
 // provider web search on where licensed).
-func (a *API) importCreateRequest(req ImportAgentRequest, doc agentexport.Document, tools []llm.EnabledMCPTool) CreateAgentRequest {
+func (a *API) importCreateRequest(req ImportAgentRequest, doc agentexport.Document, tools []llm.EnabledMCPTool, documents []AgentDocumentRef) CreateAgentRequest {
 	fields := AgentRequestFields{
 		DisplayName:        req.DisplayName,
 		ServiceID:          req.ServiceID,
@@ -291,6 +341,6 @@ func (a *API) importCreateRequest(req ImportAgentRequest, doc agentexport.Docume
 	if a.licenseChecker.Allows(enterprise.CapProviderWebSearch) {
 		fields.EnabledNativeTools = []string{llm.NativeToolWebSearch}
 	}
-	applyImportedMission(&fields, doc, tools)
+	applyImportedMission(&fields, doc, tools, documents)
 	return CreateAgentRequest{AgentRequestFields: fields, Username: req.Username}
 }

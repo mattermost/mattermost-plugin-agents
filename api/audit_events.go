@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 31
+// Audit event names for every state-changing operation in the plugin: 32
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -40,6 +40,10 @@ const (
 	// import preview are read-only and are not audited.
 	AuditEventRestoreAgentVersion = "restoreAgentVersion"
 	AuditEventImportAgent         = "importAgent"
+
+	// Agent reference documents. Downloading a document or reading its
+	// text is read-only and is not audited.
+	AuditEventUploadAgentDocument = "uploadAgentDocument"
 
 	// Custom prompts.
 	AuditEventCreateCustomPrompt = "createCustomPrompt"
@@ -117,6 +121,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 		// Agent versioning and transfer.
 		handlerFuncName(a.handleRestoreAgentVersion): AuditEventRestoreAgentVersion,
 		handlerFuncName(a.handleImportAgent):         AuditEventImportAgent,
+
+		// Agent reference documents.
+		handlerFuncName(a.handleUploadAgentDocument): AuditEventUploadAgentDocument,
 
 		// Custom prompts.
 		handlerFuncName(a.handleCreateCustomPrompt): AuditEventCreateCustomPrompt,

@@ -18,6 +18,7 @@ import (
 var managerEditableBotConfigFields = map[string]bool{
 	"DisplayName":             true,
 	"CustomInstructions":      true,
+	"Documents":               true,
 	"Model":                   true,
 	"ServiceID":               true,
 	"EnableVision":            true,

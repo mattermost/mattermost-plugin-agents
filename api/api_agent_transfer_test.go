@@ -130,13 +130,14 @@ func TestExportAgent(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw["agent"], &rawAgent))
 	assert.ElementsMatch(t, []string{
 		"name", "displayName", "customInstructions", "disableTools", "maxToolTurns",
-		"mcpDynamicToolLoading", "autoEnableNewMCPTools", "mcpTools",
+		"mcpDynamicToolLoading", "autoEnableNewMCPTools", "mcpTools", "documents",
 	}, slices.Collect(maps.Keys(rawAgent)), "only transferable fields are exported")
 
 	var doc agentexport.Document
 	require.NoError(t, json.Unmarshal([]byte(body), &doc))
 	assert.Equal(t, agentexport.Kind, doc.Kind)
-	assert.Equal(t, 1, doc.SchemaVersion)
+	assert.Equal(t, 2, doc.SchemaVersion)
+	assert.Equal(t, []agentexport.AgentDocument{}, doc.Agent.Documents)
 	assert.Equal(t, 2, doc.AgentVersion)
 	assert.NotZero(t, doc.ExportedAt)
 	assert.Equal(t, "my-agent", doc.Agent.Name)
@@ -233,7 +234,7 @@ func TestPreviewAgentImport(t *testing.T) {
 		errorContains string
 	}{
 		{name: "wrong kind", document: map[string]any{"kind": "other", "schemaVersion": 1, "agent": map[string]any{}}, errorContains: "not a Mattermost agent export"},
-		{name: "future schema", document: map[string]any{"kind": agentexport.Kind, "schemaVersion": 2, "agent": map[string]any{}}, errorContains: "unsupported agent export schema version 2"},
+		{name: "future schema", document: map[string]any{"kind": agentexport.Kind, "schemaVersion": 3, "agent": map[string]any{}}, errorContains: "unsupported agent export schema version 3"},
 		{name: "max tool turns out of range", document: map[string]any{"kind": agentexport.Kind, "schemaVersion": 1, "agent": map[string]any{"maxToolTurns": 1000}}, errorContains: "maxToolTurns"},
 		{name: "not an object", document: "nope", errorContains: "invalid request body"},
 	}

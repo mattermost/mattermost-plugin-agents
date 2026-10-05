@@ -114,6 +114,17 @@ type AgentStore interface {
 	GetAgentVersion(agentID string, version int) (*store.AgentVersionDetail, error)
 	// GetLatestAgentVersion returns 0 when the agent has no versions.
 	GetLatestAgentVersion(agentID string) (int, error)
+
+	// SaveAgentDocument stores a reference document, reusing an identical one
+	// the same user stored before.
+	SaveAgentDocument(doc *store.AgentDocument) error
+	// GetAgentDocument returns nil, nil when the document does not exist.
+	GetAgentDocument(id string) (*store.AgentDocument, error)
+	// GetAgentDocumentInfos returns existing documents without content, keyed by ID.
+	GetAgentDocumentInfos(ids []string) (map[string]*store.AgentDocument, error)
+	// ListAgentDocumentReferences returns the agent's current document
+	// references followed by those of its versions, newest first.
+	ListAgentDocumentReferences(agentID string) ([]llm.AgentDocument, error)
 }
 
 // ConfigUpdater updates the in-memory plugin configuration.
@@ -373,6 +384,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	// Static import routes, likewise registered before /:agentid.
 	agentRouter.POST("/import/preview", a.handlePreviewAgentImport)
 	agentRouter.POST("/import", a.handleImportAgent)
+	agentRouter.POST("/documents", a.handleUploadAgentDocument)
 	agentRouter.GET("/:agentid", a.handleGetAgent)
 	agentRouter.PUT("/:agentid", a.handleUpdateAgent)
 	agentRouter.DELETE("/:agentid", a.handleDeleteAgent)
@@ -381,6 +393,8 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	agentRouter.GET("/:agentid/versions/:version", a.handleGetAgentVersion)
 	agentRouter.POST("/:agentid/versions/:version/restore", a.handleRestoreAgentVersion)
 	agentRouter.GET("/:agentid/export", a.handleExportAgent)
+	agentRouter.GET("/:agentid/documents/:documentid", a.handleDownloadAgentDocument)
+	agentRouter.GET("/:agentid/documents/:documentid/text", a.handleGetAgentDocumentText)
 	// Access policy authoring: agent managers.
 	agentRouter.GET("/:agentid/access_policy", a.handleGetAgentPolicy)
 	agentRouter.PUT("/:agentid/access_policy", a.handlePutAgentPolicy)
