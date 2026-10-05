@@ -232,6 +232,41 @@ export class AgentPageHelper {
         return this.page.locator('button[class*="Toggle"]');
     }
 
+    // --- Reference documents (Configuration tab) ---
+
+    getDocumentsSection(): Locator {
+        return this.page.getByTestId('agent-documents');
+    }
+
+    /** Hidden file input behind the "Upload documents" button. */
+    getDocumentsFileInput(): Locator {
+        return this.page.getByTestId('agent-documents-input');
+    }
+
+    /** Rows of the documents in the editor draft, in order. */
+    getDocumentRows(): Locator {
+        return this.getDocumentsSection().getByRole('list', { name: 'Reference documents', exact: true }).getByRole('listitem');
+    }
+
+    getDocumentRow(name: string): Locator {
+        return this.getDocumentRows().filter({ has: this.page.getByText(name, { exact: true }) });
+    }
+
+    /** Rows of in-flight or failed uploads. */
+    getDocumentUploadRow(name: string): Locator {
+        return this.getDocumentsSection().getByRole('list', { name: 'Document uploads', exact: true })
+            .getByRole('listitem').filter({ has: this.page.getByText(name, { exact: true }) });
+    }
+
+    getDocumentsUsage(): Locator {
+        return this.page.getByTestId('agent-documents-usage');
+    }
+
+    /** The reference documents listed in a History version snapshot. */
+    getVersionSnapshotDocuments(): Locator {
+        return this.page.getByTestId('version-snapshot-documents');
+    }
+
     // --- Editor header ---
 
     /** Export button in the editor header (existing agents only). */
