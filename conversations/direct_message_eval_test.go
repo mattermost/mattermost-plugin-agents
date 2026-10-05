@@ -158,6 +158,7 @@ func TestDirectMessageConversations(t *testing.T) {
 
 			// Build completion request directly (ProcessUserRequest was removed in Step L)
 			llmContext := contextBuilder.BuildLLMContextUserRequest(
+				context.Background(),
 				bots.NewBot(botConfig, serviceConfig, mmBot, llmInstance),
 				threadData.RequestingUser(),
 				threadData.Channel,

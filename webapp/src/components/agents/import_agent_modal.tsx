@@ -11,6 +11,7 @@ import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal
 import {PrimaryButton, TertiaryButton} from '@/components/assets/buttons';
 import {SelectField, StyledInput, StyledRadio} from '@/components/system_console/item';
 import {
+    AgentExportDocument,
     AgentImportMCPServerMapping,
     AgentImportMode,
     AgentImportPreview,
@@ -18,9 +19,11 @@ import {
     ServiceInfo,
     UserAgent,
     DefaultMaxToolTurns,
+    MaxAgentImportFileBytes,
     codePointLength,
 } from '@/types/agents';
 
+import {formatDocumentSize, totalDocumentBytes} from './agent_documents';
 import {agentUsernameError} from './agent_username';
 
 const IMPORT_TITLE_ID = 'import-agent-title';
@@ -73,6 +76,10 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [fileError, setFileError] = useState('');
     const [preview, setPreview] = useState<AgentImportPreview | null>(null);
+
+    // The file exactly as parsed from disk. The preview echoes the document without
+    // document content, so this (not preview.document) is what gets imported.
+    const [parsedDocument, setParsedDocument] = useState<AgentExportDocument | null>(null);
     const [mode, setMode] = useState<AgentImportMode>(createAllowed ? 'create' : 'update');
     const [targetAgentId, setTargetAgentId] = useState('');
     const [username, setUsername] = useState('');
@@ -112,8 +119,17 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
         }
         setFileName(file.name);
         setPreview(null);
+        setParsedDocument(null);
         setFileError('');
         setSubmitError('');
+
+        if (file.size > MaxAgentImportFileBytes) {
+            setFileError(intl.formatMessage(
+                {defaultMessage: 'This file is too large. Agent files can be up to {max}.'},
+                {max: formatDocumentSize(intl, MaxAgentImportFileBytes)},
+            ));
+            return;
+        }
 
         let parsed: unknown;
         try {
@@ -129,7 +145,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
 
         setLoadingPreview(true);
         try {
-            const result = await previewAgentImport(parsed as AgentImportPreview['document']);
+            const result = await previewAgentImport(parsed as AgentExportDocument);
             const manageableExisting = result.existingAgent && result.existingAgent.canManage &&
                 manageableAgents.some((a) => a.id === result.existingAgent?.id) ? result.existingAgent : null;
 
@@ -153,6 +169,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
                 initialMappings[server.sourceOrigin] = server.autoTargetOrigin || '';
             }
             setMappings(initialMappings);
+            setParsedDocument(parsed as AgentExportDocument);
             setPreview(result);
         } catch (err) {
             setFileError(errorText(err, intl.formatMessage({defaultMessage: 'Failed to read this agent file.'})));
@@ -170,11 +187,11 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
     const usernameError = mode === 'create' ? agentUsernameError(intl, username) : '';
     const createFieldsValid = !usernameError && displayName.trim() !== '' && serviceId !== '';
     const updateFieldsValid = targetAgentId !== '';
-    const canSubmit = Boolean(preview) && !submitting && !unresolvedMappings &&
+    const canSubmit = Boolean(preview) && Boolean(parsedDocument) && !submitting && !unresolvedMappings &&
         (mode === 'create' ? createFieldsValid : updateFieldsValid);
 
     const handleImport = async () => {
-        if (!preview || !canSubmit) {
+        if (!preview || !parsedDocument || !canSubmit) {
             return;
         }
         const mcpServerMappings: AgentImportMCPServerMapping[] = mappingRequired ? mcpServers.map((s) => {
@@ -186,7 +203,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
         }) : [];
 
         const request: AgentImportRequest = mode === 'create' ? {
-            document: preview.document,
+            document: parsedDocument,
             mode,
             username: username.trim(),
             displayName: displayName.trim(),
@@ -194,7 +211,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
             model: model.trim(),
             mcpServerMappings,
         } : {
-            document: preview.document,
+            document: parsedDocument,
             mode,
             agentID: targetAgentId,
             mcpServerMappings,
@@ -212,6 +229,7 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
     };
 
     const doc = preview?.document.agent;
+    const previewDocuments = preview?.documents ?? parsedDocument?.agent.documents ?? [];
     const instructionsLength = doc ? codePointLength(doc.customInstructions ?? '') : 0;
     const instructionsPreview = doc ? Array.from(doc.customInstructions ?? '').slice(0, INSTRUCTIONS_PREVIEW_CHARS).join('') : '';
 
@@ -317,6 +335,20 @@ const ImportAgentModal = ({services, manageableAgents, canCreate, createDisabled
                                         intl.formatMessage(
                                             {defaultMessage: 'MCP tools: {count, plural, =0 {none} one {# tool} other {# tools}}'},
                                             {count: doc.mcpTools?.length ?? 0},
+                                        )
+                                    )}
+                                </SummaryLine>
+                                <SummaryLine data-testid='import-summary-documents'>
+                                    {previewDocuments.length === 0 ? (
+                                        <FormattedMessage defaultMessage='Reference documents: none'/>
+                                    ) : (
+                                        intl.formatMessage(
+                                            {defaultMessage: 'Reference documents: {count, plural, one {# document} other {# documents}} ({size}): {names}'},
+                                            {
+                                                count: previewDocuments.length,
+                                                size: formatDocumentSize(intl, totalDocumentBytes(previewDocuments)),
+                                                names: previewDocuments.map((d) => d.name).join(', '),
+                                            },
                                         )
                                     )}
                                 </SummaryLine>

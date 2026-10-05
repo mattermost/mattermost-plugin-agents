@@ -108,6 +108,7 @@ The Configuration tab covers identity, model selection, custom instructions, and
 | **Model** | Optional. Override the service's default model for this agent. For OpenAI, Anthropic, Azure, OpenAI Compatible, Gemini, and Vertex AI services the field becomes a combobox populated by a live model fetch from the provider; for other services it is a free-text field. Leave empty to use the service default. |
 | **Max tool turns** | Maximum number of consecutive tool-call/execute rounds the agent performs in a single response before stopping. Defaults to **30** (allowed range **1–250**). Lower this for smaller models that tend to loop on tool calls; raise it for agents that chain many tools per turn (for example dynamic MCP discovery: search → load → execute). Clearing the field saves the default. |
 | **Custom instructions** | Free-text. Prepended to every request as the agent's system prompt. Use it for tone, role, vocabulary, or workflow guidance. |
+| **Reference documents** | Optional. PDF and text files whose text is added to the agent's context on every request, right after the custom instructions. See [Reference documents](#reference-documents). |
 | **Enable Vision** | Available for service types that support image input. Lets the agent process attached images. Requires a vision-capable model. |
 | **Enable Tools** | Available for service types that support tool calling. When off, the agent runs without tools and the **MCPs** tab is disabled. Some Mattermost Agents features will not work without tools. |
 | **Native provider tools** | Available when the selected provider exposes native tools (Anthropic, OpenAI on Responses API, Gemini, Vertex AI, and OpenAI Compatible/Azure when **Use Responses API** is on). Pick which native tools (such as web search) the agent may use. |
@@ -170,7 +171,7 @@ While **Use service accounts for authentication** is off, anyone who can manage 
 
 While **Use service accounts for authentication** is enabled:
 
-- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
+- **Editable by anyone who can manage the agent:** display name, avatar, AI service, model, max tool turns, custom instructions, reference documents, vision, Enable Tools, native tools, dynamic tool loading, and reasoning.
 - **System-admin-only (sensitive):** channel access, user access, and agent admins; MCP tool grants and **Automatically enable all MCP tools**; and enabling service account authentication itself.
 - Anyone who can manage the agent may still turn service account authentication **off** or delete the agent.
 
@@ -188,6 +189,28 @@ The dirty-state check considers both form fields and a queued avatar upload, so 
 - Updating the AI service, model, or instructions takes effect on the next agent turn — in-flight responses already streaming to a user are not interrupted.
 - Updating channel/user access rules takes effect immediately for new mentions; the next time a user `@mentions` the agent in a channel that is now blocked, the agent will refuse the request.
 
+## Reference documents
+
+Reference documents give an agent background material, such as a handbook, an FAQ, or a product sheet, in addition to its custom instructions. On every request, the text of the agent's documents is added to its system prompt, right after the custom instructions. This works with any model and also when tools are disabled. The documents are presented to the model as reference material provided by the agent's administrators, not as instructions from the user.
+
+Manage documents in the **Reference documents** section of the **Configuration** tab, below **Custom instructions**. You can upload, rename, remove, and download documents there. Like every other setting, document changes are part of the editor draft and take effect when you select **Save**, which creates a new version. Saved documents can't be edited in place: to replace a document, remove it and upload the new file.
+
+Supported files and limits:
+
+| Limit | Value |
+|---|---|
+| File types | PDF (`.pdf`), plain text (`.txt`), Markdown (`.md`, `.markdown`), CSV (`.csv`), and JSON (`.json`). Text files must be UTF-8. |
+| Size of one file | 10 MiB |
+| Documents per agent | 20 |
+| Total size of an agent's documents | 25 MiB |
+| Extracted text per agent | 100,000 characters in total |
+
+When you upload a file, the server extracts its text and shows how many characters it contributes. A PDF without a text layer, such as a scan, is rejected because no text can be extracted from it. Because the documents' text is sent with every request, the 100,000-character budget keeps prompts bounded. A save that goes over the budget is rejected with a message giving the total.
+
+Only users who can manage an agent can list, download, or view the text of its documents. Everyone else sees the agent without them, as with custom instructions. Downloading a document returns the original file.
+
+Each version records exactly which documents the agent had. The **History** tab lists each version's documents, and restoring a version also restores its documents. Stored files are immutable and are never deleted, so every version's documents stay available. Uploads are recorded in the server audit log as `uploadAgentDocument` with the document ID, type, and size; file names and content are never recorded.
+
 ## Version history
 
 Every successful save of an agent creates a new numbered version: 1, 2, 3, and so on. The agent always runs its latest version; there are no drafts or pinned versions. Creating, editing, restoring, and importing an agent each add a version, and so do a few internal writes (for example, the legacy bot migration), which are labeled **System**. Agents that existed before version history was introduced get a version 1, labeled **Initial version**, when the plugin activates. If an agent's stored configuration changes outside the editor (for example, an internal migration), a **System** version records that change before the next save, so the next editor is never credited with it.
@@ -201,7 +224,9 @@ To roll back, select a version and choose **Restore this version**, then confirm
 - The username never changes.
 - Versions do not store attribute-based access policies. Switching an agent away from attribute-based access deletes its policy, so restoring an earlier attribute-based version leaves the agent with no policy and nobody can use it. The confirmation warns about this, and after the restore the editor opens the **Access** tab so you can create a new policy.
 
-Only users who can manage the agent can see its history, because versions include the agent's custom instructions. Versions are kept when an agent is deleted and are never pruned. Restores are recorded in the server audit log as `restoreAgentVersion` (agent, version number, and changed setting names only).
+A restore also brings back the version's [reference documents](#reference-documents), subject to the same document limits as a save.
+
+Only users who can manage the agent can see its history, because versions include the agent's custom instructions and reference documents. Versions are kept when an agent is deleted and are never pruned. Restores are recorded in the server audit log as `restoreAgentVersion` (agent, version number, and changed setting names only).
 
 ## Exporting and importing agents
 
@@ -217,8 +242,11 @@ The file contains only settings that mean the same thing on any server:
 - Custom instructions
 - **Enable Tools**, **Max tool turns**, and dynamic tool loading
 - **Automatically enable all MCP tools**, and the list of granted MCP tools, each identified by its MCP server's URL (with the server's name for reference)
+- The [reference documents](#reference-documents), each with its name, type, size, SHA-256 checksum, and original file content (base64-encoded)
 
-The file does **not** contain the AI service, model, reasoning settings, native provider tools, vision, access rules (channels, users, teams, attribute-based policies), agent admins, the service account setting, the avatar, or any IDs. It never contains MCP server credentials or AI service keys. Custom instructions are included, so treat the file as you would the instructions themselves.
+The file does **not** contain the AI service, model, reasoning settings, native provider tools, vision, access rules (channels, users, teams, attribute-based policies), agent admins, the service account setting, the avatar, or any IDs. It never contains MCP server credentials or AI service keys. Custom instructions and reference documents are included, so treat the file as you would the instructions and documents themselves.
+
+Exports use file format version 2. Files from servers without reference documents (version 1) can still be imported.
 
 ### Import
 
@@ -233,6 +261,8 @@ Each MCP server referenced in the file must be mapped to an MCP server on this s
 - Otherwise, pick the server to use, or choose **Remove these tools**. Import is blocked until every server is mapped or removed. Tools keep their names on the chosen server.
 - Available servers are the ones your **MCPs** tab lists: enabled servers your access policies allow, and the embedded Mattermost server when it is enabled. System administrators can also map to disabled servers.
 - When the file turns on **Automatically enable all MCP tools**, no mapping is needed: the agent gets every MCP tool on this server, as it would at runtime.
+
+Reference documents in the file are checked against their size and checksum, validated against the [document limits](#reference-documents), and have their text extracted again on this server. Documents are stored only after the rest of the import has been validated (permissions, agent quota, username, service, license, and agent configuration), so a rejected import leaves no documents behind. When updating an existing agent, the file's documents replace the agent's documents. If two documents in the file have identical content and type, the agent keeps only the first of them, under its name. A version 1 file carries no documents: any `documents` it contains are ignored (not checked, extracted, or stored), and updating from one leaves the agent's documents unchanged. Import files can be up to 40 MiB.
 
 An import adds a new version labeled **Imported**, and is recorded in the server audit log as `importAgent` (agent, and whether it created or updated an agent; never the file contents). Viewing history, exporting, and previewing an import are read-only and are not audited.
 
@@ -299,7 +329,7 @@ If migration was not performed (because no `config.bots` entries existed) the fl
 
 ### Backups
 
-`Agents_UserAgents` and its version history in `Agents_AgentVersions` are plugin-owned tables and are included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
+`Agents_UserAgents`, its version history in `Agents_AgentVersions`, and the reference document files in `Agents_AgentDocuments` are plugin-owned tables and are included in standard Mattermost database backups. Plain `mattermost-config.json` snapshots are no longer sufficient to restore agents — they contain only services and the default-bot setting, not agent definitions. See [Backup and restore](../admin_guide.md#backup-and-restore) for details.
 
 ## HA cluster behavior
 

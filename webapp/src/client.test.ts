@@ -4,13 +4,16 @@
 import type {ChannelSearchOpts, ChannelWithTeamData} from '@mattermost/types/channels';
 import type {OptsSignalExt} from '@mattermost/types/client4';
 
+import type {AgentExportDocument} from '@/types/agents';
 import type {ConversationResponse, Turn} from '@/types/conversation';
 
 import manifest from './manifest';
 
 import {
+    agentDocumentUrl,
     doLoopInAgent,
     doThreadAnalysis,
+    downloadAgentDocument,
     exportAgent,
     getAgentVersion,
     getAgentVersions,
@@ -18,6 +21,7 @@ import {
     parseContentDispositionFilename,
     previewAgentImport,
     restoreAgentVersion,
+    uploadAgentDocument,
     getChannelAutoReply,
     getConversation,
     getConversationContext,
@@ -369,7 +373,7 @@ describe('license denial errors', () => {
 
 describe('agent versioning and import/export client', () => {
     const agentBase = `${siteURL}/plugins/${manifest.id}/agents`;
-    const document = {
+    const document: AgentExportDocument = {
         kind: 'mattermost-agent',
         schemaVersion: 1,
         exportedAt: 1,
@@ -464,5 +468,42 @@ describe('agent versioning and import/export client', () => {
         {header: "attachment; filename*=UTF-8''caf%C3%A9.agent.json", expected: 'café.agent.json'},
     ])('parseContentDispositionFilename($header)', ({header, expected}) => {
         expect(parseContentDispositionFilename(header)).toBe(expected);
+    });
+
+    test('uploadAgentDocument posts the file as multipart form data without a JSON content type', async () => {
+        const uploaded = {id: 'doc1', name: 'handbook.pdf', mimeType: 'application/pdf', size: 3, sha256: 'abc', textRunes: 10};
+        mockFetch.mockResolvedValue(jsonResponse(uploaded, {status: 201}));
+        const file = new File(['abc'], 'handbook.pdf', {type: 'application/pdf'});
+
+        await expect(uploadAgentDocument(file)).resolves.toEqual(uploaded);
+
+        const [calledUrl, options] = mockFetch.mock.calls[0];
+        expect(calledUrl).toBe(`${agentBase}/documents`);
+        expect(options.method).toBe('POST');
+        expect(options.body).toBeInstanceOf(FormData);
+        expect((options.body as FormData).get('file')).toBe(file);
+        expect(options.headers).toEqual({'X-Requested-With': 'XMLHttpRequest'});
+    });
+
+    test('uploadAgentDocument surfaces the server error message and status', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({error: 'no extractable text found in "scan.pdf"'}, {ok: false, status: 400}));
+
+        await expect(uploadAgentDocument(new File(['x'], 'scan.pdf'))).rejects.toMatchObject({
+            status_code: 400,
+            message: 'no extractable text found in "scan.pdf"',
+        });
+    });
+
+    test('downloadAgentDocument returns the blob and Content-Disposition filename from the document route', async () => {
+        mockFetch.mockResolvedValue(jsonResponse({}, {
+            headers: {'Content-Disposition': "attachment; filename*=UTF-8''caf%C3%A9.pdf"},
+        }));
+
+        const result = await downloadAgentDocument('a1', 'doc1');
+
+        expect(agentDocumentUrl('a1', 'doc1')).toBe(`${agentBase}/a1/documents/doc1`);
+        expect(mockFetch.mock.calls[0][0]).toBe(`${agentBase}/a1/documents/doc1`);
+        expect(result.filename).toBe('café.pdf');
+        expect(result.blob).toBeInstanceOf(Blob);
     });
 });

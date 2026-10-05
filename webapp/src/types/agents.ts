@@ -23,6 +23,32 @@ export type EnabledTool = {
     tool_name: string; // tool identifier on that server
 }
 
+// Reference-document limits. Mirror the constants of the same meaning on the backend.
+export const MaxAgentDocuments = 20;
+export const MaxAgentDocumentBytes = 10 * 1024 * 1024;
+export const MaxAgentDocumentsTextRunes = 100000;
+export const MaxAgentDocumentNameLength = 256;
+
+// Largest agent file the import endpoints accept (preview and import bodies).
+export const MaxAgentImportFileBytes = 40 * 1024 * 1024;
+
+// AgentDocument matches llm.AgentDocument: a reference to an immutable, content-addressed
+// document blob. Extracted text and bytes are never part of the agent.
+export type AgentDocument = {
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    textRunes: number;
+}
+
+// The id/name pair the create and update requests carry for each document.
+export type AgentDocumentReference = {
+    id: string;
+    name: string;
+}
+
 // Mirrors config.AgentInactiveReason on the backend.
 export type AgentInactiveReason = 'invalid_config' | 'service_unavailable' | 'service_not_licensed' | 'agent_limit';
 
@@ -70,6 +96,9 @@ export type UserAgent = {
     reasoningEffort: string;
     thinkingBudget: number;
     maxToolTurns: number;
+
+    // Server sends nil Go slices as JSON null; absent on responses from older servers.
+    documents?: AgentDocument[] | null;
 
     /**
      * @deprecated Structured output is configured per service
@@ -127,6 +156,7 @@ export type CreateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+    documents?: AgentDocumentReference[];
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -157,6 +187,9 @@ export type UpdateAgentRequest = {
     reasoningEffort?: string;
     thinkingBudget?: number;
     maxToolTurns?: number;
+
+    // Full replace: an omitted or empty list removes every document.
+    documents?: AgentDocumentReference[];
 }
 
 // ServiceInfo matches api.ServiceInfo in Go (safe subset, no secrets).
@@ -203,7 +236,17 @@ export type AgentExportMCPTool = {
     toolName: string;
 }
 
-// The `agent` section of an export document (schemaVersion 1).
+// A reference document inside a schemaVersion 2 export document; content is the
+// base64 of the original file bytes.
+export type AgentExportDocumentFile = {
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    content: string;
+}
+
+// The `agent` section of an export document (schemaVersion 1 has no documents).
 export type AgentExportAgent = {
     name: string;
     displayName: string;
@@ -213,11 +256,12 @@ export type AgentExportAgent = {
     mcpDynamicToolLoading: boolean;
     autoEnableNewMCPTools: boolean;
     mcpTools: AgentExportMCPTool[];
+    documents?: AgentExportDocumentFile[] | null;
 }
 
 export type AgentExportDocument = {
     kind: string;
-    schemaVersion: number;
+    schemaVersion: 1 | 2;
     exportedAt: number;
     agentVersion: number;
     agent: AgentExportAgent;
@@ -242,8 +286,19 @@ export type AgentImportExistingAgent = {
     canManage: boolean;
 }
 
+// Summary of one document in an import preview (no content).
+export type AgentImportPreviewDocument = {
+    name: string;
+    mimeType: string;
+    size: number;
+}
+
 export type AgentImportPreview = {
+
+    // Normalized echo of the file with document content stripped. Never send this to
+    // /agents/import; send the locally parsed file instead.
     document: AgentExportDocument;
+    documents?: AgentImportPreviewDocument[] | null;
     mcpServers: AgentImportMCPServer[] | null;
     availableMCPServers: AgentImportAvailableMCPServer[] | null;
     existingAgent?: AgentImportExistingAgent | null;

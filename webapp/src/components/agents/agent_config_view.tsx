@@ -8,10 +8,12 @@ import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
 import {createAgent, updateAgent, uploadAgentAvatar} from '@/client';
 import {
+    AgentDocument,
     UserAgent,
     CreateAgentRequest,
     UpdateAgentRequest,
     EnabledTool,
+    MaxAgentDocumentsTextRunes,
     MaxCustomInstructionsRunes,
     ServiceInfo,
     DefaultMaxToolTurns,
@@ -26,7 +28,9 @@ import {useABACSupport} from '@/utils/access_control';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 import {downloadAgentExport} from '@/utils/download_agent_export';
 
+import {totalDocumentTextRunes} from './agent_documents';
 import {agentUsernameError} from './agent_username';
+import {useAgentDocumentUploads} from './use_agent_document_uploads';
 import ConfigTab from './tabs/config_tab';
 import AccessTab from './tabs/access_tab';
 import McpsTab from './tabs/mcps_tab';
@@ -60,6 +64,7 @@ export type AgentDraft = {
     reasoningEffort: string;
     thinkingBudget: number;
     maxToolTurns: number;
+    documents: AgentDocument[];
 }
 
 const emptyDraft: AgentDraft = {
@@ -85,6 +90,7 @@ const emptyDraft: AgentDraft = {
     reasoningEffort: 'medium',
     thinkingBudget: 0,
     maxToolTurns: DefaultMaxToolTurns,
+    documents: [],
 };
 
 function cloneDraft(draft: AgentDraft): AgentDraft {
@@ -96,6 +102,7 @@ function cloneDraft(draft: AgentDraft): AgentDraft {
         adminUserIds: [...draft.adminUserIds],
         enabledTools: [...draft.enabledTools],
         enabledNativeTools: [...draft.enabledNativeTools],
+        documents: draft.documents.map((doc) => ({...doc})),
     };
 }
 
@@ -131,6 +138,7 @@ function draftToCreateAgentPayload(draft: AgentDraft): CreateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
+        documents: draft.documents.map(({id, name}) => ({id, name})),
     };
 }
 
@@ -162,6 +170,7 @@ function draftToUpdateAgentPayload(draft: AgentDraft): UpdateAgentRequest {
         reasoningEffort: draft.reasoningEffort,
         thinkingBudget: draft.thinkingBudget,
         maxToolTurns: draft.maxToolTurns,
+        documents: draft.documents.map(({id, name}) => ({id, name})),
     };
 }
 
@@ -189,6 +198,7 @@ function agentToDraft(agent: UserAgent): AgentDraft {
         reasoningEffort: agent.reasoningEffort || 'medium',
         thinkingBudget: agent.thinkingBudget ?? 0,
         maxToolTurns: agent.maxToolTurns && agent.maxToolTurns > 0 ? agent.maxToolTurns : DefaultMaxToolTurns,
+        documents: (agent.documents ?? []).map((doc) => ({...doc})),
     };
 }
 
@@ -311,6 +321,18 @@ const AgentConfigView = (props: Props) => {
         });
     }, []);
 
+    const handleDocumentUploaded = useCallback((document: AgentDocument) => {
+        setDraft((prev) => (prev.documents.some((doc) => doc.id === document.id) ? prev : {...prev, documents: [...prev.documents, document]}));
+        setErrors((prev) => {
+            const next = {...prev};
+            delete next.documents;
+            delete next.general;
+            return next;
+        });
+    }, []);
+    const documentUploads = useAgentDocumentUploads(draft.documents, handleDocumentUploaded);
+    const savedDocumentIds = useMemo(() => baselineDraft.documents.map((doc) => doc.id), [baselineDraft.documents]);
+
     // Server-state reconciliation: applied to both the editable draft and the
     // baseline used for dirty detection. Used when a child tab (e.g. MCPs) drops
     // entries that no longer exist server-side. This must not mark the form as
@@ -372,6 +394,17 @@ const AgentConfigView = (props: Props) => {
                 {max: intl.formatNumber(MaxCustomInstructionsRunes)},
             );
         }
+        if (documentUploads.uploading) {
+            errs.documents = intl.formatMessage({defaultMessage: 'Wait for document uploads to finish before saving.'});
+        } else if (totalDocumentTextRunes(draft.documents) > MaxAgentDocumentsTextRunes) {
+            errs.documents = intl.formatMessage(
+                {defaultMessage: 'Reference documents contain {used} characters of extracted text, over the limit of {max}. Remove a document to continue.'},
+                {
+                    used: intl.formatNumber(totalDocumentTextRunes(draft.documents)),
+                    max: intl.formatNumber(MaxAgentDocumentsTextRunes),
+                },
+            );
+        }
         if (draft.maxToolTurns < 1 || draft.maxToolTurns > MaxAllowedMaxToolTurns) {
             errs.maxToolTurns = intl.formatMessage(
                 {defaultMessage: 'Max tool turns must be between 1 and {max}'},
@@ -379,7 +412,7 @@ const AgentConfigView = (props: Props) => {
             );
         }
         return errs;
-    }, [draft, intl]);
+    }, [draft, intl, documentUploads.uploading]);
 
     const handleSave = useCallback(async () => {
         const validationErrors = validate();
@@ -511,6 +544,11 @@ const AgentConfigView = (props: Props) => {
                             onAvatarChange={setAvatarFile}
                             avatarFile={avatarFile}
                             botUserId={agent?.botUserID}
+                            agentId={agent?.id}
+                            savedDocumentIds={savedDocumentIds}
+                            documentUploads={documentUploads.uploads}
+                            onUploadDocuments={documentUploads.upload}
+                            onDismissDocumentUpload={documentUploads.dismiss}
                             services={services}
                             errors={errors}
                             usernameLocked={mode === 'edit'}

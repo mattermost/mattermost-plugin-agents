@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/loadtest/profile"
@@ -156,12 +158,28 @@ type EnabledMCPTool struct {
 	ToolName     string `json:"tool_name"`
 }
 
+// AgentDocument references an immutable reference document attached to an
+// agent. The content and extracted text live in the document store under ID;
+// everything except Name is copied from that stored document when an agent is
+// saved and is never taken from a client.
+type AgentDocument struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	MimeType  string `json:"mimeType"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+	TextRunes int    `json:"textRunes"`
+}
+
 type BotConfig struct {
 	ID                 string `json:"id"`
 	Name               string `json:"name"`
 	DisplayName        string `json:"displayName"`
 	CustomInstructions string `json:"customInstructions"`
-	ServiceID          string `json:"serviceID"`
+	// Documents are the agent's reference documents, whose extracted text is
+	// added to the system prompt after CustomInstructions.
+	Documents []AgentDocument `json:"documents"`
+	ServiceID string          `json:"serviceID"`
 
 	// Model is the optional model override for this bot.
 	// If not specified, the service's DefaultModel will be used.
@@ -293,7 +311,43 @@ func (c *BotConfig) Validate() error {
 	if c.MaxToolTurns > MaxAllowedMaxToolTurns {
 		return fmt.Errorf("maxToolTurns must be less than or equal to %d", MaxAllowedMaxToolTurns)
 	}
+	return c.validateIdentifierLists()
+}
+
+// validateIdentifierLists rejects control characters (including NUL, which
+// Postgres jsonb cannot represent) in list fields that are otherwise stored
+// verbatim.
+func (c *BotConfig) validateIdentifierLists() error {
+	lists := []struct {
+		field  string
+		values []string
+	}{
+		{"channelIDs", c.ChannelIDs},
+		{"userIDs", c.UserIDs},
+		{"teamIDs", c.TeamIDs},
+		{"adminUserIDs", c.AdminUserIDs},
+		{"enabledNativeTools", c.EnabledNativeTools},
+	}
+	for _, list := range lists {
+		for i, value := range list.values {
+			if containsControlCharacter(value) {
+				return fmt.Errorf("%s[%d] contains control characters", list.field, i)
+			}
+		}
+	}
+	for i, tool := range c.EnabledMCPTools {
+		if containsControlCharacter(tool.ServerOrigin) {
+			return fmt.Errorf("enabledMCPTools[%d].server_origin contains control characters", i)
+		}
+		if containsControlCharacter(tool.ToolName) {
+			return fmt.Errorf("enabledMCPTools[%d].tool_name contains control characters", i)
+		}
+	}
 	return nil
+}
+
+func containsControlCharacter(s string) bool {
+	return strings.ContainsFunc(s, unicode.IsControl)
 }
 
 // EffectiveMaxToolTurns returns the configured MaxToolTurns or DefaultMaxToolTurns

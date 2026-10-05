@@ -107,6 +107,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		}
 
 		llmContext := c.contextBuilder.BuildLLMContextUserRequest(
+			ctx,
 			bot,
 			user,
 			channel,
@@ -162,6 +163,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		}
 
 		context := c.contextBuilder.BuildLLMContextUserRequest(
+			ctx,
 			bot,
 			user,
 			originalFileChannel,
@@ -196,6 +198,7 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 		}
 
 		context := c.contextBuilder.BuildLLMContextUserRequest(
+			ctx,
 			bot,
 			user,
 			channel,

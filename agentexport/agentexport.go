@@ -10,12 +10,15 @@
 package agentexport
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/agentdocs"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 )
@@ -23,13 +26,19 @@ import (
 const (
 	// Kind identifies an agent export document.
 	Kind = "mattermost-agent"
-	// SchemaVersion is the only document schema version this server reads and writes.
-	SchemaVersion = 1
+	// SchemaVersion is the document schema version this server writes.
+	// Version 2 added reference documents.
+	SchemaVersion = 2
+	// MinSchemaVersion is the oldest document schema version this server reads.
+	MinSchemaVersion = 1
+	// DocumentsSchemaVersion is the first schema version that carries
+	// reference documents.
+	DocumentsSchemaVersion = 2
 
 	embeddedServerName = "Mattermost"
 )
 
-// Document is an exported agent (schema version 1).
+// Document is an exported agent.
 type Document struct {
 	Kind          string `json:"kind"`
 	SchemaVersion int    `json:"schemaVersion"`
@@ -53,6 +62,18 @@ type Agent struct {
 	// carried as stored but ignored on import, as it is at runtime.
 	AutoEnableNewMCPTools bool      `json:"autoEnableNewMCPTools"`
 	MCPTools              []MCPTool `json:"mcpTools"`
+	// Documents are the agent's reference documents (schema version 2+).
+	Documents []AgentDocument `json:"documents"`
+}
+
+// AgentDocument is an exported reference document with its original bytes.
+// Content is encoded as base64 in JSON.
+type AgentDocument struct {
+	Name     string `json:"name"`
+	MimeType string `json:"mimeType"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+	Content  []byte `json:"content,omitempty"`
 }
 
 // UnmarshalJSON defaults MCPDynamicToolLoading to true when the field is
@@ -157,8 +178,9 @@ func UniqueServers(servers []Server) []Server {
 }
 
 // New builds the export document for agent at version. servers resolves the
-// informational server names of the agent's MCP tools.
-func New(agent *llm.BotConfig, version int, servers []Server, exportedAt int64) Document {
+// informational server names of the agent's MCP tools; documents are the
+// agent's reference documents with their content.
+func New(agent *llm.BotConfig, version int, servers []Server, exportedAt int64, documents []AgentDocument) Document {
 	names := make(map[string]string, len(servers))
 	for _, s := range servers {
 		names[llm.NormalizeMCPServerOrigin(s.Origin)] = s.Name
@@ -188,6 +210,7 @@ func New(agent *llm.BotConfig, version int, servers []Server, exportedAt int64) 
 			MCPDynamicToolLoading: agent.MCPDynamicToolLoading,
 			AutoEnableNewMCPTools: agent.AutoEnableNewMCPTools,
 			MCPTools:              tools,
+			Documents:             append([]AgentDocument{}, documents...),
 		},
 	}
 	doc.normalizeTools()
@@ -201,8 +224,8 @@ func (d Document) Normalize() (Document, error) {
 	if d.Kind != Kind {
 		return Document{}, invalidf("this file is not a Mattermost agent export (expected kind %q)", Kind)
 	}
-	if d.SchemaVersion != SchemaVersion {
-		return Document{}, invalidf("unsupported agent export schema version %d; this server supports version %d", d.SchemaVersion, SchemaVersion)
+	if d.SchemaVersion < MinSchemaVersion || d.SchemaVersion > SchemaVersion {
+		return Document{}, invalidf("unsupported agent export schema version %d; this server supports versions %d to %d", d.SchemaVersion, MinSchemaVersion, SchemaVersion)
 	}
 	if utf8.RuneCountInString(d.Agent.CustomInstructions) > llm.MaxCustomInstructionsRunes {
 		return Document{}, invalidf("customInstructions exceeds maximum length of %d characters", llm.MaxCustomInstructionsRunes)
@@ -216,9 +239,73 @@ func (d Document) Normalize() (Document, error) {
 		}
 	}
 
+	// Documents from before DocumentsSchemaVersion cannot carry reference
+	// documents, so anything under that key is ignored rather than imported.
+	documents := []AgentDocument{}
+	if d.SchemaVersion >= DocumentsSchemaVersion {
+		var err error
+		if documents, err = normalizeDocuments(d.Agent.Documents); err != nil {
+			return Document{}, err
+		}
+	}
+
 	d.Agent.MCPTools = append([]MCPTool(nil), d.Agent.MCPTools...)
 	d.normalizeTools()
+	d.Agent.Documents = documents
 	return d, nil
+}
+
+// normalizeDocuments checks each document's name, type, size and checksum
+// against its decoded content and the per-agent count and size limits.
+// Extracted-text limits are checked by whoever extracts the text.
+func normalizeDocuments(docs []AgentDocument) ([]AgentDocument, error) {
+	if len(docs) > agentdocs.MaxDocumentsPerAgent {
+		return nil, invalidf("an agent can have at most %d reference documents (the file has %d)", agentdocs.MaxDocumentsPerAgent, len(docs))
+	}
+	normalized := make([]AgentDocument, 0, len(docs))
+	var total int64
+	for i, doc := range docs {
+		name, err := agentdocs.NormalizeName(doc.Name)
+		if err != nil {
+			return nil, invalidf("reference document %d: %s", i+1, err)
+		}
+		if !agentdocs.IsSupportedMimeType(doc.MimeType) {
+			return nil, invalidf("reference document %q has an unsupported type %q", name, doc.MimeType)
+		}
+		if len(doc.Content) == 0 {
+			return nil, invalidf("reference document %q has no content", name)
+		}
+		if len(doc.Content) > agentdocs.MaxDocumentBytes {
+			return nil, invalidf("reference document %q is larger than %d bytes", name, agentdocs.MaxDocumentBytes)
+		}
+		if doc.Size != int64(len(doc.Content)) {
+			return nil, invalidf("reference document %q is %d bytes but its size says %d; the file may be damaged", name, len(doc.Content), doc.Size)
+		}
+		sum := sha256.Sum256(doc.Content)
+		if checksum := hex.EncodeToString(sum[:]); !strings.EqualFold(doc.SHA256, checksum) {
+			return nil, invalidf("reference document %q does not match its sha256 checksum; the file may be damaged", name)
+		}
+		total += doc.Size
+		doc.Name = name
+		doc.SHA256 = strings.ToLower(doc.SHA256)
+		normalized = append(normalized, doc)
+	}
+	if total > agentdocs.MaxTotalBytesPerAgent {
+		return nil, invalidf("reference documents exceed the limit of %d bytes in total (have %d)", agentdocs.MaxTotalBytesPerAgent, total)
+	}
+	return normalized, nil
+}
+
+// WithoutDocumentContent returns d with its documents' content removed, for
+// echoing a document back without the bulk of its bytes.
+func (d Document) WithoutDocumentContent() Document {
+	docs := make([]AgentDocument, len(d.Agent.Documents))
+	for i, doc := range d.Agent.Documents {
+		doc.Content = nil
+		docs[i] = doc
+	}
+	d.Agent.Documents = docs
+	return d
 }
 
 func (d *Document) normalizeTools() {

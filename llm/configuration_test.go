@@ -269,6 +269,67 @@ func TestBotConfig_MaxToolTurnsValidation(t *testing.T) {
 	}
 }
 
+func TestBotConfig_IdentifierListValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(c *BotConfig)
+		wantError string
+	}{
+		{name: "ordinary identifiers are allowed", mutate: func(c *BotConfig) {
+			c.ChannelIDs = []string{"channel1"}
+			c.UserIDs = []string{"user1"}
+			c.TeamIDs = []string{"team1"}
+			c.AdminUserIDs = []string{"admin1"}
+			c.EnabledNativeTools = []string{NativeToolWebSearch}
+			c.EnabledMCPTools = []EnabledMCPTool{{ServerOrigin: "https://mcp.example.com", ToolName: "search_docs"}}
+		}},
+		{name: "unicode tool names are allowed", mutate: func(c *BotConfig) {
+			c.EnabledMCPTools = []EnabledMCPTool{{ServerOrigin: "https://mcp.example.com", ToolName: "recherche_données"}}
+		}},
+		{name: "NUL in an MCP tool name", mutate: func(c *BotConfig) {
+			c.EnabledMCPTools = []EnabledMCPTool{{ServerOrigin: "https://mcp.example.com", ToolName: "bad\x00tool"}}
+		}, wantError: "enabledMCPTools[0].tool_name"},
+		{name: "newline in an MCP server origin", mutate: func(c *BotConfig) {
+			c.EnabledMCPTools = []EnabledMCPTool{{ServerOrigin: "https://mcp.example.com", ToolName: "ok"}, {ServerOrigin: "https://a\n.example.com", ToolName: "ok"}}
+		}, wantError: "enabledMCPTools[1].server_origin"},
+		{name: "NUL in a native tool id", mutate: func(c *BotConfig) {
+			c.EnabledNativeTools = []string{"web_search\x00"}
+		}, wantError: "enabledNativeTools[0]"},
+		{name: "tab in a channel id", mutate: func(c *BotConfig) {
+			c.ChannelIDs = []string{"channel\t1"}
+		}, wantError: "channelIDs[0]"},
+		{name: "NUL in a user id", mutate: func(c *BotConfig) {
+			c.UserIDs = []string{"ok", "\x00"}
+		}, wantError: "userIDs[1]"},
+		{name: "C1 control in a team id", mutate: func(c *BotConfig) {
+			c.TeamIDs = []string{"team\u0085"}
+		}, wantError: "teamIDs[0]"},
+		{name: "DEL in an admin id", mutate: func(c *BotConfig) {
+			c.AdminUserIDs = []string{"admin\x7f"}
+		}, wantError: "adminUserIDs[0]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &BotConfig{
+				Name:               "n",
+				DisplayName:        "d",
+				ServiceID:          "svc",
+				ChannelAccessLevel: ChannelAccessLevelAll,
+				UserAccessLevel:    UserAccessLevelAll,
+			}
+			tt.mutate(c)
+			err := c.Validate()
+			if tt.wantError == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantError)
+		})
+	}
+}
+
 func TestBotConfig_EffectiveMaxToolTurns(t *testing.T) {
 	tests := []struct {
 		name string

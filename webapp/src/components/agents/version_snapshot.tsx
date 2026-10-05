@@ -1,22 +1,59 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React from 'react';
+import React, {useState} from 'react';
 import styled from 'styled-components';
 import {useIntl} from 'react-intl';
 
+import {agentDocumentUrl} from '@/client';
 import {ChannelAccessLevel, UserAccessLevel} from '@/components/system_console/bot';
-import {DefaultMaxToolTurns, ServiceInfo, UserAgent} from '@/types/agents';
+import {AgentDocument, DefaultMaxToolTurns, ServiceInfo, UserAgent} from '@/types/agents';
+import {downloadAgentDocument} from '@/utils/download_agent_document';
+
+import {formatDocumentSize} from './agent_documents';
 
 type Props = {
     config: Partial<UserAgent>;
     services: ServiceInfo[];
+
+    /** Needed to link the snapshot's documents to their download route. */
+    agentId?: string;
 }
+
+const DocumentLink = ({agentId, document}: {agentId: string; document: AgentDocument}) => {
+    const intl = useIntl();
+    const [error, setError] = useState('');
+
+    const handleClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
+        e.preventDefault();
+        setError('');
+        try {
+            await downloadAgentDocument(agentId, document.id, document.name);
+        } catch (err) {
+            const message = (err as {message?: unknown})?.message;
+            setError(typeof message === 'string' && message.trim() ? message.trim() : intl.formatMessage({defaultMessage: 'Failed to download the document. Please try again.'}));
+        }
+    };
+
+    return (
+        <>
+            <a
+                href={agentDocumentUrl(agentId, document.id)}
+                download={document.name}
+                onClick={handleClick}
+            >
+                {document.name}
+            </a>
+            <DocumentSize>{formatDocumentSize(intl, document.size)}</DocumentSize>
+            {error && <DocumentError role='alert'>{error}</DocumentError>}
+        </>
+    );
+};
 
 /**
  * Read-only rendering of a stored agent version snapshot (llm.BotConfig JSON).
  */
-const VersionSnapshot = ({config, services}: Props) => {
+const VersionSnapshot = ({config, services, agentId}: Props) => {
     const intl = useIntl();
 
     const enabled = intl.formatMessage({defaultMessage: 'Enabled'});
@@ -96,6 +133,30 @@ const VersionSnapshot = ({config, services}: Props) => {
         );
     }
 
+    const documents = config.documents ?? [];
+    let documentsValue: React.ReactNode = none;
+    if (documents.length > 0) {
+        documentsValue = (
+            <ToolList data-testid='version-snapshot-documents'>
+                {documents.map((doc) => (
+                    <li key={doc.id}>
+                        {agentId ? (
+                            <DocumentLink
+                                agentId={agentId}
+                                document={doc}
+                            />
+                        ) : (
+                            <>
+                                {doc.name}
+                                <DocumentSize>{formatDocumentSize(intl, doc.size)}</DocumentSize>
+                            </>
+                        )}
+                    </li>
+                ))}
+            </ToolList>
+        );
+    }
+
     return (
         <Grid data-testid='version-snapshot'>
             <Row label={intl.formatMessage({defaultMessage: 'Display name'})}>
@@ -117,6 +178,9 @@ const VersionSnapshot = ({config, services}: Props) => {
                         {config.customInstructions}
                     </Instructions>
                 ) : none}
+            </Row>
+            <Row label={intl.formatMessage({defaultMessage: 'Reference documents'})}>
+                {documentsValue}
             </Row>
             <Row label={intl.formatMessage({defaultMessage: 'Tools'})}>
                 {toolsDisabled ? disabled : enabled}
@@ -204,6 +268,13 @@ const ToolOrigin = styled.span`
     margin-left: 8px;
     font-size: 12px;
     color: rgba(var(--center-channel-color-rgb), 0.64);
+`;
+
+const DocumentSize = styled(ToolOrigin)``;
+
+const DocumentError = styled.div`
+    font-size: 12px;
+    color: var(--dnd-indicator, #D24B4E);
 `;
 
 export default VersionSnapshot;

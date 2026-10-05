@@ -5,7 +5,7 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import {importAgent, previewAgentImport} from '@/client';
-import {AgentExportDocument, AgentImportPreview, ServiceInfo, UserAgent} from '@/types/agents';
+import {AgentExportDocument, AgentImportPreview, MaxAgentImportFileBytes, ServiceInfo, UserAgent} from '@/types/agents';
 
 import ImportAgentModal from './import_agent_modal';
 
@@ -15,6 +15,7 @@ jest.mock('react-intl', () => {
     // Real ICU formatting (plurals, values) with ids derived from defaultMessage, as the babel plugin does at build time.
     const real = actual.createIntl({locale: 'en', defaultLocale: 'en', onError: () => null});
     const intl = {
+        ...real,
         formatMessage: (descriptor: {id?: string; defaultMessage: string}, values?: Record<string, string | number>) =>
             real.formatMessage({id: descriptor.id ?? descriptor.defaultMessage, ...descriptor}, values),
     };
@@ -377,6 +378,95 @@ describe('ImportAgentModal', () => {
         expect(onImported).not.toHaveBeenCalled();
         expect(onClose).not.toHaveBeenCalled();
         expect(importButton().disabled).toBe(false);
+    });
+
+    describe('reference documents', () => {
+        const fullDocument: AgentExportDocument = {
+            ...makeDocument({mcpTools: []}),
+            schemaVersion: 2,
+        };
+        fullDocument.agent.documents = [
+            {name: 'handbook.pdf', mimeType: 'application/pdf', size: 3 * 1024 * 1024, sha256: 'aa', content: 'QUJD'},
+            {name: 'faq.txt', mimeType: 'text/plain', size: 1024, sha256: 'bb', content: 'REVG'},
+        ];
+
+        // The server echoes the document without document content.
+        const strippedDocument: AgentExportDocument = {
+            ...fullDocument,
+            agent: {...fullDocument.agent, documents: fullDocument.agent.documents.map((d) => ({...d, content: ''}))},
+        };
+
+        function previewWithDocuments(): AgentImportPreview {
+            return makePreview({
+                document: strippedDocument,
+                documents: [
+                    {name: 'handbook.pdf', mimeType: 'application/pdf', size: 3 * 1024 * 1024},
+                    {name: 'faq.txt', mimeType: 'text/plain', size: 1024},
+                ],
+                mcpServers: [],
+            });
+        }
+
+        test('the summary lists the documents with their count and total size', async () => {
+            renderModal();
+            mockPreview.mockResolvedValueOnce(previewWithDocuments());
+            chooseFile(JSON.stringify(fullDocument));
+            await screen.findByTestId('import-summary');
+
+            expect(within(screen.getByTestId('import-summary')).getByTestId('import-summary-documents').textContent).toBe(
+                'Reference documents: 2 documents (3 MB): handbook.pdf, faq.txt',
+            );
+        });
+
+        test('the summary says there are no documents for a file without any', async () => {
+            renderModal();
+
+            await loadPreview(makePreview({mcpServers: []}, {autoEnableNewMCPTools: true}));
+
+            expect(within(screen.getByTestId('import-summary')).getByTestId('import-summary-documents').textContent).toBe('Reference documents: none');
+        });
+
+        test('imports the locally parsed file with document content, not the stripped preview document', async () => {
+            mockImport.mockResolvedValue({id: 'new'} as UserAgent);
+            renderModal();
+            mockPreview.mockResolvedValueOnce(previewWithDocuments());
+            chooseFile(JSON.stringify(fullDocument));
+            await screen.findByTestId('import-summary');
+
+            fireEvent.click(importButton());
+
+            await waitFor(() => expect(mockImport).toHaveBeenCalledTimes(1));
+            const sent = mockImport.mock.calls[0][0].document;
+            expect(sent).toEqual(fullDocument);
+            expect(sent.agent.documents?.map((d) => d.content)).toEqual(['QUJD', 'REVG']);
+            expect(mockPreview).toHaveBeenCalledWith(fullDocument);
+        });
+
+        test('update mode also sends the locally parsed file', async () => {
+            mockImport.mockResolvedValue({id: 'agent_1'} as UserAgent);
+            renderModal({canCreate: false});
+            mockPreview.mockResolvedValueOnce(previewWithDocuments());
+            chooseFile(JSON.stringify(fullDocument));
+            await screen.findByTestId('import-summary');
+
+            fireEvent.change(screen.getByLabelText('Agent to update'), {target: {value: 'agent_1'}});
+            fireEvent.click(importButton());
+
+            await waitFor(() => expect(mockImport).toHaveBeenCalledTimes(1));
+            expect(mockImport.mock.calls[0][0]).toEqual(expect.objectContaining({mode: 'update', agentID: 'agent_1', document: fullDocument}));
+        });
+
+        test('shows a clear error and skips the server for a file over the size limit', async () => {
+            renderModal();
+            const file = new File(['{}'], 'huge.agent.json', {type: 'application/json'});
+            Object.defineProperty(file, 'size', {value: MaxAgentImportFileBytes + 1});
+
+            fireEvent.change(screen.getByTestId('import-agent-file-input'), {target: {files: [file]}});
+
+            expect(await screen.findByText('This file is too large. Agent files can be up to 40 MB.')).not.toBeNull();
+            expect(mockPreview).not.toHaveBeenCalled();
+            expect(importButton().disabled).toBe(true);
+        });
     });
 
     test('Cancel closes the modal', () => {

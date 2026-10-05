@@ -117,6 +117,9 @@ func agentVersionSnapshot(cfg *llm.BotConfig) llm.BotConfig {
 	snap.AdminUserIDs = emptyToNil(snap.AdminUserIDs)
 	snap.EnabledMCPTools = emptyToNil(snap.EnabledMCPTools)
 	snap.EnabledNativeTools = emptyToNil(snap.EnabledNativeTools)
+	if snap.Documents == nil {
+		snap.Documents = []llm.AgentDocument{}
+	}
 	return snap
 }
 
@@ -128,10 +131,26 @@ var ignoredVersionFields = map[string]bool{
 	"structuredOutputEnabled": true,
 }
 
+// laterVersionFields maps BotConfig keys that snapshots recorded before the
+// field existed lack to the snapshot value they stand for.
+var laterVersionFields = map[string]json.RawMessage{
+	"documents": json.RawMessage("[]"),
+}
+
 // changedVersionFields returns the BotConfig keys of next that differ from
-// the snapshot JSON prev, excluding ignoredVersionFields.
+// the snapshot JSON prev, excluding ignoredVersionFields. Keys of
+// laterVersionFields missing from prev compare as their recorded value.
 func changedVersionFields(prev string, next llm.BotConfig) []string {
-	return slices.DeleteFunc(audit.ChangedJSONKeys(json.RawMessage(prev), next), func(key string) bool {
+	var prevFields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(prev), &prevFields); err != nil || prevFields == nil {
+		prevFields = map[string]json.RawMessage{}
+	}
+	for key, value := range laterVersionFields {
+		if _, ok := prevFields[key]; !ok {
+			prevFields[key] = value
+		}
+	}
+	return slices.DeleteFunc(audit.ChangedJSONKeys(prevFields, next), func(key string) bool {
 		return ignoredVersionFields[key]
 	})
 }
@@ -324,6 +343,9 @@ func (s *Store) GetAgentVersion(agentID string, version int) (*AgentVersionDetai
 	detail := &AgentVersionDetail{AgentVersion: v}
 	if err := json.Unmarshal([]byte(row.Config), &detail.Config); err != nil {
 		return nil, fmt.Errorf("failed to parse config of version %d of agent %q: %w", version, agentID, err)
+	}
+	if detail.Config.Documents == nil {
+		detail.Config.Documents = []llm.AgentDocument{}
 	}
 	return detail, nil
 }

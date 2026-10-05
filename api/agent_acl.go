@@ -70,6 +70,7 @@ func canConfigureAgentServices(client *pluginapi.Client, userID string) bool {
 func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.DisplayName = ""
 	cfg.CustomInstructions = ""
+	cfg.Documents = nil
 	cfg.Model = ""
 	cfg.ServiceID = ""
 	cfg.EnableVision = false

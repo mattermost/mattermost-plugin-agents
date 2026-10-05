@@ -323,8 +323,9 @@ test.describe('Agent versioning, export and import', () => {
         expect(fromEditor.filename).toBe('exportagent-v1.agent.json');
         const doc = fromEditor.doc;
         expect(doc.kind).toBe('mattermost-agent');
-        expect(doc.schemaVersion).toBe(1);
+        expect(doc.schemaVersion).toBe(2);
         expect(doc.agentVersion).toBe(1);
+        expect(doc.agent.documents).toEqual([]);
         expect(doc.agent).toMatchObject({
             name: 'exportagent',
             displayName: 'Export Agent',

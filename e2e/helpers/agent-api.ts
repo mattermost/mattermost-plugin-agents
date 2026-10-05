@@ -39,6 +39,23 @@ export interface CreateAgentRequest {
     thinkingBudget?: number;
     structuredOutputEnabled?: boolean;
     maxToolTurns?: number;
+    documents?: AgentDocumentRef[];
+}
+
+// AgentDocumentRef is a reference document in agent create/update requests (api.AgentDocumentRef).
+export interface AgentDocumentRef {
+    id: string;
+    name: string;
+}
+
+// AgentDocument matches llm.AgentDocument (and the POST /agents/documents response).
+export interface AgentDocument {
+    id: string;
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    textRunes: number;
 }
 
 // UpdateAgentRequest matches api.UpdateAgentRequest in Go.
@@ -72,6 +89,7 @@ export interface AgentResponse {
     thinkingBudget: number;
     structuredOutputEnabled: boolean;
     maxToolTurns?: number;
+    documents?: AgentDocument[];
     // Admin / lifecycle metadata (omitempty on backend).
     botUserID?: string;
     creatorID?: string;
@@ -112,6 +130,7 @@ export function mergeAgentIntoUpdate(
         thinkingBudget: agent.thinkingBudget,
         structuredOutputEnabled: agent.structuredOutputEnabled,
         maxToolTurns: agent.maxToolTurns,
+        documents: (agent.documents ?? []).map(({ id, name }) => ({ id, name })),
     };
     return { ...base, ...overrides };
 }
@@ -137,11 +156,20 @@ export interface AgentVersionDetail extends AgentVersionSummary {
     config: Partial<AgentResponse>;
 }
 
-// Mirrors agentexport.Document (schemaVersion 1).
+// Mirrors agentexport.Document (schemaVersion 1, or 2 with documents).
 export interface AgentExportMCPTool {
     serverOrigin: string;
     serverName: string;
     toolName: string;
+}
+
+export interface AgentExportReferenceDocument {
+    name: string;
+    mimeType: string;
+    size: number;
+    sha256: string;
+    /** Base64 of the original bytes. */
+    content: string;
 }
 
 export interface AgentExportDocument {
@@ -158,11 +186,13 @@ export interface AgentExportDocument {
         mcpDynamicToolLoading: boolean;
         autoEnableNewMCPTools: boolean;
         mcpTools: AgentExportMCPTool[];
+        documents?: AgentExportReferenceDocument[];
     };
 }
 
 export interface AgentImportPreview {
     document: AgentExportDocument;
+    documents?: Array<{ name: string; mimeType: string; size: number }>;
     mcpServers: Array<{
         sourceOrigin: string;
         sourceName: string;
@@ -265,6 +295,56 @@ export class AgentAPIHelper {
         req: AgentImportRequest,
     ): Promise<RawJSONResponse<AgentResponse & { error?: string }>> {
         return toRawJSON(await this.routes.request('POST', 'agents/import', token, req));
+    }
+
+    /** PUT /agents/:id with exactly body (no merging), returning the raw response. */
+    async putAgentRaw(
+        token: string,
+        agentId: string,
+        body: UpdateAgentRequest,
+    ): Promise<RawJSONResponse<AgentResponse & { error?: string }>> {
+        return toRawJSON(await this.routes.request('PUT', `agents/${agentId}`, token, body));
+    }
+
+    /** POST /agents/documents with a single multipart `file`. */
+    async uploadAgentDocument(
+        token: string,
+        file: { name: string; mimeType: string; buffer: Buffer },
+    ): Promise<RawJSONResponse<AgentDocument & { error?: string }>> {
+        const form = new FormData();
+        form.append('file', new Blob([new Uint8Array(file.buffer)], { type: file.mimeType }), file.name);
+        const response = await fetch(this.routes.pluginUrl('agents/documents'), {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+            body: form,
+        });
+        return toRawJSON(response);
+    }
+
+    /** Uploads a document and fails the test setup when the server rejects it. */
+    async uploadAgentDocumentOrThrow(
+        token: string,
+        file: { name: string; mimeType: string; buffer: Buffer },
+    ): Promise<AgentDocument> {
+        const response = await this.uploadAgentDocument(token, file);
+        if (response.status !== 201) {
+            throw new Error(`POST agents/documents ${file.name} failed: ${response.status} ${JSON.stringify(response.body)}`);
+        }
+        return response.body;
+    }
+
+    /** GET /agents/:id/documents/:documentid (the original bytes). */
+    async downloadAgentDocument(token: string, agentId: string, documentId: string): Promise<Response> {
+        return this.routes.request('GET', `agents/${agentId}/documents/${documentId}`, token);
+    }
+
+    /** GET /agents/:id/documents/:documentid/text. */
+    async getAgentDocumentText(
+        token: string,
+        agentId: string,
+        documentId: string,
+    ): Promise<RawJSONResponse<{ id: string; text: string; textRunes: number; error?: string }>> {
+        return toRawJSON(await this.routes.request('GET', `agents/${agentId}/documents/${documentId}/text`, token));
     }
 
     async deleteAgent(token: string, agentId: string): Promise<void> {

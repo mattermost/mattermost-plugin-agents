@@ -64,6 +64,13 @@ export const responseTest2Text = "Hello! This is a second message."
 
 export const SMOCKER_IMAGE = "thiht/smocker";
 
+/** A request recorded in Smocker's history. */
+export type SmockerRequest = {
+	method: string;
+	path: string;
+	body: string;
+};
+
 export class OpenAIMockContainer {
 	container: StartedTestContainer;
 
@@ -197,6 +204,23 @@ export class OpenAIMockContainer {
 
 			return this.appendMocks(bodies, attempt + 1);
 		}
+	}
+
+	/**
+	 * Requests Smocker has received since the container started (or the last
+	 * history reset), oldest first, with their raw bodies.
+	 */
+	getRequestHistory = async (): Promise<SmockerRequest[]> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/history`);
+		if (!response.ok) {
+			throw new Error(`Failed to read Smocker history: ${response.status} ${response.statusText}`);
+		}
+		const entries = await response.json() as Array<{ request: { method: string; path: string; body_string?: string; body?: unknown } }>;
+		return entries.map(({ request }) => ({
+			method: request.method,
+			path: request.path,
+			body: request.body_string ?? (typeof request.body === 'string' ? request.body : JSON.stringify(request.body ?? '')),
+		}));
 	}
 
 	addCompletionMock = async (response: string, botPrefix?: string) => {

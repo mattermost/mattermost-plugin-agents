@@ -95,6 +95,7 @@ const groups = {
         'tests/tool-config/real-api/disabled-tool.spec.ts',
         'tests/channel-autoreply/channel_autoreply.spec.ts',
         'tests/agents/versioning-import-export.spec.ts',
+        'tests/agents/reference-documents.spec.ts',
     ],
 };
 
