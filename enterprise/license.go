@@ -77,6 +77,7 @@ const (
 	CapModelFallback         Capability = "model_fallback"
 	CapStateChangingTools    Capability = "state_changing_tools"
 	CapChannelAutoReply      Capability = "channel_auto_reply"
+	CapChannelContext        Capability = "channel_context"
 	CapAttributeBasedAccess  Capability = "attribute_based_access"
 	capabilityUnknownDisplay            = "This feature"
 )
@@ -107,6 +108,7 @@ var capabilities = map[Capability]capabilitySpec{
 	CapSharedPrompts:        {LevelEnterprise, "Shared prompt libraries"},
 
 	CapChannelAutoReply:     {LevelEnterpriseAdvanced, "Channel agent auto-reply"},
+	CapChannelContext:       {LevelEnterpriseAdvanced, "Channel agent instructions and pinned context"},
 	CapAttributeBasedAccess: {LevelEnterpriseAdvanced, "Attribute-based access control"},
 	CapModelFallback:        {LevelEnterpriseAdvanced, "LLM fallback chains"},
 }

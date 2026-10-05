@@ -889,6 +889,112 @@ export async function updateChannelAutoReply(channelId: string, settings: Channe
     });
 }
 
+export type ChannelInstructions = {
+    instructions: string;
+};
+
+export async function getChannelInstructions(channelId: string): Promise<ChannelInstructions> {
+    const url = `${channelRoute(channelId)}/instructions`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function updateChannelInstructions(channelId: string, instructions: string): Promise<ChannelInstructions> {
+    const url = `${channelRoute(channelId)}/instructions`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'PUT',
+        body: JSON.stringify({instructions}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export type ChannelContextPost = {
+    post_id: string;
+    user_id: string;
+    root_id: string;
+    message: string;
+    create_at: number;
+    pinned_by: string;
+    pinned_at: number;
+};
+
+export type ChannelContextPosts = {
+    posts: ChannelContextPost[];
+    max_posts: number;
+};
+
+export async function getChannelContextPosts(channelId: string): Promise<ChannelContextPosts> {
+    const url = `${channelRoute(channelId)}/context_posts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function pinChannelContextPost(channelId: string, postId: string): Promise<ChannelContextPosts> {
+    const url = `${channelRoute(channelId)}/context_posts`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'POST',
+        body: JSON.stringify({post_id: postId}),
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
+export async function unpinChannelContextPost(channelId: string, postId: string): Promise<ChannelContextPosts> {
+    const url = `${channelRoute(channelId)}/context_posts/${encodeURIComponent(postId)}`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'DELETE',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function disconnectMCPOAuth(serverName: string): Promise<void> {
     const url = `${baseRoute()}/mcp/oauth/${encodeURIComponent(serverName)}`;
     const response = await fetch(url, Client4.getOptions({

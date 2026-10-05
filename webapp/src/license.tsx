@@ -42,6 +42,7 @@ export type Capability =
     | 'mcp_service_account'
     | 'shared_prompts'
     | 'channel_auto_reply'
+    | 'channel_context'
     | 'attribute_based_access';
 
 // capabilityMinLevel is the tier chart: the minimum level at which each capability is available.
@@ -64,6 +65,7 @@ const capabilityMinLevel: Record<Capability, LicenseLevel> = {
     shared_prompts: LicenseLevel.Enterprise,
 
     channel_auto_reply: LicenseLevel.EnterpriseAdvanced,
+    channel_context: LicenseLevel.EnterpriseAdvanced,
     attribute_based_access: LicenseLevel.EnterpriseAdvanced,
     model_fallback: LicenseLevel.EnterpriseAdvanced,
 };

@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bifrost"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/channelcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -135,6 +136,18 @@ type ChannelAutoReplyStore interface {
 	Delete(channelID string) error
 }
 
+// ChannelContextStore provides read/write access to a channel's agent
+// instructions and agent-context pins. Implemented by *channelcontext.Service,
+// which validates writes (wrapping channelcontext.ErrValidation) and enforces
+// the per-channel pin limit (channelcontext.ErrPinLimitReached).
+type ChannelContextStore interface {
+	GetInstructions(channelID string) (string, error)
+	SetInstructions(channel *model.Channel, instructions, updatedBy string) (string, error)
+	ListPinnedPosts(channelID string) ([]channelcontext.PinnedPost, error)
+	PinPost(channel *model.Channel, postID, pinnedBy string) error
+	UnpinPost(channelID, postID string) error
+}
+
 // ClusterAgentNotifier broadcasts agent update events to other cluster nodes.
 type ClusterAgentNotifier interface {
 	PublishAgentUpdate() error
@@ -186,6 +199,7 @@ type API struct {
 	getSearchInitError    func() string
 	customPromptsStore    *customprompts.Store
 	autoReplyStore        ChannelAutoReplyStore
+	channelContextStore   ChannelContextStore
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
 
@@ -234,6 +248,7 @@ func New(
 	getSearchInitError func() string,
 	customPromptsStore *customprompts.Store,
 	autoReplyStore ChannelAutoReplyStore,
+	channelContextStore ChannelContextStore,
 	accessChecker *accesscontrol.Checker,
 ) *API {
 	// A nil checker would silently disable authorization gates (e.g. MCP listing).
@@ -273,6 +288,7 @@ func New(
 		getSearchInitError:    getSearchInitError,
 		customPromptsStore:    customPromptsStore,
 		autoReplyStore:        autoReplyStore,
+		channelContextStore:   channelContextStore,
 		accessChecker:         accessChecker,
 	}
 	a.auditEvents = buildAuditEventRegistry(a)
@@ -412,15 +428,21 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	channelRouter.POST("/analyze", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleChannelAnalysis)
 	channelRouter.POST("/interval", a.capabilityRequired(enterprise.CapChannelSummarization), a.handleInterval)
 
-	// Auto-reply settings are channel configuration, not a bot invocation:
-	// they must not depend on the default agent (restricted default agents and
-	// zero-agent installs must not block reading or clearing a setting), so
-	// they are registered outside the aiBotRequired group. The PUT handler and
-	// the autoreply service validate the selected bot themselves.
-	autoReplyRouter := router.Group("/channel/:channelid")
-	autoReplyRouter.Use(a.channelReadAuthorizationRequired)
-	autoReplyRouter.GET("/autoreply", a.handleGetChannelAutoReply)
-	autoReplyRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
+	// Auto-reply settings and agent context are channel configuration, not a
+	// bot invocation: they must not depend on the default agent (restricted
+	// default agents and zero-agent installs must not block reading or
+	// clearing a setting), so they are registered outside the aiBotRequired
+	// group. The auto-reply PUT handler and service validate the selected bot
+	// themselves.
+	channelSettingsRouter := router.Group("/channel/:channelid")
+	channelSettingsRouter.Use(a.channelReadAuthorizationRequired)
+	channelSettingsRouter.GET("/autoreply", a.handleGetChannelAutoReply)
+	channelSettingsRouter.PUT("/autoreply", a.handlePutChannelAutoReply)
+	channelSettingsRouter.GET("/instructions", a.handleGetChannelInstructions)
+	channelSettingsRouter.PUT("/instructions", a.handlePutChannelInstructions)
+	channelSettingsRouter.GET("/context_posts", a.handleGetChannelContextPosts)
+	channelSettingsRouter.POST("/context_posts", a.handlePinChannelContextPost)
+	channelSettingsRouter.DELETE("/context_posts/:postid", a.handleUnpinChannelContextPost)
 
 	adminRouter := router.Group("/admin")
 	adminRouter.Use(a.mattermostAdminAuthorizationRequired)

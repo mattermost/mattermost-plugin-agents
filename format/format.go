@@ -103,6 +103,38 @@ func AuthoredPost(post *model.Post, username string) string {
 	return "@" + username + ": " + PostBody(post)
 }
 
+// ContextPosts formats the posts pinned to a channel's agent context for the
+// system prompt, in the given order. Each body is cut to maxBodyRunes so one
+// long post cannot crowd out the rest of the prompt. usernames maps author IDs
+// to usernames.
+func ContextPosts(posts []*model.Post, usernames map[string]string, maxBodyRunes int) string {
+	var b strings.Builder
+	for i, post := range posts {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		username := usernames[post.UserId]
+		if username == "" {
+			username = "unknown"
+		}
+		fmt.Fprintf(&b, "Post ID %s by @%s", post.Id, username)
+		if created := TimeFromMillis(post.CreateAt); created != "" {
+			fmt.Fprintf(&b, " at %s", created)
+		}
+		b.WriteString(":\n")
+		b.WriteString(truncateRunes(strings.TrimSpace(PostBody(post)), maxBodyRunes))
+	}
+	return b.String()
+}
+
+func truncateRunes(s string, maxRunes int) string {
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return string(runes[:maxRunes]) + " … [truncated]"
+}
+
 // TimeFromMillis formats a Unix-milliseconds timestamp as RFC3339 UTC for
 // LLM consumption. Returns "" for non-positive values so callers/templates
 // can omit the attribute when the timestamp is unknown.

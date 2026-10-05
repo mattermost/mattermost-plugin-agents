@@ -12,12 +12,17 @@ import {
     doLoopInAgent,
     doThreadAnalysis,
     getChannelAutoReply,
+    getChannelContextPosts,
+    getChannelInstructions,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
+    pinChannelContextPost,
     searchAllChannels,
     setSiteURL,
+    unpinChannelContextPost,
     updateChannelAutoReply,
+    updateChannelInstructions,
     updateRead,
 } from './client';
 
@@ -292,6 +297,40 @@ describe('updateChannelAutoReply', () => {
         mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
 
         await expect(updateChannelAutoReply('channel-1', {bot_id: '', mode: 'off'})).rejects.toMatchObject({status_code: status});
+    });
+});
+
+describe('channel agent context requests', () => {
+    const channelBase = `${siteURL}/plugins/${manifest.id}/channel/cha%2Fnnel`;
+    const pins = {posts: [], max_posts: 10};
+
+    test.each([
+        {name: 'getChannelInstructions', call: () => getChannelInstructions('cha/nnel'), method: 'GET', url: `${channelBase}/instructions`, body: null, response: {instructions: 'x'}},
+        {name: 'updateChannelInstructions', call: () => updateChannelInstructions('cha/nnel', 'Deploys freeze on Fridays.'), method: 'PUT', url: `${channelBase}/instructions`, body: JSON.stringify({instructions: 'Deploys freeze on Fridays.'}), response: {instructions: 'x'}},
+        {name: 'getChannelContextPosts', call: () => getChannelContextPosts('cha/nnel'), method: 'GET', url: `${channelBase}/context_posts`, body: null, response: pins},
+        {name: 'pinChannelContextPost', call: () => pinChannelContextPost('cha/nnel', 'post1'), method: 'POST', url: `${channelBase}/context_posts`, body: JSON.stringify({post_id: 'post1'}), response: pins},
+        {name: 'unpinChannelContextPost', call: () => unpinChannelContextPost('cha/nnel', 'po/st'), method: 'DELETE', url: `${channelBase}/context_posts/po%2Fst`, body: null, response: pins},
+    ])('$name issues a $method to an encoded route and returns the parsed body', async ({call, method, url, body, response}) => {
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve(response)} as unknown as Response);
+
+        await expect(call()).resolves.toEqual(response);
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [calledURL, options] = mockFetch.mock.calls[0];
+        expect(calledURL).toBe(url);
+        expect(options).toEqual(expect.objectContaining({method}));
+        expect(options.body ?? null).toBe(body);
+    });
+
+    test.each([
+        {name: 'updateChannelInstructions', call: () => updateChannelInstructions('c', 'x'), status: 403},
+        {name: 'pinChannelContextPost', call: () => pinChannelContextPost('c', 'p'), status: 409},
+        {name: 'unpinChannelContextPost', call: () => unpinChannelContextPost('c', 'p'), status: 500},
+        {name: 'getChannelContextPosts', call: () => getChannelContextPosts('c'), status: 403},
+    ])('$name throws an error carrying status $status on a non-ok response', async ({call, status}) => {
+        mockFetch.mockResolvedValue({ok: false, status, json: jest.fn()} as unknown as Response);
+
+        await expect(call()).rejects.toMatchObject({status_code: status});
     });
 });
 

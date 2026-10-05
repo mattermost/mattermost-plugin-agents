@@ -347,6 +347,8 @@ Configure who can access AI features by setting team-level, channel-level, and u
 
 Per-channel agent auto-reply is governed by the channel-management permission (`manage_public_channel_properties` or `manage_private_channel_properties`, depending on the channel type), checked server-side on writes; channel members can read the current setting. The auto-reply endpoints do not depend on the workspace default agent: reads and writes work even when the default agent is restricted from the channel or user (or when no agents are configured at all), and writes validate the *selected* agent's channel access instead. Channel agent auto-reply is available at Enterprise Advanced; below that level the channel settings tab is hidden and any stored setting is inactive. Turning auto-reply off through the REST endpoint never requires a license, so an existing setting is always clearable. The channel settings tab UI requires Mattermost v11.10 or later; on older servers the tab is hidden, but the REST endpoint (`GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/autoreply`) remains available.
 
+Channel instructions and posts pinned to agent context use the same channel-management permission for writes, and channel members can read them. Whenever an agent builds a request for a public or private channel the requesting user can read, the plugin adds the channel's instructions and the current content of its pinned context posts to the system prompt, framed as optional, member-written background that never overrides the agent's own instructions. Instructions are limited to 8,000 characters, a channel can pin up to 10 posts, and each post contributes at most its first 4,000 characters. Agent context pins are stored by the plugin and are separate from Mattermost's pinned messages; pins whose post was deleted or moved are removed automatically. Channel context is available at Enterprise Advanced; below that level it is not sent to agents, while clearing instructions and unpinning posts through the REST API never require a license. The endpoints are `GET`/`PUT /plugins/mattermost-ai/channel/{channelid}/instructions`, `GET`/`POST /plugins/mattermost-ai/channel/{channelid}/context_posts`, and `DELETE /plugins/mattermost-ai/channel/{channelid}/context_posts/{postid}`; each write emits a server audit record (`updateChannelInstructions`, `pinChannelContextPost`, `unpinChannelContextPost`) that carries the channel and post IDs but never the instructions text.
+
 ### Attribute-based access control (ABAC)
 
 Attribute-based access control lets you restrict who can use agents, LLM services, and MCP servers with policies written against user attributes (for example `user.attributes.department == "engineering"`), instead of maintaining explicit user or team lists.
@@ -949,6 +951,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | MCP service-account authentication | — | — | ✅ | ✅ |
 | Shared prompt libraries | — | — | ✅ | ✅ |
 | Channel agent auto-reply | — | — | — | ✅ |
+| Channel agent instructions & pinned context | — | — | — | ✅ |
 | Attribute-based access control for AI | — | — | — | ✅ |
 
 How each row is enforced:

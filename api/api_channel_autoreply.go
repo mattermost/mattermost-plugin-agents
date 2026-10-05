@@ -68,19 +68,7 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	audit.AddParam(auditRec(c), audit.KeyChannelID, channel.Id)
 
-	var perm *model.Permission
-	switch channel.Type {
-	case model.ChannelTypeOpen:
-		perm = model.PermissionManagePublicChannelProperties
-	case model.ChannelTypePrivate:
-		perm = model.PermissionManagePrivateChannelProperties
-	default: // ChannelTypeDirect, ChannelTypeGroup
-		c.AbortWithError(http.StatusBadRequest,
-			errors.New("auto-reply cannot be configured for direct or group message channels"))
-		return
-	}
-	if !a.pluginAPI.User.HasPermissionToChannel(userID, channel.Id, perm) {
-		c.AbortWithError(http.StatusForbidden, errors.New("user doesn't have permission to manage channel properties"))
+	if !a.requireManageChannelProperties(c, userID, channel) {
 		return
 	}
 
