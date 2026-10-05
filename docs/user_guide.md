@@ -61,6 +61,19 @@ An automatic reply behaves exactly as if you had @mentioned the agent: the same 
 
 > **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
 
+### Channel instructions and agent context
+
+Channel members with permission to manage channel settings can give agents background about a channel — for example, what the channel is for, team conventions, or where things are tracked. Whenever any agent works in the channel (an @mention, an automatic reply, or a thread or channel summary), it receives this context automatically, much like a coding assistant reads a repository's `AGENTS.md` file. Agents are told that the context is optional and may not be relevant to every request, so they use it when it helps and otherwise ignore it without mentioning it. The context never overrides the agent's own instructions configured by your system administrator.
+
+There are two kinds of channel context:
+
+- **Channel instructions**: Free-form text, up to 8,000 characters. To edit them, open **Channel Settings**, select the **Agents** tab, enter text under **Channel instructions**, and select **Save**. Clear the text and save to remove the instructions.
+- **Posts pinned to agent context**: Individual posts whose content agents receive with every request. To pin a post, hover over it, open the **AI Actions** menu, and select **Pin to agent context**. Select **Unpin from agent context** in the same menu to remove it, or remove it from the **Pinned agent context** list in the **Agents** channel settings tab. Pinned posts show an **Agent context** label next to their timestamp. A channel can pin up to 10 posts, and agents receive at most the first 4,000 characters of each.
+
+Pinning a post to agent context is separate from [pinning a message](https://docs.mattermost.com/collaborate/pin-messages.html) to the channel: agent context pins don't appear in the channel's pinned messages, and regular pinned messages aren't sent to agents. Edits to a pinned post are picked up automatically, and deleting the post removes it from agent context.
+
+Channel context is captured when a conversation starts, so changes apply to new threads and @mentions, not to follow-up replies in an existing agent conversation. Channel context is available in public and private channels (not direct or group messages) at Enterprise Advanced.
+
 ### Use custom prompt templates
 
 Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
