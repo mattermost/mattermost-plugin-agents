@@ -238,6 +238,26 @@ func TestBlocksToPost_RedactUnshared(t *testing.T) {
 	})
 }
 
+func TestToolUseBlocksAndBlocksToPostRoundTripUIMeta(t *testing.T) {
+	uiMeta := &llm.ToolUIMeta{ResourceURI: "ui://srv/app.html", Visibility: []string{"model", "app"}}
+	toolCalls := []llm.ToolCall{{
+		ID:           "tc1",
+		Name:         "demo",
+		ServerOrigin: "https://srv.example",
+		Arguments:    json.RawMessage(`{}`),
+		Status:       llm.ToolCallStatusPending,
+		UIMeta:       uiMeta,
+	}}
+
+	blocks := toolUseBlocks("", llm.ReasoningData{}, nil, nil, toolCalls, true)
+	require.Len(t, blocks, 1)
+	assert.Equal(t, uiMeta, blocks[0].UIMeta)
+
+	roundTripped := BlocksToPost(blocks, "assistant", PostConversionOptions{})
+	require.Len(t, roundTripped.ToolUse, 1)
+	assert.Equal(t, uiMeta, roundTripped.ToolUse[0].UIMeta)
+}
+
 func TestBlocksToPostRehydratesToolCatalogMetadata(t *testing.T) {
 	// Persisted block omits the bare name on purpose: rehydration must derive
 	// it from the namespaced catalog entry, not echo a value the test pre-set.

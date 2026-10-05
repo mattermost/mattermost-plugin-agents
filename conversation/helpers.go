@@ -172,6 +172,7 @@ func toolUseBlocks(
 			WouldAutoExecute: tc.WouldAutoExecute,
 			Title:            tc.Title,
 			Description:      tc.Description,
+			UIMeta:           tc.UIMeta,
 		})
 	}
 

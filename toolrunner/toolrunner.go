@@ -593,6 +593,7 @@ func buildResolvedToolCalls(toolCalls []llm.ToolCall, toolResults []ToolResult) 
 			MCPBareName:  tc.MCPBareName,
 			Status:       status,
 			Result:       toolResults[i].Result,
+			UIMeta:       tc.UIMeta,
 		}
 	}
 	return resolved
