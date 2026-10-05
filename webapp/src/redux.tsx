@@ -5,6 +5,7 @@ import {combineReducers, Dispatch, Store, UnknownAction} from 'redux';
 import {GlobalState} from '@mattermost/types/store';
 
 import {makeCallsPostButtonClickedHandler} from './calls_button';
+import {channelContextPostsReducer} from './channel_context';
 import {getCustomPrompts as fetchCustomPromptsAPI, getCustomPromptPins} from './client';
 import {licenseAllows} from './license';
 import manifest from './manifest';
@@ -28,6 +29,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
+        channelContextPosts: channelContextPostsReducer,
     });
     registry.registerReducer(reducer);
 

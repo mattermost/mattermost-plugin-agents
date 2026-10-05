@@ -9,7 +9,14 @@ import {ClientError} from '@mattermost/client';
 import {Channel} from '@mattermost/types/channels';
 import {GlobalState} from '@mattermost/types/store';
 
-import {ChannelAutoReplyMode, ChannelAutoReplySettings, getChannelAutoReply, updateChannelAutoReply} from '@/client';
+import {
+    ChannelAutoReplyMode,
+    ChannelAutoReplySettings,
+    getChannelAutoReply,
+    getChannelInstructions,
+    updateChannelAutoReply,
+    updateChannelInstructions,
+} from '@/client';
 import {LLMBot, fetchAndStoreBots, filterBotsByChannelAccess} from '@/bots';
 import {
     PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES,
@@ -25,6 +32,9 @@ import {
     setChannelAutoReplyDraft,
     setChannelAutoReplySaveError,
 } from './autoreply_state';
+import {ChannelContextPostsSection} from './channel_context_posts_section';
+import {ChannelInstructionsSetting} from './channel_instructions_setting';
+import {setChannelInstructionsDraft, setChannelInstructionsSaveError} from './channel_instructions_state';
 
 export type WebappStore = Store<GlobalState, UnknownAction>;
 
@@ -36,11 +46,12 @@ type RadioOption = {value: string; text: string; helpText?: string};
 type RadioSetting = {name: string; type: 'radio'; title?: string; helpText?: string; default: string; options: RadioOption[]};
 type CustomSetting = {name: string; type: 'custom'; component: ComponentType<{informChange: (name: string, value: string) => void}>};
 type SettingsSection = {title: string; settings: Array<RadioSetting | CustomSetting>};
-export type ChannelAutoReplyTabRegistration = {
+type CustomSection = {title: string; component: ComponentType};
+export type ChannelAgentsTabRegistration = {
     uiName: string;
     icon: string;
     shouldRender: (state: GlobalState, channel: Channel) => boolean;
-    sections: SettingsSection[];
+    sections: Array<SettingsSection | CustomSection>;
     loadValues: (channel: Channel) => Promise<ChannelSettingsValues>;
     onSave: (values: ChannelSettingsValues, channel: Channel) => Promise<void>;
 };
@@ -60,14 +71,15 @@ export function botsFromState(state: GlobalState): LLMBot[] | null {
 // It is also the only gate on tab visibility; because it requires the same
 // manage-properties permission that gates the built-in Info tab, the plugin
 // tab never expands Channel Settings menu-item visibility beyond core.
-export const shouldRenderChannelAutoReplyTab = (state: GlobalState, channel: Channel): boolean => {
+export const shouldRenderChannelAgentsTab = (state: GlobalState, channel: Channel): boolean => {
     if (channel.type !== 'O' && channel.type !== 'P') {
         return false;
     }
 
-    // Channel agent auto-reply is available at Enterprise Advanced; below it a
-    // stored setting is inactive and stays clearable through the REST API.
-    if (!licenseAllows(state, 'channel_auto_reply')) {
+    // Auto-reply and channel agent context are available at Enterprise
+    // Advanced; below it stored settings are inactive and stay clearable
+    // through the REST API.
+    if (!licenseAllows(state, 'channel_auto_reply') && !licenseAllows(state, 'channel_context')) {
         return false;
     }
     const permission = channel.type === 'P' ? PERMISSION_MANAGE_PRIVATE_CHANNEL_PROPERTIES : PERMISSION_MANAGE_PUBLIC_CHANNEL_PROPERTIES;
@@ -85,16 +97,28 @@ export const shouldRenderChannelAutoReplyTab = (state: GlobalState, channel: Cha
     return filterBotsByChannelAccess(bots, channel.id).length > 0;
 };
 
-export const makeLoadValues = (store: WebappStore) => async (channel: Channel): Promise<ChannelSettingsValues> => {
+// Shared by one registration's loadValues and onSave: the values last handed
+// to the host by loadValues or a successful save, i.e. the host's own
+// baseline. onSave compares against it rather than against drafts that
+// websocket re-syncs update, so an unrelated save never writes a stale value
+// back over a remote change. values is null until hydration succeeds.
+export type AgentsTabBaseline = {values: ChannelSettingsValues | null};
+
+export const makeLoadValues = (store: WebappStore, baseline: AgentsTabBaseline) => async (channel: Channel): Promise<ChannelSettingsValues> => {
     let raw: ChannelAutoReplySettings;
+    let instructions: string;
     try {
-        raw = await getChannelAutoReply(channel.id);
+        [raw, {instructions}] = await Promise.all([
+            getChannelAutoReply(channel.id),
+            getChannelInstructions(channel.id),
+        ]);
     } catch (e) {
-        // A failed GET (e.g. 403 from the default-agent middleware) must not
-        // leave a previous channel's draft visible: clear it so the picker
-        // renders its load-failure message, then let the host fall back to
-        // schema defaults.
+        // A failed GET must not leave a previous channel's drafts visible:
+        // clear them so the custom settings render their load-failure
+        // messages, then let the host fall back to schema defaults.
+        baseline.values = null;
         setChannelAutoReplyDraft(null);
+        setChannelInstructionsDraft(null);
         throw e;
     }
     let bots = botsFromState(store.getState());
@@ -106,12 +130,24 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
     // saved agent instead of clearing it like an empty agent list would.
     const saved = normalizeChannelAutoReply(raw, bots, channel.id);
     setChannelAutoReplyDraft({channelId: channel.id, saved, saveError: null});
-    return {mode: saved.mode, bot_id: saved.bot_id};
+    setChannelInstructionsDraft({channelId: channel.id, saved: instructions, saveError: null});
+    baseline.values = {mode: saved.mode, bot_id: saved.bot_id, instructions};
+    return baseline.values;
 };
 
-export const makeOnSave = () => async (values: ChannelSettingsValues, channel: Channel): Promise<void> => {
+function saveErrorStatus(e: unknown): number {
+    // The endpoints answer with a bare status code (no JSON error body), so
+    // error handling keys off the status only.
+    return e instanceof ClientError ? e.status_code ?? 0 : 0;
+}
+
+async function saveAutoReply(values: ChannelSettingsValues, channel: Channel, baseline: AgentsTabBaseline): Promise<void> {
     const mode: ChannelAutoReplyMode = values.mode === 'root_posts' || values.mode === 'threads' ? values.mode : 'off';
     const botId = mode === 'off' ? '' : (values.bot_id ?? '');
+    const before = baseline.values;
+    if (before && mode === before.mode && (mode === 'off' || botId === before.bot_id)) {
+        return;
+    }
     if (mode !== 'off' && !botId) {
         setChannelAutoReplySaveError('no_agent');
         throw new Error('no agent selected for channel auto-reply');
@@ -119,66 +155,120 @@ export const makeOnSave = () => async (values: ChannelSettingsValues, channel: C
     try {
         await updateChannelAutoReply(channel.id, {bot_id: botId, mode});
     } catch (e) {
-        // The endpoints answer with a bare status code (no JSON error body),
-        // so error handling keys off the status only.
-        const status = e instanceof ClientError ? e.status_code : 0;
-        setChannelAutoReplySaveError(status === 403 ? 'forbidden' : 'generic');
+        setChannelAutoReplySaveError(saveErrorStatus(e) === 403 ? 'forbidden' : 'generic');
 
         // The host swallows the rejection and keeps the tab dirty; the picker
         // is the plugin-rendered element that displays the recorded error.
         throw e;
     }
     setChannelAutoReplyDraft({channelId: channel.id, saved: {bot_id: botId, mode}, saveError: null});
+    if (baseline.values) {
+        baseline.values = {...baseline.values, mode, bot_id: values.bot_id ?? ''};
+    }
+}
+
+async function saveInstructions(values: ChannelSettingsValues, channel: Channel, baseline: AgentsTabBaseline): Promise<void> {
+    const instructions = values.instructions;
+
+    // Absent when hydration failed and the host fell back to schema defaults.
+    if (typeof instructions === 'undefined' || instructions === baseline.values?.instructions) {
+        return;
+    }
+    let saved: string;
+    try {
+        ({instructions: saved} = await updateChannelInstructions(channel.id, instructions));
+    } catch (e) {
+        const status = saveErrorStatus(e);
+        if (status === 403) {
+            setChannelInstructionsSaveError('forbidden');
+        } else if (status === 400 || status === 413) {
+            setChannelInstructionsSaveError('invalid');
+        } else {
+            setChannelInstructionsSaveError('generic');
+        }
+        throw e;
+    }
+    setChannelInstructionsDraft({channelId: channel.id, saved, saveError: null});
+    if (baseline.values) {
+        baseline.values = {...baseline.values, instructions};
+    }
+}
+
+// Saves only the parts the user changed, so editing the instructions never
+// re-validates (or re-audits) an untouched auto-reply setting and vice versa.
+// If one part fails after the other succeeded, the host keeps the tab dirty
+// and a retry re-sends only the failed part. Without a baseline (hydration
+// failed) the auto-reply values are always sent.
+export const makeOnSave = (baseline: AgentsTabBaseline) => async (values: ChannelSettingsValues, channel: Channel): Promise<void> => {
+    await saveAutoReply(values, channel, baseline);
+    await saveInstructions(values, channel, baseline);
 };
 
 // Builds the registration passed to registry.registerChannelSettingsTab. Must
 // be called exactly once at init: the host re-runs hydration whenever the
 // schema object reference changes, which would destroy in-progress user edits.
-export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape): ChannelAutoReplyTabRegistration {
+export function makeChannelAgentsTabSchema(store: WebappStore, intl: IntlShape): ChannelAgentsTabRegistration {
+    const baseline: AgentsTabBaseline = {values: null};
     return {
         uiName: intl.formatMessage({defaultMessage: 'Agents'}),
         icon: 'icon-creation-outline',
-        shouldRender: shouldRenderChannelAutoReplyTab,
-        sections: [{
-            title: intl.formatMessage({defaultMessage: 'Automatic replies'}),
-            settings: [
-                {
-                    name: 'mode',
-                    type: 'radio',
-                    title: intl.formatMessage({defaultMessage: 'Auto-reply mode'}),
-                    helpText: intl.formatMessage({defaultMessage: 'An automatic reply behaves exactly as if the author had @-mentioned the agent.'}),
-                    default: 'off',
-                    options: [
-                        {
-                            value: 'off',
-                            text: intl.formatMessage({defaultMessage: 'Off'}),
-                            helpText: intl.formatMessage({defaultMessage: 'The agent replies only when @-mentioned.'}),
-                        },
-                        {
-                            value: 'root_posts',
-                            text: intl.formatMessage({defaultMessage: 'Top-level posts only'}),
-                            helpText: intl.formatMessage({defaultMessage: 'The agent automatically replies to new top-level posts, starting a thread.'}),
-                        },
-                        {
-                            value: 'threads',
-                            text: intl.formatMessage({defaultMessage: 'Threads too'}),
-                            helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
-                        },
-                    ],
-                },
-                {
+        shouldRender: shouldRenderChannelAgentsTab,
+        sections: [
+            {
+                title: intl.formatMessage({defaultMessage: 'Automatic replies'}),
+                settings: [
+                    {
+                        name: 'mode',
+                        type: 'radio',
+                        title: intl.formatMessage({defaultMessage: 'Auto-reply mode'}),
+                        helpText: intl.formatMessage({defaultMessage: 'An automatic reply behaves exactly as if the author had @-mentioned the agent.'}),
+                        default: 'off',
+                        options: [
+                            {
+                                value: 'off',
+                                text: intl.formatMessage({defaultMessage: 'Off'}),
+                                helpText: intl.formatMessage({defaultMessage: 'The agent replies only when @-mentioned.'}),
+                            },
+                            {
+                                value: 'root_posts',
+                                text: intl.formatMessage({defaultMessage: 'Top-level posts only'}),
+                                helpText: intl.formatMessage({defaultMessage: 'The agent automatically replies to new top-level posts, starting a thread.'}),
+                            },
+                            {
+                                value: 'threads',
+                                text: intl.formatMessage({defaultMessage: 'Threads too'}),
+                                helpText: intl.formatMessage({defaultMessage: 'The agent also automatically replies to replies in threads.'}),
+                            },
+                        ],
+                    },
+                    {
 
-                    // No title/helpText/default: the host ignores title and
-                    // helpText for custom settings (the picker renders its own
-                    // label), drops falsy defaults, and loadValues always
-                    // supplies bot_id.
-                    name: 'bot_id',
-                    type: 'custom',
-                    component: AutoReplyAgentPicker,
-                },
-            ],
-        }],
-        loadValues: makeLoadValues(store),
-        onSave: makeOnSave(),
+                        // No title/helpText/default: the host ignores title and
+                        // helpText for custom settings (the picker renders its own
+                        // label), drops falsy defaults, and loadValues always
+                        // supplies bot_id.
+                        name: 'bot_id',
+                        type: 'custom',
+                        component: AutoReplyAgentPicker,
+                    },
+                ],
+            },
+            {
+                title: intl.formatMessage({defaultMessage: 'Channel instructions'}),
+                settings: [
+                    {
+                        name: 'instructions',
+                        type: 'custom',
+                        component: ChannelInstructionsSetting,
+                    },
+                ],
+            },
+            {
+                title: intl.formatMessage({defaultMessage: 'Pinned agent context'}),
+                component: ChannelContextPostsSection,
+            },
+        ],
+        loadValues: makeLoadValues(store, baseline),
+        onSave: makeOnSave(baseline),
     };
 }
