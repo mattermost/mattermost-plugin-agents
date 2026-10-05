@@ -5,8 +5,8 @@ import React from 'react';
 import {fireEvent, render, screen, waitFor, waitForElementToBeRemoved, within} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
-import {createAgent, getAgentVersion, getAgentVersions, getProfilesByIds, restoreAgentVersion, updateAgent} from '@/client';
-import {AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
+import {createAgent, getAgentVersion, getAgentVersions, getProfilesByIds, restoreAgentVersion, updateAgent, uploadAgentDocument} from '@/client';
+import {AgentDocument, AgentVersionDetail, AgentVersionList, EnabledTool, MaxCustomInstructionsRunes, ServiceInfo, UserAgent} from '@/types/agents';
 import {downloadAgentExport} from '@/utils/download_agent_export';
 import {useCurrentUserHasSystemPermission} from '@/utils/permissions';
 
@@ -50,6 +50,8 @@ jest.mock('@/client', () => ({
     getAgentVersion: jest.fn(),
     restoreAgentVersion: jest.fn(),
     getProfilesByIds: jest.fn(),
+    uploadAgentDocument: jest.fn(),
+    agentDocumentUrl: (agentId: string, documentId: string) => `/agents/${agentId}/documents/${documentId}`,
 }));
 
 jest.mock('@/utils/download_agent_export', () => ({
@@ -90,14 +92,64 @@ jest.mock('./tabs/config_tab', () => ({
         onAvatarChange,
         avatarFile,
         errors = {},
+        savedDocumentIds = [],
+        documentUploads = [],
+        onUploadDocuments,
+        onDismissDocumentUpload,
     }: {
         draft: AgentDraft;
         onChange: (updates: Partial<AgentDraft>) => void;
         onAvatarChange: (file: File | null) => void;
         avatarFile?: File | null;
         errors?: Record<string, string>;
+        savedDocumentIds?: string[];
+        documentUploads?: Array<{key: string; name: string; status: string; error?: string}>;
+        onUploadDocuments: (files: File[]) => void;
+        onDismissDocumentUpload: (key: string) => void;
     }) => (
         <>
+            <input
+                aria-label='Upload documents'
+                type='file'
+                multiple={true}
+                onChange={(e) => onUploadDocuments(Array.from(e.target.files ?? []))}
+            />
+            <ul data-testid='draft-documents'>
+                {draft.documents.map((doc) => (
+                    <li
+                        key={doc.id}
+                        data-saved={String(savedDocumentIds.includes(doc.id))}
+                    >
+                        {doc.name}
+                        <button
+                            type='button'
+                            onClick={() => onChange({documents: draft.documents.filter((d) => d.id !== doc.id)})}
+                        >
+                            {`Remove ${doc.name}`}
+                        </button>
+                        <button
+                            type='button'
+                            onClick={() => onChange({documents: draft.documents.map((d) => (d.id === doc.id ? {...d, name: 'renamed.txt'} : d))})}
+                        >
+                            {`Rename ${doc.name}`}
+                        </button>
+                    </li>
+                ))}
+            </ul>
+            <ul data-testid='document-uploads'>
+                {documentUploads.map((item) => (
+                    <li key={item.key}>
+                        {`${item.name}: ${item.status}${item.error ? ` - ${item.error}` : ''}`}
+                        <button
+                            type='button'
+                            onClick={() => onDismissDocumentUpload(item.key)}
+                        >
+                            {`Dismiss ${item.name}`}
+                        </button>
+                    </li>
+                ))}
+            </ul>
+            {errors.documents && <div role='alert'>{errors.documents}</div>}
             <input
                 aria-label='Bot avatar'
                 type='file'
@@ -1158,5 +1210,245 @@ describe('AgentConfigView history and export', () => {
         fireEvent.click(screen.getByRole('button', {name: 'Export'}));
 
         expect(await screen.findByText('You do not have permission to export this agent.')).not.toBeNull();
+    });
+});
+
+describe('AgentConfigView reference documents', () => {
+    const mockUploadAgentDocument = uploadAgentDocument as jest.MockedFunction<typeof uploadAgentDocument>;
+    const mockGetAgentVersions = getAgentVersions as jest.MockedFunction<typeof getAgentVersions>;
+    const mockGetAgentVersion = getAgentVersion as jest.MockedFunction<typeof getAgentVersion>;
+    const mockRestoreAgentVersion = restoreAgentVersion as jest.MockedFunction<typeof restoreAgentVersion>;
+
+    function makeDocument(id: string, name: string, overrides: Partial<AgentDocument> = {}): AgentDocument {
+        return {id, name, mimeType: 'application/pdf', size: 2048, sha256: `sha-${id}`, textRunes: 1000, ...overrides};
+    }
+
+    const handbook = makeDocument('doc_1', 'handbook.pdf');
+    const faq = makeDocument('doc_2', 'faq.txt', {mimeType: 'text/plain'});
+
+    const agentWithDocuments: UserAgent = {
+        ...savedAgent,
+        id: 'agent_1',
+        name: 'existingagent',
+        displayName: 'Existing Agent',
+        documents: [handbook, faq],
+    };
+
+    function renderEdit(agent: UserAgent = agentWithDocuments, onSaved = jest.fn()) {
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agent}
+                    services={services}
+                    onBack={jest.fn()}
+                    onSaved={onSaved}
+                    onRestored={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+    }
+
+    function uploadFiles(files: File[]) {
+        fireEvent.change(screen.getByLabelText('Upload documents'), {target: {files}});
+    }
+
+    function documentNames(): string[] {
+        return within(screen.getByTestId('draft-documents')).queryAllByRole('listitem').map((li) => li.firstChild?.textContent ?? '');
+    }
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockedUseCurrentUserHasSystemPermission.mockReturnValue(true);
+        mockUpdateAgent.mockResolvedValue(agentWithDocuments);
+        mockCreateAgent.mockResolvedValue(savedAgent);
+    });
+
+    test('loads the agent documents into the draft without marking it dirty', () => {
+        const onBack = jest.fn();
+        render(
+            <IntlProvider locale='en'>
+                <AgentConfigView
+                    mode='edit'
+                    agent={agentWithDocuments}
+                    services={services}
+                    onBack={onBack}
+                    onSaved={jest.fn()}
+                />
+            </IntlProvider>,
+        );
+
+        expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt']);
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    test('an uploaded document is appended to the draft and makes the editor dirty', async () => {
+        const uploaded = makeDocument('doc_3', 'notes.md', {mimeType: 'text/markdown'});
+        mockUploadAgentDocument.mockResolvedValue(uploaded);
+        renderEdit();
+
+        const file = new File(['# notes'], 'notes.md', {type: 'text/markdown'});
+        uploadFiles([file]);
+
+        await waitFor(() => expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt', 'notes.md']));
+        expect(mockUploadAgentDocument).toHaveBeenCalledWith(file);
+        expect(within(screen.getByTestId('document-uploads')).queryAllByRole('listitem')).toHaveLength(0);
+
+        // New uploads are not saved yet, so they are not downloadable.
+        const items = within(screen.getByTestId('draft-documents')).getAllByRole('listitem');
+        expect(items.map((li) => li.getAttribute('data-saved'))).toEqual(['true', 'true', 'false']);
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(screen.getByRole('dialog', {name: 'Discard changes?'})).not.toBeNull();
+    });
+
+    test('save sends documents as {id, name} references only', async () => {
+        const uploaded = makeDocument('doc_3', 'notes.md', {mimeType: 'text/markdown'});
+        mockUploadAgentDocument.mockResolvedValue(uploaded);
+        renderEdit();
+
+        uploadFiles([new File(['# notes'], 'notes.md')]);
+        await waitFor(() => expect(documentNames()).toContain('notes.md'));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([
+            {id: 'doc_1', name: 'handbook.pdf'},
+            {id: 'doc_2', name: 'faq.txt'},
+            {id: 'doc_3', name: 'notes.md'},
+        ]);
+    });
+
+    test('create sends an empty documents list when none were added', async () => {
+        renderView();
+
+        fireEvent.change(screen.getByLabelText('Display Name'), {target: {value: 'New Agent'}});
+        fireEvent.change(screen.getByLabelText('Username'), {target: {value: 'newagent'}});
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockCreateAgent).toHaveBeenCalledTimes(1));
+        expect(mockCreateAgent.mock.calls[0][0].documents).toEqual([]);
+    });
+
+    test('removing and renaming documents is reflected in the save payload', async () => {
+        renderEdit();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Remove handbook.pdf'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Rename faq.txt'}));
+        expect(documentNames()).toEqual(['renamed.txt']);
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([{id: 'doc_2', name: 'renamed.txt'}]);
+    });
+
+    test('removing every document saves an empty list', async () => {
+        renderEdit();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Remove handbook.pdf'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Remove faq.txt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+        expect(mockUpdateAgent.mock.calls[0][1].documents).toEqual([]);
+    });
+
+    test('blocks saving when the extracted text is over the budget', () => {
+        const big = [
+            makeDocument('doc_a', 'a.txt', {textRunes: 60000}),
+            makeDocument('doc_b', 'b.txt', {textRunes: 40001}),
+        ];
+        renderEdit({...agentWithDocuments, documents: big});
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText(/over the limit of 100,000/)).not.toBeNull();
+        expect(mockUpdateAgent).not.toHaveBeenCalled();
+
+        // Removing a document clears the error and unblocks Save.
+        fireEvent.click(screen.getByRole('button', {name: 'Remove b.txt'}));
+        expect(screen.queryByText(/over the limit of 100,000/)).toBeNull();
+    });
+
+    test('allows saving exactly at the budget', async () => {
+        const exact = [makeDocument('doc_a', 'a.txt', {textRunes: 100000})];
+        renderEdit({...agentWithDocuments, documents: exact});
+
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        await waitFor(() => expect(mockUpdateAgent).toHaveBeenCalledTimes(1));
+    });
+
+    test('shows the server error for a failed upload and does not add the document', async () => {
+        mockUploadAgentDocument.mockRejectedValue({message: 'no extractable text found in "scan.pdf"'});
+        renderEdit();
+
+        uploadFiles([new File(['x'], 'scan.pdf')]);
+
+        expect(await screen.findByText('scan.pdf: error - no extractable text found in "scan.pdf"')).not.toBeNull();
+        expect(documentNames()).toEqual(['handbook.pdf', 'faq.txt']);
+
+        fireEvent.click(screen.getByRole('button', {name: 'Dismiss scan.pdf'}));
+        expect(screen.queryByText(/scan.pdf: error/)).toBeNull();
+    });
+
+    test('blocks saving while an upload is still in flight', async () => {
+        let finish: (doc: AgentDocument) => void = jest.fn();
+        mockUploadAgentDocument.mockImplementation(() => new Promise((resolve) => {
+            finish = resolve;
+        }));
+        renderEdit();
+
+        uploadFiles([new File(['x'], 'slow.txt')]);
+        expect(await screen.findByText('slow.txt: uploading')).not.toBeNull();
+        fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+
+        expect(screen.getByText('Wait for document uploads to finish before saving.')).not.toBeNull();
+        expect(mockUpdateAgent).not.toHaveBeenCalled();
+
+        finish(makeDocument('doc_4', 'slow.txt', {mimeType: 'text/plain'}));
+        await waitFor(() => expect(documentNames()).toContain('slow.txt'));
+        expect(screen.queryByText('Wait for document uploads to finish before saving.')).toBeNull();
+    });
+
+    test('restoring a version resets the draft documents and the baseline', async () => {
+        const restored: UserAgent = {...agentWithDocuments, documents: [faq]};
+        mockGetAgentVersions.mockResolvedValue({
+            currentVersion: 2,
+            versions: [
+                {version: 2, createdBy: '', createAt: 1759600000000, source: 'update', restoredFromVersion: 0, changedFields: ['documents']},
+                {version: 1, createdBy: '', createAt: 1759500000000, source: 'initial', restoredFromVersion: 0, changedFields: []},
+            ],
+        });
+        mockGetAgentVersion.mockImplementation(async (_id, version) => ({
+            version,
+            createdBy: '',
+            createAt: 1759500000000,
+            source: 'update',
+            restoredFromVersion: 0,
+            changedFields: null,
+            config: {...agentWithDocuments, documents: version === 1 ? [faq] : [handbook, faq]},
+        }));
+        mockRestoreAgentVersion.mockResolvedValue(restored);
+        renderEdit();
+
+        // An unsaved local removal must be replaced by the restored documents.
+        fireEvent.click(screen.getByRole('button', {name: 'Remove faq.txt'}));
+        fireEvent.click(screen.getByRole('button', {name: 'History'}));
+        const list = await screen.findByTestId('version-list');
+        expect(within(list).getByText('Changed: Reference documents')).not.toBeNull();
+        fireEvent.click(within(list).getByText('Version 1'));
+        await waitFor(() => expect((screen.getByRole('button', {name: 'Restore this version'}) as HTMLButtonElement).disabled).toBe(false));
+        fireEvent.click(screen.getByRole('button', {name: 'Restore this version'}));
+        fireEvent.click(within(screen.getByRole('dialog', {name: 'Restore this version?'})).getByRole('button', {name: 'Restore'}));
+        await waitFor(() => expect(mockRestoreAgentVersion).toHaveBeenCalledWith('agent_1', 1));
+        await screen.findByText('Version 1 was restored as the current version.');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Configuration'}));
+        expect(documentNames()).toEqual(['faq.txt']);
+
+        fireEvent.keyDown(document, {key: 'Escape'});
+        expect(screen.queryByRole('dialog', {name: 'Discard changes?'})).toBeNull();
     });
 });

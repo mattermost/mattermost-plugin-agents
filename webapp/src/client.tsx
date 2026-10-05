@@ -17,6 +17,7 @@ import {
     ServiceInfo,
     AgentVersionList,
     AgentVersionDetail,
+    AgentDocument,
     AgentExportDocument,
     AgentImportPreview,
     AgentImportRequest,
@@ -1212,6 +1213,47 @@ export async function uploadAgentAvatar(agentId: string, file: File): Promise<vo
         status_code: response.status,
         url,
     });
+}
+
+export async function uploadAgentDocument(file: File): Promise<AgentDocument> {
+    const url = `${baseRoute()}/agents/documents`;
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const headers = {...(Client4.getOptions({method: 'POST'}).headers as Record<string, string>)};
+    delete headers['Content-Type'];
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: formData,
+    });
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw await agentErrorFromResponse(response, url);
+}
+
+export function agentDocumentUrl(agentId: string, documentId: string): string {
+    return `${agentRoute(agentId)}/documents/${encodeURIComponent(documentId)}`;
+}
+
+export async function downloadAgentDocument(agentId: string, documentId: string): Promise<AgentExportFile> {
+    const url = agentDocumentUrl(agentId, documentId);
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return {
+            blob: await response.blob(),
+            filename: parseContentDispositionFilename(response.headers.get('Content-Disposition')),
+        };
+    }
+
+    throw await agentErrorFromResponse(response, url);
 }
 
 export async function getServices(): Promise<ServiceInfo[]> {

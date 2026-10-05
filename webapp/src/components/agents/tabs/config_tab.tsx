@@ -40,6 +40,8 @@ import {LLMService} from '@/components/system_console/service';
 import {LicenseLevel, useIsLicensedFor, useLicenseLevelName, useServiceLimit} from '@/license';
 
 import {AgentDraft} from '../agent_config_view';
+import AgentDocumentsSection from '../agent_documents_section';
+import type {DocumentUploadItem} from '../use_agent_document_uploads';
 
 type Props = {
     draft: AgentDraft;
@@ -49,6 +51,17 @@ type Props = {
     /** The avatar upload that the next save will apply, if any. */
     avatarFile?: File | null;
     botUserId?: string;
+
+    /** Set for existing agents; enables downloading saved reference documents. */
+    agentId?: string;
+
+    /** Ids of the reference documents already saved on the agent. */
+    savedDocumentIds?: string[];
+
+    /** In-flight and failed reference document uploads. */
+    documentUploads?: DocumentUploadItem[];
+    onUploadDocuments: (files: File[]) => void;
+    onDismissDocumentUpload: (key: string) => void;
     services: ServiceInfo[];
     errors?: Record<string, string>;
 
@@ -65,6 +78,11 @@ const ConfigTab = (props: Props) => {
         draft,
         onChange,
         onAvatarChange,
+        agentId,
+        savedDocumentIds = [],
+        documentUploads = [],
+        onUploadDocuments,
+        onDismissDocumentUpload,
         services,
         errors = {},
         usernameLocked = false,
@@ -368,6 +386,17 @@ const ConfigTab = (props: Props) => {
                             {intl.formatNumber(MaxCustomInstructionsRunes)}
                         </CharacterCounter>
                     )}
+                />
+
+                <AgentDocumentsSection
+                    documents={draft.documents}
+                    uploads={documentUploads}
+                    agentId={agentId}
+                    savedDocumentIds={savedDocumentIds}
+                    error={errors.documents}
+                    onChange={(documents) => onChange({documents})}
+                    onUpload={onUploadDocuments}
+                    onDismissUpload={onDismissDocumentUpload}
                 />
             </ItemList>
 

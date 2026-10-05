@@ -87,6 +87,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: 30,
+        documents: [],
         ...overrides,
     };
 }
@@ -115,6 +116,8 @@ describe('ConfigTab', () => {
                     draft={makeDraft()}
                     onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[openaiService]}
                 />
             </IntlProvider>,
@@ -155,6 +158,8 @@ describe('ConfigTab', () => {
                     draft={makeDraft({serviceId: northService.id})}
                     onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[northService]}
                 />
             </IntlProvider>,
@@ -193,6 +198,8 @@ describe('ConfigTab license gating', () => {
                     draft={makeDraft()}
                     onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[openaiService, second]}
                 />
             </IntlProvider>,
@@ -213,6 +220,8 @@ describe('ConfigTab license gating', () => {
                     draft={makeDraft({enabledNativeTools: ['web_search']})}
                     onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[openaiService]}
                 />
             </IntlProvider>,
@@ -234,6 +243,8 @@ describe('ConfigTab license gating', () => {
                     draft={makeDraft({enabledNativeTools: []})}
                     onChange={jest.fn()}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[openaiService]}
                 />
             </IntlProvider>,
@@ -260,6 +271,8 @@ describe('ConfigTab license gating', () => {
                     draft={makeDraft({serviceId, enabledNativeTools: ['web_fetch']})}
                     onChange={onChange}
                     onAvatarChange={jest.fn()}
+                    onUploadDocuments={jest.fn()}
+                    onDismissDocumentUpload={jest.fn()}
                     services={[openaiService, anthropicService]}
                 />
             </IntlProvider>
@@ -270,5 +283,68 @@ describe('ConfigTab license gating', () => {
         rerender(renderTab(openaiService.id));
 
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({enabledNativeTools: expected}));
+    });
+
+    describe('reference documents', () => {
+        const handbook = {id: 'doc_1', name: 'handbook.pdf', mimeType: 'application/pdf', size: 2048, sha256: 'a', textRunes: 100};
+        const faq = {id: 'doc_2', name: 'faq.txt', mimeType: 'text/plain', size: 10, sha256: 'b', textRunes: 5};
+
+        function renderTab(props: Partial<React.ComponentProps<typeof ConfigTab>> = {}) {
+            const handlers = {
+                onChange: jest.fn(),
+                onUploadDocuments: jest.fn(),
+                onDismissDocumentUpload: jest.fn(),
+            };
+            render(
+                <IntlProvider locale='en'>
+                    <ConfigTab
+                        draft={makeDraft({documents: [handbook, faq]})}
+                        onAvatarChange={jest.fn()}
+                        services={[openaiService]}
+                        agentId='agent_1'
+                        savedDocumentIds={['doc_1']}
+                        {...handlers}
+                        {...props}
+                    />
+                </IntlProvider>,
+            );
+            return handlers;
+        }
+
+        test('renders the section right below Custom instructions', async () => {
+            renderTab();
+
+            await waitFor(() => expect(screen.getByText('Custom instructions')).not.toBeNull());
+            const instructions = formRowForLabel('Custom instructions');
+            const section = screen.getByTestId('agent-documents');
+            expect(instructions.nextElementSibling).toBe(section);
+            expect(within(section).getByText('handbook.pdf')).not.toBeNull();
+            expect(within(section).getByText('faq.txt')).not.toBeNull();
+        });
+
+        test('removing a document updates the draft documents', async () => {
+            const {onChange} = renderTab();
+
+            fireEvent.click(await screen.findByRole('button', {name: 'Remove handbook.pdf'}));
+
+            expect(onChange).toHaveBeenCalledWith({documents: [faq]});
+        });
+
+        test('shows Download only for saved documents of an existing agent', async () => {
+            renderTab();
+
+            expect(await screen.findByRole('button', {name: 'Download handbook.pdf'})).not.toBeNull();
+            expect(screen.queryByRole('button', {name: 'Download faq.txt'})).toBeNull();
+        });
+
+        test('uploads the chosen files and shows the editor validation error', async () => {
+            const {onUploadDocuments} = renderTab({errors: {documents: 'Reference documents contain too much text.'}});
+            const files = [new File(['x'], 'a.txt'), new File(['y'], 'b.md')];
+
+            fireEvent.change(await screen.findByTestId('agent-documents-input'), {target: {files}});
+
+            expect(onUploadDocuments).toHaveBeenCalledWith(files);
+            expect(screen.getByText('Reference documents contain too much text.')).not.toBeNull();
+        });
     });
 });

@@ -97,6 +97,7 @@ function makeDraft(overrides: Partial<AgentDraft> = {}): AgentDraft {
         reasoningEffort: 'medium',
         thinkingBudget: 0,
         maxToolTurns: DefaultMaxToolTurns,
+        documents: [],
         ...overrides,
     };
 }

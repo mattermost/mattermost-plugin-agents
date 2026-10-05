@@ -325,6 +325,7 @@ const HistoryTab = ({agentId, services, isDirty, currentUserAccessLevel, onResto
                     <VersionSnapshot
                         config={detail.config ?? {}}
                         services={services}
+                        agentId={agentId}
                     />
                 )}
             </DetailPane>
