@@ -16,13 +16,18 @@ import (
 // buildPDF returns a minimal one-page PDF whose page content stream is
 // content, with a correct cross-reference table.
 func buildPDF(content string) []byte {
-	objects := []string{
+	return assemblePDF(
 		"<< /Type /Catalog /Pages 2 0 R >>",
 		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
 		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		pdfStream("", content),
 		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
-	}
+	)
+}
+
+// assemblePDF returns a PDF of the given objects, numbered from 1 with object
+// 1 as the document catalog, and a correct cross-reference table.
+func assemblePDF(objects ...string) []byte {
 	var b bytes.Buffer
 	b.WriteString("%PDF-1.4\n")
 	offsets := make([]int, len(objects))
@@ -37,6 +42,12 @@ func buildPDF(content string) []byte {
 	}
 	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
 	return b.Bytes()
+}
+
+// pdfStream returns a stream object holding data, with extra entries added
+// to its dictionary.
+func pdfStream(extra, data string) string {
+	return fmt.Sprintf("<< /Length %d %s >>\nstream\n%s\nendstream", len(data), extra, data)
 }
 
 func TestMimeTypeForName(t *testing.T) {
@@ -200,7 +211,7 @@ func TestExtract(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := Extract("doc", tt.mimeType, tt.data)
+			got, err := Extract(t.Context(), "doc", tt.mimeType, tt.data)
 			if tt.wantErrIn != "" {
 				require.ErrorIs(t, err, ErrInvalidDocument)
 				assert.Contains(t, err.Error(), tt.wantErrIn)
@@ -218,7 +229,7 @@ func TestExtractNeverPanicsOnCorruptedPDFs(t *testing.T) {
 		corrupted := append([]byte(nil), valid...)
 		corrupted[cut] ^= 0x5a
 		assert.NotPanics(t, func() {
-			_, _ = Extract("doc.pdf", MimeTypePDF, corrupted)
+			_, _ = Extract(t.Context(), "doc.pdf", MimeTypePDF, corrupted)
 		}, "byte %d", cut)
 	}
 }

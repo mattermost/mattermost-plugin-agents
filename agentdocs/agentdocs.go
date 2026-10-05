@@ -7,15 +7,13 @@ package agentdocs
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"path"
 	"strings"
-	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"github.com/ledongthuc/pdf"
 )
 
 // Limits for agent reference documents. The webapp mirrors these values.
@@ -41,9 +39,6 @@ const (
 	MimeTypeCSV      = "text/csv"
 	MimeTypeJSON     = "application/json"
 )
-
-// pdfExtractTimeout bounds the time spent extracting text from one PDF.
-const pdfExtractTimeout = 30 * time.Second
 
 var mimeTypesByExtension = map[string]string{
 	".pdf":      MimeTypePDF,
@@ -108,17 +103,18 @@ func NormalizeName(name string) (string, error) {
 }
 
 // Extract returns the normalized text of a document of the given MIME type.
-// name is only used in error messages. Every error wraps ErrInvalidDocument:
-// unsupported or mismatching content, no extractable text, or more than
-// MaxTotalTextRunes characters of text (a document an agent could never hold).
-func Extract(name, mimeType string, data []byte) (string, error) {
+// name is only used in error messages. Every error wraps ErrInvalidDocument
+// (unsupported or mismatching content, no extractable text, more than
+// MaxTotalTextRunes characters of text, which no agent could hold, or a PDF
+// too costly to read), except the error returned when ctx is done first.
+func Extract(ctx context.Context, name, mimeType string, data []byte) (string, error) {
 	var (
 		text string
 		err  error
 	)
 	switch mimeType {
 	case MimeTypePDF:
-		text, err = extractPDF(name, data)
+		text, err = extractPDF(ctx, name, data)
 	case MimeTypeText, MimeTypeMarkdown, MimeTypeCSV, MimeTypeJSON:
 		text, err = extractText(name, data)
 	default:
@@ -148,49 +144,6 @@ func extractText(name string, data []byte) (string, error) {
 		return "", invalidf("%q is not a text file", name)
 	}
 	return normalizeText(string(data)), nil
-}
-
-// extractPDF reads the text of every page. The PDF library can panic on
-// malformed input, which is reported as an invalid document. Extraction stops
-// once the text exceeds MaxTotalTextRunes or pdfExtractTimeout elapses.
-func extractPDF(name string, data []byte) (text string, err error) {
-	if !bytes.Contains(data[:min(len(data), 1024)], []byte("%PDF-")) {
-		return "", invalidf("%q is not a PDF file", name)
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			text, err = "", invalidf("could not read %q; the PDF may be damaged", name)
-		}
-	}()
-
-	reader, err := pdf.NewReader(bytes.NewReader(data), int64(len(data)))
-	if err != nil {
-		return "", invalidf("could not read %q; the PDF may be damaged or encrypted", name)
-	}
-
-	deadline := time.Now().Add(pdfExtractTimeout)
-	var b strings.Builder
-	runes := 0
-	for i := 1; i <= reader.NumPage(); i++ {
-		if time.Now().After(deadline) {
-			return "", invalidf("reading %q took too long", name)
-		}
-		page := reader.Page(i)
-		if page.V.IsNull() {
-			continue
-		}
-		pageText, pageErr := page.GetPlainText(nil)
-		if pageErr != nil {
-			return "", invalidf("could not read page %d of %q; the PDF may be damaged", i, name)
-		}
-		b.WriteString(pageText)
-		b.WriteString("\n")
-		runes += utf8.RuneCountInString(pageText)
-		if runes > MaxTotalTextRunes {
-			return "", tooMuchTextError(name)
-		}
-	}
-	return collapseBlankLines(normalizeText(strings.ToValidUTF8(b.String(), ""))), nil
 }
 
 // normalizeText drops a byte order mark and control characters other than

@@ -226,7 +226,7 @@ func extractAgentDocument(c *gin.Context, rawName, mimeType string, data []byte,
 			return nil, false
 		}
 	}
-	text, err := agentdocs.Extract(name, mimeType, data)
+	text, err := agentdocs.Extract(c.Request.Context(), name, mimeType, data)
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, agentdocs.ErrInvalidDocument) {
