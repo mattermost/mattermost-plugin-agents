@@ -645,6 +645,24 @@ Integrations are available in direct messages by default. If you enable the expe
 
 The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
 
+### HTML artifacts
+
+When **Enable HTML artifacts** is turned on (`enableHTMLArtifacts` in the plugin configuration, off by default), HTML files (`.html`/`.htm`) that an agent creates with the `CreateFile` tool are rendered as interactive artifacts inline in the agent's reply and can be opened in a fullscreen viewer. The `CreateFile` tool description also tells the model that HTML files must be self-contained and how to use the theme variables and viewer API.
+
+Security model:
+
+- Artifacts are served by the plugin from `/plugins/mattermost-ai/artifacts/{file_id}` only for HTML files attached to a post authored by one of this plugin's agents, and only to users who can read the post's channel (and pass the file download access policy).
+- The response carries a `Content-Security-Policy` with `sandbox allow-scripts`, so the document runs in an opaque origin even when opened directly in a tab, and the embedding iframe uses `sandbox="allow-scripts"`. Artifact scripts cannot read Mattermost cookies, local storage, or call the Mattermost API.
+- The CSP allows no network requests via fetch/XHR/WebSocket (`connect-src 'none'`) and no external resources (scripts, styles, fonts, images); only inline code and `data:`/`blob:` resources are allowed.
+- An artifact can reach user data only through a small host-mediated `postMessage` API (`window.mattermost`). In this version it exposes the viewer's theme and `getCurrentUser()`, which returns name, username, and locale (never email, roles, or tokens) and requires the viewer's explicit consent.
+
+Known limitation: artifacts are not fully isolated from the network. Two egress paths remain that CSP cannot close:
+
+- An artifact can navigate its own frame to an external URL. CSP cannot block this. The webapp detects the self-navigation and resets the frame, but by then the request (including anything encoded in the URL) has already been sent.
+- An artifact can use WebRTC, which Chromium-based browsers do not govern with CSP.
+
+As a result, anything in the artifact's own content and any data it received from the `window.mattermost` API could be exfiltrated. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that deliberately leaks it. The feature is off by default; enable it only where this risk is acceptable.
+
 ## Model Context Protocol (MCP) Integration
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.

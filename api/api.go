@@ -54,6 +54,7 @@ type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
 	AllowUnsafeLinks() bool
+	EnableHTMLArtifacts() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 
@@ -344,6 +345,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/oauth/callback", a.handleOAuthCallback)
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
+	router.GET("/artifacts/:fileid", a.handleGetArtifact)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)
@@ -597,9 +599,10 @@ type AIBotInfo struct {
 }
 
 type AIBotsResponse struct {
-	Bots             []AIBotInfo `json:"bots"`
-	SearchEnabled    bool        `json:"searchEnabled"`
-	AllowUnsafeLinks bool        `json:"allowUnsafeLinks"`
+	Bots                 []AIBotInfo `json:"bots"`
+	SearchEnabled        bool        `json:"searchEnabled"`
+	AllowUnsafeLinks     bool        `json:"allowUnsafeLinks"`
+	HTMLArtifactsEnabled bool        `json:"htmlArtifactsEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -668,9 +671,10 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 	searchEnabled := a.searchService.Enabled()
 
 	c.JSON(http.StatusOK, AIBotsResponse{
-		Bots:             bots,
-		SearchEnabled:    searchEnabled,
-		AllowUnsafeLinks: a.config.AllowUnsafeLinks(),
+		Bots:                 bots,
+		SearchEnabled:        searchEnabled,
+		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
+		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
 	})
 }
 

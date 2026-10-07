@@ -38,7 +38,7 @@ func AttachSandboxOutputFiles(ctx context.Context, client mmapi.Client, download
 		return
 	}
 
-	sizeLimit := createFileContentLimit(client.GetConfig())
+	sizeLimit := CreateFileContentLimit(client.GetConfig())
 	slots := min(llmCtx.ResponseAttachmentSlots(), maxCreatedFilesPerTurn)
 
 	for _, fileRef := range files {
