@@ -611,6 +611,7 @@
   "rxqs5U7A": "False",
   "s8qMMpQ1": "Root URL of your SearXNG instance (e.g. https://searx.example.com). The instance must allow the json format (search.formats in its settings). If the instance is on a private/reserved address, add it to the Mattermost AllowedUntrustedInternalConnections setting.",
   "s8sShoc9": "Dynamic tool loading",
+  "sIbr9ycL": "Don't enter passwords",
   "scjLYJp/": "Remove policy",
   "sdvGmNvB": "AI Services",
   "smLbkv+W": "Select from the list or type a custom model name",

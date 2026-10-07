@@ -10,9 +10,9 @@ import {ShieldAlertOutlineIcon} from '@mattermost/compass-icons/components';
 
 interface Props {
 
-    // Container width below which only the icon is shown (its label stays
-    // available as a tooltip and to assistive technology). Omit to always
-    // show the text.
+    // Container width below which a shorter warning replaces the full text
+    // (the full sentence stays available as a tooltip and to assistive
+    // technology). Omit to always show the full text.
     collapseBelowPx?: number;
 }
 
@@ -36,27 +36,38 @@ const ArtifactNotice = ({collapseBelowPx}: Props) => {
                 size='12'
                 glyph={<ShieldAlertOutlineIcon/>}
             />
-            <NoticeText aria-hidden='true'>
+            <FullText
+                aria-hidden='true'
+                data-testid='html-artifact-notice-full'
+            >
                 {intl.formatMessage({defaultMessage: 'AI-generated · Don\'t enter passwords'})}
-            </NoticeText>
+            </FullText>
+            {Boolean(collapseBelowPx) && (
+                <ShortText
+                    aria-hidden='true'
+                    data-testid='html-artifact-notice-short'
+                >
+                    {intl.formatMessage({defaultMessage: 'Don\'t enter passwords'})}
+                </ShortText>
+            )}
         </Notice>
     );
 };
 
 export default ArtifactNotice;
 
-const NoticeText = styled.span`
-    overflow: hidden;
-    text-overflow: ellipsis;
+const FullText = styled.span``;
+
+const ShortText = styled.span`
+    display: none;
 `;
 
+// The notice never shrinks: in a tight header the file name gives way first.
 const Notice = styled.span<{$collapseBelowPx?: number}>`
     display: inline-flex;
-    flex: 0 1 auto;
-    min-width: 12px;
+    flex: none;
     align-items: center;
     gap: 4px;
-    max-width: 100%;
     color: rgba(var(--center-channel-color-rgb), 0.64);
     font-size: 12px;
     font-weight: 400;
@@ -66,8 +77,12 @@ const Notice = styled.span<{$collapseBelowPx?: number}>`
 
     ${(props) => (props.$collapseBelowPx ? css`
         @container (max-width: ${props.$collapseBelowPx}px) {
-            ${NoticeText} {
+            ${FullText} {
                 display: none;
+            }
+
+            ${ShortText} {
+                display: inline;
             }
         }
     ` : '')}

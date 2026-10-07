@@ -226,6 +226,7 @@ func TestHandleGetArtifact(t *testing.T) {
 
 				req := httptest.NewRequest(http.MethodGet, path, nil)
 				req.Header.Set("Mattermost-User-Id", testUserID)
+				req.Header.Set("Sec-Fetch-Dest", "iframe")
 				rec := httptest.NewRecorder()
 				e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, rec, req)
 
@@ -258,6 +259,74 @@ func TestHandleGetArtifact(t *testing.T) {
 				assert.Contains(t, rec.Body.String(), "const TOKEN = \""+wantToken+"\";")
 			})
 		}
+	}
+}
+
+func TestHandleGetArtifactTopLevel(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	sessionID := model.NewId()
+	fileID := model.NewId()
+	postID := model.NewId()
+	channelID := model.NewId()
+	const htmlDoc = "<html><body><script>run()</script></body></html>"
+	secret := []byte(strings.Repeat("k", artifactSecretSize))
+	wantToken := artifactBridgeToken(secret, testUserID, fileID)
+
+	tests := []struct {
+		name      string
+		dest      string
+		wantServe bool
+	}{
+		{name: "missing header shows interstitial"},
+		{name: "document shows interstitial", dest: "document"},
+		{name: "empty shows interstitial", dest: "empty"},
+		{name: "iframe serves artifact", dest: "iframe", wantServe: true},
+		{name: "iframe is case-insensitive", dest: "IFrame", wantServe: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.setupTestBot(llm.BotConfig{Name: "test-bot", DisplayName: "Test Bot"})
+			e.config.enableHTMLArtifacts = true
+			e.api.artifactSecretCache = secret
+
+			m := mocks.NewMockClient(t)
+			m.EXPECT().HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true).Maybe()
+			m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, PostId: postID, ChannelId: channelID, Name: "a.html", Extension: "html", Size: int64(len(htmlDoc))}, nil)
+			m.EXPECT().GetPost(postID).Return(&model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}, nil)
+			m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+			if tt.wantServe {
+				m.EXPECT().GetConfig().Return(&model.Config{})
+				m.EXPECT().GetFile(fileID).Return(io.NopCloser(strings.NewReader(htmlDoc)), nil)
+			}
+			e.api.mmClient = m
+
+			req := httptest.NewRequest(http.MethodGet, "/artifacts/"+fileID, nil)
+			req.Header.Set("Mattermost-User-Id", testUserID)
+			if tt.dest != "" {
+				req.Header.Set("Sec-Fetch-Dest", tt.dest)
+			}
+			rec := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{SessionId: sessionID}, rec, req)
+
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+			assert.Equal(t, "private, no-store", rec.Header().Get("Cache-Control"))
+			assert.Equal(t, "no-referrer", rec.Header().Get("Referrer-Policy"))
+			if tt.wantServe {
+				assert.Equal(t, artifactCSP, rec.Header().Get("Content-Security-Policy"))
+				assert.Contains(t, rec.Body.String(), "run()")
+				return
+			}
+			assert.Equal(t, artifactInterstitialCSP, rec.Header().Get("Content-Security-Policy"))
+			assert.Contains(t, rec.Body.String(), "can only be viewed inside Mattermost")
+			assert.NotContains(t, rec.Body.String(), "run()")
+			assert.NotContains(t, rec.Body.String(), wantToken)
+			assert.NotContains(t, strings.ToLower(rec.Body.String()), "<script")
+		})
 	}
 }
 

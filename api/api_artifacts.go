@@ -30,6 +30,16 @@ import (
 //go:embed artifact_bridge.js
 var artifactBridgeJS string
 
+// artifactInterstitialCSP locks down the static page served instead of the
+// artifact on a top-level visit: no scripts, no subresources.
+const artifactInterstitialCSP = "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+
+// artifactInterstitialHTML is served instead of the artifact outside the
+// host's iframe. It contains no artifact content and no script.
+const artifactInterstitialHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>AI-generated artifact</title>` +
+	`<style>body{font-family:sans-serif;margin:48px auto;max-width:480px;padding:0 16px;color:#3f4350}</style></head>` +
+	`<body><p>This AI-generated artifact can only be viewed inside Mattermost.</p></body></html>`
+
 // artifactCSP gives the document an opaque origin (sandbox) even when opened
 // directly in a tab, and blocks all network and external resources.
 const artifactCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; " +
@@ -297,6 +307,17 @@ func (a *API) handleGetArtifact(c *gin.Context) {
 		return
 	}
 	fileID := c.Param("fileid")
+
+	// Only render inside the host's iframe, where the safety notice and
+	// navigation guard exist. A top-level visit (e.g. the frame URL opened in
+	// a new tab) would let attacker-authored UI fill a tab on this origin.
+	if !strings.EqualFold(c.GetHeader("Sec-Fetch-Dest"), "iframe") {
+		h := c.Writer.Header()
+		h.Set("Content-Security-Policy", artifactInterstitialCSP)
+		h.Set("Referrer-Policy", "no-referrer")
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(artifactInterstitialHTML))
+		return
+	}
 
 	limit := artifactRenderLimit(client.GetConfig())
 	if info.Size > limit {

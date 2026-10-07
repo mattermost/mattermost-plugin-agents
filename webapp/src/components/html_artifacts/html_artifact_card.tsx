@@ -98,7 +98,7 @@ export default HTMLArtifactCard;
 // Narrower than this (e.g. the Agents RHS), the file name gets the room.
 const NARROW_CARD_PX = 440;
 
-// Narrower than this, the safety notice collapses to its icon.
+// Narrower than this, the safety notice switches to its short text.
 const NOTICE_COLLAPSE_PX = 400;
 
 const Card = styled.div`

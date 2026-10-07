@@ -177,6 +177,10 @@ test.describe('HTML artifacts', () => {
 
         // The host-drawn safety notice is always present outside the frame.
         await expect(rhsCard.getByTestId('html-artifact-notice')).toHaveAttribute('aria-label', /Never enter passwords/);
+        // The narrow RHS card still shows a readable (short) warning, not just the icon.
+        await expect(rhsCard.getByTestId('html-artifact-notice-short')).toBeVisible();
+        await expect(rhsCard.getByTestId('html-artifact-notice-short')).toHaveText("Don't enter passwords");
+        await expect(rhsCard.getByTestId('html-artifact-notice-full')).toBeHidden();
 
         // Sandbox: scripts only, never same-origin.
         const sandbox = await iframe.getAttribute('sandbox');
@@ -333,6 +337,13 @@ test.describe('HTML artifacts', () => {
         const dom = await frame.getByTestId('probe-dom').textContent();
         expect(dom).toContain('Token probe');
         expect(dom).not.toContain(token);
+
+        // Opening the artifact URL top-level (outside the host's frame) shows a
+        // static interstitial, never the artifact itself.
+        await page.goto(`${mattermost.url()}/plugins/mattermost-ai/artifacts/${fileId}`);
+        await expect(page.getByText('This AI-generated artifact can only be viewed inside Mattermost.')).toBeVisible();
+        await expect(page.getByText('Token probe')).toHaveCount(0);
+        expect(await page.content()).not.toContain(token);
     });
 
     test('inline card in a dark theme', async ({page}) => {
