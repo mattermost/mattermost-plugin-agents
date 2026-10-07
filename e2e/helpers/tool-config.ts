@@ -2,6 +2,7 @@ import { Page, Locator, expect } from '@playwright/test';
 import { Client4 } from '@mattermost/client';
 import MattermostContainer from './mmcontainer';
 import {
+    MATTERMOST_AI_PLUGIN_ID,
     mattermostAIAdminConfigApiFromClient,
     mattermostAIPluginRoutes,
     normalizeMattermostAiConfigFromApi,
@@ -87,8 +88,14 @@ export class ToolConfigUIHelper {
         const serverRow = this.page.locator('div').filter({ hasText: new RegExp(escapeRegExp(serverName)) }).filter({ hasText: /tools? enabled/ });
         await serverRow.first().click();
 
-        // Wait for the tool rows to appear
-        await this.page.waitForTimeout(500);
+        // Wait for the expanded server to show its tools or a status notice
+        await expect(
+            this.getAllToolPolicyDropdowns()
+                .or(this.page.getByText('No tools available from this server'))
+                .or(this.page.getByText('Connection Error'))
+                .or(this.page.getByText('OAuth Required'))
+                .first(),
+        ).toBeVisible({ timeout: 10000 });
     }
 
     /** Get the tool count text for a server (e.g. "8/8 tools enabled") */
@@ -166,8 +173,13 @@ export class ToolConfigUIHelper {
 
     /** Click save and wait */
     async clickSave(): Promise<void> {
-        await this.getSaveButton().click();
-        await this.page.waitForTimeout(1000);
+        await Promise.all([
+            this.page.waitForResponse((response) => (
+                response.request().method() === 'PUT' &&
+                response.url().includes(`/plugins/${MATTERMOST_AI_PLUGIN_ID}/admin/config`)
+            )),
+            this.getSaveButton().click(),
+        ]);
     }
 }
 

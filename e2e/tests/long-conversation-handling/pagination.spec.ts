@@ -56,9 +56,6 @@ async function setupTestPage(page) {
     await aiPlugin.appBarIcon.waitFor({ state: 'visible', timeout: 30000 });
     await expect(aiPlugin.appBarIcon).toBeVisible({ timeout: 5000 });
 
-    // Small delay to ensure plugin is fully interactive
-    await page.waitForTimeout(500);
-
     return { mmPage, aiPlugin };
 }
 

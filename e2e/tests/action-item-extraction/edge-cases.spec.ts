@@ -65,7 +65,6 @@ async function gotoTownSquare(page) {
             if (attempt === 2) {
                 throw error;
             }
-            await page.waitForTimeout(1000);
         }
     }
 }

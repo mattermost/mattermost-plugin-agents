@@ -25,6 +25,8 @@ test.afterAll(async () => {
     await mattermost.stop();
 });
 
+const LLM_ERROR_TEXT = /Sorry! An error occurred while accessing the LLM/;
+
 async function setupTestPage(page) {
     const mmPage = new MattermostPage(page);
     const aiPlugin = new AIPlugin(page);
@@ -46,8 +48,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
 
         await aiPlugin.sendMessage('Test message for 500 error');
 
-        // Wait for error handling
-        await page.waitForTimeout(2000);
+        await expect(page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT)).toHaveCount(1, { timeout: 60000 });
 
         // Should display error message or handle gracefully
         const rhsContainer = page.getByTestId('mattermost-ai-rhs');
@@ -64,8 +65,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
 
         await aiPlugin.sendMessage('Test message for 503 error');
 
-        // Wait for error handling
-        await page.waitForTimeout(2000);
+        await expect(page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT)).toHaveCount(1, { timeout: 60000 });
 
         // Should display error or handle gracefully
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
@@ -100,8 +100,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
 
         await aiPlugin.sendMessage('Test message for auth error');
 
-        // Wait for error handling
-        await page.waitForTimeout(2000);
+        await expect(page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT)).toHaveCount(1, { timeout: 60000 });
 
         // Should display authentication error
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
@@ -117,8 +116,7 @@ test.describe('Advanced Error Scenarios - Network Errors', () => {
 
         await aiPlugin.sendMessage('Test message for forbidden error');
 
-        // Wait for error handling
-        await page.waitForTimeout(2000);
+        await expect(page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT)).toHaveCount(1, { timeout: 60000 });
 
         // Should display permission error
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();
@@ -135,7 +133,7 @@ test.describe('Advanced Error Scenarios - System Resilience', () => {
         // First, cause an error
         await openAIMock.addErrorMock(500, "Internal Server Error");
         await aiPlugin.sendMessage('Error message');
-        await page.waitForTimeout(2000);
+        await expect(page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT)).toHaveCount(1, { timeout: 60000 });
 
         // Then, send a successful message
         const successResponse = `
@@ -160,12 +158,13 @@ data: [DONE]
 
         // Cause multiple errors
         await openAIMock.addErrorMock(500, "Internal Server Error");
+        const errorMessages = page.getByTestId('mattermost-ai-rhs').getByText(LLM_ERROR_TEXT);
         await aiPlugin.sendMessage('Error 1');
-        await page.waitForTimeout(1000);
+        await expect(errorMessages).toHaveCount(1, { timeout: 60000 });
 
         await openAIMock.addErrorMock(503, "Service Unavailable");
         await aiPlugin.sendMessage('Error 2');
-        await page.waitForTimeout(1000);
+        await expect(errorMessages).toHaveCount(2, { timeout: 60000 });
 
         // RHS should still be open and functional
         await expect(page.getByTestId('mattermost-ai-rhs')).toBeVisible();

@@ -48,10 +48,10 @@ test.describe('Bot Selector in Search', () => {
 
         // Open the search bar
         await page.getByRole('button', { name: 'Search' }).click();
-        await page.waitForTimeout(500);
 
         // Select the Agents search type
         const agentsRadio = page.getByRole('radio', { name: /Agents/i });
+        await expect(agentsRadio).toBeVisible({ timeout: 10000 });
         await agentsRadio.click();
 
         // Verify bot selector button is visible with the default bot name

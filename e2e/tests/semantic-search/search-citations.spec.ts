@@ -5,6 +5,7 @@ import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { AIPlugin } from 'helpers/ai-plugin';
 import { OpenAIMockContainer, RunOpenAIMocks } from 'helpers/openai-mock';
+import { mattermostAIPluginRoutes } from 'helpers/plugin-http';
 
 const username = 'regularuser';
 const password = 'regularuser';
@@ -49,6 +50,23 @@ async function setupTestPage(page: Page, mattermost: MattermostContainer) {
     return { mmPage, aiPlugin };
 }
 
+async function waitForPostsIndexed(mattermost: MattermostContainer, query: string, postIds: string[]): Promise<void> {
+    const userClient = await mattermost.getClient(username, password);
+    const routes = mattermostAIPluginRoutes(mattermost.url());
+
+    await expect.poll(async () => {
+        try {
+            const payload = await routes.postJson('search/raw', userClient.getToken(), {query, limit: 50}) as {
+                results?: Array<{post_id: string}>;
+            };
+            const found = new Set((payload.results ?? []).map((r) => r.post_id));
+            return postIds.every((id) => found.has(id));
+        } catch {
+            return false;
+        }
+    }, {timeout: 30000, message: 'Timed out waiting for posts to be indexed for semantic search'}).toBe(true);
+}
+
 test.describe('Post Citations Display', () => {
     let mattermost: MattermostContainer;
     let openAIMock: OpenAIMockContainer;
@@ -86,7 +104,7 @@ test.describe('Post Citations Display', () => {
         );
 
         // Wait for posts to be indexed by the embedding search
-        await page.waitForTimeout(2000);
+        await waitForPostsIndexed(mattermost, 'budget discussion', [post1.id, post2.id]);
 
         // Build the mock response dynamically with real post IDs, team name, and site URL.
         // The team name in the URL ensures links pass the unsafeLinks permalink filter.

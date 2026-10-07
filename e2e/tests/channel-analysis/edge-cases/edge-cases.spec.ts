@@ -32,8 +32,7 @@ class EdgeCasesHelper {
      */
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**

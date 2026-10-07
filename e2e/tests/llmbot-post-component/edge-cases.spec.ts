@@ -44,25 +44,13 @@ const PHASE3_RAPID_MSG_MARKER_THREE = 'Rapid msg marker three';
 
 async function waitForPostTextCount(page: Page, minCount: number, maxTimeout = 120000): Promise<void> {
     const allPosts = page.locator('[data-testid="posttext"]');
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < maxTimeout) {
-        const count = await allPosts.count();
-        if (count >= minCount) {
-            await page.waitForTimeout(1000);
-            return;
-        }
-        await page.waitForTimeout(500);
-    }
-
-    const finalCount = await allPosts.count();
-    expect(finalCount).toBeGreaterThanOrEqual(minCount);
+    await expect.poll(() => allPosts.count(), { timeout: maxTimeout }).toBeGreaterThanOrEqual(minCount);
 }
 
 async function expectRhsContainsMarkers(page: Page, markers: string[]): Promise<void> {
-    const rhsText = await page.getByTestId('mattermost-ai-rhs').textContent();
+    const rhs = page.getByTestId('mattermost-ai-rhs');
     for (const marker of markers) {
-        expect(rhsText).toContain(marker);
+        await expect(rhs).toContainText(marker, { timeout: 60000 });
     }
 }
 
@@ -159,10 +147,11 @@ test.describe('Edge Cases - aimock', () => {
 
         const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
+        const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_ONE_PROMPT);
-        await page.waitForTimeout(2000);
+        await expect(rhs.getByText(PHASE3_CONCURRENT_ONE_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_TWO_PROMPT);
-        await page.waitForTimeout(2000);
+        await expect(rhs.getByText(PHASE3_CONCURRENT_TWO_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_CONCURRENT_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);
@@ -215,10 +204,11 @@ test.describe('Edge Cases - aimock', () => {
 
         const { aiPlugin } = await setupAimockTestPage(page, harness.mattermost.url());
 
+        const rhs = aiPlugin.getRhsContainer();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_ONE_PROMPT);
-        await page.waitForTimeout(1000);
+        await expect(rhs.getByText(PHASE3_RAPID_MSG_ONE_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_TWO_PROMPT);
-        await page.waitForTimeout(1000);
+        await expect(rhs.getByText(PHASE3_RAPID_MSG_TWO_PROMPT)).toBeVisible();
         await aiPlugin.sendMessage(PHASE3_RAPID_MSG_THREE_PROMPT);
 
         await waitForPostTextCount(page, 3);
@@ -248,11 +238,11 @@ test.describe('Edge Cases - aimock', () => {
         await llmBotHelper.waitForStreamingComplete();
         await llmBotHelper.expectReasoningVisible(true);
 
-        for (let i = 0; i < 5; i++) {
+        let expanded = await llmBotHelper.getReasoningContent().isVisible();
+        for (let i = 0; i < 10; i++) {
             await llmBotHelper.clickReasoningToggle();
-            await page.waitForTimeout(100);
-            await llmBotHelper.clickReasoningToggle();
-            await page.waitForTimeout(100);
+            expanded = !expanded;
+            await llmBotHelper.expectReasoningExpanded(expanded);
         }
 
         await llmBotHelper.expectReasoningVisible(true);

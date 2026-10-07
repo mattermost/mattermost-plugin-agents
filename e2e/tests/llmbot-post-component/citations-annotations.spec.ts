@@ -91,7 +91,7 @@ describeAIMockCitationCase({
         await expect(llmBotHelper.getCitationTooltip()).toContainText('typescriptlang.org');
 
         await page.mouse.move(0, 0);
-        await page.waitForTimeout(300);
+        await expect(llmBotHelper.getCitationTooltip()).toBeHidden();
 
         await llmBotHelper.getCitationWrapper(2).scrollIntoViewIfNeeded();
         await llmBotHelper.hoverCitation(2);

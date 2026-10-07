@@ -280,9 +280,8 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         // Send message to trigger tool call
         await mmPage.sendChannelMessage('Please read post test123');
 
-        // Wait for some response to appear (tool call processing)
-        // With auto_run, Accept/Reject should NOT appear
-        await page.waitForTimeout(5000);
+        // With auto_run, the tool executes and the follow-up renders without any Accept/Reject prompt
+        await expect(page.getByText('Here is the post content you requested.')).toBeVisible({timeout: 30000});
 
         // Verify no approval prompt appears for auto_run tool
         const acceptButton = page.getByRole('button', { name: /accept/i });
@@ -318,7 +317,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
             // Seed after the browser has left Town Square so the assertion only measures
             // requests caused by the tool result card flow, not by the source post itself.
-            await page.waitForTimeout(500);
+            await expect(page).toHaveURL(/\/messages\/@toolbot/);
             const baselineRequestCount = imageTrap.getRequestCount();
 
             await openAIMock.addMocks([
@@ -407,7 +406,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             await expect(latestBotPost.getByText('blocked-image')).toBeVisible({timeout: 30000});
             await expect(latestBotPost.locator('img[src*="tool-result-image-"]')).toHaveCount(0);
 
-            await page.waitForTimeout(1000);
+            await page.waitForLoadState('networkidle');
             expect(imageTrap.getRequestCount() - baselineRequestCount).toBe(0);
         } finally {
             await imageTrap.close();
@@ -906,7 +905,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const shareButton = rhs.getByRole('button', {name: /^share$/i});
         await expect(shareButton).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
-        await page.waitForTimeout(3000);
+        await page.waitForLoadState('networkidle');
         await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
 
         await shareButton.click();

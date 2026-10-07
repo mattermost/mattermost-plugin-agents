@@ -64,7 +64,6 @@ export class AIPlugin {
       // Wait for the icon to be in a stable, clickable state
       // This helps with timing issues where the element is visible but not yet interactive
       await this.appBarIcon.waitFor({ state: 'visible', timeout: 5000 });
-      await this.page.waitForTimeout(500); // Small delay to ensure the icon is fully rendered
 
       // Retry click with error handling for obscured/not clickable elements
       let clicked = false;
@@ -82,8 +81,6 @@ export class AIPlugin {
             } catch (e) {
                throw error;
             }
-          } else {
-            await this.page.waitForTimeout(1000);
           }
         }
       }
@@ -218,7 +215,7 @@ export class AIPlugin {
     const isVisible = await closeButton.isVisible().catch(() => false);
     if (isVisible) {
       await closeButton.click();
-      await this.page.waitForTimeout(500);
+      await expect(closeButton).toBeHidden({ timeout: 10000 });
     }
   }
 
@@ -248,10 +245,9 @@ export class AIPlugin {
   async triggerEmbeddingSearch(query: string) {
     // Open the search bar
     await this.page.getByRole('button', { name: 'Search' }).click();
-    // Wait for search options to appear
-    await this.page.waitForTimeout(500);
-    // Select the Agents search type
+    // Select the Agents search type once the search options have appeared
     const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
+    await expect(agentsRadio).toBeVisible({ timeout: 10000 });
     await agentsRadio.click();
     // Enter search query and execute
     await this.page.getByRole('searchbox', { name: 'Search' }).fill(query);
@@ -264,7 +260,6 @@ export class AIPlugin {
   async expectAgentsSearchVisible() {
     // Open the search bar
     await this.page.getByRole('button', { name: 'Search' }).click();
-    await this.page.waitForTimeout(500);
     // Verify Agents radio option is visible
     const agentsRadio = this.page.getByRole('radio', { name: /Agents/i });
     await expect(agentsRadio).toBeVisible({ timeout: 10000 });

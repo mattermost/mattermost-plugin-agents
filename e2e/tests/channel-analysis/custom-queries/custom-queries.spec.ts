@@ -31,8 +31,7 @@ class CustomQueriesHelper {
      */
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -265,7 +264,6 @@ data: [DONE]
         expect(firstContent).toContain('release timeline');
 
         // 8. Re-open the popover for second question
-        await page.waitForTimeout(2000);
         await customQueriesHelper.openChannelAnalysisPopover();
 
         // Mock response 2
@@ -291,12 +289,9 @@ data: [DONE]
         // 11. Wait for second response streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 12. Wait a moment for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 13. Verify second response visible and has content
+        // 12. Verify second response visible and has content
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible({ timeout: 30000 });
+        await expect(secondPostText).toContainText('questions asked', { timeout: 30000 });
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(10);

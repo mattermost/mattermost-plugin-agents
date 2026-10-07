@@ -103,10 +103,10 @@ test.describe.skip('Bot Native Tools', () => {
 
         // 17. Click Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 18. Reload page
         await page.reload();
@@ -202,10 +202,10 @@ test.describe.skip('Bot Native Tools', () => {
 
         // 15. Click Save
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 16. Reload page
         await page.reload();
@@ -398,15 +398,16 @@ test.describe.skip('Bot Native Tools', () => {
 
         // 8. Click Save
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 9. Reload and verify ON state persists
         await page.reload();
         await page.waitForLoadState('networkidle');
         const reloadedBotCard1 = page.locator('[class*="BotContainer"]').first();
         await reloadedBotCard1.click();
-        await page.waitForTimeout(500);
         const reloadedCheckbox1 = reloadedBotCard1.getByRole('checkbox').first();
         await expect(reloadedCheckbox1).toBeChecked();
 
@@ -415,15 +416,16 @@ test.describe.skip('Bot Native Tools', () => {
         await expect(reloadedCheckbox1).not.toBeChecked();
 
         // 11. Save again
-        await saveButton.click();
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 12. Reload and verify OFF state persists
         await page.reload();
         await page.waitForLoadState('networkidle');
         const reloadedBotCard2 = page.locator('[class*="BotContainer"]').first();
         await reloadedBotCard2.click();
-        await page.waitForTimeout(500);
         const reloadedCheckbox2 = reloadedBotCard2.getByRole('checkbox').first();
         await expect(reloadedCheckbox2).not.toBeChecked();
 
@@ -493,15 +495,16 @@ test.describe.skip('Bot Native Tools', () => {
 
         // 8. Click Save
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 9. Reload and verify ON state persists
         await page.reload();
         await page.waitForLoadState('networkidle');
         const reloadedBotCard1 = page.locator('[class*="BotContainer"]').first();
         await reloadedBotCard1.click();
-        await page.waitForTimeout(500);
         const reloadedCheckbox1 = reloadedBotCard1.getByRole('checkbox').first();
         await expect(reloadedCheckbox1).toBeChecked();
 
@@ -510,15 +513,16 @@ test.describe.skip('Bot Native Tools', () => {
         await expect(reloadedCheckbox1).not.toBeChecked();
 
         // 11. Save again
-        await saveButton.click();
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // 12. Reload and verify OFF state persists
         await page.reload();
         await page.waitForLoadState('networkidle');
         const reloadedBotCard2 = page.locator('[class*="BotContainer"]').first();
         await reloadedBotCard2.click();
-        await page.waitForTimeout(500);
         const reloadedCheckbox2 = reloadedBotCard2.getByRole('checkbox').first();
         await expect(reloadedCheckbox2).not.toBeChecked();
 

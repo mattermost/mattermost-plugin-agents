@@ -176,7 +176,7 @@ export class MattermostPage {
         const skewMs = 5000;
         const deadline = Date.now() + observeDuration;
 
-        while (Date.now() < deadline) {
+        await expect.poll(async () => {
             const posts = await fetchPostsForChannel(client, channelId);
             const botPosts = posts.filter(
                 (p) => p.user_id === botUserId && p.create_at >= sinceMs - skewMs,
@@ -186,12 +186,12 @@ export class MattermostPage {
                     `Expected no bot reply post, but found ${botPosts.length} bot post(s) after user message (sinceMs=${sinceMs}).`,
                 );
             }
-            const remaining = deadline - Date.now();
-            if (remaining <= 0) {
-                break;
-            }
-            await this.page.waitForTimeout(Math.min(pollInterval, remaining));
-        }
+            return Date.now() >= deadline;
+        }, {
+            message: `Observation window of ${observeDuration}ms for bot DM reply did not complete.`,
+            timeout: observeDuration + 30000,
+            intervals: [pollInterval],
+        }).toBe(true);
     }
 
     /**
@@ -292,8 +292,9 @@ export class MattermostPage {
                 await rhsContainer.waitFor({ state: 'visible', timeout: 10000 });
             }
 
-            // Wait a bit for posts to load
-            await this.page.waitForTimeout(500);
+            await expect(
+                rhsContainer.getByTestId('chat-history').or(rhsContainer.getByTestId('new-chat')).first(),
+            ).toBeVisible({ timeout: 10000 });
         }
     }
 
@@ -313,7 +314,7 @@ export class MattermostPage {
         const team = teams[0];
 
         await this.page.goto(`${mattermost.url()}/${team.name}/messages/@${botUsername}`);
-        await this.page.waitForTimeout(2000);
+        await expect(this.postTextbox).toBeVisible({ timeout: 30000 });
     }
 }
 

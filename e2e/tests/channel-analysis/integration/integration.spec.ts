@@ -35,8 +35,7 @@ class IntegrationHelper {
      */
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -214,12 +213,9 @@ data: [DONE]
         // 11. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 12. Wait for the DOM to update with the new post
-        await page.waitForTimeout(1000);
-
-        // 13. Verify channel analysis response is visible and contains channel-specific content
+        // 12. Verify channel analysis response is visible and contains channel-specific content
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('new feature implementation');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(20);
@@ -336,12 +332,9 @@ data: [DONE]
         // 8. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 9. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 10. Verify second response mentions database
+        // 9. Verify second response mentions database
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Database optimization');
         const secondContent = await secondPostText.textContent();
         expect(secondContent!.toLowerCase()).toContain('database');
 
@@ -438,9 +431,6 @@ data: [DONE]
         expect(firstContent).toBeTruthy();
         expect(firstContent!.toLowerCase()).toMatch(/sprint|planning|testing|release/);
 
-        // 7. Wait a moment before second action
-        await page.waitForTimeout(2000);
-
         // 8. Use second quick action - custom query
         await integrationHelper.openChannelAgentsPopover();
 
@@ -458,12 +448,9 @@ data: [DONE]
         // 9. Wait for second response
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify second response is visible
+        // 10. Verify second response is visible
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Priorities: Q2 roadmap and testing.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/roadmap|testing|q2/);
@@ -527,12 +514,9 @@ data: [DONE]
         // 9. Wait for streaming to complete
         await llmBotHelper.waitForStreamingComplete();
 
-        // 10. Wait for the DOM to update
-        await page.waitForTimeout(1000);
-
-        // 11. Verify new response appears correctly and mentions monitoring
+        // 10. Verify new response appears correctly and mentions monitoring
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible();
+        await expect(secondPostText).toContainText('Monitoring: Dashboard is live.');
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.toLowerCase()).toMatch(/monitoring|dashboard/);
