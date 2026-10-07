@@ -318,7 +318,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // The second round's approval card renders without expanding,
             // while the resolved first round stays folded into the row above.
             const invokerPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(invokerPost.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+            await expect(invokerPost.getByRole('button', {name: createPostToolLabel, exact: true})).toBeVisible({timeout: 45000});
             await expectToolActivityCurrent(invokerPost, getChannelInfoToolLabel);
             expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
 
