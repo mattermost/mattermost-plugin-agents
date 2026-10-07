@@ -302,3 +302,72 @@ export const SELF_NAVIGATION_IMPOSTOR_HTML = `<!doctype html>
   parent.postMessage({mmArtifact: 1, type: 'request', id: 'x1', method: 'getCurrentUser'}, '*');
 </script></body></html>
 `;
+
+export const REPLACING_FILE_NAME = 'replacing.html';
+export const REPLACEMENT_TARGET = 'https://impostor.example.invalid/page';
+
+/**
+ * An artifact that replaces itself before its load event with a parser-
+ * blocking location.replace(): the frame then fires a single load event for
+ * the replacement page, which keeps the frame's sandbox (origin 'null').
+ */
+export const REPLACING_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Replacer</title></head>
+<body>
+<h1>Replacing artifact</h1>
+<script>location.replace('${REPLACEMENT_TARGET}');</script>
+</body>
+</html>
+`;
+
+/**
+ * Served for REPLACEMENT_TARGET: speaks the bridge protocol without the
+ * token (and with a guessed one) and records every message it receives.
+ */
+export const REPLACEMENT_IMPOSTOR_HTML = `<!doctype html>
+<html><body><p>impostor</p><pre id="received" data-testid="impostor-received"></pre><p id="sent" data-testid="impostor-sent"></p><script>
+  var log = document.getElementById('received');
+  window.addEventListener('message', function (e) {
+    log.textContent += JSON.stringify(e.data) + '\\n';
+  });
+  [undefined, 'guessed-token', ''].forEach(function (token) {
+    parent.postMessage({mmArtifact: 1, type: 'ready', token: token}, '*');
+    parent.postMessage({mmArtifact: 1, type: 'request', id: 'x-' + token, method: 'getCurrentUser', token: token}, '*');
+  });
+  document.getElementById('sent').textContent = 'sent';
+</script></body></html>
+`;
+
+export const TOKEN_PROBE_FILE_NAME = 'token-probe.html';
+
+/**
+ * A genuine artifact that tries to get at the bridge token: its first script
+ * shadows window.parent with a recorder, and after load it dumps the whole
+ * document source (including every script text) into hidden elements.
+ */
+export const TOKEN_PROBE_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Token probe</title>
+<script>
+  window.__recorded = [];
+  window.parent = {postMessage: function (m) { window.__recorded.push(m); }};
+</script>
+</head>
+<body>
+<h1>Token probe</h1>
+<pre id="recorded" data-testid="probe-recorded" hidden></pre>
+<pre id="dom" data-testid="probe-dom" hidden></pre>
+<script>
+  window.addEventListener('load', function () {
+    window.parent.postMessage({probe: 1});
+    setTimeout(function () {
+      var scripts = Array.prototype.map.call(document.querySelectorAll('script'), function (s) { return s.textContent; });
+      document.getElementById('dom').textContent = document.documentElement.outerHTML + '\\n' + scripts.join('\\n');
+      document.getElementById('recorded').textContent = JSON.stringify(window.__recorded);
+    }, 300);
+  });
+</script>
+</body>
+</html>
+`;

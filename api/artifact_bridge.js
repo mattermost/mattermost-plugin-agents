@@ -6,26 +6,43 @@
 // Injected by the server as the first script of every HTML artifact. The
 // artifact runs in an opaque-origin sandbox with no access to the Mattermost
 // session; this bridge is its only channel to the host page. Every message is
-// a plain object tagged with mmArtifact: 1. Targets '*' because an opaque
-// origin cannot know the parent's origin, and the artifact holds no secrets.
+// a plain object tagged with mmArtifact: 1 and carrying the viewer's bridge
+// token, which the host requires on every message. Targets '*' because an
+// opaque origin cannot know the parent's origin.
+//
+// The token must never become reachable by artifact code (which runs after
+// this script and can replace any global or prototype method). So, before any
+// artifact code runs, this script captures everything it needs, removes its
+// own element from the DOM, and from then on only ever puts the token into
+// object literals handed straight to the parent WindowProxy's postMessage
+// (a cross-origin method artifact code cannot hook). Messages are never
+// passed to, mutated by, or built with any overridable function.
 (function () {
     'use strict';
+
+    const TOKEN = /*MM_ARTIFACT_BRIDGE_TOKEN*/null;
+
+    // window.parent is [Replaceable]: never read it again after this line.
+    const parentWin = window.parent;
+    const PromiseCtor = Promise;
+    const ErrorCtor = Error;
+    const setTimeoutFn = setTimeout;
+    const clearTimeoutFn = clearTimeout;
+
+    if (document.currentScript) {
+        document.currentScript.remove();
+    }
 
     var PROTOCOL = 1;
     var REQUEST_TIMEOUT_MS = 120000;
 
-    var parentWindow = window.parent;
     var currentContext = null;
     var subscribers = [];
-    var pending = {};
+    var pending = Object.create(null);
     var nextRequestId = 1;
     var lastHeight = -1;
     var resizeScheduled = false;
 
-    function post(message) {
-        message.mmArtifact = PROTOCOL;
-        parentWindow.postMessage(message, '*');
-    }
 
     // centerChannelBg -> center-channel-bg
     function kebab(key) {
@@ -72,9 +89,9 @@
             return;
         }
         delete pending[data.id];
-        clearTimeout(entry.timer);
+        clearTimeoutFn(entry.timer);
         if (data.error) {
-            var err = new Error(String(data.error.message || 'Request failed'));
+            var err = new ErrorCtor(String(data.error.message || 'Request failed'));
             err.code = String(data.error.code || 'unavailable');
             entry.reject(err);
         } else {
@@ -84,7 +101,7 @@
 
     window.addEventListener('message', function (event) {
         var data = event.data;
-        if (event.source !== parentWindow || !data || typeof data !== 'object' || data.mmArtifact !== PROTOCOL) {
+        if (event.source !== parentWin || !data || typeof data !== 'object' || data.mmArtifact !== PROTOCOL) {
             return;
         }
         if (data.type === 'context') {
@@ -95,20 +112,20 @@
     });
 
     function request(method, params) {
-        return new Promise(function (resolve, reject) {
+        return new PromiseCtor(function (resolve, reject) {
             var id = 'req-' + (nextRequestId++);
-            var timer = setTimeout(function () {
+            var timer = setTimeoutFn(function () {
                 delete pending[id];
-                var err = new Error('Request timed out');
+                var err = new ErrorCtor('Request timed out');
                 err.code = 'timeout';
                 reject(err);
             }, REQUEST_TIMEOUT_MS);
             pending[id] = {resolve: resolve, reject: reject, timer: timer};
-            var message = {type: 'request', id: id, method: method};
-            if (params !== undefined) {
-                message.params = params;
+            if (params === undefined) {
+                parentWin.postMessage({mmArtifact: PROTOCOL, type: 'request', id: id, method: method, token: TOKEN}, '*');
+            } else {
+                parentWin.postMessage({mmArtifact: PROTOCOL, type: 'request', id: id, method: method, params: params, token: TOKEN}, '*');
             }
-            post(message);
         });
     }
 
@@ -156,7 +173,7 @@
         var height = contentHeight();
         if (height !== lastHeight) {
             lastHeight = height;
-            post({type: 'resize', height: height});
+            parentWin.postMessage({mmArtifact: PROTOCOL, type: 'resize', height: height, token: TOKEN}, '*');
         }
     }
     function scheduleResize() {
@@ -170,12 +187,12 @@
     // host close the fullscreen viewer on an Escape the artifact didn't handle.
     window.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && !event.defaultPrevented) {
-            post({type: 'escape'});
+            parentWin.postMessage({mmArtifact: PROTOCOL, type: 'escape', token: TOKEN}, '*');
         }
     });
 
     function onReady() {
-        post({type: 'ready'});
+        parentWin.postMessage({mmArtifact: PROTOCOL, type: 'ready', token: TOKEN}, '*');
         if (typeof ResizeObserver === 'function') {
             var observer = new ResizeObserver(scheduleResize);
             observer.observe(document.documentElement);

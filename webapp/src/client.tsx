@@ -69,6 +69,29 @@ export function artifactURL(fileId: string): string {
     return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
 }
 
+// Fetches the viewer's token that authenticates messages from the artifact's
+// bridge script to this page.
+export async function getArtifactToken(fileId: string): Promise<string> {
+    const url = `${artifactURL(fileId)}/token`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        const data: unknown = await response.json();
+        const token = (data as {token?: unknown} | null)?.token;
+        if (typeof token === 'string' && token !== '') {
+            return token;
+        }
+    }
+
+    throw new ClientError(Client4.url, {
+        message: '',
+        status_code: response.status,
+        url,
+    });
+}
+
 export function fileDownloadURL(fileId: string): string {
     return `${Client4.url}/api/v4/files/${encodeURIComponent(fileId)}?download=1`;
 }

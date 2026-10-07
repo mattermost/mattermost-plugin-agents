@@ -28,7 +28,13 @@ function focusableControls(root: HTMLElement | null): HTMLElement[] {
         return [];
     }
     return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).
-        filter((el) => !el.hasAttribute('disabled') && !el.hasAttribute('data-focus-sentinel'));
+        filter((el) => !el.hasAttribute('disabled') && !el.hasAttribute('data-focus-sentinel') && isShown(el));
+}
+
+// isShown excludes controls hidden by CSS or by an ancestor, e.g. the iframe
+// while the artifact is still loading (visibility: hidden).
+function isShown(el: HTMLElement): boolean {
+    return el.getClientRects().length > 0 && window.getComputedStyle(el).visibility !== 'hidden';
 }
 
 const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {

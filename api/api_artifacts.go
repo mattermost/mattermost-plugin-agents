@@ -5,7 +5,13 @@ package api
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -18,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 //go:embed artifact_bridge.js
@@ -30,12 +37,82 @@ const artifactCSP = "sandbox allow-scripts; default-src 'none'; script-src 'unsa
 	"connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'; " +
 	"form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
 
-// injectArtifactBridge inserts the bridge script at the earliest safe point
-// of the document: after any leading BOM, whitespace, doctype, comments and the
-// opening <html> and/or <head> tags. It never scans past the first other
-// content, so a "<head>" inside a comment or a later script is never matched.
-func injectArtifactBridge(doc []byte) []byte {
-	script := "<script>" + artifactBridgeJS + "</script>"
+// artifactBridgeTokenPlaceholder is replaced in artifact_bridge.js with the
+// viewer's bridge token as a JSON string literal.
+const artifactBridgeTokenPlaceholder = "/*MM_ARTIFACT_BRIDGE_TOKEN*/null" //nolint:gosec // placeholder, not a credential
+
+// artifactSecretKVKey holds the plugin-wide HMAC secret for bridge tokens.
+const artifactSecretKVKey = "html_artifact_bridge_secret_v1" //nolint:gosec // KV key name, not a credential
+
+const artifactSecretSize = 32
+
+// artifactBridgeScript returns the bridge script with token embedded as a
+// JSON string literal. json.Marshal escapes <, > and & (and U+2028/U+2029),
+// so the literal can never close the script element or the string.
+func artifactBridgeScript(token string) string {
+	literal, err := json.Marshal(token)
+	if err != nil {
+		literal = []byte(`""`)
+	}
+	return "<script>" + strings.Replace(artifactBridgeJS, artifactBridgeTokenPlaceholder, string(literal), 1) + "</script>"
+}
+
+// artifactBridgeToken derives the token that authenticates bridge messages
+// for one viewer and one artifact file.
+func artifactBridgeToken(secret []byte, userID, fileID string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte("html-artifact-bridge:v1|" + userID + "|" + fileID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+// artifactSecret returns the plugin-wide bridge token secret, creating it on
+// first use. Creation is an atomic set-if-absent followed by a read back, so
+// every cluster node ends up with the same secret.
+func (a *API) artifactSecret() ([]byte, error) {
+	a.artifactSecretMu.Lock()
+	defer a.artifactSecretMu.Unlock()
+	if a.artifactSecretCache != nil {
+		return a.artifactSecretCache, nil
+	}
+	if a.pluginAPI == nil {
+		return nil, errors.New("plugin API unavailable")
+	}
+
+	var secret []byte
+	if err := a.pluginAPI.KV.Get(artifactSecretKVKey, &secret); err != nil {
+		return nil, err
+	}
+	if len(secret) != artifactSecretSize {
+		fresh := make([]byte, artifactSecretSize)
+		if _, err := rand.Read(fresh); err != nil {
+			return nil, err
+		}
+		if _, err := a.pluginAPI.KV.Set(artifactSecretKVKey, fresh, pluginapi.SetAtomic(nil)); err != nil {
+			return nil, err
+		}
+		// Another node may have won the race; use whatever is stored.
+		secret = nil
+		if err := a.pluginAPI.KV.Get(artifactSecretKVKey, &secret); err != nil {
+			return nil, err
+		}
+		if len(secret) != artifactSecretSize {
+			return nil, errors.New("invalid html artifact bridge secret")
+		}
+	}
+	a.artifactSecretCache = secret
+	return secret, nil
+}
+
+// injectArtifactBridge inserts the bridge script before any author content:
+// after a leading BOM, whitespace, comments and the doctype, and before
+// <html>/<head>. The bridge must run before every artifact-authored script
+// so it can capture window.parent and intrinsics before artifact code can
+// shadow them. The HTML parser accepts a script before <html> (it creates the
+// html and head elements implicitly and merges a later <html>'s attributes),
+// the doctype stays first so standards mode is kept, and the charset comes
+// from the Content-Type header.
+func injectArtifactBridge(doc []byte, token string) []byte {
+	script := artifactBridgeScript(token)
 	insertAt := artifactBridgeInsertPos(doc)
 	out := make([]byte, 0, len(doc)+len(script))
 	out = append(out, doc[:insertAt]...)
@@ -49,24 +126,21 @@ func artifactBridgeInsertPos(doc []byte) int {
 	if bytes.HasPrefix(doc, []byte("\xEF\xBB\xBF")) {
 		i = 3
 	}
-	skipSpace := func() {
+	for {
 		for i < len(doc) && (doc[i] == ' ' || doc[i] == '\t' || doc[i] == '\n' || doc[i] == '\r' || doc[i] == '\f') {
 			i++
 		}
-	}
-	// Skip the prolog: whitespace, comments and doctype.
-	for {
-		skipSpace()
 		rest := doc[i:]
 		if bytes.HasPrefix(rest, []byte("<!--")) {
-			end := bytes.Index(rest[4:], []byte("-->"))
+			end := commentEnd(rest)
 			if end < 0 {
 				return i
 			}
-			i += 4 + end + 3
+			i += end
 			continue
 		}
 		if hasTagPrefixFold(rest, "<!doctype") {
+			// '>' always ends a doctype, even inside a quoted identifier.
 			end := bytes.IndexByte(rest, '>')
 			if end < 0 {
 				return i
@@ -74,64 +148,32 @@ func artifactBridgeInsertPos(doc []byte) int {
 			i += end + 1
 			continue
 		}
-		break
+		return i
 	}
-	for _, tag := range []string{"<html", "<head"} {
-		saved := i
-		for {
-			skipSpace()
-			if !bytes.HasPrefix(doc[i:], []byte("<!--")) {
-				break
-			}
-			end := bytes.Index(doc[i+4:], []byte("-->"))
-			if end < 0 {
-				break
-			}
-			i += 4 + end + 3
-		}
-		if !hasTagPrefixFold(doc[i:], tag) {
-			i = saved
-			continue
-		}
-		end := tagEnd(doc[i:])
-		if end < 0 {
-			i = saved
-			break
-		}
-		i += end + 1
-	}
-	return i
 }
 
-// tagEnd returns the index of the '>' that closes the start tag at the
-// beginning of b, skipping '>' inside quoted attribute values, or -1. Quotes
-// only delimit a value directly after '=' (optionally separated by
-// whitespace), matching the HTML tokenizer. The doctype is not scanned with
-// this: a '>' ends a doctype even inside a quoted identifier.
-func tagEnd(b []byte) int {
-	for j := 0; j < len(b); j++ {
-		switch b[j] {
-		case '>':
-			return j
-		case '=':
-			k := j + 1
-			for k < len(b) && (b[k] == ' ' || b[k] == '\t' || b[k] == '\n' || b[k] == '\r' || b[k] == '\f') {
-				k++
-			}
-			if k < len(b) && (b[k] == '"' || b[k] == '\'') {
-				closeQuote := bytes.IndexByte(b[k+1:], b[k])
-				if closeQuote < 0 {
-					return -1
-				}
-				j = k + 1 + closeQuote
-			}
+// commentEnd returns the length of the comment at the start of b (which
+// begins with "<!--"), following the HTML tokenizer: "<!-->" and "<!--->"
+// close immediately, otherwise the first "-->" or "--!>" closes it. It
+// returns -1 for an unterminated comment.
+func commentEnd(b []byte) int {
+	if bytes.HasPrefix(b, []byte("<!-->")) {
+		return 5
+	}
+	if bytes.HasPrefix(b, []byte("<!--->")) {
+		return 6
+	}
+	end := -1
+	for _, closer := range []string{"-->", "--!>"} {
+		if j := bytes.Index(b[4:], []byte(closer)); j >= 0 && (end < 0 || 4+j+len(closer) < end) {
+			end = 4 + j + len(closer)
 		}
 	}
-	return -1
+	return end
 }
 
 // hasTagPrefixFold reports whether b starts with tag (case-insensitive)
-// followed by whitespace, '/', or '>' (so "<header" does not match "<head").
+// followed by whitespace, '/', or '>'.
 func hasTagPrefixFold(b []byte, tag string) bool {
 	if len(b) <= len(tag) || !bytes.EqualFold(b[:len(tag)], []byte(tag)) {
 		return false
@@ -151,63 +193,107 @@ func isArtifactExtension(info *model.FileInfo) bool {
 	return ext == "html" || ext == "htm"
 }
 
-// handleGetArtifact serves an agent-created HTML file as a sandboxed artifact
-// with the bridge script injected. Read-only, so it is not audited.
-func (a *API) handleGetArtifact(c *gin.Context) {
+// authorizeArtifact runs the checks shared by every artifact route: the
+// feature is enabled, the file is HTML, attached to a bot post, and readable
+// by the viewer. On failure it writes the response and returns ok=false.
+// Failures are 404 so as not to confirm the artifact exists.
+func (a *API) authorizeArtifact(c *gin.Context) (client mmapi.Client, info *model.FileInfo, ok bool) {
 	h := c.Writer.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "private, no-store")
 
 	if !a.config.EnableHTMLArtifacts() {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 
 	fileID := c.Param("fileid")
 	if !model.IsValidId(fileID) {
 		c.String(http.StatusBadRequest, "invalid file id")
-		return
+		return nil, nil, false
 	}
 
 	if a.mmClient == nil {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 	userID := c.GetHeader("Mattermost-User-Id")
 	// Respect the viewer's file-download access policy.
-	client := mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
+	client = mmapi.WithFilePolicy(a.mmClient, auth.SessionIDFromContext(c.Request.Context()))
 
 	info, err := client.GetFileInfo(fileID)
 	if err != nil || info == nil || !isArtifactExtension(info) {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 
 	if info.PostId == "" {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 	post, err := client.GetPost(info.PostId)
 	if err != nil || post == nil || !slices.Contains(post.FileIds, fileID) {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 
-	// Check access before revealing anything about the file; 404 so as not
-	// to confirm the artifact exists.
+	// Check access before revealing anything about the file.
 	if !client.HasPermissionToChannel(userID, post.ChannelId, model.PermissionReadChannel) {
 		c.String(http.StatusNotFound, "not found")
-		return
+		return nil, nil, false
 	}
 
 	if a.bots == nil || !a.bots.IsAnyBot(post.UserId) {
 		c.String(http.StatusNotFound, "not found")
+		return nil, nil, false
+	}
+	return client, info, true
+}
+
+// viewerArtifactToken returns the bridge token for the requesting viewer and
+// fileID, logging and writing a 500 on failure.
+func (a *API) viewerArtifactToken(c *gin.Context, fileID string) (string, bool) {
+	secret, err := a.artifactSecret()
+	if err != nil {
+		a.logArtifactError("Failed to load artifact bridge secret", err, fileID)
+		c.String(http.StatusInternalServerError, "failed to prepare artifact")
+		return "", false
+	}
+	return artifactBridgeToken(secret, c.GetHeader("Mattermost-User-Id"), fileID), true
+}
+
+// handleGetArtifactToken returns the token the viewer's host page uses to
+// authenticate messages from the artifact's bridge. Read-only, so it is not
+// audited.
+func (a *API) handleGetArtifactToken(c *gin.Context) {
+	_, _, ok := a.authorizeArtifact(c)
+	if !ok {
 		return
 	}
+	token, ok := a.viewerArtifactToken(c, c.Param("fileid"))
+	if !ok {
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+// handleGetArtifact serves an agent-created HTML file as a sandboxed artifact
+// with the bridge script injected. Read-only, so it is not audited.
+func (a *API) handleGetArtifact(c *gin.Context) {
+	client, info, ok := a.authorizeArtifact(c)
+	if !ok {
+		return
+	}
+	fileID := c.Param("fileid")
 
 	limit := mmtools.CreateFileContentLimit(client.GetConfig())
 	if info.Size > limit {
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
+		return
+	}
+
+	token, ok := a.viewerArtifactToken(c, fileID)
+	if !ok {
 		return
 	}
 
@@ -229,11 +315,12 @@ func (a *API) handleGetArtifact(c *gin.Context) {
 		return
 	}
 
+	h := c.Writer.Header()
 	h.Set("Content-Security-Policy", artifactCSP)
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	h.Set("Content-Disposition", "inline")
-	c.Data(http.StatusOK, "text/html; charset=utf-8", injectArtifactBridge(body))
+	c.Data(http.StatusOK, "text/html; charset=utf-8", injectArtifactBridge(body, token))
 }
 
 func (a *API) logArtifactError(msg string, err error, fileID string) {

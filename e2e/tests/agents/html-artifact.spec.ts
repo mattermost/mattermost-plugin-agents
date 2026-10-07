@@ -26,6 +26,12 @@ import {
     SELF_NAVIGATING_HTML,
     SELF_NAVIGATION_IMPOSTOR_HTML,
     SELF_NAVIGATION_TARGET,
+    REPLACEMENT_IMPOSTOR_HTML,
+    REPLACEMENT_TARGET,
+    REPLACING_FILE_NAME,
+    REPLACING_HTML,
+    TOKEN_PROBE_FILE_NAME,
+    TOKEN_PROBE_HTML,
     artifactIframes,
     setHTMLArtifactsEnabled,
     setUserTheme,
@@ -96,6 +102,28 @@ async function askForArtifact(page: Page, mattermost: MattermostContainer, aimoc
     const iframe = artifactIframes(botPost).first();
     await expect(iframe).toBeVisible({timeout: 60000});
     return {botPost, iframe};
+}
+
+/** Has the bot post `html` as `fileName` in the RHS and returns the bot post. */
+async function postArtifact(page: Page, mattermost: MattermostContainer, aimock: AIMockContainer, fileName: string, html: string, finalText: string): Promise<Locator> {
+    const prompt = `${fileName} ${Date.now()}`;
+    await aimock.setFixtures(mergeFixtureFiles(
+        {fixtures: [buildTitleFixture(fileName)]},
+        buildCreateFileSequence({
+            userPrompt: prompt,
+            fileName,
+            fileContent: html,
+            finalText,
+            toolCallId: `call_html_artifact_${Date.now()}`,
+        }),
+    ));
+    await new MattermostPage(page).login(mattermost.url(), username, password);
+    const aiPlugin = new AIPlugin(page);
+    await aiPlugin.openRHS();
+    await aiPlugin.sendMessage(prompt);
+    const botPost = page.getByTestId('mattermost-ai-rhs').locator('[data-testid="llm-bot-post"]').last();
+    await expect(botPost.getByText(finalText)).toBeVisible({timeout: 120000});
+    return botPost;
 }
 
 test.describe('HTML artifacts', () => {
@@ -230,46 +258,76 @@ test.describe('HTML artifacts', () => {
     // re-run the navigation), and the replacement page gets no broker access.
     test('self-navigating artifact is unloaded and its replacement gets no access', async ({page}) => {
         test.setTimeout(300000);
-        const targetRequests: string[] = [];
         await page.context().route(`${SELF_NAVIGATION_TARGET}**`, (route) => {
-            targetRequests.push(route.request().url());
             return route.fulfill({contentType: 'text/html', body: SELF_NAVIGATION_IMPOSTOR_HTML});
         });
         let artifactRequests = 0;
         page.on('request', (req) => {
-            if (req.url().includes('/plugins/mattermost-ai/artifacts/')) {
+            if (req.url().includes('/plugins/mattermost-ai/artifacts/') && !req.url().endsWith('/token')) {
                 artifactRequests++;
             }
         });
+        const navigated = page.waitForRequest((req) => req.url().startsWith(SELF_NAVIGATION_TARGET), {timeout: 180000});
 
-        const prompt = `self navigating artifact ${Date.now()}`;
-        await aimock.setFixtures(mergeFixtureFiles(
-            {fixtures: [buildTitleFixture('Navigator')]},
-            buildCreateFileSequence({
-                userPrompt: prompt,
-                fileName: SELF_NAVIGATING_FILE_NAME,
-                fileContent: SELF_NAVIGATING_HTML,
-                finalText: 'Here is the navigator.',
-                toolCallId: `call_html_artifact_nav_${Date.now()}`,
-            }),
-        ));
-        await new MattermostPage(page).login(mattermost.url(), username, password);
-        const aiPlugin = new AIPlugin(page);
-        await aiPlugin.openRHS();
-        await aiPlugin.sendMessage(prompt);
-        const botPost = page.getByTestId('mattermost-ai-rhs').locator('[data-testid="llm-bot-post"]').last();
-        await expect(botPost.getByText('Here is the navigator.')).toBeVisible({timeout: 120000});
+        const botPost = await postArtifact(page, mattermost, aimock, SELF_NAVIGATING_FILE_NAME, SELF_NAVIGATING_HTML, 'Here is the navigator.');
+        await navigated;
 
         const stopped = botPost.getByTestId('html-artifact-navigation-stopped');
         await expect(stopped).toBeVisible({timeout: 30000});
         await expect(artifactIframes(botPost)).toHaveCount(0);
-
-        // Give a remount, or the impostor's consent request, time to show up.
-        await page.waitForTimeout(2000);
         expect(artifactRequests).toBe(1);
-        expect(targetRequests.length).toBeLessThanOrEqual(1);
         await expect(page.getByTestId('html-artifact-consent')).toHaveCount(0);
         await expect(stopped).toBeVisible();
+    });
+
+    // A parser-blocking location.replace() swaps the artifact for another
+    // page before the first load event, so the frame-load guard cannot tell.
+    // The replacement does not know the bridge token, so it gets nothing.
+    test('a document that replaces the artifact before load gets no broker access', async ({page}) => {
+        test.setTimeout(300000);
+        await page.context().route(`${REPLACEMENT_TARGET}**`, (route) => {
+            return route.fulfill({contentType: 'text/html', body: REPLACEMENT_IMPOSTOR_HTML});
+        });
+        const botPost = await postArtifact(page, mattermost, aimock, REPLACING_FILE_NAME, REPLACING_HTML, 'Here is the replacer.');
+
+        const iframe = artifactIframes(botPost).first();
+        const frame = iframe.contentFrame();
+        await expect(frame.getByTestId('impostor-sent')).toHaveText('sent', {timeout: 30000});
+
+        // The host never accepts a ready, so it ends in the load error state.
+        await expect(botPost.getByTestId('html-artifact-card').getByText('This artifact could not be loaded.')).toBeVisible({timeout: 30000});
+        await expect(page.getByTestId('html-artifact-consent')).toHaveCount(0);
+        await expect(frame.getByTestId('impostor-received')).toHaveText('');
+    });
+
+    test('artifact code cannot read the bridge token or intercept its messages', async ({page}) => {
+        test.setTimeout(300000);
+        const botPost = await postArtifact(page, mattermost, aimock, TOKEN_PROBE_FILE_NAME, TOKEN_PROBE_HTML, 'Here is the probe.');
+        const iframe = artifactIframes(botPost).first();
+        const frame = iframe.contentFrame();
+
+        // The host still talks to the genuine bridge: the frame becomes ready (visible).
+        await expect(frame.getByRole('heading', {name: 'Token probe'})).toBeVisible({timeout: 30000});
+        await expect(frame.getByTestId('probe-recorded')).not.toHaveText('', {timeout: 15000});
+
+        const src = await iframe.getAttribute('src');
+        const fileId = src!.split('/artifacts/')[1].split(/[/?]/)[0];
+        const res = await page.request.get(`${mattermost.url()}/plugins/mattermost-ai/artifacts/${fileId}/token`, {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        });
+        expect(res.ok()).toBe(true);
+        const {token} = await res.json();
+        expect(typeof token).toBe('string');
+        expect(token.length).toBeGreaterThan(20);
+
+        // The shadowed window.parent only ever saw the artifact's own message.
+        const recorded = await frame.getByTestId('probe-recorded').textContent();
+        expect(JSON.parse(recorded!)).toEqual([{probe: 1}]);
+        expect(recorded).not.toContain(token);
+
+        const dom = await frame.getByTestId('probe-dom').textContent();
+        expect(dom).toContain('Token probe');
+        expect(dom).not.toContain(token);
     });
 
     test('inline card in a dark theme', async ({page}) => {

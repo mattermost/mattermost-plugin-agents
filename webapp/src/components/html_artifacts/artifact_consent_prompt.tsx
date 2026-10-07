@@ -22,20 +22,25 @@ interface Props {
 
 const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
     const denyRef = useRef<HTMLButtonElement>(null);
+    const dialogRef = useRef<HTMLDivElement>(null);
     const [armed, setArmed] = useState(false);
 
     // Buttons that received a pointerdown after the prompt mounted.
     const pressedRef = useRef(new Set<string>());
 
     // Focus the safe choice so a stray Enter never grants access.
-    // Focus returns to where it was once the prompt goes away.
+    // Focus returns to where it was once the prompt goes away, unless it
+    // has already moved elsewhere (e.g. to the fullscreen viewer).
     useEffect(() => {
         const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const dialog = dialogRef.current;
         denyRef.current?.focus({preventScroll: true});
         const timer = window.setTimeout(() => setArmed(true), CONSENT_ARM_DELAY_MS);
         return () => {
             window.clearTimeout(timer);
-            if (previous?.isConnected) {
+            const active = document.activeElement;
+            const focusInPrompt = !active || active === document.body || Boolean(dialog?.contains(active));
+            if (focusInPrompt && previous?.isConnected) {
                 previous.focus({preventScroll: true});
             }
         };
@@ -61,6 +66,7 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
     return (
         <Backdrop>
             <Dialog
+                ref={dialogRef}
                 role='alertdialog'
                 aria-modal='true'
                 aria-labelledby='html-artifact-consent-heading'

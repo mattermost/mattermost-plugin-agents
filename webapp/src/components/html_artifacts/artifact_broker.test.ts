@@ -35,6 +35,8 @@ function makeTarget() {
     return {postMessage: jest.fn()} as unknown as Window & {postMessage: jest.Mock};
 }
 
+const TOKEN = 'bridge-token-1';
+
 function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; currentUser?: ArtifactUser | null; canPrompt?: () => boolean} = {}) {
     const target = makeTarget();
     const requestConsent = jest.fn(opts.consent ?? (() => Promise.resolve(true)));
@@ -44,6 +46,7 @@ function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; current
     const dismissConsent = jest.fn();
     const broker = new ArtifactBroker({
         fileId: opts.fileId ?? 'file1',
+        token: TOKEN,
         getTargetWindow: () => target,
         getContext: () => context,
         getCurrentUser: () => (typeof opts.currentUser === 'undefined' ? user : opts.currentUser),
@@ -54,8 +57,12 @@ function setup(opts: {consent?: () => Promise<boolean>; fileId?: string; current
         onResize,
         onEscape,
     });
-    const send = (data: unknown, overrides: Partial<{source: unknown; origin: string}> = {}) =>
-        broker.handleMessage({data, source: target, origin: 'null', ...overrides} as unknown as MessageEvent);
+
+    // Adds the bridge token to object payloads unless withToken is false.
+    const send = (data: unknown, overrides: Partial<{source: unknown; origin: string}> = {}, withToken = true) => {
+        const payload = withToken && typeof data === 'object' && data !== null ? {token: TOKEN, ...data} : data;
+        return broker.handleMessage({data: payload, source: target, origin: 'null', ...overrides} as unknown as MessageEvent);
+    };
     return {broker, target, requestConsent, dismissConsent, onReady, onResize, onEscape, send};
 }
 
@@ -92,6 +99,38 @@ describe('ArtifactBroker message validation', () => {
         expect(onReady).not.toHaveBeenCalled();
         expect(onResize).not.toHaveBeenCalled();
         expect(requestConsent).not.toHaveBeenCalled();
+    });
+
+    const messages: Array<{type: string; data: Record<string, unknown>}> = [
+        {type: 'ready', data: {mmArtifact: 1, type: 'ready'}},
+        {type: 'resize', data: {mmArtifact: 1, type: 'resize', height: 200}},
+        {type: 'escape', data: {mmArtifact: 1, type: 'escape'}},
+        {type: 'request', data: {mmArtifact: 1, type: 'request', id: 'r1', method: 'getCurrentUser'}},
+    ];
+    const badTokens: Array<{name: string; token?: unknown}> = [
+        {name: 'missing token'},
+        {name: 'empty token', token: ''},
+        {name: 'wrong token', token: 'guessed-token'},
+        {name: 'token prefix', token: TOKEN.slice(0, -1)},
+        {name: 'non-string token', token: {toString: () => TOKEN}},
+        {name: 'array token', token: [TOKEN]},
+    ];
+    const tokenCases = messages.flatMap((m) => badTokens.map((b) => ({...b, type: m.type, data: m.data})));
+
+    test.each(tokenCases)('ignores $type with $name', ({data, token}) => {
+        const {send, target, onReady, onResize, onEscape, requestConsent} = setup();
+        const payload = typeof token === 'undefined' ? data : {...data, token};
+        expect(send(payload, {}, false)).toBe(false);
+        expect(target.postMessage).not.toHaveBeenCalled();
+        expect(onReady).not.toHaveBeenCalled();
+        expect(onResize).not.toHaveBeenCalled();
+        expect(onEscape).not.toHaveBeenCalled();
+        expect(requestConsent).not.toHaveBeenCalled();
+    });
+
+    test.each(messages)('accepts $type with the right token', ({data}) => {
+        const {send} = setup();
+        expect(send({...data, token: TOKEN}, {}, false)).toBe(true);
     });
 
     test('parseArtifactMessage drops unknown fields', () => {

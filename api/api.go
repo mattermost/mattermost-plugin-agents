@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -190,6 +191,11 @@ type API struct {
 	accessChecker         *accesscontrol.Checker
 	mcpRequestLimiter     *mcpRequestLimiter
 
+	// artifactSecretCache caches the HTML artifact bridge secret after
+	// its first load from the KV store.
+	artifactSecretMu    sync.Mutex
+	artifactSecretCache []byte
+
 	// auditEvents maps gin handler names to audit event names for routes
 	// that emit server audit records. Built once in New; read-only after.
 	auditEvents map[string]string
@@ -346,6 +352,7 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 	router.GET("/ai_threads", a.handleGetAIThreads)
 	router.GET("/ai_bots", a.handleGetAIBots)
 	router.GET("/artifacts/:fileid", a.handleGetArtifact)
+	router.GET("/artifacts/:fileid/token", a.handleGetArtifactToken)
 	router.GET("/mcp/tools", a.handleGetUserMCPTools)
 	router.POST("/mcp/tools/refresh", a.handleRefreshUserMCPTools)
 	router.GET("/mcp/oauth/:serverName/start", a.handleOAuthStart)

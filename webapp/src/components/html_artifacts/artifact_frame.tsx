@@ -24,6 +24,7 @@ import {
     toArtifactUser,
 } from './artifact_broker';
 import ArtifactConsentPrompt from './artifact_consent_prompt';
+import {fetchArtifactToken} from './artifact_token';
 
 export const MIN_INLINE_HEIGHT = 120;
 export const MAX_INLINE_HEIGHT = 600;
@@ -71,7 +72,10 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
 
     // Re-read the theme whenever preferences change (theme switches live there).
     const preferences = useSelector<GlobalState, unknown>((state) => state.entities.preferences?.myPreferences);
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const currentUser = useSelector<GlobalState, any>((state) => state.entities.users.profiles[state.entities.users.currentUserId]);
+    const [token, setToken] = useState<string | null>(null);
+    const [tokenFailed, setTokenFailed] = useState(false);
     const locale = intl.locale;
 
     const context = useMemo<ArtifactContext>(() => {
@@ -100,8 +104,33 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     const obscuredRef = useRef(obscured);
     obscuredRef.current = obscured;
 
-    const broker = useMemo(() => new ArtifactBroker({
+    // The frame is only rendered once the viewer's bridge token is known.
+    useEffect(() => {
+        let cancelled = false;
+        setToken(null);
+        setTokenFailed(false);
+        setStatus('loading');
+        if (!currentUserId) {
+            setTokenFailed(true);
+            return undefined; // eslint-disable-line no-undefined
+        }
+        fetchArtifactToken(fileId, currentUserId).then((t) => {
+            if (!cancelled) {
+                setToken(t);
+            }
+        }, () => {
+            if (!cancelled) {
+                setTokenFailed(true);
+            }
+        });
+        return () => {
+            cancelled = true;
+        };
+    }, [fileId, currentUserId, loadKey]);
+
+    const broker = useMemo(() => (token ? new ArtifactBroker({
         fileId,
+        token,
         getTargetWindow: () => iframeRef.current?.contentWindow,
         getContext: () => contextRef.current,
         getCurrentUser: () => userRef.current,
@@ -113,12 +142,16 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         onReady: () => setStatus('ready'),
         onResize: (h) => setHeight(clampInlineHeight(h)),
         onEscape: () => onEscapeRef.current?.(),
+    }) : null),
 
     // loadKey: every host load gets its own broker, so a disposed one is never reused.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [fileId, loadKey]);
+    [fileId, token, loadKey]);
 
     useEffect(() => {
+        if (!broker) {
+            return undefined; // eslint-disable-line no-undefined
+        }
         window.addEventListener('message', broker.handleMessage);
         return () => {
             window.removeEventListener('message', broker.handleMessage);
@@ -130,11 +163,14 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     }, [broker]);
 
     useEffect(() => {
-        broker.sendContext();
+        broker?.sendContext();
     }, [broker, context]);
 
     // Each host load: reset state and arm the ready timeout.
     useEffect(() => {
+        if (!broker) {
+            return undefined; // eslint-disable-line no-undefined
+        }
         broker.reset();
         loadCountRef.current = 0;
         setStatus('loading');
@@ -164,7 +200,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         // whatever is in the frame now is not the artifact we served. Stop
         // answering it at once and unload it; remounting would only re-run
         // the same navigation. Unanswered prompts are dropped undecided.
-        broker.dispose();
+        broker?.dispose();
         pendingConsentRef.current?.reject();
         setPendingConsent(null);
         setNavigationStopped(true);
@@ -177,6 +213,8 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         setPendingConsent(null);
     }, []);
 
+    const shownStatus: Status = tokenFailed ? 'error' : status;
+
     const title = intl.formatMessage({defaultMessage: 'Interactive artifact: {fileName}'}, {fileName});
 
     return (
@@ -186,7 +224,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
             $consentShown={Boolean(pendingConsent)}
             data-testid='html-artifact-frame'
         >
-            {!navigationStopped && (
+            {!navigationStopped && token && (
                 <Frame
                     key={loadKey}
                     ref={iframeRef}
@@ -196,7 +234,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     title={title}
                     onLoad={handleLoad}
                     onError={handleError}
-                    $hidden={status !== 'ready'}
+                    $hidden={shownStatus !== 'ready'}
                 />
             )}
             {navigationStopped && (
@@ -218,7 +256,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     </ErrorBox>
                 </Overlay>
             )}
-            {!navigationStopped && status === 'loading' && (
+            {!navigationStopped && shownStatus === 'loading' && (
                 <Overlay>
                     <Spinner
                         size='24'
@@ -226,7 +264,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     />
                 </Overlay>
             )}
-            {!navigationStopped && status === 'error' && (
+            {!navigationStopped && shownStatus === 'error' && (
                 <Overlay>
                     <ErrorBox role='alert'>
                         <Icon

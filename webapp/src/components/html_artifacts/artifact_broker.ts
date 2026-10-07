@@ -224,6 +224,10 @@ export function colorSchemeFor(centerChannelBg: string | undefined): ColorScheme
 
 export interface ArtifactBrokerOptions {
     fileId: string;
+
+    // The viewer's bridge token for this file. Only the genuine bridge script
+    // knows it; a document that replaced the artifact in the frame does not.
+    token: string;
     getTargetWindow: () => Window | null | undefined;
     getContext: () => ArtifactContext;
     getCurrentUser: () => ArtifactUser | null;
@@ -280,7 +284,14 @@ export class ArtifactBroker {
         if (event.origin !== 'null') {
             return false;
         }
-        const msg = parseArtifactMessage(event.data);
+
+        // Every message must carry the bridge token: a document that replaced
+        // the artifact in the same frame passes the source and origin checks.
+        const data: unknown = event.data;
+        if (!isPlainObject(data) || typeof data.token !== 'string' || data.token !== this.opts.token) {
+            return false;
+        }
+        const msg = parseArtifactMessage(data);
         if (!msg) {
             return false;
         }
