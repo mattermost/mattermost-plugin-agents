@@ -107,15 +107,11 @@ async function waitForUserPost(client: Client4, channelId: string, userId: strin
  * fault fail legibly instead of eating the whole test timeout.
  */
 async function waitOutSkewWindow(earlierBotPost: Post): Promise<void> {
-    const deadline = Date.now() + 30000;
-    while (Date.now() <= earlierBotPost.create_at + 6000) {
-        if (Date.now() > deadline) {
-            throw new Error(
-                `waitOutSkewWindow: still inside the skew window after 30 s — server clock (create_at=${earlierBotPost.create_at}) is far ahead of the runner (now=${Date.now()}).`,
-            );
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
-    }
+    await expect.poll(() => Date.now() > earlierBotPost.create_at + 6000, {
+        timeout: 30000,
+        intervals: [250],
+        message: `waitOutSkewWindow: still inside the skew window after 30 s — server clock (create_at=${earlierBotPost.create_at}) is far ahead of the runner.`,
+    }).toBe(true);
 }
 
 test.describe('Per-channel agent auto-reply', () => {

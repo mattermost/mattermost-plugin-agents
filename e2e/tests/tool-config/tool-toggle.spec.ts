@@ -42,7 +42,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Find read_post tool - should be enabled
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
@@ -62,7 +61,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         // Expand server again
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
 
         // Verify tool shows as disabled
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
@@ -101,7 +99,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         await toolConfig.navigateToToolsTab(mattermost.url());
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
         await toolConfig.toggleTool(READ_POST_TOOL_NAME, false);
         await toolConfig.clickSave();
@@ -117,7 +114,6 @@ test.describe('Per-Tool Enable/Disable', () => {
         await toolConfig.navigateToToolsTab(mattermost.url());
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
         await expect(page.getByText(READ_POST_TOOL_NAME, { exact: true })).toBeVisible({ timeout: 5000 });
         await toolConfig.toggleTool(READ_POST_TOOL_NAME, true);
         await toolConfig.clickSave();

@@ -111,10 +111,10 @@ test.describe.serial('Debug Panel', () => {
 
         // Click Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();

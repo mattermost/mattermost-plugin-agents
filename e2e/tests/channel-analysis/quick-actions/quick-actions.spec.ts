@@ -31,8 +31,7 @@ class ChannelAnalysisHelper {
      */
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        // Wait for plugin to initialize
-        await this.page.waitForTimeout(2000);
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     /**
@@ -40,12 +39,15 @@ class ChannelAnalysisHelper {
      */
     async createChannelContent(mmPage: MattermostPage) {
         // Post several messages to the channel to ensure there's content to summarize
-        await mmPage.sendChannelMessage('Project update: We completed phase 1 of the migration.');
-        await this.page.waitForTimeout(500);
-        await mmPage.sendChannelMessage('Next steps: Review the API documentation and start phase 2.');
-        await this.page.waitForTimeout(500);
-        await mmPage.sendChannelMessage('Reminder: Team meeting scheduled for tomorrow at 2pm.');
-        await this.page.waitForTimeout(1000);
+        const messages = [
+            'Project update: We completed phase 1 of the migration.',
+            'Next steps: Review the API documentation and start phase 2.',
+            'Reminder: Team meeting scheduled for tomorrow at 2pm.',
+        ];
+        for (const message of messages) {
+            await mmPage.sendChannelMessage(message);
+            await expect(this.page.locator('.post-message__text').getByText(message, { exact: true }).last()).toBeVisible();
+        }
     }
 }
 
@@ -391,9 +393,8 @@ data: [DONE]
         await llmBotHelper.waitForStreamingComplete();
 
         // 9. Verify second response appears
-        await page.waitForTimeout(1000);
         const secondPostText = llmBotHelper.getPostText();
-        await expect(secondPostText).toBeVisible({ timeout: 30000 });
+        await expect(secondPostText).toContainText('tomorrow', { timeout: 30000 });
         const secondContent = await secondPostText.textContent();
         expect(secondContent).toBeTruthy();
         expect(secondContent!.length).toBeGreaterThan(10);

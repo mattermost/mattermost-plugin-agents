@@ -89,51 +89,22 @@ async function captureReplyCount(page: Page): Promise<number> {
 
 async function waitForReplyAndOpenThread(page: Page, countBeforeSend: number, timeout: number = 120000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
-    const startTime = Date.now();
 
-    while (Date.now() - startTime < timeout) {
-        const currentCount = await replyIndicator.count().catch(() => 0);
-        if (currentCount > countBeforeSend) {
-            const lastIndicator = replyIndicator.last();
-            if (await lastIndicator.isVisible().catch(() => false)) {
-                await lastIndicator.click();
-                await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-                await page.waitForTimeout(1000);
-                return;
-            }
-        }
-        await page.waitForTimeout(1000);
-    }
+    await expect.poll(() => replyIndicator.count().catch(() => 0), {
+        timeout,
+        message: 'Timeout waiting for bot reply in thread',
+    }).toBeGreaterThan(countBeforeSend);
 
-    throw new Error('Timeout waiting for bot reply in thread');
+    await expect(replyIndicator.last()).toBeVisible({timeout: 10000});
+    await replyIndicator.last().click();
+    await expect(page.locator('#rhsContainer')).toBeVisible({timeout: 10000});
 }
 
 async function openLatestThread(page: Page, timeout: number = 30000): Promise<void> {
     const replyIndicator = page.getByText(/\d+ repl/);
     await expect(replyIndicator.last()).toBeVisible({timeout});
     await replyIndicator.last().click();
-    await page.locator('#rhsContainer').waitFor({state: 'visible', timeout: 10000});
-    await page.waitForTimeout(1000);
-}
-
-async function waitForButtonInThread(page: Page, buttonName: string, timeout: number = 120000, throwOnTimeout: boolean = true): Promise<boolean> {
-    const startTime = Date.now();
-    const rhs = page.locator('#rhsContainer');
-
-    while (Date.now() - startTime < timeout) {
-        const button = rhs.getByRole('button', {name: buttonName, exact: true});
-        if (await button.first().isVisible().catch(() => false)) {
-            await page.waitForTimeout(500);
-            return true;
-        }
-        await page.waitForTimeout(1000);
-    }
-
-    if (throwOnTimeout) {
-        throw new Error(`Timeout waiting for '${buttonName}' button in thread`);
-    }
-
-    return false;
+    await expect(page.locator('#rhsContainer')).toBeVisible({timeout: 10000});
 }
 
 async function waitForAnyButtonInThread(
@@ -142,40 +113,46 @@ async function waitForAnyButtonInThread(
     timeout: number = 120000,
     throwOnTimeout: boolean = true,
 ): Promise<string | null> {
-    const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+    let found: string | null = null;
 
-    while (Date.now() - startTime < timeout) {
-        for (const buttonName of buttonNames) {
-            const button = rhs.getByRole('button', {name: buttonName, exact: true});
-            if (await button.first().isVisible().catch(() => false)) {
-                await page.waitForTimeout(500);
-                return buttonName;
+    try {
+        await expect.poll(async () => {
+            found = null;
+            for (const buttonName of buttonNames) {
+                const button = rhs.getByRole('button', {name: buttonName, exact: true});
+                if (await button.first().isVisible().catch(() => false)) {
+                    found = buttonName;
+                    break;
+                }
             }
+            return found;
+        }, {timeout}).not.toBeNull();
+    } catch {
+        if (throwOnTimeout) {
+            throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
         }
-        await page.waitForTimeout(1000);
+        return null;
     }
 
-    if (throwOnTimeout) {
-        throw new Error(`Timeout waiting for one of buttons in thread: ${buttonNames.join(', ')}`);
-    }
-
-    return null;
+    return found;
 }
 
 async function clickAllButtonsInThread(page: Page, buttonName: string): Promise<number> {
     const rhs = page.locator('#rhsContainer');
+    const buttons = rhs.getByRole('button', {name: buttonName, exact: true});
     let clicked = 0;
 
     while (true) {
-        const button = rhs.getByRole('button', {name: buttonName, exact: true}).first();
+        const button = buttons.first();
         if (!(await button.isVisible().catch(() => false))) {
             return clicked;
         }
 
+        const countBeforeClick = await buttons.count();
         await button.click();
         clicked++;
-        await page.waitForTimeout(500);
+        await expect.poll(() => buttons.count(), {timeout: 15000}).toBeLessThan(countBeforeClick);
     }
 }
 
@@ -194,12 +171,16 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
     if (firstDecisionButton === 'Accept') {
         if (action === 'reject') {
             await clickAllButtonsInThread(page, 'Reject');
-            await page.waitForTimeout(2000);
             return true;
         }
 
-        await clickAllButtonsInThread(page, 'Accept');
-        await waitForButtonInThread(page, 'Share', 120000);
+        const rhs = page.locator('#rhsContainer');
+        await expect(async () => {
+            if (await rhs.getByRole('button', {name: 'Accept', exact: true}).first().isVisible().catch(() => false)) {
+                await clickAllButtonsInThread(page, 'Accept');
+            }
+            await expect(rhs.getByRole('button', {name: 'Share', exact: true}).first()).toBeVisible({timeout: 20000});
+        }).toPass({timeout: 120000});
     }
 
     if (action === 'accept-share' || action === 'reject') {
@@ -208,7 +189,6 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
         await clickAllButtonsInThread(page, 'Keep private');
     }
 
-    await page.waitForTimeout(2000);
     return true;
 }
 
@@ -228,28 +208,16 @@ async function completeAllToolCallRounds(page: Page, action: 'accept-share' | 'a
 }
 
 async function waitForApprovalFlowToSettle(page: Page, timeout: number = 30000): Promise<void> {
-    const startTime = Date.now();
     const rhs = page.locator('#rhsContainer');
+    const decisionButtons = rhs.getByRole('button', {name: /^(Accept|Reject|Share|Keep private)$/});
 
-    while (Date.now() - startTime < timeout) {
-        const hasAccept = await rhs.getByRole('button', {name: 'Accept'}).first().isVisible().catch(() => false);
-        const hasReject = await rhs.getByRole('button', {name: 'Reject'}).first().isVisible().catch(() => false);
-        const hasShare = await rhs.getByRole('button', {name: 'Share'}).first().isVisible().catch(() => false);
-        const hasKeepPrivate = await rhs.getByRole('button', {name: 'Keep private'}).first().isVisible().catch(() => false);
-
-        if (!hasAccept && !hasReject && !hasShare && !hasKeepPrivate) {
-            await page.waitForTimeout(2000);
-            return;
-        }
-        await page.waitForTimeout(1000);
-    }
-
-    throw new Error('Timeout waiting for tool approval flow to settle');
+    await expect(decisionButtons.filter({visible: true})).toHaveCount(0, {timeout});
+    await expect(rhs.getByTestId('stop-generating-button').filter({visible: true})).toHaveCount(0, {timeout});
 }
 
 async function waitForPageReady(page: Page): Promise<void> {
     await page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', {timeout: 30000});
-    await page.waitForTimeout(2000);
+    await expect(page.locator('#post_textbox')).toBeVisible({timeout: 30000});
 }
 
 async function navigateToChannel(page: Page, baseUrl: string, channelName: string = 'off-topic'): Promise<void> {
@@ -341,7 +309,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
             // The second round's approval card renders without expanding,
             // while the resolved first round stays folded into the row above.
             const invokerPost = rhs.locator('[data-testid="llm-bot-post"]').last();
-            await expect(invokerPost.getByText(createPostToolLabel, {exact: true})).toBeVisible({timeout: 45000});
+            await expect(invokerPost.getByRole('button', {name: createPostToolLabel, exact: true})).toBeVisible({timeout: 45000});
             await expectToolActivityCurrent(invokerPost, getChannelInfoToolLabel);
             expect(await completeOneToolCallRound(invokerPage, 'accept-keep-private')).toBe(true);
 
@@ -422,7 +390,7 @@ test.describe('Multiplayer Tool Calling (Aimock)', () => {
 
             await waitForApprovalFlowToSettle(invokerPage);
 
-            await onlookerPage.waitForTimeout(3000);
+            await expect(onlookerRhs.getByText(happyFinalText).first()).toBeVisible({timeout: 60000});
             await expect(onlookerRhs.getByRole('button', {name: 'Accept'})).not.toBeVisible();
             await expect(onlookerRhs.getByRole('button', {name: 'Share'})).not.toBeVisible();
 

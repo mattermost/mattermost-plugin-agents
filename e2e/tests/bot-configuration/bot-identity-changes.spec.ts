@@ -57,9 +57,6 @@ function createTestSuite() {
         const updatedBot = await botConfig.getBot(originalBot!.id);
         expect(updatedBot?.displayName).toBe('AI Assistant');
 
-        // Wait for configuration to propagate
-        await page.waitForTimeout(1000);
-
         // Reload page to pick up configuration changes
         await page.reload();
         await page.waitForLoadState('domcontentloaded');
@@ -130,9 +127,6 @@ function createTestSuite() {
         await botConfig.updateBot(originalBot!.id, {
             displayName: 'Persistent Bot'
         });
-
-        // Wait for configuration to propagate
-        await page.waitForTimeout(1000);
 
         // Reload page to pick up configuration changes
         await page.reload();

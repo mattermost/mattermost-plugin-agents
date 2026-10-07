@@ -27,20 +27,19 @@ async function waitForReindexComplete(
     routes: ReturnType<typeof mattermostAIPluginRoutes>,
     token: string,
 ): Promise<JobStatus> {
-    const deadline = Date.now() + 60000;
-    for (;;) {
-        const status = await routes.getJson('admin/reindex/status', token) as JobStatus;
-        if (status.status === 'completed') {
-            return status;
-        }
+    let status: JobStatus | undefined;
+    await expect.poll(async () => {
+        status = await routes.getJson('admin/reindex/status', token) as JobStatus;
         if (status.status === 'failed' || status.status === 'canceled') {
             throw new Error(`Reindex did not complete: ${status.status} (${status.error ?? 'no error'})`);
         }
-        if (Date.now() > deadline) {
-            throw new Error(`Timed out waiting for reindex to complete, last status: ${status.status}`);
-        }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
+        return status.status;
+    }, {
+        timeout: 60000,
+        intervals: [1000],
+        message: 'Timed out waiting for reindex to complete',
+    }).toBe('completed');
+    return status!;
 }
 
 test.describe('Reindex after embedding model change', () => {

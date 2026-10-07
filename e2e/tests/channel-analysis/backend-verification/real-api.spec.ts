@@ -53,7 +53,7 @@ class ChannelAnalysisBackendHelper {
 
     async waitForPageReady() {
         await this.page.waitForSelector('[class*="channel-header"], #channelHeaderInfo', { timeout: 30000 });
-        await this.page.waitForTimeout(2000);
+        await expect(this.page.getByTestId('ask-channel-button').first()).toBeVisible({ timeout: 30000 });
     }
 
     async navigateToChannel(mattermost: MattermostContainer, channelName: string) {

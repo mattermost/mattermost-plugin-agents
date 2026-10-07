@@ -258,7 +258,7 @@ test.describe('Custom Prompts Management Modal', () => {
                 store.dispatch({type: 'SHOW_CUSTOM_PROMPTS_MODAL', show: false});
             }
         });
-        await page.waitForTimeout(500);
+        await expect(page.getByRole('dialog', {name: 'Custom Prompts'})).toBeHidden({ timeout: 10000 });
 
         // Reopen
         await openCustomPromptsModal(page);

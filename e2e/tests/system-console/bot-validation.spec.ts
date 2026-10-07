@@ -84,9 +84,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 9. Click on the bot card to expand it
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        // Use a longer wait for CI environments where rendering can be slower
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 10. Enter a valid username 'testbot' in the 'Agent Username' field
         const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
@@ -166,8 +164,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 8. Expand bot card
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 9. Verify the 'Agent Username' field contains 'test bot'
         const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
@@ -248,8 +245,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 7. Expand bot card
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 8. Verify the username field contains '1testbot'
         const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
@@ -320,8 +316,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 7. Expand bot card
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 8. Change username to 'testbot' (all lowercase)
         const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });
@@ -399,8 +394,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 8. Expand bot card
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 9. Locate 'AI Service' dropdown
         // 10. Verify dropdown shows 'Select a service' placeholder
@@ -490,8 +484,7 @@ test.describe.skip('Bot Validation Badges', () => {
         // 9. Expand bot card
         await botCard.click();
 
-        // Wait for the card to fully expand and form fields to render
-        await page.waitForTimeout(1000);
+        await expect(botCard.getByRole('textbox', { name: /(bot|agent) username/i })).toBeVisible();
 
         // 10. Add valid username 'testbot'
         const usernameField = botCard.getByRole('textbox', { name: /(bot|agent) username/i });

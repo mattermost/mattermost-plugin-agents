@@ -276,7 +276,7 @@ export class LLMBotPostHelper {
     async hoverCitation(index: number, postId?: string): Promise<void> {
         const citationWrapper = this.getCitationWrapper(index, postId);
         await citationWrapper.hover();
-        await this.page.waitForTimeout(300);
+        await expect(this.getCitationTooltip(postId)).toBeVisible();
     }
 
     /**
@@ -583,24 +583,14 @@ export class LLMBotPostHelper {
     async waitForPostText(text: string, postId?: string, maxTimeout: number = 300000): Promise<void> {
         const postText = this.getPostText(postId);
 
-        // Poll every 500ms checking if the text has appeared
-        const startTime = Date.now();
-        while (Date.now() - startTime < maxTimeout) {
-            try {
-                const content = await postText.textContent();
-                if (content && content.includes(text)) {
-                    // Text found - wait a bit for final updates
-                    await this.page.waitForTimeout(500);
-                    return;
-                }
-            } catch (error) {
-                // Element not yet available, continue polling
-            }
-            await this.page.waitForTimeout(500);
+        try {
+            await expect.poll(async () => {
+                const content = await postText.textContent({ timeout: 1000 }).catch(() => null);
+                return content?.includes(text) ?? false;
+            }, { timeout: maxTimeout, intervals: [500] }).toBe(true);
+        } catch (error) {
+            throw new Error(`Timeout waiting for post text to contain: ${text}`);
         }
-
-        // If we hit max timeout, throw error with API context if available
-        throw new Error(`Timeout waiting for post text to contain: ${text}`);
     }
 
     /**
@@ -618,21 +608,14 @@ export class LLMBotPostHelper {
             throw new Error('Timeout waiting for reasoning display to appear');
         }
 
-        // Then poll until reasoning spinner disappears (reasoning complete)
+        // Then wait until reasoning spinner disappears (reasoning complete)
         const spinner = this.getReasoningSpinner(postId);
 
-        const startTime = Date.now();
-        while (Date.now() - startTime < maxTimeout) {
-            const isVisible = await spinner.isVisible().catch(() => false);
-            if (!isVisible) {
-                // Spinner gone, reasoning complete - wait a bit for final updates
-                await this.page.waitForTimeout(1000);
-                return;
-            }
-            await this.page.waitForTimeout(500);
+        try {
+            await expect(spinner.filter({ visible: true })).toHaveCount(0, { timeout: maxTimeout });
+        } catch (error) {
+            // If we hit max timeout, that's okay - reasoning might have completed without spinner
         }
-
-        // If we hit max timeout, that's okay - reasoning might have completed without spinner
     }
 
     /**
@@ -646,24 +629,16 @@ export class LLMBotPostHelper {
         const citation = this.getCitationWrapper(index, postId);
         const allCitations = this.getAllCitationIcons(postId);
 
-        // Poll every 500ms checking if citation has appeared
-        const startTime = Date.now();
-        while (Date.now() - startTime < maxTimeout) {
+        try {
+            await expect.poll(async () => {
+                const count = await allCitations.count().catch(() => 0);
+                return count >= index && await citation.isVisible().catch(() => false);
+            }, { timeout: maxTimeout, intervals: [500] }).toBe(true);
+        } catch (error) {
+            // Throw with API context if available
             const count = await allCitations.count().catch(() => 0);
-            if (count >= index) {
-                const isVisible = await citation.isVisible().catch(() => false);
-                if (isVisible) {
-                    // Citation found - wait a bit for final updates
-                    await this.page.waitForTimeout(500);
-                    return;
-                }
-            }
-            await this.page.waitForTimeout(500);
+            throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})`);
         }
-
-        // If we hit max timeout, throw error with API context if available
-        const count = await allCitations.count().catch(() => 0);
-        throw new Error(`Timeout waiting for citation ${index} to appear (found ${count})`);
     }
 
     /**
@@ -747,17 +722,13 @@ export class LLMBotPostHelper {
         // Wait for "Stop Generating" button to disappear (streaming complete)
         const stopButton = this.getStopGeneratingButton();
 
-        // Poll every 500ms until stop button disappears (streaming complete)
-        while (Date.now() - startTime < maxTimeout) {
-            const isVisible = await stopButton.isVisible().catch(() => false);
-            if (!isVisible) {
-                // Stop button gone, streaming complete - wait a bit for final updates
-                await this.page.waitForTimeout(1000);
-                return;
-            }
-            await this.page.waitForTimeout(500);
+        // Wait until the stop button disappears (streaming complete)
+        try {
+            await expect(stopButton.filter({ visible: true })).toHaveCount(0, {
+                timeout: Math.max(maxTimeout - (Date.now() - startTime), 1),
+            });
+        } catch (error) {
+            // If we hit max timeout, that's okay - streaming might have completed without stop button
         }
-
-        // If we hit max timeout, that's okay - streaming might have completed without stop button
     }
 }

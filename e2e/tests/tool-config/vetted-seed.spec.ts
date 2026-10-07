@@ -52,7 +52,7 @@ test.describe('Vetted Server Seed', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
+        await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
 
         // Check that at least some known vetted READ tools are visible and have "auto_run_in_dm" policy
         for (const toolName of ['read_post', 'get_channel_info', 'search_posts']) {

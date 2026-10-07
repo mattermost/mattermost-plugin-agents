@@ -75,9 +75,8 @@ test.describe('Streaming and Persistence - aimock', () => {
         expect(contentBefore).toContain(PHASE3_NAV_PERSISTENCE_MARKER);
 
         await aiPlugin.closeRHS();
-        await page.waitForTimeout(1000);
+        await expect(page.getByTestId('mattermost-ai-rhs')).toBeHidden();
         await aiPlugin.openRHS();
-        await page.waitForTimeout(2000);
 
         const postTextAfter = llmBotHelper.getPostText();
         await expect(postTextAfter).toBeVisible();
@@ -100,12 +99,9 @@ test.describe('Streaming and Persistence - aimock', () => {
 
         await page.reload();
         await aiPlugin.openRHS();
-        await page.waitForTimeout(2000);
 
         await aiPlugin.openChatHistory();
-        await page.waitForTimeout(1000);
         await aiPlugin.clickChatHistoryItem(0);
-        await page.waitForTimeout(2000);
 
         const postTextAfter = llmBotHelper.getPostText();
         await expect(postTextAfter).toBeVisible();

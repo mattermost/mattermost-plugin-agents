@@ -60,26 +60,43 @@ async function setupTestPage(page: Page) {
     return { mmPage, aiPlugin };
 }
 
+async function waitForPostsIndexed(mattermost: MattermostContainer, query: string, postIds: string[]): Promise<void> {
+    const userClient = await mattermost.getClient(username, password);
+    const routes = mattermostAIPluginRoutes(mattermost.url());
+
+    await expect.poll(async () => {
+        try {
+            const payload = await routes.postJson('search/raw', userClient.getToken(), {query, limit: 50}) as {
+                results?: Array<{post_id: string}>;
+            };
+            const found = new Set((payload.results ?? []).map((r) => r.post_id));
+            return postIds.every((id) => found.has(id));
+        } catch {
+            return false;
+        }
+    }, {timeout: 30000, message: 'Timed out waiting for posts to be indexed for semantic search'}).toBe(true);
+}
+
 test.describe('Search Sources Display', () => {
     test('Search response text displays in RHS', async ({ page }) => {
         const { mmPage, aiPlugin } = await setupTestPage(page);
 
         // Create posts with searchable content about budget
-        await mmPage.sendMessageAsUser(
+        const post1 = await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
             'The Q4 budget report shows a 15% increase in marketing spend'
         );
 
-        await mmPage.sendMessageAsUser(
+        const post2 = await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
             'Budget allocation for engineering has been approved for next quarter'
         );
 
-        await mmPage.sendMessageAsUser(
+        const post3 = await mmPage.sendMessageAsUser(
             mattermost,
             username,
             password,
@@ -87,7 +104,7 @@ test.describe('Search Sources Display', () => {
         );
 
         // Wait for posts to be indexed by the embedding search
-        await page.waitForTimeout(2000);
+        await waitForPostsIndexed(mattermost, 'budget', [post1.id, post2.id, post3.id]);
 
         // Set up mock response for the LLM
         await openAIMock.addCompletionMock(searchResponseWithSources);

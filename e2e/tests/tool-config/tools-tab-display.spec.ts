@@ -49,7 +49,6 @@ test.describe('Tools Tab Display', () => {
         // Click the server row header to expand
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Verify individual tool rows are now visible
         // Known embedded server tools include read_post, get_channel_info, etc.
@@ -78,7 +77,6 @@ test.describe('Tools Tab Display', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Verify read_post (a vetted READ tool) shows the DM-scoped auto-run policy
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });

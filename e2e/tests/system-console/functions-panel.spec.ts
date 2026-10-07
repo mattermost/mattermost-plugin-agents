@@ -108,10 +108,10 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Click the Save button at the bottom of the page
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save operation to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -194,10 +194,10 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Click the Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -309,10 +309,10 @@ test.describe.serial('AI Functions Panel', () => {
 
         // Click the Save button
         const saveButton = systemConsole.getSaveButton();
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();
@@ -337,10 +337,10 @@ test.describe.serial('AI Functions Panel', () => {
         await expect(reloadedTrueRadio).not.toBeChecked();
 
         // Click Save button
-        await saveButton.click();
-
-        // Wait for save to complete
-        await page.waitForTimeout(1000);
+        await Promise.all([
+            page.waitForResponse((response) => response.request().method() === 'PUT' && response.url().includes('/admin/config')),
+            saveButton.click(),
+        ]);
 
         // Reload the page
         await page.reload();

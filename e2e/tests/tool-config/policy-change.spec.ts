@@ -40,7 +40,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // Find read_post tool (should be "auto_run_in_dm" from vetted seed)
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
@@ -60,7 +59,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
         // Expand server again
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
 
         // Verify the tool now shows "ask"
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
@@ -80,7 +78,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
         // Expand the embedded server
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         // read_post should be "ask" from the previous test changing it
         // (tests in the same describe block share the container)
@@ -100,7 +97,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
         // Expand server again
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
 
         // Verify the tool now shows "auto_run_in_dm"
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
@@ -119,7 +115,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
 
         const serverHeader = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader.click();
-        await page.waitForTimeout(500);
 
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
 
@@ -133,7 +128,6 @@ test.describe.serial('Per-Tool Policy Change', () => {
 
         const serverHeader2 = page.getByText(/\d+\/\d+ tools? enabled/).first();
         await serverHeader2.click();
-        await page.waitForTimeout(500);
 
         await expect(page.getByText('read_post', { exact: true })).toBeVisible({ timeout: 5000 });
         const readPostPolicyAfter = toolConfig.getToolPolicyDropdown('read_post');

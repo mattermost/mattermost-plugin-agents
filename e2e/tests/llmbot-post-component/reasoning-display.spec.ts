@@ -108,29 +108,14 @@ test.describe('Reasoning Display - aimock', () => {
         await aiPlugin.sendMessage(PHASE3_REASONING_MULTI_SECOND_PROMPT);
 
         const allReasoningDisplays = llmBotHelper.getAllReasoningDisplays();
-        const startTime = Date.now();
-        const maxTimeout = 120000;
-
-        while (Date.now() - startTime < maxTimeout) {
-            const count = await allReasoningDisplays.count();
-            if (count >= 2) {
-                await page.waitForTimeout(1000);
-                break;
-            }
-            await page.waitForTimeout(500);
-        }
-
-        const finalCount = await allReasoningDisplays.count();
-        expect(finalCount).toBeGreaterThanOrEqual(2);
+        await expect.poll(() => allReasoningDisplays.count(), { timeout: 120000 }).toBeGreaterThanOrEqual(2);
 
         const firstReasoning = allReasoningDisplays.first();
         await firstReasoning.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(500);
         await firstReasoning.click();
 
         const secondReasoning = allReasoningDisplays.nth(1);
         await secondReasoning.scrollIntoViewIfNeeded();
-        await page.waitForTimeout(500);
         await secondReasoning.click();
 
         const countAfterClicks = await allReasoningDisplays.count();
@@ -174,12 +159,9 @@ test.describe('Reasoning Persistence After Refresh - aimock', () => {
 
         await page.reload();
         await aiPlugin.openRHS();
-        await page.waitForTimeout(2000);
 
         await aiPlugin.openChatHistory();
-        await page.waitForTimeout(1000);
         await aiPlugin.clickChatHistoryItem(0);
-        await page.waitForTimeout(2000);
 
         await llmBotHelper.expectReasoningVisible(true);
         await llmBotHelper.expectReasoningExpanded(false);
