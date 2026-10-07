@@ -15,22 +15,15 @@ const FULL_SENTENCE = 'AI-generated content. Never enter passwords or sensitive 
 
 describe('ArtifactNotice', () => {
     it.each([
-        {name: 'wide only (fullscreen)', collapseBelowPx: 0, expectShort: false},
-        {name: 'collapsible (inline card)', collapseBelowPx: 400, expectShort: true},
-    ])('keeps a readable warning: $name', ({collapseBelowPx, expectShort}) => {
-        render(<ArtifactNotice collapseBelowPx={collapseBelowPx}/>);
+        {name: 'always inline (fullscreen)', wrapBelowPx: 0},
+        {name: 'wraps to its own row when narrow (inline card)', wrapBelowPx: 400},
+    ])('shows the full warning text: $name', ({wrapBelowPx}) => {
+        render(<ArtifactNotice wrapBelowPx={wrapBelowPx}/>);
 
         const notice = screen.getByTestId('html-artifact-notice');
+        expect(notice.getAttribute('role')).toBe('note');
         expect(notice.getAttribute('aria-label')).toBe(FULL_SENTENCE);
         expect(notice.getAttribute('title')).toBe(FULL_SENTENCE);
-        expect(screen.getByTestId('html-artifact-notice-full').textContent).toBe('AI-generated · Don\'t enter passwords');
-
-        // Narrow cards swap to the short text instead of hiding the warning.
-        const short = screen.queryByTestId('html-artifact-notice-short');
-        if (expectShort) {
-            expect(short?.textContent).toBe('Don\'t enter passwords');
-        } else {
-            expect(short).toBeNull();
-        }
+        expect(notice.textContent).toBe('AI-generated · Don\'t enter passwords');
     });
 });

@@ -41,7 +41,10 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
                     size='16'
                     glyph={<FileCodeOutlineIcon/>}
                 />
-                <FileName title={fileName}>{fileName}</FileName>
+                <FileName
+                    title={fileName}
+                    data-testid='html-artifact-file-name'
+                >{fileName}</FileName>
                 <TagSlot>
                     <Tag
                         size='x-small'
@@ -50,7 +53,7 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
                     />
                 </TagSlot>
                 <Spacer/>
-                <ArtifactNotice collapseBelowPx={NOTICE_COLLAPSE_PX}/>
+                <ArtifactNotice wrapBelowPx={NOTICE_WRAP_PX}/>
                 <IconButton
                     size='x-small'
                     icon={<Icon glyph={<ArrowExpandIcon/>}/>}
@@ -98,8 +101,9 @@ export default HTMLArtifactCard;
 // Narrower than this (e.g. the Agents RHS), the file name gets the room.
 const NARROW_CARD_PX = 440;
 
-// Narrower than this, the safety notice switches to its short text.
-const NOTICE_COLLAPSE_PX = 400;
+// Narrower than this, the safety notice moves to its own row under the file
+// name and buttons, so the file name keeps its room.
+const NOTICE_WRAP_PX = 400;
 
 const Card = styled.div`
     container-type: inline-size;
@@ -114,6 +118,8 @@ const Header = styled.div`
     display: flex;
     align-items: center;
     gap: 6px;
+    flex-wrap: wrap;
+    row-gap: 0;
     min-height: 40px;
     padding: 4px 8px 4px 12px;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
@@ -132,6 +138,12 @@ const TagSlot = styled.span`
 
 const FileName = styled.span`
     flex: 0 1 auto;
+
+    @container (max-width: ${NOTICE_WRAP_PX}px) {
+        /* Zero basis: a long name ellipsizes instead of wrapping the buttons. */
+        flex: 1 1 0;
+    }
+
     min-width: 0;
     overflow: hidden;
     color: var(--center-channel-color);
@@ -145,4 +157,8 @@ const FileName = styled.span`
 const Spacer = styled.div`
     flex: 1;
     min-width: 4px;
+
+    @container (max-width: ${NOTICE_WRAP_PX}px) {
+        display: none;
+    }
 `;

@@ -177,10 +177,15 @@ test.describe('HTML artifacts', () => {
 
         // The host-drawn safety notice is always present outside the frame.
         await expect(rhsCard.getByTestId('html-artifact-notice')).toHaveAttribute('aria-label', /Never enter passwords/);
-        // The narrow RHS card still shows a readable (short) warning, not just the icon.
-        await expect(rhsCard.getByTestId('html-artifact-notice-short')).toBeVisible();
-        await expect(rhsCard.getByTestId('html-artifact-notice-short')).toHaveText("Don't enter passwords");
-        await expect(rhsCard.getByTestId('html-artifact-notice-full')).toBeHidden();
+        // In the narrow RHS card the full warning moves to its own row, and the
+        // file name keeps enough room to be read.
+        const notice = rhsCard.getByTestId('html-artifact-notice');
+        await expect(notice).toBeVisible();
+        await expect(notice).toHaveText("AI-generated · Don't enter passwords");
+        const fileName = rhsCard.getByTestId('html-artifact-file-name');
+        await expect(fileName).toHaveAttribute('title', SPRINT_DASHBOARD_FILE_NAME);
+        const nameFits = await fileName.evaluate((el) => el.scrollWidth <= el.clientWidth);
+        expect(nameFits).toBe(true);
 
         // Sandbox: scripts only, never same-origin.
         const sandbox = await iframe.getAttribute('sandbox');
