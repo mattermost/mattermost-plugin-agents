@@ -10,6 +10,7 @@ import {
     buildToolCallResponse,
     buildTextResponse,
     responseTest,
+    titleGenerationMockRule,
 } from 'helpers/openai-mock';
 import { RunToolConfigContainerWithPolicies } from 'helpers/tool-config-container';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
@@ -210,11 +211,17 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
 
         const seededMessage = 'Please read post test123';
 
+        const adminClient = await mattermost.getAdminClient();
+        const sourcePost = await adminClient.createPost({
+            channel_id: await getTownSquareChannelID(),
+            message: `auto_run read_post source ${Date.now()}`,
+        });
+
         // Build a tool-call response for an auto_run tool
         const toolCallSSE = buildToolCallResponse(
             'call_001',
             embeddedReadPostTool,
-            '{"post_id": "test123"}',
+            JSON.stringify({post_id: sourcePost.id}),
         );
         const followUpTextSSE = buildTextResponse('Here is the post content you requested.');
 
@@ -263,6 +270,9 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     body: followUpTextSSE,
                 },
             },
+            // Title generation also contains the user message; the last rule has the
+            // highest priority, so it siphons that request instead of the turn mocks.
+            titleGenerationMockRule(),
         ]);
 
         const mmPage = new MattermostPage(page);
