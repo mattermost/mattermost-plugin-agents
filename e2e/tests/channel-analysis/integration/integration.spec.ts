@@ -90,6 +90,10 @@ class IntegrationHelper {
         const menuItem = this.page.getByText(actionMap[action]);
         await expect(menuItem).toBeVisible();
         await menuItem.click();
+
+        // The popover closes once the action is chosen; reopening it before it is gone
+        // would find it still visible and then lose it.
+        await expect(this.page.locator('.channel-summarize-popover')).toBeHidden({ timeout: 10000 });
     }
 
     /**
