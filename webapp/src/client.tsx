@@ -64,6 +64,15 @@ export function baseRoute(): string {
     return `${Client4.url}/plugins/${manifest.id}`;
 }
 
+// URL of the sandboxed HTML artifact document served by the plugin.
+export function artifactURL(fileId: string): string {
+    return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
+}
+
+export function fileDownloadURL(fileId: string): string {
+    return `${Client4.url}/api/v4/files/${encodeURIComponent(fileId)}?download=1`;
+}
+
 // Interpolated ids are encoded so each one can only ever occupy one path segment.
 function postRoute(postid: string): string {
     return `${baseRoute()}/post/${encodeURIComponent(postid)}`;

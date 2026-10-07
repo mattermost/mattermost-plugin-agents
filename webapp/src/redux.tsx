@@ -25,6 +25,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         selectedPostId,
         searchEnabled,
         allowUnsafeLinks,
+        htmlArtifactsEnabled,
         customPrompts,
         pinnedPromptIds,
         showCustomPromptsModal,
@@ -89,6 +90,15 @@ function allowUnsafeLinks(state = false, action: any) {
     switch (action.type) {
     case 'SET_ALLOW_UNSAFE_LINKS':
         return action.allowUnsafeLinks;
+    default:
+        return state;
+    }
+}
+
+function htmlArtifactsEnabled(state = false, action: any) {
+    switch (action.type) {
+    case 'SET_HTML_ARTIFACTS_ENABLED':
+        return action.htmlArtifactsEnabled;
     default:
         return state;
     }
