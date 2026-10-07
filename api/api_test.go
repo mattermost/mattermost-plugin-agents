@@ -506,6 +506,9 @@ type mockAgentStore struct {
 	// countErr, when set, makes CountActiveAgents fail (to exercise best-effort paths).
 	countErr error
 
+	// createErr, when set, makes CreateAgent fail.
+	createErr error
+
 	// updateErr, when set, makes UpdateAgent fail.
 	updateErr error
 
@@ -545,6 +548,9 @@ func cloneBotConfig(src *llm.BotConfig) *llm.BotConfig {
 }
 
 func (m *mockAgentStore) CreateAgent(cfg *llm.BotConfig) error {
+	if m.createErr != nil {
+		return m.createErr
+	}
 	cfg.ID = "agen" + fmt.Sprintf("%022d", len(m.agents)+1)
 	now := time.Now().UnixMilli()
 	cfg.CreateAt = now

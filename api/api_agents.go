@@ -421,8 +421,8 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	}
 	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
 		var appErr *model.AppError
-		if errors.As(err, &appErr) && appErr.Id == "app.user.save.username_exists.app_error" {
-			abortAgentRequest(c, http.StatusConflict, fmt.Errorf("username %q is already taken", req.Username))
+		if errors.As(err, &appErr) && (appErr.Id == "app.user.save.username_exists.app_error" || appErr.Id == "app.user.save.email_exists.app_error") {
+			abortAgentRequest(c, http.StatusConflict, a.agentUsernameConflictError(userID, req.Username))
 			return
 		}
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
@@ -432,9 +432,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	agent := buildAgentConfigForCreate(req, userID, mmBot.UserId)
 
 	if err := a.agentStore.CreateAgent(agent); err != nil {
-		if _, deactivateErr := a.pluginAPI.Bot.UpdateActive(mmBot.UserId, false); deactivateErr != nil {
-			a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", mmBot.UserId, "error", deactivateErr.Error())
-		}
+		a.discardUnusedBot(mmBot.UserId)
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to persist agent: %w", err))
 		return
 	}
@@ -445,6 +443,53 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	_ = a.refreshBotsAndNotify()
 	c.JSON(http.StatusCreated, agent)
+}
+
+// agentUsernameConflictError explains which existing account blocks username for a
+// new agent's bot. Bot emails are derived from the username, so the blocking account
+// may hold either the username or that derived email (e.g. a bot renamed through the
+// user API keeps its old email).
+func (a *API) agentUsernameConflictError(userID, username string) error {
+	// The lookups below bypass the caller's user-visibility and email-privacy
+	// restrictions, so only system admins are told which account blocks the name.
+	if !isSystemAdmin(a.pluginAPI, userID) {
+		return fmt.Errorf("username %q is unavailable because another account already uses it. If that is an unused bot account, a system admin can permanently delete it and its history to make the username available", username)
+	}
+
+	email := model.UserFromBot(&model.Bot{Username: username}).Email
+	holder, err := a.pluginAPI.User.GetByUsername(username)
+	if err != nil {
+		holder, err = a.pluginAPI.User.GetByEmail(email)
+	}
+	if err != nil {
+		return fmt.Errorf("username %q is already taken", username)
+	}
+
+	if holder.IsBot && holder.DeleteAt != 0 {
+		blocker := "a deactivated bot account uses the username"
+		if holder.Username != username {
+			blocker = fmt.Sprintf("the deactivated bot account @%s uses the email %s reserved for it", holder.Username, email)
+		}
+		return fmt.Errorf("username %q is unavailable because %s. A system admin can permanently delete that bot account and its history (for example with \"mmctl user delete %s\") to make the username available", username, blocker, holder.Username)
+	}
+	if holder.Username == username {
+		return fmt.Errorf("username %q is already taken", username)
+	}
+	return fmt.Errorf("username %q is unavailable because the account @%s uses the email %s reserved for it. A system admin can change that account's email, or permanently delete it if it is an unused bot account", username, holder.Username, email)
+}
+
+// discardUnusedBot removes a bot created for an agent that failed to persist. The
+// bot has no history yet, so it is deleted rather than deactivated: a deactivated
+// bot would keep blocking the username on retry.
+func (a *API) discardUnusedBot(botUserID string) {
+	deleteErr := a.pluginAPI.Bot.DeletePermanently(botUserID)
+	if deleteErr == nil {
+		return
+	}
+	a.pluginAPI.Log.Error("Failed to delete bot after agent persist failure", "bot_user_id", botUserID, "error", deleteErr.Error())
+	if _, err := a.pluginAPI.Bot.UpdateActive(botUserID, false); err != nil {
+		a.pluginAPI.Log.Error("Failed to deactivate bot after agent persist failure", "bot_user_id", botUserID, "error", err.Error())
+	}
 }
 
 // agentListItem is an agent as listed on GET /agents, with the reason it is
