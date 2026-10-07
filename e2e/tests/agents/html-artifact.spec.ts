@@ -80,23 +80,59 @@ async function openArtifactInBotDM(page: Page, mattermost: MattermostContainer):
  * row, and the safety notice is either on that row or entirely below it,
  * never wrapped in between. Returns whether the notice is on its own row.
  */
+type Rect = {x: number; y: number; width: number; height: number};
+type HeaderRects = {card: Rect; name: Rect; button: Rect; reload: Rect; notice: Rect};
+
+/** Measures the card and its header parts in one atomic snapshot (no layout movement between reads). */
+async function measureHeader(card: Locator): Promise<HeaderRects | null> {
+    return card.evaluate((root) => {
+        const rect = (el: Element | null) => {
+            if (!el) {
+                return null;
+            }
+            const r = el.getBoundingClientRect();
+            return {x: Math.round(r.x), y: Math.round(r.y), width: Math.round(r.width), height: Math.round(r.height)};
+        };
+        const part = (id: string) => rect(root.querySelector(`[data-testid="${id}"]`));
+        const name = part('html-artifact-file-name');
+        const button = part('html-artifact-open-fullscreen');
+        const reload = part('html-artifact-reload');
+        const notice = part('html-artifact-notice');
+        if (!name || !button || !reload || !notice) {
+            return null;
+        }
+        return {card: rect(root)!, name, button, reload, notice};
+    });
+}
+
+/** Waits until two consecutive snapshots ~100ms apart are identical (scroll/resize settled) and returns it. */
+async function stableHeaderRects(card: Locator): Promise<HeaderRects> {
+    let prev = '';
+    let stable: HeaderRects | null = null;
+    await expect.poll(async () => {
+        const rects = await measureHeader(card);
+        const key = JSON.stringify(rects);
+        const settled = rects !== null && key === prev;
+        prev = key;
+        stable = settled ? rects : null;
+        return settled;
+    }, {timeout: 10000, intervals: [100]}).toBe(true);
+    return stable!;
+}
+
 async function expectHeaderLayout(card: Locator): Promise<boolean> {
-    const nameBox = await card.getByTestId('html-artifact-file-name').boundingBox();
-    const buttonBox = await card.getByTestId('html-artifact-open-fullscreen').boundingBox();
-    const reloadBox = await card.getByTestId('html-artifact-reload').boundingBox();
-    const noticeBox = await card.getByTestId('html-artifact-notice').boundingBox();
-    expect(nameBox && buttonBox && reloadBox && noticeBox).toBeTruthy();
-    const nameMid = nameBox!.y + (nameBox!.height / 2);
-    expect(Math.abs((buttonBox!.y + (buttonBox!.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
-    expect(Math.abs((reloadBox!.y + (reloadBox!.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
-    const noticeMid = noticeBox!.y + (noticeBox!.height / 2);
+    const {name: nameBox, button: buttonBox, reload: reloadBox, notice: noticeBox} = await stableHeaderRects(card);
+    const nameMid = nameBox.y + (nameBox.height / 2);
+    expect(Math.abs((buttonBox.y + (buttonBox.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
+    expect(Math.abs((reloadBox.y + (reloadBox.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
+    const noticeMid = noticeBox.y + (noticeBox.height / 2);
     const inline = Math.abs(noticeMid - nameMid) <= 4;
-    const below = noticeBox!.y >= Math.max(nameBox!.y + nameBox!.height, buttonBox!.y + buttonBox!.height) - 1;
+    const below = noticeBox.y >= Math.max(nameBox.y + nameBox.height, buttonBox.y + buttonBox.height) - 1;
     expect(inline || below).toBe(true);
     if (inline) {
         // On the first row the notice sits between the name and the buttons.
-        expect(noticeBox!.x).toBeGreaterThanOrEqual(nameBox!.x + nameBox!.width);
-        expect(noticeBox!.x + noticeBox!.width).toBeLessThanOrEqual(buttonBox!.x);
+        expect(noticeBox.x).toBeGreaterThanOrEqual(nameBox.x + nameBox.width - 1);
+        expect(noticeBox.x + noticeBox.width).toBeLessThanOrEqual(buttonBox.x + 1);
     }
     return !inline;
 }
@@ -241,11 +277,10 @@ test.describe('HTML artifacts', () => {
         // header never wraps the notice in between the name and the buttons.
         for (const width of [1100, 1000, 900, 820, 760]) {
             await page.setViewportSize({width, height: 900});
-            await page.waitForTimeout(200);
             await expectHeaderLayout(center.card);
         }
         await page.setViewportSize({width: 860, height: 900});
-        const midWidth = (await center.card.boundingBox())!.width;
+        const midWidth = (await stableHeaderRects(center.card)).card.width;
         expect(midWidth).toBeGreaterThan(400);
         expect(midWidth).toBeLessThan(640);
         expect(await expectHeaderLayout(center.card)).toBe(true);
