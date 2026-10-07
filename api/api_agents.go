@@ -422,7 +422,7 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 	if err := a.pluginAPI.Bot.Create(mmBot); err != nil {
 		var appErr *model.AppError
 		if errors.As(err, &appErr) && (appErr.Id == "app.user.save.username_exists.app_error" || appErr.Id == "app.user.save.email_exists.app_error") {
-			abortAgentRequest(c, http.StatusConflict, a.agentUsernameConflictError(req.Username))
+			abortAgentRequest(c, http.StatusConflict, a.agentUsernameConflictError(userID, req.Username))
 			return
 		}
 		abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to create bot account: %w", err))
@@ -449,7 +449,13 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 // new agent's bot. Bot emails are derived from the username, so the blocking account
 // may hold either the username or that derived email (e.g. a bot renamed through the
 // user API keeps its old email).
-func (a *API) agentUsernameConflictError(username string) error {
+func (a *API) agentUsernameConflictError(userID, username string) error {
+	// The lookups below bypass the caller's user-visibility and email-privacy
+	// restrictions, so only system admins are told which account blocks the name.
+	if !isSystemAdmin(a.pluginAPI, userID) {
+		return fmt.Errorf("username %q is unavailable because another account already uses it. If that is an unused bot account, a system admin can permanently delete it and its history to make the username available", username)
+	}
+
 	email := model.UserFromBot(&model.Bot{Username: username}).Email
 	holder, err := a.pluginAPI.User.GetByUsername(username)
 	if err != nil {

@@ -497,11 +497,13 @@ func TestCreateAgentUsernameConflict(t *testing.T) {
 	emailTaken := model.NewAppError("CreateBot", "app.user.save.email_exists.app_error", nil, "", http.StatusBadRequest)
 
 	tests := []struct {
-		name          string
-		createBotErr  *model.AppError
-		usernameOwner *model.User
-		emailOwner    *model.User
-		wantContains  []string
+		name            string
+		nonAdmin        bool
+		createBotErr    *model.AppError
+		usernameOwner   *model.User
+		emailOwner      *model.User
+		wantContains    []string
+		wantNotContains []string
 	}{
 		{
 			name:          "deactivated bot holds the username",
@@ -540,6 +542,14 @@ func TestCreateAgentUsernameConflict(t *testing.T) {
 			createBotErr: emailTaken,
 			wantContains: []string{`username "my-agent" is already taken`},
 		},
+		{
+			name:            "non-admin is not told which account blocks the username",
+			nonAdmin:        true,
+			createBotErr:    emailTaken,
+			emailOwner:      &model.User{Id: "renamedbotid", Username: "my-agent-old", IsBot: true, DeleteAt: 1},
+			wantContains:    []string{`username "my-agent" is unavailable`, "system admin can permanently delete"},
+			wantNotContains: []string{"my-agent-old", "@localhost", "deactivated"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -549,6 +559,7 @@ func TestCreateAgentUsernameConflict(t *testing.T) {
 
 			mockLicensed(e.mockAPI)
 			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOwnAgent).Return(true)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(!tt.nonAdmin)
 			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
 			e.mockAPI.On("CreateBot", mock.AnythingOfType("*model.Bot")).Return(nil, tt.createBotErr)
 			if tt.usernameOwner != nil {
@@ -567,6 +578,13 @@ func TestCreateAgentUsernameConflict(t *testing.T) {
 			msg := decodeAgentError(t, recorder)
 			for _, want := range tt.wantContains {
 				assert.Contains(t, msg, want)
+			}
+			for _, unwanted := range tt.wantNotContains {
+				assert.NotContains(t, msg, unwanted)
+			}
+			if tt.nonAdmin {
+				e.mockAPI.AssertNotCalled(t, "GetUserByUsername", mock.Anything)
+				e.mockAPI.AssertNotCalled(t, "GetUserByEmail", mock.Anything)
 			}
 			assert.Empty(t, e.agentStore.agents)
 		})
