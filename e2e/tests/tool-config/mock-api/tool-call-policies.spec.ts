@@ -905,7 +905,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const shareButton = rhs.getByRole('button', {name: /^share$/i});
         await expect(shareButton).toBeVisible({timeout: 30000});
         await expect(rhs.getByRole('button', {name: /keep private/i})).toBeVisible();
-        await page.waitForLoadState('networkidle');
+        expect(await openAIMock.countRequestsContaining(toolCallID)).toBe(0);
         await expect(rhs.getByText(followUpMarker)).not.toBeVisible();
 
         await shareButton.click();

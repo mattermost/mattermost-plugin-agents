@@ -82,6 +82,19 @@ export class OpenAIMockContainer {
 		await this.container.stop()
 	}
 
+	/**
+	 * Count requests Smocker has received (current session) whose request
+	 * (not the mocked response) contains `substring`.
+	 */
+	countRequestsContaining = async (substring: string): Promise<number> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/history`);
+		if (!response.ok) {
+			throw new Error(`Failed to read mock history: ${response.status} ${response.statusText}`);
+		}
+		const history: Array<{request?: unknown}> = await response.json();
+		return history.filter((entry) => JSON.stringify(entry.request ?? {}).includes(substring)).length;
+	}
+
 	resetMocks = async (attempt = 0): Promise<void> => {
 		const maxAttempts = 5;
 
