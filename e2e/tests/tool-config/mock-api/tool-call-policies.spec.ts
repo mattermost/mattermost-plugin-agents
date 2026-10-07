@@ -219,7 +219,8 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
         const followUpTextSSE = buildTextResponse('Here is the post content you requested.');
 
         // Register both mocks together: the tool-call mock (matches first request)
-        // and the text follow-up (for after tool execution).
+        // and the text follow-up (matched by the tool call ID, so it is only served
+        // after the tool executed).
         // Using addMocks to send both in a single request since addMock resets.
         await openAIMock.addMocks([
             {
@@ -248,7 +249,7 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
                     path: '/v1/chat/completions',
                     body: {
                         matcher: 'ShouldContainSubstring',
-                        value: 'You are called Tool Test Bot with the username toolbot',
+                        value: 'call_001',
                     },
                 },
                 context: {
