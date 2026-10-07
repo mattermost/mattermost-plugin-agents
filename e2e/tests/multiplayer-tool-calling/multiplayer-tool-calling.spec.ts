@@ -107,20 +107,6 @@ async function openLatestThread(page: Page, timeout: number = 30000): Promise<vo
     await expect(page.locator('#rhsContainer')).toBeVisible({timeout: 10000});
 }
 
-async function waitForButtonInThread(page: Page, buttonName: string, timeout: number = 120000, throwOnTimeout: boolean = true): Promise<boolean> {
-    const button = page.locator('#rhsContainer').getByRole('button', {name: buttonName, exact: true}).first();
-
-    try {
-        await button.waitFor({state: 'visible', timeout});
-        return true;
-    } catch {
-        if (throwOnTimeout) {
-            throw new Error(`Timeout waiting for '${buttonName}' button in thread`);
-        }
-        return false;
-    }
-}
-
 async function waitForAnyButtonInThread(
     page: Page,
     buttonNames: string[],
@@ -188,8 +174,13 @@ async function completeOneToolCallRound(page: Page, action: 'accept-share' | 'ac
             return true;
         }
 
-        await clickAllButtonsInThread(page, 'Accept');
-        await waitForButtonInThread(page, 'Share', 120000);
+        const rhs = page.locator('#rhsContainer');
+        await expect(async () => {
+            if (await rhs.getByRole('button', {name: 'Accept', exact: true}).first().isVisible().catch(() => false)) {
+                await clickAllButtonsInThread(page, 'Accept');
+            }
+            await expect(rhs.getByRole('button', {name: 'Share', exact: true}).first()).toBeVisible({timeout: 20000});
+        }).toPass({timeout: 120000});
     }
 
     if (action === 'accept-share' || action === 'reject') {
