@@ -278,14 +278,15 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             'toolbot',
         );
 
-        // Send message to trigger tool call
-        await mmPage.sendChannelMessage('Please read post test123');
+        // Send message to trigger tool call; the bot's DM turn renders in the thread (RHS)
+        await mentionBotAndOpenThread(page, mmPage, 'toolbot', seededMessage);
 
         // With auto_run, the tool executes and the follow-up renders without any Accept/Reject prompt
-        await expect(page.getByText('Here is the post content you requested.')).toBeVisible({timeout: 30000});
+        const rhs = page.locator('#rhsContainer');
+        await expect(rhs.getByText('Here is the post content you requested.')).toBeVisible({timeout: 45000});
 
         // Verify no approval prompt appears for auto_run tool
-        const acceptButton = page.getByRole('button', { name: /accept/i });
+        const acceptButton = rhs.getByRole('button', { name: /accept/i });
         const isAcceptVisible = await acceptButton.isVisible().catch(() => false);
 
         // If auto_run is properly configured, no approval should be needed
