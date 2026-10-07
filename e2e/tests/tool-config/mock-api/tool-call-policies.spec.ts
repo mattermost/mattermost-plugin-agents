@@ -278,8 +278,11 @@ test.describe('Tool Call Policies (Mocked LLM)', () => {
             'toolbot',
         );
 
-        // Send message to trigger tool call; the bot's DM turn renders in the thread (RHS)
-        await mentionBotAndOpenThread(page, mmPage, 'toolbot', seededMessage);
+        // Send a plain DM (an @mention would route through the mention path, where
+        // auto_run_in_dm tools still need approval); the bot's turn renders in the thread (RHS)
+        await mmPage.sendChannelMessage(seededMessage);
+        const sentPost = await waitForSentPost(page, seededMessage, 30000);
+        await openThreadForPost(sentPost, 30000);
 
         // With auto_run, the tool executes and the follow-up renders without any Accept/Reject prompt
         const rhs = page.locator('#rhsContainer');
