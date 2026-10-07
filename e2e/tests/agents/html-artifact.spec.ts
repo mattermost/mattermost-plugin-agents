@@ -75,6 +75,32 @@ async function openArtifactInBotDM(page: Page, mattermost: MattermostContainer):
     return {botPost, card, iframe};
 }
 
+/**
+ * Asserts the card header layout: the action buttons share the file name's
+ * row, and the safety notice is either on that row or entirely below it,
+ * never wrapped in between. Returns whether the notice is on its own row.
+ */
+async function expectHeaderLayout(card: Locator): Promise<boolean> {
+    const nameBox = await card.getByTestId('html-artifact-file-name').boundingBox();
+    const buttonBox = await card.getByTestId('html-artifact-open-fullscreen').boundingBox();
+    const reloadBox = await card.getByTestId('html-artifact-reload').boundingBox();
+    const noticeBox = await card.getByTestId('html-artifact-notice').boundingBox();
+    expect(nameBox && buttonBox && reloadBox && noticeBox).toBeTruthy();
+    const nameMid = nameBox!.y + (nameBox!.height / 2);
+    expect(Math.abs((buttonBox!.y + (buttonBox!.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
+    expect(Math.abs((reloadBox!.y + (reloadBox!.height / 2)) - nameMid)).toBeLessThanOrEqual(4);
+    const noticeMid = noticeBox!.y + (noticeBox!.height / 2);
+    const inline = Math.abs(noticeMid - nameMid) <= 4;
+    const below = noticeBox!.y >= Math.max(nameBox!.y + nameBox!.height, buttonBox!.y + buttonBox!.height) - 1;
+    expect(inline || below).toBe(true);
+    if (inline) {
+        // On the first row the notice sits between the name and the buttons.
+        expect(noticeBox!.x).toBeGreaterThanOrEqual(nameBox!.x + nameBox!.width);
+        expect(noticeBox!.x + noticeBox!.width).toBeLessThanOrEqual(buttonBox!.x);
+    }
+    return !inline;
+}
+
 /** Sends `prompt` to the bot in the Agents RHS and returns the inline artifact iframe in the reply. */
 async function askForArtifact(page: Page, mattermost: MattermostContainer, aimock: AIMockContainer, prompt: string): Promise<{botPost: Locator; iframe: Locator}> {
     await aimock.setFixtures(mergeFixtureFiles(
@@ -195,6 +221,7 @@ test.describe('HTML artifacts', () => {
         const rhsFrame = iframe.contentFrame();
         await expect(rhsFrame.getByRole('heading', {name: 'Sprint 42 dashboard'})).toBeVisible({timeout: 30000});
         await expect(rhsFrame.getByTestId('stat-completed')).toHaveText('34');
+        expect(await expectHeaderLayout(rhsCard)).toBe(true);
         await scrollToTop(rhsCard);
         await shot(page, '01-inline-card-rhs');
 
@@ -207,7 +234,25 @@ test.describe('HTML artifacts', () => {
 
         // Inline height follows the content: no inner scrollbar.
         await expect.poll(async () => frame.locator('html').evaluate((el) => el.scrollHeight - el.clientHeight), {timeout: 10000}).toBeLessThanOrEqual(1);
+        expect(await expectHeaderLayout(center.card)).toBe(false);
         await shot(page, '01-inline-card');
+
+        // Intermediate widths (e.g. a narrow window or the RHS open): the
+        // header never wraps the notice in between the name and the buttons.
+        for (const width of [1100, 1000, 900, 820, 760]) {
+            await page.setViewportSize({width, height: 900});
+            await page.waitForTimeout(200);
+            await expectHeaderLayout(center.card);
+        }
+        await page.setViewportSize({width: 860, height: 900});
+        const midWidth = (await center.card.boundingBox())!.width;
+        expect(midWidth).toBeGreaterThan(400);
+        expect(midWidth).toBeLessThan(640);
+        expect(await expectHeaderLayout(center.card)).toBe(true);
+        await scrollToTop(center.botPost);
+        await shot(page, '07-inline-card-mid');
+        await page.setViewportSize({width: 1440, height: 900});
+        await scrollToTop(center.botPost);
 
         // getCurrentUser → host-side consent prompt (not a browser dialog).
         await frame.getByRole('button', {name: 'Say hello'}).click();

@@ -16,7 +16,7 @@ const FULL_SENTENCE = 'AI-generated content. Never enter passwords or sensitive 
 describe('ArtifactNotice', () => {
     it.each([
         {name: 'always inline (fullscreen)', wrapBelowPx: 0},
-        {name: 'wraps to its own row when narrow (inline card)', wrapBelowPx: 400},
+        {name: 'wraps to its own row when narrow (inline card)', wrapBelowPx: 640},
     ])('shows the full warning text: $name', ({wrapBelowPx}) => {
         render(<ArtifactNotice wrapBelowPx={wrapBelowPx}/>);
 

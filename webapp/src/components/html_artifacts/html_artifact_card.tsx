@@ -53,30 +53,32 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
                     />
                 </TagSlot>
                 <Spacer/>
-                <ArtifactNotice wrapBelowPx={NOTICE_WRAP_PX}/>
-                <IconButton
-                    size='x-small'
-                    icon={<Icon glyph={<ArrowExpandIcon/>}/>}
-                    aria-label={fullscreenLabel}
-                    title={fullscreenLabel}
-                    onClick={() => setFullscreen(true)}
-                    data-testid='html-artifact-open-fullscreen'
-                />
-                <IconButton
-                    size='x-small'
-                    icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
-                    aria-label={downloadLabel}
-                    title={downloadLabel}
-                    onClick={() => downloadArtifact(fileId)}
-                />
-                <IconButton
-                    size='x-small'
-                    icon={<Icon glyph={<RefreshIcon/>}/>}
-                    aria-label={reloadLabel}
-                    title={reloadLabel}
-                    onClick={() => frameRef.current?.reload()}
-                    data-testid='html-artifact-reload'
-                />
+                <ArtifactNotice wrapBelowPx={NARROW_CARD_PX}/>
+                <Actions>
+                    <IconButton
+                        size='x-small'
+                        icon={<Icon glyph={<ArrowExpandIcon/>}/>}
+                        aria-label={fullscreenLabel}
+                        title={fullscreenLabel}
+                        onClick={() => setFullscreen(true)}
+                        data-testid='html-artifact-open-fullscreen'
+                    />
+                    <IconButton
+                        size='x-small'
+                        icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                        aria-label={downloadLabel}
+                        title={downloadLabel}
+                        onClick={() => downloadArtifact(fileId)}
+                    />
+                    <IconButton
+                        size='x-small'
+                        icon={<Icon glyph={<RefreshIcon/>}/>}
+                        aria-label={reloadLabel}
+                        title={reloadLabel}
+                        onClick={() => frameRef.current?.reload()}
+                        data-testid='html-artifact-reload'
+                    />
+                </Actions>
             </Header>
             <ArtifactFrame
                 ref={frameRef}
@@ -98,12 +100,12 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
 
 export default HTMLArtifactCard;
 
-// Narrower than this (e.g. the Agents RHS), the file name gets the room.
-const NARROW_CARD_PX = 440;
-
-// Narrower than this, the safety notice moves to its own row under the file
-// name and buttons, so the file name keeps its room.
-const NOTICE_WRAP_PX = 400;
+// Narrower than this (e.g. the Agents RHS, or a center-channel card with the
+// RHS open), the single-row header (icon, name, Interactive tag, notice,
+// buttons; ~610px with a typical name) would not fit comfortably. The header
+// then becomes two rows: icon, name and buttons on the first, the safety
+// notice full-width on the second, and the Interactive tag is hidden.
+const NARROW_CARD_PX = 640;
 
 const Card = styled.div`
     container-type: inline-size;
@@ -118,8 +120,14 @@ const Header = styled.div`
     display: flex;
     align-items: center;
     gap: 6px;
-    flex-wrap: wrap;
-    row-gap: 0;
+    flex-wrap: nowrap;
+
+    /* Wrap only in the two-row layout, never from preferred sizes. */
+    @container (max-width: ${NARROW_CARD_PX}px) {
+        flex-wrap: wrap;
+        row-gap: 0;
+    }
+
     min-height: 40px;
     padding: 4px 8px 4px 12px;
     border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
@@ -139,7 +147,7 @@ const TagSlot = styled.span`
 const FileName = styled.span`
     flex: 0 1 auto;
 
-    @container (max-width: ${NOTICE_WRAP_PX}px) {
+    @container (max-width: ${NARROW_CARD_PX}px) {
         /* Zero basis: a long name ellipsizes instead of wrapping the buttons. */
         flex: 1 1 0;
     }
@@ -158,7 +166,14 @@ const Spacer = styled.div`
     flex: 1;
     min-width: 4px;
 
-    @container (max-width: ${NOTICE_WRAP_PX}px) {
+    @container (max-width: ${NARROW_CARD_PX}px) {
         display: none;
     }
+`;
+
+const Actions = styled.span`
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
 `;
