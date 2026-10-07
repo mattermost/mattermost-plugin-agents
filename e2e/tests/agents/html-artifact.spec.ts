@@ -22,6 +22,10 @@ import {
     ONYX_THEME,
     SPRINT_DASHBOARD_FILE_NAME,
     SPRINT_DASHBOARD_HTML,
+    SELF_NAVIGATING_FILE_NAME,
+    SELF_NAVIGATING_HTML,
+    SELF_NAVIGATION_IMPOSTOR_HTML,
+    SELF_NAVIGATION_TARGET,
     artifactIframes,
     setHTMLArtifactsEnabled,
     setUserTheme,
@@ -218,6 +222,54 @@ test.describe('HTML artifacts', () => {
         // The probe is visually hidden; its text content is still asserted.
         await expect(netResult).toContainText('network: blocked', {timeout: 30000});
         await expect(netResult).not.toContainText('LEAKED');
+    });
+
+    // Self-navigation of a sandboxed frame cannot be blocked (CSP and the
+    // Navigation API do not cover opaque-origin frames), so the request does
+    // go out. What the host guarantees: it does not remount (which would
+    // re-run the navigation), and the replacement page gets no broker access.
+    test('self-navigating artifact is unloaded and its replacement gets no access', async ({page}) => {
+        test.setTimeout(300000);
+        const targetRequests: string[] = [];
+        await page.context().route(`${SELF_NAVIGATION_TARGET}**`, (route) => {
+            targetRequests.push(route.request().url());
+            return route.fulfill({contentType: 'text/html', body: SELF_NAVIGATION_IMPOSTOR_HTML});
+        });
+        let artifactRequests = 0;
+        page.on('request', (req) => {
+            if (req.url().includes('/plugins/mattermost-ai/artifacts/')) {
+                artifactRequests++;
+            }
+        });
+
+        const prompt = `self navigating artifact ${Date.now()}`;
+        await aimock.setFixtures(mergeFixtureFiles(
+            {fixtures: [buildTitleFixture('Navigator')]},
+            buildCreateFileSequence({
+                userPrompt: prompt,
+                fileName: SELF_NAVIGATING_FILE_NAME,
+                fileContent: SELF_NAVIGATING_HTML,
+                finalText: 'Here is the navigator.',
+                toolCallId: `call_html_artifact_nav_${Date.now()}`,
+            }),
+        ));
+        await new MattermostPage(page).login(mattermost.url(), username, password);
+        const aiPlugin = new AIPlugin(page);
+        await aiPlugin.openRHS();
+        await aiPlugin.sendMessage(prompt);
+        const botPost = page.getByTestId('mattermost-ai-rhs').locator('[data-testid="llm-bot-post"]').last();
+        await expect(botPost.getByText('Here is the navigator.')).toBeVisible({timeout: 120000});
+
+        const stopped = botPost.getByTestId('html-artifact-navigation-stopped');
+        await expect(stopped).toBeVisible({timeout: 30000});
+        await expect(artifactIframes(botPost)).toHaveCount(0);
+
+        // Give a remount, or the impostor's consent request, time to show up.
+        await page.waitForTimeout(2000);
+        expect(artifactRequests).toBe(1);
+        expect(targetRequests.length).toBeLessThanOrEqual(1);
+        await expect(page.getByTestId('html-artifact-consent')).toHaveCount(0);
+        await expect(stopped).toBeVisible();
     });
 
     test('inline card in a dark theme', async ({page}) => {

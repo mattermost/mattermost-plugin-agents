@@ -23,6 +23,14 @@ interface Props {
 
 const FOCUSABLE = 'button, [href], iframe, [tabindex]:not([tabindex="-1"])';
 
+function focusableControls(root: HTMLElement | null): HTMLElement[] {
+    if (!root) {
+        return [];
+    }
+    return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).
+        filter((el) => !el.hasAttribute('disabled') && !el.hasAttribute('data-focus-sentinel'));
+}
+
 const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
     const intl = useIntl();
     const rootRef = useRef<HTMLDivElement>(null);
@@ -41,32 +49,14 @@ const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
         const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         closeRef.current?.focus();
 
+        // Tab wrapping is done by the focus sentinels below: a keydown check
+        // cannot see Tab presses inside the artifact, so tabbing past its
+        // last control would otherwise leave the dialog.
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 e.preventDefault();
                 e.stopPropagation();
                 onCloseRef.current();
-                return;
-            }
-            const root = rootRef.current;
-            if (e.key !== 'Tab' || !root) {
-                return;
-            }
-            const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).
-                filter((el) => !el.hasAttribute('disabled'));
-            if (focusables.length === 0) {
-                return;
-            }
-            const first = focusables[0];
-            const last = focusables[focusables.length - 1];
-            const active = document.activeElement;
-            const outside = !root.contains(active);
-            if (e.shiftKey && (active === first || outside)) {
-                e.preventDefault();
-                last.focus();
-            } else if (!e.shiftKey && (active === last || outside)) {
-                e.preventDefault();
-                first.focus();
             }
         };
         document.addEventListener('keydown', onKeyDown, true);
@@ -75,6 +65,9 @@ const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
             previousFocus?.focus?.({preventScroll: true});
         };
     }, []);
+
+    const focusFirst = () => focusableControls(rootRef.current)[0]?.focus();
+    const focusLast = () => focusableControls(rootRef.current).at(-1)?.focus();
 
     const downloadLabel = intl.formatMessage({defaultMessage: 'Download'});
     const closeLabel = intl.formatMessage({defaultMessage: 'Close'});
@@ -88,6 +81,12 @@ const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
             aria-label={fileName}
             data-testid='html-artifact-fullscreen'
         >
+            <FocusSentinel
+                tabIndex={0}
+                data-focus-sentinel='start'
+                data-testid='html-artifact-fullscreen-sentinel-start'
+                onFocus={focusLast}
+            />
             <Header>
                 <Icon
                     size='20'
@@ -135,6 +134,12 @@ const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
                     onEscape={onClose}
                 />
             </Body>
+            <FocusSentinel
+                tabIndex={0}
+                data-focus-sentinel='end'
+                data-testid='html-artifact-fullscreen-sentinel-end'
+                onFocus={focusFirst}
+            />
         </Root>,
         document.body,
     );
@@ -196,5 +201,15 @@ const Title = styled.h2`
     font-weight: 600;
     line-height: 24px;
     text-overflow: ellipsis;
+    white-space: nowrap;
+`;
+
+// Invisible tab stops at both ends of the dialog that send focus back inside.
+const FocusSentinel = styled.div`
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
     white-space: nowrap;
 `;

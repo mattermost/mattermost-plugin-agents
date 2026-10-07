@@ -658,8 +658,8 @@ Security model:
 
 Known limitation: artifacts are not fully isolated from the network. Two egress paths remain that CSP cannot close:
 
-- An artifact can navigate its own frame to an external URL. CSP cannot block this. The webapp detects the self-navigation and resets the frame, but by then the request (including anything encoded in the URL) has already been sent.
-- An artifact can use WebRTC, which Chromium-based browsers do not govern with CSP.
+- An artifact can navigate its own frame to an external URL (link, `location` change, meta refresh). Neither CSP nor the iframe sandbox can block this, and the Navigation API's `navigate` event is not fired in opaque-origin (sandboxed) documents, so the artifact cannot be stopped from inside either. When the webapp sees the frame load a second time it stops answering the frame and unloads it, but by then the request (including anything encoded in the URL) has already been sent. If the artifact replaces itself before it finishes loading, the webapp sees only one load and cannot tell the replacement page from the artifact, so that page can use the `window.mattermost` API (including asking for profile consent) as if it were the artifact.
+- An artifact can use WebRTC, which is not governed by CSP or the iframe sandbox.
 
 As a result, anything in the artifact's own content and any data it received from the `window.mattermost` API could be exfiltrated. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that deliberately leaks it. The feature is off by default; enable it only where this risk is acceptable.
 

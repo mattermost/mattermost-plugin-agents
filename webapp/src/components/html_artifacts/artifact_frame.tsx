@@ -9,9 +9,8 @@ import styled, {css} from 'styled-components';
 import {GlobalState} from '@mattermost/types/store';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
-import {AlertCircleOutlineIcon, CloseIcon, RefreshIcon} from '@mattermost/compass-icons/components';
+import {AlertCircleOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
 import {artifactURL} from '@/client';
 
@@ -30,10 +29,6 @@ export const MIN_INLINE_HEIGHT = 120;
 export const MAX_INLINE_HEIGHT = 600;
 export const DEFAULT_INLINE_HEIGHT = 320;
 const READY_TIMEOUT_MS = 10000;
-
-// Automatic resets after the artifact navigates its own frame, per mount (and
-// per manual reload). More would let a self-reloading artifact fetch forever.
-export const MAX_AUTO_RESETS = 1;
 
 export function clampInlineHeight(height: number): number {
     return Math.min(MAX_INLINE_HEIGHT, Math.max(MIN_INLINE_HEIGHT, Math.ceil(height)));
@@ -65,13 +60,12 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     const intl = useIntl();
     const iframeRef = useRef<HTMLIFrameElement>(null);
 
-    // Bumping loadKey remounts the iframe, which is the only host-initiated load.
+    // Bumping loadKey remounts the iframe (with a fresh broker), which is the
+    // only host-initiated load.
     const [loadKey, setLoadKey] = useState(0);
     const loadCountRef = useRef(0);
     const [status, setStatus] = useState<Status>('loading');
     const [height, setHeight] = useState(DEFAULT_INLINE_HEIGHT);
-    const [navigationBlocked, setNavigationBlocked] = useState(false);
-    const autoResetsRef = useRef(0);
     const [navigationStopped, setNavigationStopped] = useState(false);
     const [pendingConsent, setPendingConsent] = useState<PendingConsent | null>(null);
 
@@ -119,7 +113,10 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         onReady: () => setStatus('ready'),
         onResize: (h) => setHeight(clampInlineHeight(h)),
         onEscape: () => onEscapeRef.current?.(),
-    }), [fileId]);
+
+    // loadKey: every host load gets its own broker, so a disposed one is never reused.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }), [fileId, loadKey]);
 
     useEffect(() => {
         window.addEventListener('message', broker.handleMessage);
@@ -147,20 +144,13 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
             }
         }, READY_TIMEOUT_MS);
         return () => window.clearTimeout(timer);
-    }, [broker, loadKey]);
+    }, [broker]);
 
-    const remount = useCallback(() => {
+    const reload = useCallback(() => {
+        setNavigationStopped(false);
         setHeight(DEFAULT_INLINE_HEIGHT);
         setLoadKey((k) => k + 1);
     }, []);
-
-    // A viewer-initiated reload also re-arms the navigation guard.
-    const reload = useCallback(() => {
-        autoResetsRef.current = 0;
-        setNavigationStopped(false);
-        setNavigationBlocked(false);
-        remount();
-    }, [remount]);
 
     useImperativeHandle(ref, () => ({reload}), [reload]);
 
@@ -170,20 +160,15 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
             return;
         }
 
-        // The artifact navigated its own frame (reload, meta refresh, link).
-        if (autoResetsRef.current < MAX_AUTO_RESETS) {
-            autoResetsRef.current += 1;
-            setNavigationBlocked(true);
-            remount();
-            return;
-        }
-
-        // It keeps doing so: unload it rather than fetching in a loop.
-        setNavigationBlocked(false);
-        setNavigationStopped(true);
+        // The artifact navigated its own frame (reload, meta refresh, link):
+        // whatever is in the frame now is not the artifact we served. Stop
+        // answering it at once and unload it; remounting would only re-run
+        // the same navigation. Unanswered prompts are dropped undecided.
+        broker.dispose();
         pendingConsentRef.current?.reject();
         setPendingConsent(null);
-    }, [remount]);
+        setNavigationStopped(true);
+    }, [broker]);
 
     const handleError = useCallback(() => setStatus('error'), []);
 
@@ -198,6 +183,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         <Container
             $displayMode={displayMode}
             $height={height}
+            $consentShown={Boolean(pendingConsent)}
             data-testid='html-artifact-frame'
         >
             {!navigationStopped && (
@@ -220,7 +206,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                             size='20'
                             glyph={<AlertCircleOutlineIcon/>}
                         />
-                        <FormattedMessage defaultMessage='This artifact kept trying to navigate away and was stopped.'/>
+                        <FormattedMessage defaultMessage='This artifact tried to navigate away and was stopped.'/>
                         <Button
                             emphasis='tertiary'
                             size='x-small'
@@ -259,20 +245,6 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     </ErrorBox>
                 </Overlay>
             )}
-            {navigationBlocked && (
-                <Notice role='status'>
-                    <NoticeText>
-                        <FormattedMessage defaultMessage='This artifact tried to navigate away and was stopped.'/>
-                    </NoticeText>
-                    <IconButton
-                        size='x-small'
-                        icon={<Icon glyph={<CloseIcon/>}/>}
-                        aria-label={intl.formatMessage({defaultMessage: 'Dismiss'})}
-                        title={intl.formatMessage({defaultMessage: 'Dismiss'})}
-                        onClick={() => setNavigationBlocked(false)}
-                    />
-                </Notice>
-            )}
             {pendingConsent && (
                 <ArtifactConsentPrompt
                     fileName={fileName}
@@ -288,12 +260,16 @@ ArtifactFrame.displayName = 'ArtifactFrame';
 
 export default ArtifactFrame;
 
-const Container = styled.div<{$displayMode: DisplayMode; $height: number}>`
+// Tall enough for the consent prompt, which would otherwise be clipped by a
+// short inline frame.
+export const CONSENT_MIN_HEIGHT = 240;
+
+const Container = styled.div<{$displayMode: DisplayMode; $height: number; $consentShown: boolean}>`
     position: relative;
     width: 100%;
     background: var(--center-channel-bg);
     ${(props) => (props.$displayMode === 'inline' ? css`
-        height: ${props.$height}px;
+        height: ${props.$consentShown ? Math.max(props.$height, CONSENT_MIN_HEIGHT) : props.$height}px;
         transition: height 0.15s ease-out;
     ` : css`
         flex: 1;
@@ -332,25 +308,4 @@ const ErrorBox = styled.div`
     > :first-child {
         color: var(--error-text);
     }
-`;
-
-const Notice = styled.div`
-    position: absolute;
-    top: 8px;
-    left: 8px;
-    right: 8px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 8px 6px 12px;
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
-    border-radius: 4px;
-    background: var(--center-channel-bg);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.12);
-    color: var(--center-channel-color);
-    font-size: 12px;
-`;
-
-const NoticeText = styled.span`
-    flex: 1;
 `;

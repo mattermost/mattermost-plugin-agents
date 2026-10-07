@@ -93,7 +93,7 @@ func artifactBridgeInsertPos(doc []byte) int {
 			i = saved
 			continue
 		}
-		end := bytes.IndexByte(doc[i:], '>')
+		end := tagEnd(doc[i:])
 		if end < 0 {
 			i = saved
 			break
@@ -101,6 +101,33 @@ func artifactBridgeInsertPos(doc []byte) int {
 		i += end + 1
 	}
 	return i
+}
+
+// tagEnd returns the index of the '>' that closes the start tag at the
+// beginning of b, skipping '>' inside quoted attribute values, or -1. Quotes
+// only delimit a value directly after '=' (optionally separated by
+// whitespace), matching the HTML tokenizer. The doctype is not scanned with
+// this: a '>' ends a doctype even inside a quoted identifier.
+func tagEnd(b []byte) int {
+	for j := 0; j < len(b); j++ {
+		switch b[j] {
+		case '>':
+			return j
+		case '=':
+			k := j + 1
+			for k < len(b) && (b[k] == ' ' || b[k] == '\t' || b[k] == '\n' || b[k] == '\r' || b[k] == '\f') {
+				k++
+			}
+			if k < len(b) && (b[k] == '"' || b[k] == '\'') {
+				closeQuote := bytes.IndexByte(b[k+1:], b[k])
+				if closeQuote < 0 {
+					return -1
+				}
+				j = k + 1 + closeQuote
+			}
+		}
+	}
+	return -1
 }
 
 // hasTagPrefixFold reports whether b starts with tag (case-insensitive)

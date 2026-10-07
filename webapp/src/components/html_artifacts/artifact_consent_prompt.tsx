@@ -28,10 +28,17 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
     const pressedRef = useRef(new Set<string>());
 
     // Focus the safe choice so a stray Enter never grants access.
+    // Focus returns to where it was once the prompt goes away.
     useEffect(() => {
+        const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         denyRef.current?.focus({preventScroll: true});
         const timer = window.setTimeout(() => setArmed(true), CONSENT_ARM_DELAY_MS);
-        return () => window.clearTimeout(timer);
+        return () => {
+            window.clearTimeout(timer);
+            if (previous?.isConnected) {
+                previous.focus({preventScroll: true});
+            }
+        };
     }, []);
 
     const guarded = useCallback((key: string, action: () => void) => (e: React.MouseEvent) => {
@@ -113,13 +120,15 @@ const Backdrop = styled.div`
     position: absolute;
     inset: 0;
     display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 16px;
+    overflow: auto;
     background: rgba(var(--center-channel-color-rgb), 0.32);
 `;
 
+// margin: auto centers the dialog but keeps it scrollable when it is taller
+// than the frame (a very long file name).
 const Dialog = styled.div`
+    margin: auto;
     max-width: 400px;
     padding: 16px 20px;
     border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);

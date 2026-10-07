@@ -257,6 +257,26 @@ func TestInjectArtifactBridge(t *testing.T) {
 			want: "<!doctype html><HEAD>" + bridge + "<script>a()</script></HEAD>",
 		},
 		{
+			name: "gt inside double-quoted html attribute",
+			doc:  `<html data-note="a > b"><head><script>a()</script></head></html>`,
+			want: `<html data-note="a > b"><head>` + bridge + "<script>a()</script></head></html>",
+		},
+		{
+			name: "gt inside single-quoted head attribute",
+			doc:  `<html><head data-x = 'x>"y'><script>a()</script></head></html>`,
+			want: `<html><head data-x = 'x>"y'>` + bridge + "<script>a()</script></head></html>",
+		},
+		{
+			name: "quote not after equals does not open a value",
+			doc:  `<html a"b><head><script>a()</script></head></html>`,
+			want: `<html a"b><head>` + bridge + "<script>a()</script></head></html>",
+		},
+		{
+			name: "unterminated quoted attribute",
+			doc:  `<html data-x="a><script>a()</script>`,
+			want: bridge + `<html data-x="a><script>a()</script>`,
+		},
+		{
 			name: "neither tag",
 			doc:  "<div>hi</div><script>a()</script>",
 			want: bridge + "<div>hi</div><script>a()</script>",
