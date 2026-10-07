@@ -40,7 +40,7 @@ const (
 	htmlArtifactDescription = " HTML files (.html) are rendered as interactive, sandboxed artifacts inline in the conversation. " +
 		"They must be fully self-contained: inline all CSS and JavaScript, and do not reference external URLs: external scripts, stylesheets, fonts and images will not load, and network requests (fetch, XHR, WebSocket) will not work. " +
 		"To match the viewer's theme, use CSS variables such as --mm-center-channel-bg, --mm-center-channel-color, --mm-button-bg, --mm-button-color and --mm-link-color. " +
-		"Scripts may call `await window.mattermost.getCurrentUser()` to get the viewer's name, username and locale; the viewer is asked for consent, so handle a rejected promise."
+		"Scripts may call `await window.mattermost.getCurrentUser()` to get the viewer's name (firstName, lastName, nickname, displayName) and username; the viewer is asked for consent, so handle a rejected promise."
 
 	// createFileResultNote reminds the model not to duplicate attached content.
 	createFileResultNote = "Attached to your reply automatically — do not repeat the file's content in your response text."

@@ -11,6 +11,7 @@ import {getArtifactToken} from '@/client';
 import {resetConsentStore} from './artifact_broker';
 import ArtifactConsentPrompt, {CONSENT_ARM_DELAY_MS} from './artifact_consent_prompt';
 import ArtifactFrame from './artifact_frame';
+import HTMLArtifactCard from './html_artifact_card';
 import HTMLArtifactFullscreen from './html_artifact_fullscreen';
 import {resetArtifactTokenCache} from './artifact_token';
 
@@ -60,7 +61,7 @@ beforeEach(() => {
     resetConsentStore();
     resetArtifactTokenCache();
     mockGetToken.mockReset();
-    mockGetToken.mockResolvedValue(TOKEN);
+    mockGetToken.mockResolvedValue({token: TOKEN, tooLarge: false});
 });
 
 afterEach(() => {
@@ -146,17 +147,27 @@ describe('ArtifactFrame bridge token', () => {
     }
 
     test('shows loading and no frame until the token arrives', async () => {
-        let resolve: (t: string) => void = () => {}; // eslint-disable-line no-empty-function
-        mockGetToken.mockReturnValue(new Promise<string>((r) => {
+        let resolve: (t: {token: string; tooLarge: boolean}) => void = () => {}; // eslint-disable-line no-empty-function
+        mockGetToken.mockReturnValue(new Promise((r) => {
             resolve = r;
         }));
         renderFrame();
         expect(iframe()).toBeNull();
         expect(screen.getByLabelText('Loading artifact')).toBeTruthy();
         await act(async () => {
-            resolve(TOKEN);
+            resolve({token: TOKEN, tooLarge: false});
         });
         expect(iframe()).not.toBeNull();
+    });
+
+    test('shows a download prompt instead of loading a too-large artifact', async () => {
+        mockGetToken.mockResolvedValueOnce({token: TOKEN, tooLarge: true});
+        renderFrame();
+        await flushToken();
+        expect(iframe()).toBeNull();
+        expect(screen.queryByLabelText('Loading artifact')).toBeNull();
+        expect(screen.getByRole('alert').textContent).toContain('too large to preview');
+        expect(screen.getByRole('button', {name: 'Download'})).toBeTruthy();
     });
 
     test('shows the error state on token failure and retries', async () => {
@@ -341,5 +352,30 @@ describe('HTMLArtifactFullscreen focus sentinels', () => {
             screen.getByTestId('html-artifact-fullscreen-sentinel-end').focus();
         });
         expect(document.activeElement).toBe(screen.getByRole('button', {name: 'Reload'}));
+    });
+});
+
+describe('artifact safety notice', () => {
+    test.each([
+        {name: 'inline card', fileName: 'card.html', fullscreen: false},
+        {name: 'fullscreen viewer', fileName: 'full.html', fullscreen: true},
+    ])('$name always shows the notice outside the frame', async ({fileName, fullscreen}) => {
+        render(withProviders(fullscreen ? (
+            <HTMLArtifactFullscreen
+                fileId='abcdefghijklmnopqrstuvwxyz'
+                fileName={fileName}
+                onClose={jest.fn()}
+            />
+        ) : (
+            <HTMLArtifactCard
+                fileId='abcdefghijklmnopqrstuvwxyz'
+                fileName={fileName}
+            />
+        )));
+        await flushToken();
+        const notice = screen.getByRole('note');
+        expect(notice.getAttribute('aria-label')).toMatch(/AI-generated.*Never enter passwords/);
+        expect(notice.textContent).toContain('Don\'t enter passwords');
+        expect(screen.getByTestId('html-artifact-frame').contains(notice)).toBe(false);
     });
 });

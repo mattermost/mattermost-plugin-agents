@@ -82,7 +82,7 @@ const ArtifactConsentPrompt = ({fileName, onAllow, onDeny}: Props) => {
                 </Heading>
                 <Text id='html-artifact-consent-text'>
                     <FormattedMessage
-                        defaultMessage='<b>{fileName}</b> wants to read your profile: name, username and language.'
+                        defaultMessage='<b>{fileName}</b> wants to read your name (first name, last name, nickname and display name) and username.'
                         values={{
                             fileName,
                             b: (chunks: React.ReactNode) => <strong>{chunks}</strong>,

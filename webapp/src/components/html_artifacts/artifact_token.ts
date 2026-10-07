@@ -1,18 +1,18 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {getArtifactToken} from '@/client';
+import {ArtifactTokenInfo, getArtifactToken} from '@/client';
 
 // Bridge tokens are cached per viewer and file for the page lifetime, so the
 // inline card and the fullscreen viewer share one fetch. The key includes the
 // user id so a different user on the same page never reuses a token.
-const tokens = new Map<string, Promise<string>>();
+const tokens = new Map<string, Promise<ArtifactTokenInfo>>();
 
 function cacheKey(userId: string, fileId: string) {
     return `${userId}:${fileId}`;
 }
 
-export function fetchArtifactToken(fileId: string, userId: string): Promise<string> {
+export function fetchArtifactToken(fileId: string, userId: string): Promise<ArtifactTokenInfo> {
     const key = cacheKey(userId, fileId);
     let token = tokens.get(key);
     if (!token) {

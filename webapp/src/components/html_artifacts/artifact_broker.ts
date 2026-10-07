@@ -18,15 +18,14 @@ export interface ArtifactContext {
     locale: string;
 }
 
-// The only user fields ever handed to an artifact.
+// The only user fields ever handed to an artifact. Keep in sync with the
+// consent prompt, which tells the viewer exactly what is shared.
 export interface ArtifactUser {
-    id: string;
     username: string;
     firstName: string;
     lastName: string;
     nickname: string;
     displayName: string;
-    locale: string;
 }
 
 export type ArtifactErrorCode = 'permission_denied' | 'unknown_method' | 'busy' | 'unavailable';
@@ -132,22 +131,19 @@ export interface UserProfileLike {
     first_name?: string;
     last_name?: string;
     nickname?: string;
-    locale?: string;
 }
 
-export function toArtifactUser(profile: UserProfileLike, fallbackLocale: string): ArtifactUser {
+export function toArtifactUser(profile: UserProfileLike): ArtifactUser {
     const firstName = profile.first_name ?? '';
     const lastName = profile.last_name ?? '';
     const nickname = profile.nickname ?? '';
     const fullName = [firstName, lastName].filter(Boolean).join(' ');
     return {
-        id: profile.id,
         username: profile.username,
         firstName,
         lastName,
         nickname,
         displayName: fullName || nickname || profile.username,
-        locale: profile.locale || fallbackLocale,
     };
 }
 
@@ -355,13 +351,11 @@ export class ArtifactBroker {
 
         // Copy the allowlisted fields explicitly so nothing else can leak.
         const result: ArtifactUser = {
-            id: user.id,
             username: user.username,
             firstName: user.firstName,
             lastName: user.lastName,
             nickname: user.nickname,
             displayName: user.displayName,
-            locale: user.locale,
         };
         this.post({mmArtifact: 1, type: 'response', id, result});
     }

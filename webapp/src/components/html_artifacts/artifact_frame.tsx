@@ -10,7 +10,7 @@ import {GlobalState} from '@mattermost/types/store';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
-import {AlertCircleOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
+import {AlertCircleOutlineIcon, DownloadOutlineIcon, RefreshIcon} from '@mattermost/compass-icons/components';
 
 import {artifactURL} from '@/client';
 
@@ -25,6 +25,7 @@ import {
 } from './artifact_broker';
 import ArtifactConsentPrompt from './artifact_consent_prompt';
 import {fetchArtifactToken} from './artifact_token';
+import {downloadArtifact} from './download';
 
 export const MIN_INLINE_HEIGHT = 120;
 export const MAX_INLINE_HEIGHT = 600;
@@ -76,6 +77,10 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     const currentUser = useSelector<GlobalState, any>((state) => state.entities.users.profiles[state.entities.users.currentUserId]);
     const [token, setToken] = useState<string | null>(null);
     const [tokenFailed, setTokenFailed] = useState(false);
+
+    // The server would refuse to serve the artifact: it exceeds the render
+    // size limit, so it is never loaded.
+    const [tooLarge, setTooLarge] = useState(false);
     const locale = intl.locale;
 
     const context = useMemo<ArtifactContext>(() => {
@@ -91,7 +96,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [preferences, displayMode, locale]);
 
-    const user = useMemo<ArtifactUser | null>(() => (currentUser ? toArtifactUser(currentUser, locale) : null), [currentUser, locale]);
+    const user = useMemo<ArtifactUser | null>(() => (currentUser ? toArtifactUser(currentUser) : null), [currentUser]);
 
     const contextRef = useRef(context);
     contextRef.current = context;
@@ -109,14 +114,20 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
         let cancelled = false;
         setToken(null);
         setTokenFailed(false);
+        setTooLarge(false);
         setStatus('loading');
         if (!currentUserId) {
             setTokenFailed(true);
             return undefined; // eslint-disable-line no-undefined
         }
-        fetchArtifactToken(fileId, currentUserId).then((t) => {
-            if (!cancelled) {
-                setToken(t);
+        fetchArtifactToken(fileId, currentUserId).then((info) => {
+            if (cancelled) {
+                return;
+            }
+            if (info.tooLarge) {
+                setTooLarge(true);
+            } else {
+                setToken(info.token);
             }
         }, () => {
             if (!cancelled) {
@@ -214,6 +225,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
     }, []);
 
     const shownStatus: Status = tokenFailed ? 'error' : status;
+    const showStatus = !navigationStopped && !tooLarge;
 
     const title = intl.formatMessage({defaultMessage: 'Interactive artifact: {fileName}'}, {fileName});
 
@@ -256,7 +268,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     </ErrorBox>
                 </Overlay>
             )}
-            {!navigationStopped && shownStatus === 'loading' && (
+            {showStatus && shownStatus === 'loading' && (
                 <Overlay>
                     <Spinner
                         size='24'
@@ -264,7 +276,7 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                     />
                 </Overlay>
             )}
-            {!navigationStopped && shownStatus === 'error' && (
+            {showStatus && shownStatus === 'error' && (
                 <Overlay>
                     <ErrorBox role='alert'>
                         <Icon
@@ -279,6 +291,25 @@ const ArtifactFrame = forwardRef<ArtifactFrameHandle, Props>(({fileId, fileName,
                             onClick={reload}
                         >
                             <FormattedMessage defaultMessage='Retry'/>
+                        </Button>
+                    </ErrorBox>
+                </Overlay>
+            )}
+            {tooLarge && (
+                <Overlay data-testid='html-artifact-too-large'>
+                    <ErrorBox role='alert'>
+                        <Icon
+                            size='20'
+                            glyph={<AlertCircleOutlineIcon/>}
+                        />
+                        <FormattedMessage defaultMessage='This artifact is too large to preview. Download it instead.'/>
+                        <Button
+                            emphasis='tertiary'
+                            size='x-small'
+                            leadingIcon={<Icon glyph={<DownloadOutlineIcon/>}/>}
+                            onClick={() => downloadArtifact(fileId)}
+                        >
+                            <FormattedMessage defaultMessage='Download'/>
                         </Button>
                     </ErrorBox>
                 </Overlay>
@@ -312,6 +343,10 @@ const Container = styled.div<{$displayMode: DisplayMode; $height: number; $conse
     ` : css`
         flex: 1;
         min-height: 0;
+        overflow: hidden;
+        border: 1px solid rgba(var(--center-channel-color-rgb), 0.16);
+        border-radius: 4px;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
     `)}
 `;
 

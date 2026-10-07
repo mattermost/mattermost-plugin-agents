@@ -185,6 +185,15 @@ func hasTagPrefixFold(b []byte, tag string) bool {
 	return false
 }
 
+// maxArtifactRenderBytes caps how much of an artifact is read into memory to
+// render it, independent of the (possibly much larger) file size limit.
+const maxArtifactRenderBytes int64 = 5 * 1024 * 1024
+
+// artifactRenderLimit is the largest artifact the content route will serve.
+func artifactRenderLimit(cfg *model.Config) int64 {
+	return min(maxArtifactRenderBytes, mmtools.CreateFileContentLimit(cfg))
+}
+
 func isArtifactExtension(info *model.FileInfo) bool {
 	ext := strings.ToLower(strings.TrimPrefix(info.Extension, "."))
 	if ext == "" {
@@ -247,6 +256,7 @@ func (a *API) authorizeArtifact(c *gin.Context) (client mmapi.Client, info *mode
 		c.String(http.StatusNotFound, "not found")
 		return nil, nil, false
 	}
+
 	return client, info, true
 }
 
@@ -265,8 +275,10 @@ func (a *API) viewerArtifactToken(c *gin.Context, fileID string) (string, bool) 
 // handleGetArtifactToken returns the token the viewer's host page uses to
 // authenticate messages from the artifact's bridge. Read-only, so it is not
 // audited.
+// tooLarge tells the host the content route would refuse the artifact, so it
+// can say so instead of loading the frame.
 func (a *API) handleGetArtifactToken(c *gin.Context) {
-	_, _, ok := a.authorizeArtifact(c)
+	client, info, ok := a.authorizeArtifact(c)
 	if !ok {
 		return
 	}
@@ -274,7 +286,7 @@ func (a *API) handleGetArtifactToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"token": token})
+	c.JSON(http.StatusOK, gin.H{"token": token, "tooLarge": info.Size > artifactRenderLimit(client.GetConfig())})
 }
 
 // handleGetArtifact serves an agent-created HTML file as a sandboxed artifact
@@ -286,7 +298,7 @@ func (a *API) handleGetArtifact(c *gin.Context) {
 	}
 	fileID := c.Param("fileid")
 
-	limit := mmtools.CreateFileContentLimit(client.GetConfig())
+	limit := artifactRenderLimit(client.GetConfig())
 	if info.Size > limit {
 		c.String(http.StatusRequestEntityTooLarge, "artifact too large")
 		return

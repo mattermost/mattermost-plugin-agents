@@ -13,6 +13,7 @@ import {CloseIcon, DownloadOutlineIcon, FileCodeOutlineIcon, RefreshIcon} from '
 
 import {cancelPendingConsent} from './artifact_broker';
 import ArtifactFrame, {ArtifactFrameHandle} from './artifact_frame';
+import ArtifactNotice from './artifact_notice';
 import {downloadArtifact} from './download';
 
 interface Props {
@@ -105,6 +106,8 @@ const HTMLArtifactFullscreen = ({fileId, fileName, onClose}: Props) => {
                     label={<FormattedMessage defaultMessage='Interactive'/>}
                 />
                 <Spacer/>
+                <ArtifactNotice/>
+                <Divider/>
                 <IconButton
                     size='small'
                     icon={<Icon glyph={<DownloadOutlineIcon/>}/>}
@@ -187,14 +190,16 @@ const Divider = styled.div`
     background: rgba(var(--center-channel-color-rgb), 0.16);
 `;
 
-// The artifact fills the area below the header edge to edge.
+// The artifact sits in an inset, bordered panel (see ArtifactFrame) so it
+// never reads as part of the Mattermost interface.
 const Body = styled.div`
     position: relative;
     display: flex;
     flex: 1;
     flex-direction: column;
     min-height: 0;
-    background: var(--center-channel-bg);
+    padding: 12px;
+    background: rgba(var(--center-channel-color-rgb), 0.04);
 `;
 
 const Title = styled.h2`

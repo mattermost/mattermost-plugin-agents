@@ -16,6 +16,7 @@ import {
 } from '@mattermost/compass-icons/components';
 
 import ArtifactFrame, {ArtifactFrameHandle} from './artifact_frame';
+import ArtifactNotice from './artifact_notice';
 import {downloadArtifact} from './download';
 import HTMLArtifactFullscreen from './html_artifact_fullscreen';
 
@@ -49,6 +50,7 @@ const HTMLArtifactCard = ({fileId, fileName}: Props) => {
                     />
                 </TagSlot>
                 <Spacer/>
+                <ArtifactNotice collapseBelowPx={NOTICE_COLLAPSE_PX}/>
                 <IconButton
                     size='x-small'
                     icon={<Icon glyph={<ArrowExpandIcon/>}/>}
@@ -96,6 +98,9 @@ export default HTMLArtifactCard;
 // Narrower than this (e.g. the Agents RHS), the file name gets the room.
 const NARROW_CARD_PX = 440;
 
+// Narrower than this, the safety notice collapses to its icon.
+const NOTICE_COLLAPSE_PX = 400;
+
 const Card = styled.div`
     container-type: inline-size;
     margin-top: 12px;
@@ -139,4 +144,5 @@ const FileName = styled.span`
 
 const Spacer = styled.div`
     flex: 1;
+    min-width: 4px;
 `;

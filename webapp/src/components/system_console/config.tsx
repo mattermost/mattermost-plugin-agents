@@ -353,7 +353,7 @@ const Config = (props: Props) => {
                         onChange={(to) => {
                             updateConfig({enableHTMLArtifacts: to});
                         }}
-                        helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files created by agents are rendered as interactive artifacts in the conversation. Artifacts run in an isolated sandbox with no access to the user\'s Mattermost session, and fetch, XHR, WebSocket and external resources are blocked. An artifact may still be able to send its own content (and any profile data the viewer allowed) to external sites via WebRTC or by navigating its own frame. Enable only where that is acceptable. Artifacts can only read the viewer\'s basic profile after the viewer explicitly allows it.'})}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files created by agents are rendered as interactive artifacts in the conversation. Artifacts run in an isolated sandbox with no access to the user\'s Mattermost session, and fetch, XHR, WebSocket and external resources are blocked. An artifact may still be able to send its own content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC or by navigating its own frame. Enable only where that is acceptable. Artifacts can only read the viewer\'s basic profile after the viewer explicitly allows it.'})}
                     />
                     <BooleanItem
                         label={

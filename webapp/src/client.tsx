@@ -69,9 +69,16 @@ export function artifactURL(fileId: string): string {
     return `${baseRoute()}/artifacts/${encodeURIComponent(fileId)}`;
 }
 
+export interface ArtifactTokenInfo {
+    token: string;
+
+    // The artifact exceeds the render size limit; loading it would fail.
+    tooLarge: boolean;
+}
+
 // Fetches the viewer's token that authenticates messages from the artifact's
 // bridge script to this page.
-export async function getArtifactToken(fileId: string): Promise<string> {
+export async function getArtifactToken(fileId: string): Promise<ArtifactTokenInfo> {
     const url = `${artifactURL(fileId)}/token`;
     const response = await fetch(url, Client4.getOptions({
         method: 'GET',
@@ -79,9 +86,9 @@ export async function getArtifactToken(fileId: string): Promise<string> {
 
     if (response.ok) {
         const data: unknown = await response.json();
-        const token = (data as {token?: unknown} | null)?.token;
+        const {token, tooLarge} = (data as {token?: unknown; tooLarge?: unknown} | null) ?? {};
         if (typeof token === 'string' && token !== '') {
-            return token;
+            return {token, tooLarge: tooLarge === true};
         }
     }
 

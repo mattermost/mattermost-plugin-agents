@@ -22,13 +22,11 @@ const context: ArtifactContext = {
 };
 
 const user: ArtifactUser = {
-    id: 'user1',
     username: 'alice',
     firstName: 'Alice',
     lastName: 'Liddell',
     nickname: 'al',
     displayName: 'Alice Liddell',
-    locale: 'en',
 };
 
 function makeTarget() {
@@ -333,14 +331,15 @@ describe('toArtifactUser', () => {
             first_name: '',
             last_name: '',
             nickname: 'bobby',
+            locale: 'fr',
             email: 'bob@example.com',
             roles: 'system_user',
             auth_data: 'secret',
             props: {a: 'b'},
         };
-        const result = toArtifactUser(profile, 'fr');
+        const result = toArtifactUser(profile);
         expect(result).toEqual({
-            id: 'u', username: 'bob', firstName: '', lastName: '', nickname: 'bobby', displayName: 'bobby', locale: 'fr',
+            username: 'bob', firstName: '', lastName: '', nickname: 'bobby', displayName: 'bobby',
         });
     });
 });

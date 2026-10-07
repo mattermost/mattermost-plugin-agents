@@ -39,6 +39,14 @@ func TestHandleGetArtifact(t *testing.T) {
 	botPost := func() *model.Post {
 		return &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID, FileIds: model.StringArray{fileID}}
 	}
+	// authorized sets up every lookup a successful authorization makes,
+	// plus the config read used for the size limit.
+	authorized := func(m *mocks.MockClient, info *model.FileInfo, cfg *model.Config) {
+		m.EXPECT().GetFileInfo(fileID).Return(info, nil)
+		m.EXPECT().GetPost(postID).Return(botPost(), nil)
+		m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+		m.EXPECT().GetConfig().Return(cfg)
+	}
 
 	tests := []struct {
 		name     string
@@ -51,6 +59,8 @@ func TestHandleGetArtifact(t *testing.T) {
 		wantStatus int
 		// wantTokenStatus is the token route's status when it differs.
 		wantTokenStatus int
+		// wantTooLarge is the token route's tooLarge flag on success.
+		wantTooLarge bool
 	}{
 		{name: "disabled returns 404", disabled: true, fileID: fileID, wantStatus: http.StatusNotFound},
 		{name: "invalid file id returns 400", fileID: "bad", wantStatus: http.StatusBadRequest},
@@ -137,17 +147,37 @@ func TestHandleGetArtifact(t *testing.T) {
 			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:   "file over size limit returns 413",
+			name:   "file over file size limit returns 413",
 			fileID: fileID,
 			setup: func(m *mocks.MockClient) {
 				info := htmlInfo()
 				info.Size = 11
-				m.EXPECT().GetFileInfo(fileID).Return(info, nil)
-				m.EXPECT().GetPost(postID).Return(botPost(), nil)
-				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				authorized(m, info, &model.Config{FileSettings: model.FileSettings{MaxFileSize: model.NewPointer(int64(10))}})
+			},
+			wantStatus:      http.StatusRequestEntityTooLarge,
+			wantTokenStatus: http.StatusOK,
+			wantTooLarge:    true,
+		},
+		{
+			name:   "file over render cap returns 413",
+			fileID: fileID,
+			setup: func(m *mocks.MockClient) {
+				info := htmlInfo()
+				info.Size = maxArtifactRenderBytes + 1
+				authorized(m, info, &model.Config{FileSettings: model.FileSettings{MaxFileSize: model.NewPointer(int64(100 * 1024 * 1024))}})
+			},
+			wantStatus:      http.StatusRequestEntityTooLarge,
+			wantTokenStatus: http.StatusOK,
+			wantTooLarge:    true,
+		},
+		{
+			name:   "content longer than reported size is cut off with 413",
+			fileID: fileID,
+			setup: func(m *mocks.MockClient) {
+				authorized(m, htmlInfo(), &model.Config{FileSettings: model.FileSettings{MaxFileSize: model.NewPointer(int64(len(htmlDoc)))}})
 			},
 			serveSetup: func(m *mocks.MockClient) {
-				m.EXPECT().GetConfig().Return(&model.Config{FileSettings: model.FileSettings{MaxFileSize: model.NewPointer(int64(10))}})
+				m.EXPECT().GetFile(fileID).Return(io.NopCloser(strings.NewReader(htmlDoc+"<p>more</p>")), nil)
 			},
 			wantStatus:      http.StatusRequestEntityTooLarge,
 			wantTokenStatus: http.StatusOK,
@@ -156,12 +186,9 @@ func TestHandleGetArtifact(t *testing.T) {
 			name:   "success serves injected html",
 			fileID: fileID,
 			setup: func(m *mocks.MockClient) {
-				m.EXPECT().GetFileInfo(fileID).Return(htmlInfo(), nil)
-				m.EXPECT().GetPost(postID).Return(botPost(), nil)
-				m.EXPECT().HasPermissionToChannel(testUserID, channelID, model.PermissionReadChannel).Return(true)
+				authorized(m, htmlInfo(), &model.Config{})
 			},
 			serveSetup: func(m *mocks.MockClient) {
-				m.EXPECT().GetConfig().Return(&model.Config{})
 				m.EXPECT().GetFile(fileID).Return(io.NopCloser(strings.NewReader(htmlDoc)), nil)
 			},
 			wantStatus: http.StatusOK,
@@ -212,10 +239,12 @@ func TestHandleGetArtifact(t *testing.T) {
 				}
 				if route == "token" {
 					var got struct {
-						Token string `json:"token"`
+						Token    string `json:"token"`
+						TooLarge bool   `json:"tooLarge"`
 					}
 					require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
 					assert.Equal(t, wantToken, got.Token)
+					assert.Equal(t, tt.wantTooLarge, got.TooLarge)
 					return
 				}
 				assert.Equal(t, "text/html; charset=utf-8", rec.Header().Get("Content-Type"))

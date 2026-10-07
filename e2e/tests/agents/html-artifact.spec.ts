@@ -175,6 +175,9 @@ test.describe('HTML artifacts', () => {
         const rhsCard = botPost.getByTestId('html-artifact-card');
         await expect(rhsCard.getByText(SPRINT_DASHBOARD_FILE_NAME)).toBeVisible();
 
+        // The host-drawn safety notice is always present outside the frame.
+        await expect(rhsCard.getByTestId('html-artifact-notice')).toHaveAttribute('aria-label', /Never enter passwords/);
+
         // Sandbox: scripts only, never same-origin.
         const sandbox = await iframe.getAttribute('sandbox');
         expect(sandbox?.split(/\s+/).sort()).toEqual(['allow-scripts']);
@@ -191,6 +194,7 @@ test.describe('HTML artifacts', () => {
         const frame = center.iframe.contentFrame();
         await frame.getByRole('button', {name: /Kudos/}).click();
         await expect(frame.locator('#kudos-count')).toHaveText('1');
+        await expect(center.card.getByTestId('html-artifact-notice')).toContainText("Don't enter passwords");
 
         // Inline height follows the content: no inner scrollbar.
         await expect.poll(async () => frame.locator('html').evaluate((el) => el.scrollHeight - el.clientHeight), {timeout: 10000}).toBeLessThanOrEqual(1);
@@ -200,7 +204,7 @@ test.describe('HTML artifacts', () => {
         await frame.getByRole('button', {name: 'Say hello'}).click();
         const consent = center.card.getByTestId('html-artifact-consent');
         await expect(consent).toBeVisible({timeout: 15000});
-        await expect(consent.getByText(/wants to read your profile/i)).toBeVisible();
+        await expect(consent.getByText(/wants to read your name .* and username/i)).toBeVisible();
 
         // Answers count only once the prompt has been on screen briefly (anti-clickjacking).
         await expect(consent.locator('[data-armed="true"]')).toHaveCount(1, {timeout: 5000});
@@ -221,6 +225,7 @@ test.describe('HTML artifacts', () => {
         const fullFrame = fullIframe.contentFrame();
         await expect(fullFrame.getByRole('heading', {name: 'Sprint 42 dashboard'})).toBeVisible({timeout: 30000});
         await expect(viewer.getByText('Interactive')).toBeVisible();
+        await expect(viewer.getByTestId('html-artifact-notice')).toContainText("Don't enter passwords");
 
         // The display mode reaches the artifact: fullscreen-only content shows.
         await expect(fullFrame.getByTestId('fullscreen-details')).toBeVisible({timeout: 15000});
