@@ -155,7 +155,7 @@ async function ensureServiceCardExpanded(serviceCard: Locator): Promise<void> {
             break;
         }
         await serviceCard.click();
-        await serviceNameInput.waitFor({state: 'visible', timeout: 2000}).catch(() => {});
+        await serviceNameInput.waitFor({state: 'visible', timeout: 10000}).catch(() => {});
     }
     await expect(serviceNameInput).toBeVisible({timeout: 30000});
 }
