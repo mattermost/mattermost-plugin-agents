@@ -94,6 +94,7 @@ const defaultConfig: Config = {
     enableCallSummary: false,
     allowedUpstreamHostnames: '',
     allowUnsafeLinks: false,
+    enableHTMLArtifacts: false,
     enableChannelMentionToolCalling: false,
     allowNativeWebSearchInChannels: false,
     embeddingSearchConfig: {
@@ -345,6 +346,14 @@ const Config = (props: Props) => {
                             updateConfig({allowUnsafeLinks: to});
                         }}
                         helpText={intl.formatMessage({defaultMessage: 'When enabled, AI responses may contain clickable links, including potentially malicious destinations. Enable only if you trust the LLM output and have mitigations for exfiltration risks.'})}
+                    />
+                    <BooleanItem
+                        label={<FormattedMessage defaultMessage='Enable HTML artifacts'/>}
+                        value={Boolean(value.enableHTMLArtifacts)}
+                        onChange={(to) => {
+                            updateConfig({enableHTMLArtifacts: to});
+                        }}
+                        helpText={intl.formatMessage({defaultMessage: 'When enabled, HTML files created by agents are rendered as interactive artifacts in the conversation. Artifacts run in an isolated sandbox with no access to the user\'s Mattermost session, and fetch, XHR, WebSocket and external resources are blocked. An artifact may still be able to send its own content, any profile data the viewer allowed, and anything the viewer types into it to external sites via WebRTC or by navigating its own frame. Enable only where that is acceptable. Artifacts can only read the viewer\'s basic profile after the viewer explicitly allows it.'})}
                     />
                     <BooleanItem
                         label={

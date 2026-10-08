@@ -645,6 +645,26 @@ Integrations are available in direct messages by default. If you enable the expe
 
 The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
 
+### HTML artifacts
+
+When **Enable HTML artifacts** is turned on (`enableHTMLArtifacts` in the plugin configuration, off by default), HTML files (`.html`/`.htm`) that an agent creates with the `CreateFile` tool are rendered as interactive artifacts inline in the agent's reply and can be opened in a fullscreen viewer. The `CreateFile` tool description also tells the model that HTML files must be self-contained and how to use the theme variables and viewer API.
+
+Security model:
+
+- Artifacts are served by the plugin from `/plugins/mattermost-ai/artifacts/{file_id}` only for HTML files attached to a post authored by one of this plugin's agents, and only to users who can read the post's channel (and pass the file download access policy).
+- The response carries a `Content-Security-Policy` with `sandbox allow-scripts`, so the document runs in an opaque origin even when opened directly in a tab, and the embedding iframe uses `sandbox="allow-scripts"`. Artifact scripts cannot read Mattermost cookies, local storage, or call the Mattermost API.
+- The artifact is only served to iframe loads (`Sec-Fetch-Dest: iframe`); opening the artifact URL directly in a tab shows a static, script-free page saying the artifact can only be viewed inside Mattermost, so artifact content never fills a tab without the host's safety notice.
+- The CSP allows no network requests via fetch/XHR/WebSocket (`connect-src 'none'`) and no external resources (scripts, styles, fonts, images); only inline code and `data:`/`blob:` resources are allowed.
+- An artifact can reach user data only through a small host-mediated `postMessage` API (`window.mattermost`). In this version it exposes the viewer's theme and `getCurrentUser()`, which returns the viewer's name (first name, last name, nickname, and display name) and username (never their user ID, email, roles, or tokens) and requires the viewer's explicit consent. The viewer's locale is sent with the theme, without consent.
+- Artifacts larger than 5 MiB (or the server's maximum file size, if smaller) are not rendered; viewers can download them instead.
+
+Known limitation: artifacts are not fully isolated from the network. Two egress paths remain that CSP cannot close:
+
+- An artifact can navigate its own frame to an external URL (link, `location` change, meta refresh). Neither CSP nor the iframe sandbox can block this, and the Navigation API's `navigate` event is not fired in opaque-origin (sandboxed) documents, so the artifact cannot be stopped from inside either. When the webapp sees the frame load a second time it stops answering the frame and unloads it, but by then the request (including anything encoded in the URL) has already been sent. If the artifact replaces itself before it finishes loading, the webapp sees only one load; the replacement page still cannot use the `window.mattermost` API, because every message from the artifact must carry a per-viewer, per-file token that only the injected bridge script knows (it runs before any artifact script and removes itself from the page), and the webapp ignores messages without it.
+- An artifact can use WebRTC, which is not governed by CSP or the iframe sandbox.
+
+As a result, anything in the artifact's own content, any data it received from the `window.mattermost` API, and anything the viewer types into the artifact could be exfiltrated. An artifact can draw anything inside its frame, including a convincing imitation of a Mattermost sign-in or "session expired" dialog, so it could phish for a password. To counter this, the artifact is always shown inside a bordered frame below a header that the artifact cannot draw over, and that header permanently tells viewers the content is AI-generated and that they should never enter passwords or sensitive information into it. Because the model writes the artifact, its content may include conversation or channel content the model had access to, and a prompt injection could cause the model to write an artifact that deliberately leaks it. The feature is off by default; enable it only where this risk is acceptable.
+
 ## Model Context Protocol (MCP) Integration
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.

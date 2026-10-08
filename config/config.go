@@ -31,6 +31,7 @@ type Config struct {
 	EnableTokenUsageLogToFile       *bool                            `json:"enableTokenUsageLogToFile,omitempty"`
 	AllowedUpstreamHostnames        string                           `json:"allowedUpstreamHostnames"`
 	AllowUnsafeLinks                bool                             `json:"allowUnsafeLinks"`
+	EnableHTMLArtifacts             bool                             `json:"enableHTMLArtifacts"`
 	EnableChannelMentionToolCalling bool                             `json:"enableChannelMentionToolCalling"`
 	AllowNativeWebSearchInChannels  bool                             `json:"allowNativeWebSearchInChannels"`
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
@@ -165,6 +166,12 @@ func (c *Container) MCP() MCPConfig {
 
 func (c *Container) AllowUnsafeLinks() bool {
 	return c.Config().AllowUnsafeLinks
+}
+
+// EnableHTMLArtifacts reports whether agent-created HTML files are rendered
+// as sandboxed interactive artifacts.
+func (c *Container) EnableHTMLArtifacts() bool {
+	return c.Config().EnableHTMLArtifacts
 }
 
 func (c *Container) EnableChannelMentionToolCalling() bool {
