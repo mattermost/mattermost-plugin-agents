@@ -79,6 +79,24 @@ describe('AskChannelButton license gating', () => {
     });
 });
 
+describe('AskChannelButton sizing', () => {
+    test('renders the channel-header IconButton at x-small to match host header actions', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        const button = screen.getByTestId('ask-channel-button');
+        expect(button.className).toMatch(/icon-button--size-x-small/);
+        expect(button.className).not.toMatch(/icon-button--size-small(?!-)/);
+        expect(button.getAttribute('aria-label')).toBe('Ask Agents about this channel');
+        expect(button.getAttribute('title')).toBe('Ask Agents about this channel');
+    });
+});
+
 describe('AskChannelButton toggle', () => {
     test('clicking the button marks it pressed while the popover is open', () => {
         const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};

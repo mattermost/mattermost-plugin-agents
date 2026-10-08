@@ -140,7 +140,7 @@ const AskChannelButton = () => {
                 <IconButton
                     ref={target}
                     onClick={handleToggle}
-                    size='small'
+                    size='x-small'
                     toggled={showPopover}
                     icon={<Icon glyph={<IconAI/>}/>}
                     aria-label={buttonLabel}
@@ -155,7 +155,7 @@ const AskChannelButton = () => {
                     <IconButton
                         ref={target}
                         onClick={handleToggle}
-                        size='small'
+                        size='x-small'
                         toggled={showPopover}
                         icon={<Icon glyph={<IconAI/>}/>}
                         aria-label={buttonLabel}
