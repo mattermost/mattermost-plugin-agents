@@ -43,7 +43,31 @@ jest.mock('../client', () => ({
 
 jest.mock('./dot_menu', () => ({
     __esModule: true,
-    default: ({children}: {children: React.ReactNode}) => <div data-testid='ai-actions-menu'>{children}</div>,
+    default: ({
+        children,
+        size,
+        padding,
+        title,
+        testId,
+    }: {
+        children: React.ReactNode;
+        size?: string;
+        padding?: string;
+        title?: string;
+        testId?: string;
+    }) => (
+        <div>
+            <button
+                type='button'
+                data-testid={testId}
+                data-size={size}
+                data-padding={padding}
+                aria-label={title}
+                title={title}
+            />
+            {children}
+        </div>
+    ),
     DropdownMenu: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
     DropdownMenuItem: ({label}: {label: React.ReactNode}) => <button type='button'>{label}</button>,
 }));
@@ -87,5 +111,21 @@ describe('PostMenu license gating', () => {
         expect(screen.queryByText('Find action items')).toBeNull();
         expect(screen.queryByText('Find open questions')).toBeNull();
         expect(screen.getByText('React for me')).not.toBeNull();
+    });
+});
+
+describe('PostMenu sizing', () => {
+    test('uses small + compact IconButton to match host post-menu actions (28px)', () => {
+        render(
+            <IntlProvider locale='en'>
+                <PostMenu post={post}/>
+            </IntlProvider>,
+        );
+
+        const button = screen.getByTestId('ai-actions-menu');
+        expect(button.getAttribute('data-size')).toBe('small');
+        expect(button.getAttribute('data-padding')).toBe('compact');
+        expect(button.getAttribute('aria-label')).toBe('AI Actions');
+        expect(button.getAttribute('title')).toBe('AI Actions');
     });
 });
