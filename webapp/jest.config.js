@@ -25,6 +25,7 @@ module.exports = {
         '\\.(svg|png|jpg|jpeg|gif|webp)$': '<rootDir>/tests/svg_mock.js',
         '\\.css$': 'identity-obj-proxy',
         '^@mattermost/compass-ui/styles': 'identity-obj-proxy',
+        '^@mattermost/shared/components/tooltip$': '<rootDir>/tests/tooltip_mock.tsx',
         '^@/(.*)$': '<rootDir>/src/$1',
         '^src/(.*)$': '<rootDir>/src/$1',
     },
