@@ -7,7 +7,7 @@ import styled from 'styled-components';
 import {useUpdateEffect} from 'react-use';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
-import {IconButton, type IconButtonSize} from '@mattermost/compass-ui/components/icon-button';
+import {IconButton, type IconButtonPadding, type IconButtonSize} from '@mattermost/compass-ui/components/icon-button';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenu} from '@mattermost/compass-ui/components/popover-menu';
 
@@ -50,6 +50,7 @@ type DotMenuProps = {
     closeOnClick?: boolean;
     testId?: string;
     size?: IconButtonSize;
+    padding?: IconButtonPadding;
 };
 
 type DropdownProps = Omit<ComponentProps<typeof Dropdown>, 'target' | 'children' | 'isOpen'>;
@@ -67,6 +68,7 @@ const DotMenu = ({
     onOpenChange,
     testId,
     size = 'small',
+    padding = 'default',
     ...props
 }: DotMenuProps & DropdownProps) => {
     const [isOpen, setOpen] = useState(false);
@@ -124,6 +126,7 @@ const DotMenu = ({
                 aria-label={title}
                 title={title}
                 size={size}
+                padding={padding}
                 active={active}
                 onClick={handleClick}
                 className={className}

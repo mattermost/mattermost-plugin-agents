@@ -53,6 +53,8 @@ const PostMenu = (props: Props) => {
             title={intl.formatMessage({defaultMessage: 'AI Actions'})}
             dropdownMenu={StyledDropdownMenu}
             testId='ai-actions-menu'
+            size='small'
+            padding='compact'
             onOpenChange={props.handleDropdownOpened}
         >
             <DropdownBotSelector
