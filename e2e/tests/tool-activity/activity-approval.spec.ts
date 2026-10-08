@@ -148,9 +148,11 @@ test.describe('Tool Activity Approval Placement (Aimock)', () => {
 
         // The auto-run prelude is folded away while the round that needs a
         // decision renders in full, below the collapsed row.
+        // Scoped to the tool card: while the live round hands over to the
+        // persisted one, the status line can briefly name the pending tool too.
         await expectToolActivityCollapsed(botPost);
+        await expect(botPost.locator(TOOL_CARD_SELECTOR).filter({hasText: getChannelInfoLabel})).toBeVisible();
         await expectToolActivityCurrent(botPost, readChannelLabel);
-        await expect(botPost.getByText(getChannelInfoLabel, {exact: true})).toBeVisible();
         expect(await approvalPlacement(botPost)).toBe('below');
 
         await acceptButton.click();
