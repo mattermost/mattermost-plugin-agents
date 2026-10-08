@@ -4,7 +4,8 @@
     "baseUrl": "./",
     "paths": {
       "@/*": ["src/*"],
-	  "@mattermost/types/*": ["node_modules/@mattermost/types/lib/*"]
+      "@mattermost/types/*": ["node_modules/@mattermost/types/lib/*"],
+      "@mattermost/shared/*": ["node_modules/@mattermost/shared/dist/*"]
     },
     "lib": [
       "dom",

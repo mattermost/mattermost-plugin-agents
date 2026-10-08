@@ -33,10 +33,19 @@ jest.mock('react-redux', () => ({
 }));
 
 jest.mock('react-bootstrap', () => ({
-    OverlayTrigger: ({children}: {children: React.ReactNode}) => <>{children}</>,
     Overlay: () => null,
-    Tooltip: ({children}: {children: React.ReactNode}) => <div>{children}</div>,
 }), {virtual: true});
+
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children, title}: {children: React.ReactNode; title: string}) => (
+        <div
+            data-testid='ask-channel-tooltip'
+            data-title={title}
+        >
+            {children}
+        </div>
+    ),
+}));
 
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
@@ -79,8 +88,27 @@ describe('AskChannelButton license gating', () => {
     });
 });
 
+describe('AskChannelButton sizing', () => {
+    test('renders the channel-header IconButton at x-small to match host header actions', () => {
+        const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
+        useIsLicensedFor.mockImplementation(() => true);
+        render(
+            <IntlProvider locale='en'>
+                <AskChannelButton/>
+            </IntlProvider>,
+        );
+
+        const button = screen.getByTestId('ask-channel-button');
+        expect(button.className).toMatch(/icon-button--size-x-small/);
+        expect(button.className).not.toMatch(/icon-button--size-small(?!-)/);
+        expect(button.getAttribute('aria-label')).toBe('Ask Agents about this channel');
+        expect(button.getAttribute('title')).toBeNull();
+        expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('Ask Agents about this channel');
+    });
+});
+
 describe('AskChannelButton toggle', () => {
-    test('clicking the button marks it pressed while the popover is open', () => {
+    test('clicking the button marks it pressed and suppresses the tooltip while open', () => {
         const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
         useIsLicensedFor.mockImplementation(() => true);
         render(
@@ -91,11 +119,14 @@ describe('AskChannelButton toggle', () => {
 
         const button = screen.getByRole('button', {name: 'Ask Agents about this channel'});
         expect(button.getAttribute('aria-pressed')).toBe('false');
+        expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('Ask Agents about this channel');
 
         fireEvent.click(button);
         expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('true');
+        expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('');
 
         fireEvent.click(screen.getByRole('button', {name: 'Ask Agents about this channel'}));
         expect(screen.getByRole('button', {name: 'Ask Agents about this channel'}).getAttribute('aria-pressed')).toBe('false');
+        expect(screen.getByTestId('ask-channel-tooltip').getAttribute('data-title')).toBe('Ask Agents about this channel');
     });
 });
