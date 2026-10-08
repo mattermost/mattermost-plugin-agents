@@ -17,6 +17,7 @@ import {
     useInteractions,
     useRole,
 } from '@floating-ui/react-dom-interactions';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 const FloatingContainer = styled.div`
     min-width: 16rem;
@@ -34,6 +35,9 @@ type DropdownProps = {
     portal?: boolean;
     isOpen: boolean;
     onOpenChange?: ((open: boolean) => void);
+
+    /** Host-style tooltip for the trigger; suppressed while the menu is open. */
+    tooltip?: string;
 };
 
 const Dropdown = (props: DropdownProps) => {
@@ -88,9 +92,21 @@ const Dropdown = (props: DropdownProps) => {
         );
     }
 
+    // Attach floating-ui reference props first, then optionally wrap with
+    // WithTooltip so both can merge refs onto the same trigger element.
+    const trigger = cloneElement(props.target, getReferenceProps({ref: reference, ...props.target.props}));
+    const triggerWithTooltip = props.tooltip ? (
+        <WithTooltip
+            title={props.tooltip}
+            disabled={open}
+        >
+            {trigger}
+        </WithTooltip>
+    ) : trigger;
+
     return (
         <>
-            {cloneElement(props.target, getReferenceProps({ref: reference, ...props.target.props}))}
+            {triggerWithTooltip}
             <MaybePortal>
                 {open && content}
             </MaybePortal>

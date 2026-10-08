@@ -5,11 +5,12 @@ import React, {useRef, useState, useEffect} from 'react';
 import {useSelector, useDispatch} from 'react-redux';
 import {GlobalState} from '@mattermost/types/store';
 //eslint-disable-next-line import/no-unresolved -- react-bootstrap is external
-import {OverlayTrigger, Tooltip, Overlay} from 'react-bootstrap';
-import {FormattedMessage, useIntl} from 'react-intl';
+import {Overlay} from 'react-bootstrap';
+import {useIntl} from 'react-intl';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
+import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {doChannelAnalysis} from '@/client';
 import {openRHS} from '@/redux_actions';
@@ -128,15 +129,10 @@ const AskChannelButton = () => {
     }
 
     const buttonLabel = intl.formatMessage({defaultMessage: 'Ask Agents about this channel'});
-    const tooltip = (
-        <Tooltip id='ask-agents-tooltip'>
-            <FormattedMessage defaultMessage='Ask Agents about this channel'/>
-        </Tooltip>
-    );
 
     return (
         <>
-            {showPopover ? (
+            <WithTooltip title={showPopover ? '' : buttonLabel}>
                 <IconButton
                     ref={target}
                     onClick={handleToggle}
@@ -144,26 +140,9 @@ const AskChannelButton = () => {
                     toggled={showPopover}
                     icon={<Icon glyph={<IconAI/>}/>}
                     aria-label={buttonLabel}
-                    title={buttonLabel}
                     data-testid='ask-channel-button'
                 />
-            ) : (
-                <OverlayTrigger
-                    placement='bottom'
-                    overlay={tooltip}
-                >
-                    <IconButton
-                        ref={target}
-                        onClick={handleToggle}
-                        size='x-small'
-                        toggled={showPopover}
-                        icon={<Icon glyph={<IconAI/>}/>}
-                        aria-label={buttonLabel}
-                        title={buttonLabel}
-                        data-testid='ask-channel-button'
-                    />
-                </OverlayTrigger>
-            )}
+            </WithTooltip>
             <Overlay
                 target={() => target.current}
                 show={showPopover}

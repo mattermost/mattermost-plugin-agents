@@ -63,7 +63,6 @@ jest.mock('./dot_menu', () => ({
                 data-size={size}
                 data-padding={padding}
                 aria-label={title}
-                title={title}
             />
             {children}
         </div>
@@ -126,6 +125,6 @@ describe('PostMenu sizing', () => {
         expect(button.getAttribute('data-size')).toBe('small');
         expect(button.getAttribute('data-padding')).toBe('compact');
         expect(button.getAttribute('aria-label')).toBe('AI Actions');
-        expect(button.getAttribute('title')).toBe('AI Actions');
+        expect(button.getAttribute('title')).toBeNull();
     });
 });

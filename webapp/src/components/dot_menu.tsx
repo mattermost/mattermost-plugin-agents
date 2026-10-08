@@ -94,7 +94,7 @@ const DotMenu = ({
 
             // @ts-ignore
             <MenuButton
-                title={title}
+                aria-label={title}
                 $isActive={active}
                 onClick={handleClick}
                 onKeyDown={(e: KeyboardEvent) => {
@@ -124,7 +124,6 @@ const DotMenu = ({
             <IconButton
                 icon={<Icon glyph={icon}/>}
                 aria-label={title}
-                title={title}
                 size={size}
                 padding={padding}
                 active={active}
@@ -158,6 +157,7 @@ const DotMenu = ({
             isOpen={isOpen}
             onOpenChange={setOpen}
             target={button}
+            tooltip={title}
         >
             {menu}
         </Dropdown>
