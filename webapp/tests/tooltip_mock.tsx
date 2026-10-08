@@ -18,7 +18,7 @@ export function WithTooltip({children, title, disabled}: WithTooltipProps) {
     return (
         <span
             data-testid='with-tooltip'
-            data-title={typeof title === 'string' ? title : undefined}
+            {...(typeof title === 'string' ? {'data-title': title} : {})}
             data-disabled={disabled ? 'true' : 'false'}
         >
             {children}
