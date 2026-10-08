@@ -43,8 +43,10 @@ describe('DotMenu IconButton tooltip', () => {
         const button = screen.getByTestId('ai-actions-menu');
         expect(button.getAttribute('aria-label')).toBe('AI Actions');
         expect(button.getAttribute('title')).toBeNull();
+        expect(button.getAttribute('aria-describedby')).toBeNull();
         expect(button.className).toMatch(/icon-button--size-small/);
         expect(button.className).toMatch(/icon-button--padding-compact/);
+        expect(button.parentElement?.tagName).toBe('SPAN');
 
         const tooltip = screen.getByTestId('dot-menu-tooltip');
         expect(tooltip.getAttribute('data-title')).toBe('AI Actions');

@@ -24,6 +24,10 @@ const FloatingContainer = styled.div`
 	z-index: 2100;
 `;
 
+const TooltipTrigger = styled.span`
+    display: inline-flex;
+`;
+
 type DropdownProps = {
     target: React.JSX.Element;
     children: React.ReactNode;
@@ -92,15 +96,18 @@ const Dropdown = (props: DropdownProps) => {
         );
     }
 
-    // Attach floating-ui reference props first, then optionally wrap with
-    // WithTooltip so both can merge refs onto the same trigger element.
+    // Attach floating-ui reference props first. When a tooltip is present, wrap
+    // the trigger in a span so WithTooltip's aria-describedby lands on the
+    // wrapper — icon-only triggers already expose their name via aria-label.
     const trigger = cloneElement(props.target, getReferenceProps({ref: reference, ...props.target.props}));
     const triggerWithTooltip = props.tooltip ? (
         <WithTooltip
             title={props.tooltip}
             disabled={open}
         >
-            {trigger}
+            <TooltipTrigger>
+                {trigger}
+            </TooltipTrigger>
         </WithTooltip>
     ) : trigger;
 

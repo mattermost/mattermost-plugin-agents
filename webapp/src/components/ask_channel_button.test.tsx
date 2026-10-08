@@ -38,7 +38,10 @@ jest.mock('react-bootstrap', () => ({
 
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children, title}: {children: React.ReactNode; title: string}) => (
-        <div data-testid='ask-channel-tooltip' data-title={title}>
+        <div
+            data-testid='ask-channel-tooltip'
+            data-title={title}
+        >
             {children}
         </div>
     ),
