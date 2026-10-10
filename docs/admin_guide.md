@@ -645,6 +645,57 @@ Integrations are available in direct messages by default. If you enable the expe
 
 The built-in `CreateFile` tool lets an agent create a text file that is attached to its own reply. It executes automatically without an approval prompt — like the dynamic tool loading meta-tools — because its only effect is attaching a file to the agent's own response; users see a resolved (auto-approved) tool card. The embedded and external MCP posting tools (`create_post`, `dm`, `group_message`) also accept an inline `files` parameter and create the attachments as the acting user, subject to those tools' configured approval policies. In channels, availability of all of these follows the existing **Enable Channel Mention Tool Calling** setting.
 
+### Webhook agent endpoint
+
+The webhook agent endpoint lets Mattermost incoming/outgoing webhooks and other external systems POST a message to an agent and receive the agent's reply synchronously. It is authenticated with a shared secret rather than a user session, so no Mattermost login is required.
+
+Because the caller is unattended, tool calling is always disabled for these requests: the agent replies from its model and configured instructions only.
+
+**Enable the endpoint**
+
+1. In the plugin configuration, enable the webhook endpoint and set a **Webhook Secret** (any sufficiently long random string). While the feature is disabled or the secret is empty, the endpoint responds with `404 Not Found` and is not exposed.
+2. Keep the secret confidential — it grants access to the agent. It is never written to logs or audit records.
+
+**Endpoint**
+
+```
+POST /plugins/mattermost-ai/webhooks/agent
+POST /plugins/mattermost-ai/webhooks/agent/<botusername>
+```
+
+Append `<botusername>` to target a specific agent. Without it, the request routes to the configured default agent (or the first agent if no default is set).
+
+The secret is supplied either as an `Authorization: Bearer <secret>` header or as a `token` form field (the Mattermost outgoing-webhook convention). A missing or incorrect secret returns `401 Unauthorized`; an unknown agent returns `404 Not Found`; an empty message returns `400 Bad Request`.
+
+**Mattermost outgoing webhook**
+
+Create a Mattermost **outgoing webhook** (Integrations → Outgoing Webhooks) so the agent replies in-channel:
+
+- **Callback URL**: `https://<your-mattermost>/plugins/mattermost-ai/webhooks/agent` (optionally with `/<botusername>`).
+- **Trigger word**: the word that starts a message to the agent (for example `!ai`). The endpoint strips a leading trigger word from the message before sending it to the agent.
+
+Mattermost posts each outgoing webhook's own generated token in the `token` form field. To authenticate, set the plugin's **Webhook Secret** to that outgoing webhook's token (shown on the outgoing webhook's configuration page). The endpoint accepts the secret from the `token` form field for exactly this reason.
+
+The endpoint reads the outgoing webhook's `text` field (stripping a leading trigger word) and returns the agent's reply in the Mattermost outgoing-webhook response shape, which Mattermost posts back into the channel:
+
+```json
+{"text": "<agent reply>", "response_type": "comment"}
+```
+
+**External JSON callers**
+
+Other systems can call the endpoint with a JSON body:
+
+```
+POST /plugins/mattermost-ai/webhooks/agent
+Authorization: Bearer <secret>
+Content-Type: application/json
+
+{"message": "Summarize today's incident report", "agent": "support"}
+```
+
+The `agent` field is optional (and is overridden by `<botusername>` in the path when present). The response uses the same shape as above.
+
 ## Model Context Protocol (MCP) Integration
 
 The Model Context Protocol (MCP) integration lets Agents use tools exposed by MCP servers, including the embedded Mattermost tools, plugin-registered MCP servers from compatible Mattermost plugins, and optional remote servers.

@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings/mocks"
@@ -68,6 +69,7 @@ type testConfigImpl struct {
 	allowUnsafeLinks                bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
+	webhookConfig                   config.WebhookConfig
 	services                        []llm.ServiceConfig
 }
 
@@ -77,6 +79,10 @@ func (tc *testConfigImpl) GetDefaultBotName() string {
 
 func (tc *testConfigImpl) MCP() mcp.Config {
 	return tc.mcpConfig
+}
+
+func (tc *testConfigImpl) Webhook() config.WebhookConfig {
+	return tc.webhookConfig
 }
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {

@@ -22,6 +22,10 @@ const (
 	// Config.
 	AuditEventSaveConfig = "saveConfig"
 
+	// Webhook agent endpoint: a token-authenticated external caller routed a
+	// message to an agent and received its reply.
+	AuditEventWebhookAgent = "webhookAgent"
+
 	// Admin operations.
 	AuditEventReindexPosts          = "reindexPosts"
 	AuditEventCancelReindexJob      = "cancelReindexJob"
@@ -94,6 +98,9 @@ func buildAuditEventRegistry(a *API) map[string]string {
 	return map[string]string{
 		// Config.
 		handlerFuncName(a.handleSaveConfig): AuditEventSaveConfig,
+
+		// Webhook agent endpoint.
+		handlerFuncName(a.handleWebhookAgent): AuditEventWebhookAgent,
 
 		// Admin operations.
 		handlerFuncName(a.handleReindexPosts):       AuditEventReindexPosts,
