@@ -36,8 +36,17 @@ type Config struct {
 	EmbeddingSearchConfig           embeddings.EmbeddingSearchConfig `json:"embeddingSearchConfig"`
 	MCP                             MCPConfig                        `json:"mcp"`
 	WebSearch                       WebSearchConfig                  `json:"webSearch"`
+	Webhook                         WebhookConfig                    `json:"webhook"`
 	TelemetryOutput                 string                           `json:"telemetryOutput"`
 	OpenTelemetryEndpoint           string                           `json:"openTelemetryEndpoint"`
+}
+
+// WebhookConfig configures the token-authenticated webhook endpoint that routes
+// an incoming message to an agent and returns the agent's reply. Secret is a
+// shared secret and must never be logged or placed in an audit record.
+type WebhookConfig struct {
+	Enabled bool   `json:"enabled"`
+	Secret  string `json:"secret"`
 }
 
 type WebSearchConfig struct {
@@ -161,6 +170,10 @@ func parseBooleanEnv(key string) (bool, bool) {
 
 func (c *Container) MCP() MCPConfig {
 	return c.Config().MCP
+}
+
+func (c *Container) Webhook() WebhookConfig {
+	return c.Config().Webhook
 }
 
 func (c *Container) AllowUnsafeLinks() bool {

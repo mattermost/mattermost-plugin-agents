@@ -53,6 +53,7 @@ const (
 type Config interface {
 	GetDefaultBotName() string
 	MCP() mcp.Config
+	Webhook() config.WebhookConfig
 	AllowUnsafeLinks() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
@@ -335,6 +336,15 @@ func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Reques
 			a.delegateToMCPHandler(gc, a.mcpHandlers.MCPHandler)
 		})
 	}
+
+	// Webhook agent endpoints — token-authenticated and session-less, so they
+	// are registered before the Mattermost session-auth gate below. The
+	// middleware returns 404 unless the feature is enabled and a secret is
+	// configured, so the route is not exposed otherwise.
+	webhookRouter := router.Group("/webhooks")
+	webhookRouter.Use(a.webhookTokenAuthRequired)
+	webhookRouter.POST("/agent", a.handleWebhookAgent)
+	webhookRouter.POST("/agent/:botusername", a.handleWebhookAgent)
 
 	router.Use(a.MattermostAuthorizationRequired)
 
