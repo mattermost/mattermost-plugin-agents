@@ -65,6 +65,13 @@ func (s *SerplyProvider) Search(ctx context.Context, query string, limit int) (*
 		failSpan(span, "create_request", 0, err)
 		return nil, err
 	}
+	// The API key travels in a header, so refuse a plaintext endpoint before
+	// the header is ever set.
+	if req.URL.Scheme != "https" || req.URL.Host == "" {
+		err = fmt.Errorf("serply API URL must be an absolute https URL")
+		failSpan(span, "invalid_endpoint", 0, err)
+		return nil, err
+	}
 
 	values := url.Values{}
 	values.Set("q", query)
@@ -84,7 +91,7 @@ func (s *SerplyProvider) Search(ctx context.Context, query string, limit int) (*
 		return nil, err
 	}
 
-	resp, err := client.Do(req)
+	resp, err := serplyPinnedClient(client, req.URL).Do(req)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Error("web search request failed", "error", err)
@@ -136,4 +143,27 @@ type serplySearchResponse struct {
 		Link        string `json:"link"`
 		Description string `json:"description"`
 	} `json:"results"`
+}
+
+// serplyPinnedClient returns a shallow copy of client that only follows
+// redirects to the endpoint's own https origin. Go forwards custom headers
+// such as X-Api-Key across redirects, so a redirect to another host or to
+// plain http must not be followed. The client's own redirect policy, or Go's
+// default 10-hop limit when it has none, still applies.
+func serplyPinnedClient(client *http.Client, endpoint *url.URL) *http.Client {
+	pinned := *client
+	next := client.CheckRedirect
+	pinned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if req.URL.Scheme != "https" || !strings.EqualFold(req.URL.Host, endpoint.Host) {
+			return fmt.Errorf("refusing redirect from the Serply endpoint to %s://%s", req.URL.Scheme, req.URL.Host)
+		}
+		if next != nil {
+			return next(req, via)
+		}
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		return nil
+	}
+	return &pinned
 }

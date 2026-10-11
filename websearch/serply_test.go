@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -127,22 +128,21 @@ func TestSerplyProvider(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			apiURL := "http://example.invalid"
-			client := http.DefaultClient
-			if tc.nilClient {
-				client = nil
-			} else {
-				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					require.Equal(t, "GET", r.Method)
-					require.Equal(t, "test-key", r.Header.Get("X-Api-Key"))
-					require.Equal(t, "golang programming", r.URL.Query().Get("q"))
-					require.Equal(t, tc.wantNum, r.URL.Query().Get("num"))
-					require.Empty(t, r.URL.Query().Get("key"), "API key must not be sent in the query string")
+			apiURL := "https://example.invalid"
+			var client *http.Client
+			if !tc.nilClient {
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					assert.Equal(t, "GET", r.Method)
+					assert.Equal(t, "test-key", r.Header.Get("X-Api-Key"))
+					assert.Equal(t, "golang programming", r.URL.Query().Get("q"))
+					assert.Equal(t, tc.wantNum, r.URL.Query().Get("num"))
+					assert.Empty(t, r.URL.Query().Get("key"), "API key must not be sent in the query string")
 					w.Header().Set("Content-Type", "application/json")
 					tc.handler(w, r)
 				}))
 				defer server.Close()
 				apiURL = server.URL
+				client = server.Client()
 			}
 
 			provider := NewSerplyProvider("test-key", apiURL, client, &mockLogger{})
@@ -162,6 +162,66 @@ func TestSerplyProvider(t *testing.T) {
 			if tc.checkFirst != nil {
 				require.Equal(t, *tc.checkFirst, resp.Results[0])
 			}
+		})
+	}
+}
+
+func TestSerplyProviderEndpointSafety(t *testing.T) {
+	tests := []struct {
+		name            string
+		setup           func(t *testing.T, keySeen *bool) (apiURL string, client *http.Client)
+		wantErrContains string
+	}{
+		{
+			name: "plaintext endpoint is refused before any request",
+			setup: func(t *testing.T, keySeen *bool) (string, *http.Client) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					*keySeen = true
+				}))
+				t.Cleanup(server.Close)
+				return server.URL, server.Client()
+			},
+			wantErrContains: "must be an absolute https URL",
+		},
+		{
+			name: "redirect to another host is not followed",
+			setup: func(t *testing.T, keySeen *bool) (string, *http.Client) {
+				other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					*keySeen = r.Header.Get("X-Api-Key") != ""
+				}))
+				t.Cleanup(other.Close)
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, other.URL+"/v1/search", http.StatusFound)
+				}))
+				t.Cleanup(server.Close)
+				return server.URL, server.Client()
+			},
+			wantErrContains: "refusing redirect",
+		},
+		{
+			name: "same-host redirect loop stops at the hop limit",
+			setup: func(t *testing.T, _ *bool) (string, *http.Client) {
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, "/loop", http.StatusFound)
+				}))
+				t.Cleanup(server.Close)
+				return server.URL, server.Client()
+			},
+			wantErrContains: "stopped after 10 redirects",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			keySeen := false
+			apiURL, client := tc.setup(t, &keySeen)
+
+			provider := NewSerplyProvider("test-key", apiURL, client, &mockLogger{})
+			_, err := provider.Search(context.Background(), "golang programming", 5)
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantErrContains)
+			require.False(t, keySeen, "the API key must not reach a host other than the configured endpoint")
 		})
 	}
 }
