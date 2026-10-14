@@ -511,7 +511,7 @@ func TestGetToolsOmitsSovereignWebSearchWhenUnlicensed(t *testing.T) {
 
 	for _, level := range enterprisetest.AllLevels {
 		t.Run(level.String(), func(t *testing.T) {
-			provider := NewMMToolProvider(client, NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(level)))
+			provider := NewMMToolProvider(client, NewWebSearchService(cfgGetter, &mockLogger{}, http.DefaultClient, enterprisetest.CheckerAt(level)), nil)
 			names := []string{}
 			for _, tool := range provider.GetTools(mockBot, &llm.Context{}) {
 				names = append(names, tool.Name)

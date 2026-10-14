@@ -11,6 +11,7 @@ interface PluginState {
     customPrompts: CustomPrompt[] | null;
     pinnedPromptIds: string[] | null;
     showCustomPromptsModal: boolean;
+    htmlArtifactsEnabled?: boolean;
 }
 
 type AppState = GlobalState & {
@@ -29,3 +30,6 @@ export const getPinnedPromptIds = (state: AppState): readonly string[] =>
 
 export const getShowCustomPromptsModal = (state: AppState): boolean =>
     state[`plugins-${manifest.id}`]?.showCustomPromptsModal ?? false;
+
+export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.htmlArtifactsEnabled);

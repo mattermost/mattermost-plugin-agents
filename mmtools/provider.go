@@ -18,15 +18,19 @@ type ToolProvider interface {
 
 // MMToolProvider implements ToolProvider with all built-in Mattermost tools
 type MMToolProvider struct {
-	pluginAPI mmapi.Client
-	webSearch WebSearchService
+	pluginAPI     mmapi.Client
+	webSearch     WebSearchService
+	htmlArtifacts func() bool
 }
 
-// NewMMToolProvider creates a new tool provider
-func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService) *MMToolProvider {
+// NewMMToolProvider creates a new tool provider. htmlArtifacts reports
+// whether HTML artifacts are enabled (read on every GetTools call so config
+// changes apply without a restart); nil means disabled.
+func NewMMToolProvider(pluginAPI mmapi.Client, webSearch WebSearchService, htmlArtifacts func() bool) *MMToolProvider {
 	return &MMToolProvider{
-		pluginAPI: pluginAPI,
-		webSearch: webSearch,
+		pluginAPI:     pluginAPI,
+		webSearch:     webSearch,
+		htmlArtifacts: htmlArtifacts,
 	}
 }
 
@@ -54,7 +58,7 @@ func (p *MMToolProvider) GetTools(bot *bots.Bot, llmContext *llm.Context) []llm.
 	}
 
 	if p.pluginAPI != nil && llmContext != nil && llmContext.ToolCatalog.ResponseFilesSupported {
-		builtInTools = append(builtInTools, NewCreateFileTool(p.pluginAPI))
+		builtInTools = append(builtInTools, NewCreateFileTool(p.pluginAPI, p.htmlArtifacts != nil && p.htmlArtifacts()))
 	}
 
 	if llmContext != nil && llmContext.ToolCatalog.InteractiveUserPresent {

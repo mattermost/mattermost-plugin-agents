@@ -9,8 +9,11 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
+    artifactPath,
+    artifactURL,
     doLoopInAgent,
     doThreadAnalysis,
+    getArtifactToken,
     getChannelAutoReply,
     getConversation,
     getConversationContext,
@@ -326,6 +329,27 @@ describe('getConversationContext', () => {
         await expect(getConversationContext(id)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('artifact URLs', () => {
+    const artifactsRoute = `${siteURL}/plugins/${manifest.id}/artifacts`;
+    const nonce = 'AbC-d_0123456789xyzABC';
+
+    test.each([
+        {name: 'well-formed id', fileId: WELL_FORMED_ID, nonce, path: `${artifactsRoute}/${WELL_FORMED_ID}`},
+        {name: 'id with a separator stays one path segment', fileId: 'ab/../cd', nonce, path: `${artifactsRoute}/ab%2F..%2Fcd`},
+        {name: 'nonce with query syntax stays one parameter value', fileId: WELL_FORMED_ID, nonce: 'a&n=b#c', path: `${artifactsRoute}/${WELL_FORMED_ID}`},
+    ])('$name', async ({fileId, nonce: n, path}) => {
+        const encodedNonce = encodeURIComponent(n);
+        expect(artifactPath(fileId)).toBe(path);
+        expect(artifactURL(fileId, n)).toBe(`${path}?n=${encodedNonce}`);
+
+        mockFetch.mockResolvedValue({ok: true, status: 200, json: () => Promise.resolve({token: 'tok', tooLarge: false})} as unknown as Response);
+        await expect(getArtifactToken(fileId, n)).resolves.toEqual({token: 'tok', tooLarge: false});
+        const [url, options] = mockFetch.mock.calls[0];
+        expect(url).toBe(`${path}/token?n=${encodedNonce}`);
+        expect(options).toEqual(expect.objectContaining({method: 'GET'}));
     });
 });
 

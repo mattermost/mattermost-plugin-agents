@@ -94,6 +94,10 @@ The plugin emits OpenTelemetry traces. Agent-relevant rules:
 - `webapp/node_modules/` contains stray Go files that `./...` matches; for sweeping Go commands use `$(go list ./... | grep -v node_modules)`.
 - Bumping the Go version: update the `go` directive in all three modules AND the `FIPS_IMAGE` tag in `build/fips.mk` — set the new tag without a digest, open a PR so the `build-fips` CI job pulls it, then pin the digest CI resolves. **Check the image exists first** (tag-listing procedure in `build/fips.mk`): the `go` directive is held at 1.26.x until `cgr.dev/mattermost.com/go-msft-fips` publishes a 1.27 toolchain — do not bump past what that registry offers. If `bin/golangci-lint` starts failing everywhere with "export data version N is greater than maximum supported version", the pinned linter predates the toolchain: bump `GOLANGCI_LINT_VERSION` in the Makefile and rerun `make install-go-tools`.
 
+## Cursor Cloud specific instructions
+
+- Run e2e with `TESTCONTAINERS_HOST_OVERRIDE=localhost` (e.g. `cd e2e && TESTCONTAINERS_HOST_OVERRIDE=localhost npx playwright test tests/agents/html-artifact.spec.ts --reporter=list`). On Cloud VMs testcontainers reports the Docker gateway IP (e.g. `172.18.0.1`) as the Mattermost host, and browsers send Fetch Metadata (`Sec-Fetch-*`) headers only to HTTPS or `localhost` origins, so without the override the HTML artifact specs only ever get the "can only be viewed inside Mattermost" page.
+
 ## Pull requests and commits
 
 - Commit subject: one succinct line. Optional Jira prefix (`MM-12345:`) or short scope (`fix:`, `docs:`, `webapp:`) is fine.

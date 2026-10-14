@@ -66,6 +66,7 @@ type TestEnvironment struct {
 // testConfigImpl is a minimal implementation of Config for testing
 type testConfigImpl struct {
 	allowUnsafeLinks                bool
+	enableHTMLArtifacts             bool
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
@@ -81,6 +82,10 @@ func (tc *testConfigImpl) MCP() mcp.Config {
 
 func (tc *testConfigImpl) AllowUnsafeLinks() bool {
 	return tc.allowUnsafeLinks
+}
+
+func (tc *testConfigImpl) EnableHTMLArtifacts() bool {
+	return tc.enableHTMLArtifacts
 }
 
 func (tc *testConfigImpl) EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig {
@@ -1166,6 +1171,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		expectedUseServiceAccountAuth bool
 		expectedSearchEnabled         bool
 		expectedAllowUnsafeLinks      bool
+		expectedHTMLArtifacts         bool
 		expectedStatus                int
 		envSetup                      func(e *TestEnvironment)
 	}{
@@ -1213,6 +1219,15 @@ func TestHandleGetAIBots(t *testing.T) {
 			expectedStatus:                http.StatusOK,
 			envSetup: func(e *TestEnvironment) {
 				e.config.allowUnsafeLinks = true
+				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
+			},
+		},
+		{
+			name:                  "html artifacts enabled via config",
+			expectedHTMLArtifacts: true,
+			expectedStatus:        http.StatusOK,
+			envSetup: func(e *TestEnvironment) {
+				e.config.enableHTMLArtifacts = true
 				e.mockAPI.On("GetChannelByName", "", mock.AnythingOfType("string"), false).Return(nil, &model.AppError{})
 			},
 		},
@@ -1271,6 +1286,7 @@ func TestHandleGetAIBots(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, test.expectedSearchEnabled, response.SearchEnabled, "SearchEnabled field should match expected value")
 				require.Equal(t, test.expectedAllowUnsafeLinks, response.AllowUnsafeLinks, "AllowUnsafeLinks field should match expected value")
+				require.Equal(t, test.expectedHTMLArtifacts, response.HTMLArtifactsEnabled, "HTMLArtifactsEnabled field should match expected value")
 				require.NotEmpty(t, response.Bots, "Should return at least one bot")
 				require.Equal(t, test.expectedUseServiceAccountAuth, response.Bots[0].UseServiceAccountAuth,
 					"UseServiceAccountAuth field should report the effective service account mode")

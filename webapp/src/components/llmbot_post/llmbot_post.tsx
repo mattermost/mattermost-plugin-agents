@@ -22,6 +22,7 @@ import {isValidId} from '@/utils/ids';
 
 import {ServerToolUse} from '@/types/conversation';
 
+import HTMLArtifacts from '../html_artifacts/html_artifacts';
 import {needsViewerDecision, selectDecisionToolCalls} from '../tool_decisions';
 import {ToolApprovalStage, ToolCall} from '../tool_types';
 import {Annotation} from '../citations/types';
@@ -712,6 +713,10 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             <AnswerArea $afterActivity={activity.items.length > 0}>
                 {activity.answerRounds.map(renderRound)}
             </AnswerArea>
+            <HTMLArtifacts
+                postId={props.post.id}
+                files={props.post.metadata?.files}
+            />
             { showPostbackButton &&
             <PostSummaryHelpMessage
                 data-testid='llm-bot-post-summary-help'

@@ -439,6 +439,7 @@ func (p *Plugin) OnActivate() error {
 	toolProvider := mmtools.NewMMToolProvider(
 		mmClient,
 		webSearchService,
+		p.configuration.EnableHTMLArtifacts,
 	)
 
 	// Build redirect URI

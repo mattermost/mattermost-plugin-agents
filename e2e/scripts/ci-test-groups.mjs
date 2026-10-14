@@ -48,6 +48,7 @@ const groups = {
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',
         'tests/agents/create-file-attachment.spec.ts',
+        'tests/agents/html-artifact.spec.ts',
         'tests/tool-activity/collapsed-activity.spec.ts',
     ],
     'e2e-shard-3': [
