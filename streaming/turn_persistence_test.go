@@ -27,6 +27,8 @@ type fakeTurnStore struct {
 	createErr error
 	lookupErr error
 	demoteErr error
+
+	heartbeats int
 }
 
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
@@ -72,6 +74,44 @@ func (f *fakeTurnStore) UpdateTurnPostID(id string, postID *string) error {
 			t.PostID = postID
 			return nil
 		}
+	}
+	return nil
+}
+
+func (f *fakeTurnStore) HeartbeatStreamingTurn(id string, content json.RawMessage) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.heartbeats++
+	for _, t := range f.turns {
+		if t.ID == id && t.Status == store.TurnStatusStreaming {
+			t.Content = content
+		}
+	}
+	return nil
+}
+
+// FinalizeStreamingTurn mirrors the store: writes final state and moves the
+// turn after any turns appended since it was created.
+func (f *fakeTurnStore) FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, t := range f.turns {
+		if t.ID != id {
+			continue
+		}
+		maxSeq := 0
+		for _, o := range f.turns {
+			if o.ConversationID == t.ConversationID && o.Sequence > maxSeq {
+				maxSeq = o.Sequence
+			}
+		}
+		if t.Sequence < maxSeq {
+			t.Sequence = maxSeq + 1
+		}
+		t.Content = content
+		t.TokensIn = tokensIn
+		t.TokensOut = tokensOut
+		t.Status = status
 	}
 	return nil
 }

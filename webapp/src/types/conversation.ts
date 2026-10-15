@@ -140,6 +140,9 @@ export interface Turn {
     // conversation state: 'call' → pending Accept/Reject; 'result' → pending
     // Share/Keep private; 'done' → no user decision remains.
     approval_state?: 'call' | 'result' | 'done';
+
+    // Lifecycle state; 'streaming' while the response is still being generated.
+    status?: 'streaming' | 'complete' | 'interrupted';
 }
 
 export interface ConversationResponse {

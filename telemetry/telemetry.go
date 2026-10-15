@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -106,12 +108,13 @@ func SpanFromContext(ctx context.Context) trace.Span {
 	return trace.SpanFromContext(ctx)
 }
 
-// DetachContext returns a context whose lifetime is independent of ctx but
+// DetachContext returns a context whose lifetime is independent of ctx (it
+// derives from the plugin root context, canceled on deactivation) but
 // preserves the active OpenTelemetry span. Use this when handing a request
 // context to background work (post streaming, async processing) that must
 // continue after the originating HTTP handler returns. Without it, the
 // request context's cancellation propagates into the background goroutine
 // and truncates the work.
 func DetachContext(ctx context.Context) context.Context {
-	return trace.ContextWithSpan(context.Background(), trace.SpanFromContext(ctx))
+	return trace.ContextWithSpan(lifecycle.Context(), trace.SpanFromContext(ctx))
 }

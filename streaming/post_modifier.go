@@ -12,6 +12,42 @@ const NoRegen = "no_regen"
 const UnsafeLinksPostProp = "unsafe_links"
 const ConversationIDProp = "conversation_id"
 
+// InterruptedProp marks a bot post whose generation was cut short by the
+// plugin or server going away rather than finishing or being stopped by the
+// user. Its value is one of the InterruptedReason* constants. The webapp
+// renders the interruption notice from this prop (only on agent-bot posts);
+// the post message itself only carries the partial response.
+const InterruptedProp = "llm_interrupted"
+
+// InterruptedAtProp is the time (ms since epoch) the interruption was recorded.
+const InterruptedAtProp = "llm_interrupted_at"
+
+const (
+	// InterruptedReasonShutdown: the plugin was deactivated (upgrade, disable,
+	// server shutdown) while the response was streaming and the stream was
+	// finalized gracefully.
+	InterruptedReasonShutdown = "shutdown"
+	// InterruptedReasonLost: the node generating the response disappeared
+	// without finalizing it; a later recovery sweep marked it.
+	InterruptedReasonLost = "lost"
+)
+
+// MarkInterrupted sets the interruption props on a post.
+func MarkInterrupted(post *model.Post, reason string, at int64) {
+	post.AddProp(InterruptedProp, reason)
+	post.AddProp(InterruptedAtProp, at)
+}
+
+// ClearInterrupted removes the interruption props. Returns true if any were present.
+func ClearInterrupted(post *model.Post) bool {
+	had := post.GetProp(InterruptedProp) != nil || post.GetProp(InterruptedAtProp) != nil
+	if had {
+		post.DelProp(InterruptedProp)
+		post.DelProp(InterruptedAtProp)
+	}
+	return had
+}
+
 // ModifyPostForBot modifies a post to add bot-specific properties
 func ModifyPostForBot(botid string, post *model.Post, respondingToPostID string) {
 	post.UserId = botid

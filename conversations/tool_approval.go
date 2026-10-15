@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/audit"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -158,7 +159,12 @@ func (c *Conversations) beginToolDecision(ctx context.Context, spanName, logMsg,
 		return fail(ErrNotRequester)
 	}
 
-	turns, err := c.convService.GetTurns(convID)
+	// The webapp shows Accept as soon as the live tool_call event arrives,
+	// which can be before the stream finalizes the clicked post's turn. Wait
+	// briefly for that turn to settle instead of rejecting the click as stale.
+	turns, err := awaitSettledPostTurns(ctx, func() ([]store.Turn, error) {
+		return c.convService.GetTurns(convID)
+	}, post.Id, settleStreamingTurnTimeout, settleStreamingTurnPollInterval)
 	if err != nil {
 		return fail(fmt.Errorf("failed to get turns: %w", err))
 	}
@@ -781,6 +787,36 @@ func resolveApprovedToolUseBlock(ctx context.Context, llmContext *llm.Context, b
 	}, llmContext)
 }
 
+const (
+	settleStreamingTurnTimeout      = 10 * time.Second
+	settleStreamingTurnPollInterval = 50 * time.Millisecond
+)
+
+// awaitSettledPostTurns loads the conversation turns, reloading until no
+// assistant turn anchored to postID is still streaming or timeout elapses.
+// On timeout it returns the latest turns; callers treat a still-streaming
+// turn as not yet actionable.
+func awaitSettledPostTurns(ctx context.Context, load func() ([]store.Turn, error), postID string, timeout, interval time.Duration) ([]store.Turn, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		turns, err := load()
+		if err != nil {
+			return nil, err
+		}
+		stillStreaming := slices.ContainsFunc(turns, func(t store.Turn) bool {
+			return t.Role == "assistant" && t.PostID != nil && *t.PostID == postID && t.Status == store.TurnStatusStreaming
+		})
+		if !stillStreaming || !time.Now().Before(deadline) {
+			return turns, nil
+		}
+		select {
+		case <-ctx.Done():
+			return turns, nil
+		case <-time.After(interval):
+		}
+	}
+}
+
 // findPendingToolTurn returns the assistant turn linked to clickedPostID along
 // with its blocks, provided the turn contains pending tool_use blocks.
 func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn, []conversation.ContentBlock, error) {
@@ -789,6 +825,11 @@ func findPendingToolTurn(turns []store.Turn, clickedPostID string) (*store.Turn,
 			continue
 		}
 		if turns[i].PostID == nil || *turns[i].PostID != clickedPostID {
+			continue
+		}
+		// A turn still streaming (possibly on another node) or interrupted
+		// mid-generation is not a settled pending tool batch.
+		if turns[i].Status != "" && turns[i].Status != store.TurnStatusComplete {
 			continue
 		}
 

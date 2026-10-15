@@ -11,9 +11,12 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -45,6 +48,19 @@ const PostStreamingControlCancel = "cancel"
 const PostStreamingControlEnd = "end"
 const PostStreamingControlStart = "start"
 
+// PostStreamingControlHeartbeat is published every heartbeat tick while a
+// stream is alive, even when no tokens arrive (slow first token, long tool
+// runs), so clients can tell a live stream from a dead one.
+const PostStreamingControlHeartbeat = "heartbeat"
+
+// DefaultHeartbeatInterval is how often an in-progress stream persists its
+// partial content and bumps its turn's UpdatedAt.
+const DefaultHeartbeatInterval = 5 * time.Second
+
+// StaleStreamThreshold is how long a streaming turn may go without a
+// heartbeat before a recovery sweep treats it as abandoned.
+const StaleStreamThreshold = 60 * time.Second
+
 // PostStreamingControlContinue signals a tool-approval resume stream onto a
 // post that already has content. The webapp clears the visible message but
 // keeps the resolved tool cards.
@@ -70,7 +86,11 @@ type Service interface {
 }
 
 type postStreamContext struct {
-	cancel context.CancelFunc
+	cancel context.CancelCauseFunc
+	// stopRootWatch detaches the root-context watcher.
+	stopRootWatch func() bool
+	// done is closed when the stream is finished (FinishStreaming).
+	done chan struct{}
 }
 
 // TurnStore is the subset of store operations needed by the streaming layer.
@@ -81,6 +101,8 @@ type TurnStore interface {
 	CreateTurnAutoSequence(turn *store.Turn) error
 	GetTurnByPostID(postID string) (*store.Turn, error)
 	UpdateTurnPostID(id string, postID *string) error
+	HeartbeatStreamingTurn(id string, content json.RawMessage) error
+	FinalizeStreamingTurn(id string, content json.RawMessage, tokensIn, tokensOut int64, status string) error
 }
 
 // turnAccumulator collects stream state. The turn is not written to the
@@ -94,6 +116,10 @@ type turnAccumulator struct {
 	// start. Used only by continuation finalize to demote the prior anchor.
 	existingAnchorID string
 	isContinuation   bool
+
+	// turnID is the streaming turn inserted at stream start. Empty when that
+	// insert failed; finalize then falls back to creating the turn.
+	turnID string
 
 	sequence    llm.TurnSequence
 	annotations []llm.Annotation
@@ -157,15 +183,61 @@ type MMPostStreamService struct {
 	mmClient      Client
 	i18n          *i18n.Bundle
 	turnStore     TurnStore
+
+	// rootCtx overrides lifecycle.Context() as the context whose cancellation
+	// (with lifecycle.ErrShutdown) interrupts every stream. Tests only.
+	rootCtx           context.Context
+	heartbeatInterval time.Duration
+	activeStreams     atomic.Int64
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
 	return &MMPostStreamService{
-		contexts: make(map[string]postStreamContext),
-		mmClient: mmClient,
-		i18n:     i18n,
+		contexts:          make(map[string]postStreamContext),
+		mmClient:          mmClient,
+		i18n:              i18n,
+		heartbeatInterval: DefaultHeartbeatInterval,
 	}
 }
+
+// SetRootContext overrides the plugin root context streams are tied to.
+func (p *MMPostStreamService) SetRootContext(ctx context.Context) {
+	p.rootCtx = ctx
+}
+
+// SetHeartbeatInterval overrides DefaultHeartbeatInterval.
+func (p *MMPostStreamService) SetHeartbeatInterval(d time.Duration) {
+	p.heartbeatInterval = d
+}
+
+func (p *MMPostStreamService) root() context.Context {
+	if p.rootCtx != nil {
+		return p.rootCtx
+	}
+	return lifecycle.Context()
+}
+
+// ActiveStreams returns the number of streams currently being written on this node.
+func (p *MMPostStreamService) ActiveStreams() int64 {
+	return p.activeStreams.Load()
+}
+
+// WaitForActiveStreams blocks until no stream is active on this node or the
+// timeout elapses. Returns true if all streams finished.
+func (p *MMPostStreamService) WaitForActiveStreams(timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for p.activeStreams.Load() > 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return true
+}
+
+// stopWaitTimeout bounds how long StopStreaming waits for the stopped stream
+// to finalize, so a caller (e.g. regenerate) can safely start a new stream.
+const stopWaitTimeout = 3 * time.Second
 
 // SetTurnStore sets the store used for persisting assistant turns.
 // When nil (the default), turn persistence is silently skipped.
@@ -242,9 +314,24 @@ func (p *MMPostStreamService) sendPostStreamingEvent(post *model.Post, broadcast
 	p.mmClient.PublishWebSocketEvent("postupdate", payload, broadcast)
 }
 
-// StopStreaming cancels any in-flight stream to the given post.
+// StopStreaming cancels any in-flight stream to the given post on this node
+// and waits (bounded) for it to finish so a new stream can take the post.
 func (p *MMPostStreamService) StopStreaming(postID string) {
-	p.FinishStreaming(postID)
+	p.contextsMutex.Lock()
+	sc, ok := p.contexts[postID]
+	p.contextsMutex.Unlock()
+	if !ok {
+		return
+	}
+	sc.cancel(context.Canceled)
+	select {
+	case <-sc.done:
+	case <-time.After(stopWaitTimeout):
+		// Keep the registration: the old goroutine's deferred FinishStreaming
+		// would otherwise cancel whichever stream registers next for this
+		// post. A new stream gets ErrAlreadyStreamingToPost until it exits.
+		p.mmClient.LogWarn("Stopped stream did not finish in time; post stays reserved", "post_id", postID)
+	}
 }
 
 func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
@@ -255,10 +342,16 @@ func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID 
 		return nil, ErrAlreadyStreamingToPost
 	}
 
-	ctx, cancel := context.WithCancel(inCtx)
+	ctx, cancel := context.WithCancelCause(inCtx)
+	// Tie every stream to the plugin root so OnDeactivate interrupts it with
+	// lifecycle.ErrShutdown even if inCtx does not derive from the root.
+	root := p.root()
+	stop := context.AfterFunc(root, func() { cancel(context.Cause(root)) })
 
 	streamingContext := postStreamContext{
-		cancel: cancel,
+		cancel:        cancel,
+		stopRootWatch: stop,
+		done:          make(chan struct{}),
 	}
 
 	p.contexts[postID] = streamingContext
@@ -272,7 +365,9 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
 	if streamContext, ok := p.contexts[postID]; ok {
-		streamContext.cancel()
+		streamContext.stopRootWatch()
+		streamContext.cancel(context.Canceled)
+		close(streamContext.done)
 	}
 	delete(p.contexts, postID)
 }
@@ -289,9 +384,58 @@ func newTurnAccumulator(conversationID, postID, existingAnchorID string, isConti
 	}
 }
 
-// finalizeTurn writes the accumulated content as a new assistant turn. For
-// continuation streams it first demotes the prior anchor.
-func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
+// beginTurn inserts the assistant turn in the streaming state so that a
+// stream abandoned by a dying node is discoverable by the recovery sweep. For
+// continuation streams it first demotes the prior anchor (demote must precede
+// create so two turns never share a post_id).
+func (p *MMPostStreamService) beginTurn(acc *turnAccumulator) {
+	p.demotePriorAnchor(acc)
+
+	postIDCopy := acc.postID
+	turn := &store.Turn{
+		ID:             model.NewId(),
+		ConversationID: acc.conversationID,
+		PostID:         &postIDCopy,
+		Role:           "assistant",
+		Content:        json.RawMessage("[]"),
+		CreatedAt:      model.GetMillis(),
+		Status:         store.TurnStatusStreaming,
+	}
+	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
+		p.mmClient.LogError("Failed to create streaming assistant turn", "error", err, "post_id", acc.postID)
+		return
+	}
+	acc.turnID = turn.ID
+}
+
+func (p *MMPostStreamService) demotePriorAnchor(acc *turnAccumulator) {
+	if acc.existingAnchorID == "" || !acc.isContinuation {
+		return
+	}
+	if demoteErr := p.turnStore.UpdateTurnPostID(acc.existingAnchorID, nil); demoteErr != nil {
+		p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
+	}
+	acc.existingAnchorID = ""
+}
+
+// heartbeatTurn persists the current partial content of a streaming turn.
+func (p *MMPostStreamService) heartbeatTurn(acc *turnAccumulator) {
+	if acc.turnID == "" {
+		return
+	}
+	contentJSON, err := json.Marshal(acc.buildContentBlocks())
+	if err != nil {
+		p.mmClient.LogError("Failed to marshal turn content blocks", "error", err, "post_id", acc.postID)
+		return
+	}
+	if err := p.turnStore.HeartbeatStreamingTurn(acc.turnID, contentJSON); err != nil {
+		p.mmClient.LogWarn("Failed to heartbeat streaming turn", "error", err, "post_id", acc.postID)
+	}
+}
+
+// finalizeTurn writes the accumulated content and final status onto the turn
+// created at stream start, or creates the turn if that insert failed.
+func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator, status string) {
 	blocks := acc.buildContentBlocks()
 
 	contentJSON, err := json.Marshal(blocks)
@@ -300,12 +444,14 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 		return
 	}
 
-	if acc.existingAnchorID != "" && acc.isContinuation {
-		// Demote the prior anchor so the new turn becomes the post's anchor.
-		if demoteErr := p.turnStore.UpdateTurnPostID(acc.existingAnchorID, nil); demoteErr != nil {
-			p.mmClient.LogError("Failed to demote prior anchor turn", "error", demoteErr, "post_id", acc.postID, "turn_id", acc.existingAnchorID)
+	if acc.turnID != "" {
+		if err := p.turnStore.FinalizeStreamingTurn(acc.turnID, contentJSON, acc.tokensIn, acc.tokensOut, status); err != nil {
+			p.mmClient.LogError("Failed to finalize streaming assistant turn", "error", err, "post_id", acc.postID)
 		}
+		return
 	}
+
+	p.demotePriorAnchor(acc)
 
 	postIDCopy := acc.postID
 	turn := &store.Turn{
@@ -317,6 +463,7 @@ func (p *MMPostStreamService) finalizeTurn(acc *turnAccumulator) {
 		TokensIn:       acc.tokensIn,
 		TokensOut:      acc.tokensOut,
 		CreatedAt:      model.GetMillis(),
+		Status:         status,
 	}
 
 	if err := p.turnStore.CreateTurnAutoSequence(turn); err != nil {
@@ -404,6 +551,16 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	)
 	defer span.End()
 
+	p.activeStreams.Add(1)
+	defer p.activeStreams.Add(-1)
+
+	// A new stream supersedes any earlier interruption of this post.
+	if ClearInterrupted(post) {
+		if err := p.mmClient.UpdatePost(post); err != nil {
+			p.mmClient.LogWarn("Failed to clear interruption marker", "error", err, "post_id", post.Id)
+		}
+	}
+
 	// postupdate events stream the full assistant message, tool calls,
 	// reasoning and annotations, which routinely exceed the 49077-byte UDP
 	// limit and are essential to the streaming UX. ReliableClusterSend routes
@@ -437,6 +594,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				isDM = mmapi.IsDMWith(requesterUserID, ch)
 			}
 			acc = newTurnAccumulator(convID, post.Id, existingAnchorID, isContinuation, isDM)
+			p.beginTurn(acc)
 		} else {
 			// Every flow that streams into a bot post is expected to own a
 			// conversation; without one no assistant turn is persisted.
@@ -444,9 +602,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	finalStatus := store.TurnStatusComplete
 	defer func() {
 		if acc != nil {
-			p.finalizeTurn(acc)
+			p.finalizeTurn(acc, finalStatus)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -456,8 +615,30 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	var reasoningBuffer strings.Builder
 	attachmentCapWarned := false
 
+	interval := p.heartbeatInterval
+	if interval <= 0 {
+		interval = DefaultHeartbeatInterval
+	}
+	heartbeat := time.NewTicker(interval)
+	defer heartbeat.Stop()
+	lastFlushedMessage := post.Message
+
 	for {
 		select {
+		case <-heartbeat.C:
+			// Persist progress independent of token flow so a dead node's
+			// stream is detectable (UpdatedAt) and its partial text survives.
+			if acc != nil {
+				p.heartbeatTurn(acc)
+			}
+			if post.Message != lastFlushedMessage {
+				if err := p.mmClient.UpdatePost(post); err != nil {
+					p.mmClient.LogWarn("Failed to flush partial streamed message", "error", err, "post_id", post.Id)
+				} else {
+					lastFlushedMessage = post.Message
+				}
+			}
+			p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlHeartbeat})
 		case event, ok := <-stream.Stream:
 			if !ok {
 				// Stream channel closed - persist final state
@@ -679,6 +860,12 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 			}
 		case <-ctx.Done():
+			// A user stop is an intentional, complete response. Plugin
+			// shutdown is an interruption the user should be told about.
+			if lifecycle.IsShutdown(ctx) {
+				finalStatus = store.TurnStatusInterrupted
+				MarkInterrupted(post, InterruptedReasonShutdown, model.GetMillis())
+			}
 			if err := p.mmClient.UpdatePost(post); err != nil {
 				p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 				return

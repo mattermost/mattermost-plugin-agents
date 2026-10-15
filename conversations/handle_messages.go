@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
@@ -149,7 +151,7 @@ func (c *Conversations) buildConversationContextWithTools(
 }
 
 func (c *Conversations) MessageHasBeenPosted(pluginContext *plugin.Context, post *model.Post) {
-	ctx := context.Background()
+	ctx := lifecycle.Context()
 	if pluginContext != nil {
 		ctx = auth.WithSessionID(ctx, pluginContext.SessionId)
 	}

@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/lifecycle"
+
 	"github.com/mattermost/mattermost-plugin-agents/v2/accesscontrol"
 	"github.com/mattermost/mattermost-plugin-agents/v2/api"
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
@@ -61,6 +63,9 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
+	streamService        *streaming.MMPostStreamService
+	recoveryMu           sync.Mutex
+	recoveryTimer        *time.Timer
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -111,6 +116,7 @@ func (l *pluginLogger) Error(message string, keyValuePairs ...any) {
 
 func (p *Plugin) OnActivate() error {
 	p.licenseChangeListeners = nil
+	lifecycle.Start()
 	pluginAPI := pluginapi.NewClient(p.API, p.Driver)
 	p.pluginAPI = pluginAPI
 	mmClient := mmapi.NewClient(pluginAPI, p.API)
@@ -612,11 +618,17 @@ func (p *Plugin) OnActivate() error {
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
+	p.streamService = streamingService
+
+	p.startStreamRecovery()
 
 	return nil
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Must run before bifrost/MCP shutdown so in-flight streams can finalize.
+	p.stopStreamsForShutdown()
+
 	// Flush pending telemetry spans
 	p.telemetryMu.Lock()
 	if p.telemetryShutdown != nil {

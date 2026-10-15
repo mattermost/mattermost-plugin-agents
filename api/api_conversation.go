@@ -42,6 +42,9 @@ type TurnResponse struct {
 	// a non-nil PostID). One of "call" | "result" | "done". Computed by the
 	// server so the webapp renders approval UI from a single source of truth.
 	ApprovalState string `json:"approval_state,omitempty"`
+	// Status is the turn lifecycle state: "streaming" while a response is
+	// being generated, then "complete" or "interrupted".
+	Status string `json:"status"`
 }
 
 // handleGetConversation returns a conversation and its turns with privacy filtering applied.
@@ -173,6 +176,7 @@ func turnsToResponse(turns []store.Turn, filterForNonRequester bool) ([]TurnResp
 			TokensOut:     turn.TokensOut,
 			Sequence:      turn.Sequence,
 			ApprovalState: approvalStateForTurn(turn, turns),
+			Status:        turn.Status,
 		}
 	}
 	return result, nil

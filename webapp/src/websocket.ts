@@ -60,6 +60,14 @@ export default class PostEventListener {
 
     public handlePostUpdateWebsockets = (msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
         const postID = msg.data.post_id;
+
+        // Heartbeats only signal that the stream is alive; they must not reset cached progress state.
+        const isHeartbeat = msg.data.control === 'heartbeat';
+        if (isHeartbeat) {
+            this.notifyPostUpdateListeners(postID, msg);
+            return;
+        }
+
         if (msg.data.control === 'progress') {
             const pending = this.progressUpdates.get(postID);
             if (pending === null) {
@@ -83,6 +91,10 @@ export default class PostEventListener {
             this.lifecycleUpdates.delete(postID);
         }
 
+        this.notifyPostUpdateListeners(postID, msg);
+    };
+
+    private notifyPostUpdateListeners = (postID: string, msg: PluginWebSocketMessage<PostUpdateWebsocketMessage>) => {
         this.postUpdateWebsocketListeners.forEach((listenerObject) => {
             if (listenerObject.postID === postID) {
                 listenerObject.listener(msg);

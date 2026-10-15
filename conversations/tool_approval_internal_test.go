@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -268,4 +269,57 @@ func TestResolveApprovedToolUseBlockAllowsOldBlockWithoutNewMetadata(t *testing.
 	require.NoError(t, err)
 	assert.True(t, called)
 	assert.Equal(t, "ok", result)
+}
+
+// A tool-approval click can arrive while the continuation stream that
+// produced the pending call is still finalizing its turn (the webapp shows
+// Accept from the live tool_call event). The click must wait for the turn to
+// settle rather than fail as stale.
+func TestAwaitSettledPostTurns(t *testing.T) {
+	const postID = "post-1"
+	streamingTurn := func() store.Turn {
+		turn := assistantTurnWithPending(t, "a2", postID, 4)
+		turn.Content = json.RawMessage("[]")
+		turn.Status = store.TurnStatusStreaming
+		return turn
+	}
+	completeTurn := func() store.Turn {
+		turn := assistantTurnWithPending(t, "a2", postID, 4)
+		turn.Status = store.TurnStatusComplete
+		return turn
+	}
+
+	cases := []struct {
+		name           string
+		streamingLoads int
+		timeout        time.Duration
+		wantFindable   bool
+	}{
+		{name: "already settled", streamingLoads: 0, timeout: time.Second, wantFindable: true},
+		{name: "settles after a few polls", streamingLoads: 3, timeout: time.Second, wantFindable: true},
+		{name: "never settles before timeout", streamingLoads: 1 << 30, timeout: 20 * time.Millisecond, wantFindable: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			loads := 0
+			load := func() ([]store.Turn, error) {
+				loads++
+				if loads <= tc.streamingLoads {
+					return []store.Turn{streamingTurn()}, nil
+				}
+				return []store.Turn{completeTurn()}, nil
+			}
+
+			turns, err := awaitSettledPostTurns(context.Background(), load, postID, tc.timeout, time.Millisecond)
+			require.NoError(t, err)
+
+			_, _, findErr := findPendingToolTurn(turns, postID)
+			if tc.wantFindable {
+				assert.NoError(t, findErr)
+			} else {
+				assert.ErrorIs(t, findErr, ErrStaleToolClick)
+			}
+		})
+	}
 }
