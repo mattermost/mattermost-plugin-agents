@@ -275,7 +275,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -443,7 +443,7 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 		ChannelId: channel.Id,
 		RootId:    responseRootID,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, postingUser.Id, responsePost, post.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, post.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)
@@ -572,8 +572,8 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 	return mentionPost
 }
 
-func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
-	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+func (c *Conversations) createResponsePlaceholder(botID string, post *model.Post, respondingToPostID string) error {
+	streaming.ModifyPostForBot(botID, post, respondingToPostID)
 	return c.mmClient.CreatePost(post)
 }
 

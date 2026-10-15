@@ -12,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -415,4 +417,82 @@ func mustMarshalBlocks(t *testing.T, blocks []conversation.ContentBlock) json.Ra
 	data, err := json.Marshal(blocks)
 	require.NoError(t, err)
 	return data
+}
+
+type fileActionStub struct{ allowed bool }
+
+func (s fileActionStub) HasPermissionToFileAction(string, string, string) bool { return s.allowed }
+
+func TestHandleGetConversationMeetingSourceAccess(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const (
+		convID          = "conv-meeting"
+		summaryPostID   = "summarypost0123456789012"
+		recordingFileID = "recordingfile01234567890"
+	)
+	transcript := mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "sensitive transcript"}})
+	summary := mustMarshalBlocks(t, []conversation.ContentBlock{{Type: conversation.BlockTypeText, Text: "summary"}})
+
+	tests := []struct {
+		name            string
+		allowed         bool
+		channelReadable bool
+		followUpFirst   bool
+		wantUserTurns   int
+	}{
+		{name: "download allowed returns the transcript turn", allowed: true, channelReadable: true, wantUserTurns: 1},
+		{name: "download denied omits the transcript turn", allowed: false, channelReadable: true, wantUserTurns: 0},
+		{name: "source channel unreadable omits the transcript turn", allowed: true, channelReadable: false, wantUserTurns: 0},
+		{name: "an earlier follow-up post without the source reference is skipped", allowed: true, channelReadable: true, followUpFirst: true, wantUserTurns: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+			e.api.mmClient = mmapi.NewClient(e.client, fileActionStub{allowed: tt.allowed})
+
+			e.conversationStore.conversations[convID] = &store.Conversation{
+				ID: convID, UserID: testUserID, BotID: testBotUserID, Operation: llm.OperationMeetingSummary,
+			}
+			postID := summaryPostID
+			e.conversationStore.turns[convID] = []store.Turn{
+				{ID: "turn-1", ConversationID: convID, Role: "user", Content: transcript, Sequence: 1},
+				{ID: "turn-2", ConversationID: convID, PostID: &postID, Role: "assistant", Content: summary, Sequence: 2},
+			}
+			summaryPost := &model.Post{Id: summaryPostID}
+			summaryPost.AddProp("referenced_recording_file_id", recordingFileID)
+			e.mockAPI.On("GetPost", summaryPostID).Return(summaryPost, nil)
+			if tt.followUpFirst {
+				followUpID := "followuppost0123456789012"
+				e.conversationStore.turns[convID] = append([]store.Turn{
+					e.conversationStore.turns[convID][0],
+					{ID: "turn-0", ConversationID: convID, PostID: &followUpID, Role: "assistant", Content: summary, Sequence: 2},
+				}, e.conversationStore.turns[convID][1:]...)
+				e.mockAPI.On("GetPost", followUpID).Return(&model.Post{Id: followUpID}, nil)
+			}
+			e.mockAPI.On("GetFileInfo", recordingFileID).Return(&model.FileInfo{Id: recordingFileID, ChannelId: "meetingchannel0123456789"}, nil).Maybe()
+			e.mockAPI.On("HasPermissionToChannel", testUserID, "meetingchannel0123456789", model.PermissionReadChannel).Return(tt.channelReadable).Maybe()
+			e.mockAPI.On("LogError", mock.Anything).Maybe()
+
+			request := httptest.NewRequest(http.MethodGet, "/conversations/"+convID, nil)
+			request.Header.Add("Mattermost-User-ID", testUserID)
+			recorder := httptest.NewRecorder()
+			e.api.ServeHTTP(&plugin.Context{SessionId: "session-id"}, recorder, request)
+			resp := recorder.Result()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var response ConversationResponse
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&response))
+			userTurns := 0
+			for _, turn := range response.Turns {
+				if turn.Role == "user" {
+					userTurns++
+				}
+			}
+			assert.Equal(t, tt.wantUserTurns, userTurns)
+			assert.NotZero(t, len(response.Turns)-userTurns, "the summary itself is always returned")
+		})
+	}
 }

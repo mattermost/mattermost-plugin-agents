@@ -13,8 +13,8 @@ import (
 	"github.com/gin-gonic/gin/render"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/channels"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -25,11 +25,6 @@ const (
 	TitleSummarizeUnreads = "Summarize Unreads"
 	TitleSummarizeChannel = "Summarize Channel"
 )
-
-var channelAnalysisRequiredMCPTools = []llm.EnabledMCPTool{
-	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
-	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
-}
 
 // channelReadAuthorizationRequired resolves the :channelid parameter, stores
 // the channel in the request context, and requires PermissionReadChannel. It
@@ -71,7 +66,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	channel := c.MustGet(ContextChannelKey).(*model.Channel)
 	bot := c.MustGet(ContextBotKey).(*bots.Bot)
-	toolBot := channelAnalysisToolBot(bot)
+	toolBot := channels.ToolBot(bot)
 
 	var data struct {
 		AnalysisType string `json:"analysis_type" binding:"required"`
@@ -100,7 +95,7 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	}
 
 	opts := []llm.ContextOption{
-		a.contextBuilder.WithLLMContextPreloadedMCPTools(channelAnalysisRequiredMCPTools),
+		a.contextBuilder.WithLLMContextPreloadedMCPTools(channels.RequiredMCPTools),
 		a.contextBuilder.WithLLMContextTools(c.Request.Context(), toolBot),
 	}
 
@@ -165,6 +160,8 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 
 	// Create analysis post with conversation ID for streaming turn persistence
 	analysisPost := makeAnalysisPost("", data.AnalysisType, result.ConversationID)
+	// Regenerating re-binds the analysis tools to this channel.
+	analysisPost.AddProp(conversations.AnalyzedChannelIDProp, channel.Id)
 
 	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), bot.GetMMBot().UserId, result.Stream, user.Id, analysisPost, ""); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
@@ -185,19 +182,6 @@ func (a *API) handleChannelAnalysis(c *gin.Context) {
 	})
 }
 
-func channelAnalysisToolBot(bot *bots.Bot) *bots.Bot {
-	cfg := bot.GetConfig()
-	if cfg.AutoEnableNewMCPTools {
-		return bot
-	}
-
-	// Channel analysis immediately scopes the catalog to bound read-only tools,
-	// so load the MCP catalog even when the agent uses a narrower allowlist.
-	cfg.AutoEnableNewMCPTools = true
-	cfg.EnabledMCPTools = nil
-	return bot.WithConfig(cfg)
-}
-
 func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) {
 	var available []string
 	if store != nil {
@@ -207,7 +191,7 @@ func channelAnalysisToolAvailability(store *llm.ToolStore) ([]string, []string) 
 	}
 
 	var missing []string
-	for _, required := range channelAnalysisRequiredMCPTools {
+	for _, required := range channels.RequiredMCPTools {
 		// Required channel-analysis MCP tools are preloaded into the visible
 		// store by WithLLMContextPreloadedMCPTools.
 		if _, ok := store.LookupTool(required.ToolName, required.ServerOrigin); !ok {

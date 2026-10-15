@@ -48,4 +48,5 @@ const (
 	SubTypeTranscriptionChunk = "transcription_chunk"
 	SubTypeChunkedTrue        = "chunked_true"
 	SubTypeChunkedFalse       = "chunked_false"
+	SubTypeRegenerate         = "regenerate"
 )

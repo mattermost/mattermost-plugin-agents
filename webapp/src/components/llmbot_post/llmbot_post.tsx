@@ -98,14 +98,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
     const knownConversation = conversation ?? (lastConversationRef.current?.id === conversationId ? lastConversationRef.current : null);
 
-    // Meeting summarization posts have no conversation entity yet; fall back to
-    // the legacy llm_requester_user_id prop.
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
-    const legacyRequester: string | undefined = props.post.props?.llm_requester_user_id;
-    const requesterIsCurrentUser = Boolean(
-        (knownConversation && knownConversation.user_id === currentUserId) ||
-        (!conversationId && legacyRequester && legacyRequester === currentUserId),
-    );
+    const requesterIsCurrentUser = Boolean(knownConversation && knownConversation.user_id === currentUserId);
 
     const channel = useSelector<GlobalState, {type?: string} | undefined>(
         (state) => state.entities.channels.channels[props.post.channel_id],

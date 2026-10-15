@@ -301,9 +301,9 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 		endpoint string
 		event    string
 		// conversationOwner seeds a conversation entity owned by that user.
-		// When empty, ownership passes via the legacy requester prop and the
-		// service rejects the missing conversation_id with a controlled 400
-		// after the handler and service enrichment already ran.
+		// When empty, the requester owns the conversation; the service then
+		// fails its own conversation lookup with a 500 after the handler and
+		// service enrichment already ran.
 		conversationOwner   string
 		body                string
 		expectedStatus      int
@@ -315,7 +315,7 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			endpoint:            "/post/" + postID + "/tool_call",
 			event:               AuditEventToolCallApproval,
 			body:                `{"accepted_tool_ids":["tool-use-1","tool-use-2"]}`,
-			expectedStatus:      http.StatusBadRequest,
+			expectedStatus:      http.StatusInternalServerError,
 			expectedAcceptedIDs: []string{"tool-use-1", "tool-use-2"},
 			expectAgentID:       true,
 		},
@@ -332,7 +332,7 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			endpoint:            "/post/" + postID + "/tool_result",
 			event:               AuditEventToolResultApproval,
 			body:                `{"accepted_tool_ids":["tool-use-1"]}`,
-			expectedStatus:      http.StatusBadRequest,
+			expectedStatus:      http.StatusInternalServerError,
 			expectedAcceptedIDs: []string{"tool-use-1"},
 			expectAgentID:       true,
 		},
@@ -350,15 +350,15 @@ func TestToolApprovalAuditRecords(t *testing.T) {
 			e.OverrideLicense(&model.License{SkuShortName: "advanced"})
 
 			post := &model.Post{Id: postID, UserId: testBotUserID, ChannelId: channelID}
-			if test.conversationOwner == "" {
-				post.AddProp(streaming.LLMRequesterUserIDProp, testUserID)
-			} else {
-				post.AddProp(streaming.ConversationIDProp, conversationID)
-				e.conversationStore.conversations[conversationID] = &store.Conversation{
-					ID:     conversationID,
-					UserID: test.conversationOwner,
-					BotID:  testBotUserID,
-				}
+			owner := test.conversationOwner
+			if owner == "" {
+				owner = testUserID
+			}
+			post.AddProp(streaming.ConversationIDProp, conversationID)
+			e.conversationStore.conversations[conversationID] = &store.Conversation{
+				ID:     conversationID,
+				UserID: owner,
+				BotID:  testBotUserID,
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(post, nil)

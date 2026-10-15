@@ -1296,6 +1296,11 @@ describe('LLMBotPost meetings license gating', () => {
 
     beforeEach(() => {
         useIsLicensedFor.mockReturnValue(true);
+        mockUseConversation.mockReturnValue({
+            conversation: makeConversation([]),
+            loading: false,
+            error: null,
+        });
         mockUseSelector.mockImplementation((selector) => selector({
             entities: {
                 channels: {
@@ -1316,20 +1321,14 @@ describe('LLMBotPost meetings license gating', () => {
     });
 
     test('shows Post summary for a transcription result at Enterprise', () => {
-        renderPost(makePost('Call summary', {
-            conversation_id: '',
-            llm_requester_user_id: 'user_1',
-        }));
+        renderPost(makePost('Call summary'));
 
         expect(screen.getByText('Post summary')).not.toBeNull();
     });
 
     test('hides Post summary below Enterprise', () => {
         useIsLicensedFor.mockReturnValue(false);
-        renderPost(makePost('Call summary', {
-            conversation_id: '',
-            llm_requester_user_id: 'user_1',
-        }));
+        renderPost(makePost('Call summary'));
 
         expect(screen.queryByText('Post summary')).toBeNull();
     });

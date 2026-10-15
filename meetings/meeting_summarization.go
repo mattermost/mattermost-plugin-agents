@@ -13,10 +13,12 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -201,7 +203,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
+		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext, requestingUser.Id, surePost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -212,7 +214,8 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		summaryPost.AddProp(streaming.ConversationIDProp, summary.ConversationID)
+		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summary.Stream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -271,11 +274,14 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
+		summary, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext, requestingUser.Id, rootID)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
 
+		// Attach the conversation before the post update below persists it,
+		// so the error path also leaves a conversation-backed post.
+		transcriptPost.AddProp(streaming.ConversationIDProp, summary.ConversationID)
 		if err = s.updatePostWithFile(transcriptPost, transcriptFileInfo); err != nil {
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
@@ -286,7 +292,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
+		s.streamingService.StreamToPost(ctx, summary.Stream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck
@@ -294,9 +300,21 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 	return nil
 }
 
-func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context) (*llm.TextStreamResult, error) {
+// SummaryResult is the result of starting a meeting summary.
+type SummaryResult struct {
+	Stream         *llm.TextStreamResult
+	ConversationID string
+}
+
+// SummarizeTranscription creates a meeting summary conversation owned by
+// userID, rooted at rootPostID, whose user turn is the (possibly
+// chunk-summarized) transcription, and starts streaming the summary.
+func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, transcription *subtitles.Subtitles, context *llm.Context, userID string, rootPostID string) (*SummaryResult, error) {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return nil, err
+	}
+	if s.convService == nil {
+		return nil, errors.New("conversation service not available for meeting summary")
 	}
 
 	llmFormattedTranscription := transcription.FormatForLLM()
@@ -361,28 +379,48 @@ func (s *Service) SummarizeTranscription(ctx stdcontext.Context, bot *bots.Bot, 
 		operationSubType = llm.SubTypeChunkedTrue
 	}
 
-	completionRequest := llm.CompletionRequest{
-		Posts: []llm.Post{
-			{
-				Role:    llm.PostRoleSystem,
-				Message: systemPrompt,
-			},
-			{
-				Role:    llm.PostRoleUser,
-				Message: llmFormattedTranscription,
-			},
-		},
-		Context:          context,
-		Operation:        llm.OperationMeetingSummary,
-		OperationSubType: operationSubType,
+	convParams := conversation.CreateConversationParams{
+		UserID:       userID,
+		BotID:        bot.GetMMBot().UserId,
+		RootPostID:   &rootPostID,
+		Operation:    llm.OperationMeetingSummary,
+		SystemPrompt: systemPrompt,
+		UserMessage:  llmFormattedTranscription,
+	}
+	convResult, err := s.convService.CreateConversation(convParams)
+	if errors.Is(err, store.ErrConversationConflict) {
+		// The user replied in the thread while the transcript was being
+		// processed, which created a regular conversation for it first.
+		// Keep the summary in its own unthreaded conversation rather than failing.
+		convParams.RootPostID = nil
+		convResult, err = s.convService.CreateConversation(convParams)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unable to create meeting summary conversation: %w", err)
+	}
+	if titleErr := s.convService.UpdateConversationTitle(convResult.ConversationID, TitleMeetingSummary); titleErr != nil {
+		s.pluginAPI.Log.Error("Failed to set meeting summary conversation title", "error", titleErr, "conversation_id", convResult.ConversationID)
 	}
 
-	summaryStream, err := bot.LLM().ChatCompletion(ctx, completionRequest, llm.WithToolsDisabled())
+	conv, err := s.convService.GetConversation(convResult.ConversationID)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get meeting summary conversation: %w", err)
+	}
+	completionRequest, err := s.convService.BuildCompletionRequest(conv, context)
+	if err != nil {
+		return nil, fmt.Errorf("unable to build meeting summary request: %w", err)
+	}
+	completionRequest.OperationSubType = operationSubType
+
+	summaryStream, err := bot.LLM().ChatCompletion(ctx, *completionRequest, llm.WithToolsDisabled())
 	if err != nil {
 		return nil, fmt.Errorf("unable to get meeting summary: %w", err)
 	}
 
-	return summaryStream, nil
+	return &SummaryResult{
+		Stream:         summaryStream,
+		ConversationID: convResult.ConversationID,
+	}, nil
 }
 
 func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo) error {
@@ -398,7 +436,7 @@ func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo)
 }
 
 func (s *Service) botDMNonResponse(botid string, userID string, post *model.Post) error {
-	streaming.ModifyPostForBot(botid, userID, post, "")
+	streaming.ModifyPostForBot(botid, post, "")
 
 	if err := s.pluginAPI.Post.DM(botid, userID, post); err != nil {
 		return fmt.Errorf("failed to post DM: %w", err)

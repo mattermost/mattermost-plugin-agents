@@ -49,7 +49,7 @@ func TestMeetingsServiceLicenseGate(t *testing.T) {
 		{
 			name: "SummarizeTranscription",
 			call: func(s *Service) error {
-				_, err := s.SummarizeTranscription(t.Context(), nil, &subtitles.Subtitles{}, nil)
+				_, err := s.SummarizeTranscription(t.Context(), nil, &subtitles.Subtitles{}, nil, "user", "root")
 				return err
 			},
 		},

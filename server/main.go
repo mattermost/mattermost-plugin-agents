@@ -515,7 +515,6 @@ func (p *Plugin) OnActivate() error {
 		dbClient,
 		licenseChecker,
 		i18nBundle,
-		nil, // meetingsService will be set after it's created
 		&p.configuration,
 	)
 
@@ -536,9 +535,7 @@ func (p *Plugin) OnActivate() error {
 		licenseChecker,
 	)
 
-	// Set the meetings service on conversations to break circular dependency
-	// TODO: Refactor to avoid circular dependency
-	conversationsService.SetMeetingsService(meetingsService)
+	meetingsService.SetConversationService(convService)
 
 	// Wire per-tool policy checker for auto-approval in streaming and conversations.
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {

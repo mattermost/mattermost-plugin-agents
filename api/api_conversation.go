@@ -11,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -79,6 +81,12 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		return
 	}
 
+	// A meeting summary's user turn is the transcript; only return it while
+	// the caller may still download the source recording or captions file.
+	if conv.Operation == llm.OperationMeetingSummary && !a.canReadMeetingSource(c, userID, turns) {
+		turns = withoutUserTurns(turns)
+	}
+
 	// 4. Privacy filtering and display sanitization
 	turnResponses, err := turnsToResponse(turns, userID != conv.UserID)
 	if err != nil {
@@ -97,6 +105,36 @@ func (a *API) handleGetConversation(c *gin.Context) {
 		Operation:  conv.Operation,
 		Turns:      turnResponses,
 	})
+}
+
+// canReadMeetingSource reports whether the caller's session may download the
+// file the conversation's meeting summary post was built from.
+func (a *API) canReadMeetingSource(c *gin.Context, userID string, turns []store.Turn) bool {
+	if a.mmClient == nil {
+		return false
+	}
+	for _, turn := range turns {
+		if turn.Role != "assistant" || turn.PostID == nil {
+			continue
+		}
+		post, err := a.mmClient.GetPost(*turn.PostID)
+		if err != nil || !conversations.HasMeetingSourceReference(post) {
+			continue
+		}
+		return conversations.CheckMeetingSourceAccess(c.Request.Context(), a.mmClient, userID, post) == nil
+	}
+	return false
+}
+
+// withoutUserTurns drops user turns, keeping the assistant output.
+func withoutUserTurns(turns []store.Turn) []store.Turn {
+	kept := make([]store.Turn, 0, len(turns))
+	for _, turn := range turns {
+		if turn.Role != "user" {
+			kept = append(kept, turn)
+		}
+	}
+	return kept
 }
 
 // approvalStateForTurn computes the approval-stage string for a post-anchor

@@ -5,6 +5,7 @@ package meetings
 
 import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
@@ -33,8 +34,15 @@ type Service struct {
 	contextBuilder   *llmcontext.Builder
 	conversations    *conversations.Conversations
 	licenseChecker   *enterprise.LicenseChecker
+	convService      *conversation.Service
 
 	ffmpegPath string
+}
+
+// SetConversationService sets the conversation entity service used to persist
+// meeting summary conversations.
+func (s *Service) SetConversationService(svc *conversation.Service) {
+	s.convService = svc
 }
 
 // NewService creates a new meetings service

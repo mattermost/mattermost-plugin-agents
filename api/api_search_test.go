@@ -47,7 +47,7 @@ func enabledSearchService(t *testing.T) *search.Search {
 // useSearchConversations swaps in a conversations service backed by client so
 // requests that pass validation reach the Mattermost client.
 func (e *TestEnvironment) useSearchConversations(client mmapi.Client) {
-	e.api.conversationsService = conversations.New(e.api.prompts, client, nil, e.api.contextBuilder, e.bots, nil, nil, nil, nil, e.config)
+	e.api.conversationsService = conversations.New(e.api.prompts, client, nil, e.api.contextBuilder, e.bots, nil, nil, nil, e.config)
 }
 
 func postSearchRun(e *TestEnvironment, body []byte, botUsername string) *http.Response {

@@ -92,7 +92,7 @@ func (c *Conversations) runSearch(ctx context.Context, bot *bots.Bot, user *mode
 		ChannelId: channel.Id,
 		RootId:    questionPost.Id,
 	}
-	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, user.Id, responsePost, questionPost.Id); placeholderErr != nil {
+	if placeholderErr := c.createResponsePlaceholder(bot.GetMMBot().UserId, responsePost, questionPost.Id); placeholderErr != nil {
 		return fmt.Errorf("unable to create response placeholder: %w", placeholderErr)
 	}
 	progress := newResponseProgressReporter(ctx, c.mmClient, responsePost)

@@ -8,15 +8,37 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
+
+// RequiredMCPTools are the embedded MCP tools channel analysis binds to the
+// analyzed channel.
+var RequiredMCPTools = []llm.EnabledMCPTool{
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+	{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "get_channel_info"},
+}
+
+// ToolBot returns the bot to load channel-analysis tools for. Channel analysis
+// immediately scopes the catalog to bound read-only tools, so the MCP catalog
+// is loaded even when the agent uses a narrower allowlist.
+func ToolBot(bot *bots.Bot) *bots.Bot {
+	cfg := bot.GetConfig()
+	if cfg.AutoEnableNewMCPTools {
+		return bot
+	}
+	cfg.AutoEnableNewMCPTools = true
+	cfg.EnabledMCPTools = nil
+	return bot.WithConfig(cfg)
+}
 
 // AnalysisResult is the return type for channel analysis operations.
 // It contains the conversation ID (for linking to the post) and the
@@ -88,23 +110,9 @@ func (c *Channels) AnalyzeChannel(
 		operationSubType = llm.TokenUsageUnknown
 	}
 
-	// Get tools and bind channel_id so it cannot be manipulated by the LLM.
-	readChannel, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "read_channel")
-	if !ok {
-		return nil, fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
+	if err := bindChannelTools(context, channelID); err != nil {
+		return nil, err
 	}
-	boundReadChannel := readChannel.WithBoundParams(map[string]any{"channel_id": channelID})
-
-	getChannelInfo, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "get_channel_info")
-	if !ok {
-		return nil, fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
-	}
-	boundGetChannelInfo := getChannelInfo.WithBoundParams(map[string]any{"channel_id": channelID})
-
-	// Create scoped tool store with bound tools
-	scopedTools := llm.NewToolStore()
-	scopedTools.AddTools([]llm.Tool{boundReadChannel, boundGetChannelInfo})
-	context.Tools = scopedTools
 
 	systemPrompt, err := c.prompts.Format(prompts.PromptSummarizeChannelSystem, context)
 	if err != nil {
@@ -112,6 +120,27 @@ func (c *Channels) AnalyzeChannel(
 	}
 
 	return c.AnalyzeChannelWithRequest(ctx, context, userID, botID, systemPrompt, userPrompt, operationSubType)
+}
+
+// bindChannelTools replaces context.Tools with the channel-analysis tools bound
+// to channelID so the LLM cannot point them at another channel.
+func bindChannelTools(context *llm.Context, channelID string) error {
+	readChannel, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "read_channel")
+	if !ok {
+		return fmt.Errorf("read_channel tool not available - ensure MCP embedded server is enabled and running")
+	}
+	getChannelInfo, ok := requiredEmbeddedToolByExactOrBareName(context.Tools, "get_channel_info")
+	if !ok {
+		return fmt.Errorf("get_channel_info tool not available - ensure MCP embedded server is enabled and running")
+	}
+
+	scopedTools := llm.NewToolStore()
+	scopedTools.AddTools([]llm.Tool{
+		readChannel.WithBoundParams(map[string]any{"channel_id": channelID}),
+		getChannelInfo.WithBoundParams(map[string]any{"channel_id": channelID}),
+	})
+	context.Tools = scopedTools
+	return nil
 }
 
 func requiredEmbeddedToolByExactOrBareName(store *llm.ToolStore, name string) (llm.Tool, bool) {
@@ -166,28 +195,69 @@ func (c *Channels) AnalyzeChannelWithRequest(
 	}
 	completionRequest.OperationSubType = operationSubType
 
-	// Run the ToolRunner loop: always approve bound tools.
-	runner := toolrunner.New(c.llm)
-	runResult, err := runner.Run(
-		ctx,
-		*completionRequest,
-		func(_ llm.ToolCall) bool { return true },
-		func(turns []toolrunner.ToolTurn) {
-			if writeErr := c.convSvc.WriteToolTurns(convResult.ConversationID, turns, true); writeErr != nil {
-				c.client.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", convResult.ConversationID)
-			}
-		},
-		llm.WithReasoningDisabled(),
-	)
-
+	stream, err := c.runAnalysis(ctx, *completionRequest, convResult.ConversationID)
 	if err != nil {
-		return nil, fmt.Errorf("tool runner failed: %w", err)
+		return nil, err
 	}
 
 	return &AnalysisResult{
 		ConversationID: convResult.ConversationID,
-		Stream:         runResult.Stream,
+		Stream:         stream,
 	}, nil
+}
+
+// RegenerateAnalysis re-runs a channel analysis inside its existing
+// conversation: the stored system prompt and user turn are reused, the prior
+// response turns anchored to postID are scrubbed, and the tools are re-bound
+// to channelID. The context must carry the unscoped tool store.
+func (c *Channels) RegenerateAnalysis(
+	ctx stdcontext.Context,
+	context *llm.Context,
+	conv *store.Conversation,
+	channelID string,
+	postID string,
+	sessionID string,
+) (*llm.TextStreamResult, error) {
+	if err := bindChannelTools(context, channelID); err != nil {
+		return nil, err
+	}
+
+	// Build before scrubbing: ExcludeAfterPostID needs the anchor.
+	completionRequest, err := c.convSvc.BuildCompletionRequest(conv, context, conversation.BuildOptions{
+		ExcludeAfterPostID: postID,
+		SessionID:          sessionID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build completion request: %w", err)
+	}
+	completionRequest.OperationSubType = llm.SubTypeRegenerate
+
+	if err := c.convSvc.DeleteResponseTurns(conv.ID, postID); err != nil {
+		c.client.LogError("Failed to scrub prior response turns on channel analysis regen", "error", err, "conversation_id", conv.ID, "post_id", postID)
+	}
+
+	return c.runAnalysis(ctx, *completionRequest, conv.ID)
+}
+
+// runAnalysis runs the ToolRunner loop, always approving the bound tools and
+// persisting tool turns to the conversation.
+func (c *Channels) runAnalysis(ctx stdcontext.Context, request llm.CompletionRequest, conversationID string) (*llm.TextStreamResult, error) {
+	runner := toolrunner.New(c.llm)
+	runResult, err := runner.Run(
+		ctx,
+		request,
+		func(_ llm.ToolCall) bool { return true },
+		func(turns []toolrunner.ToolTurn) {
+			if writeErr := c.convSvc.WriteToolTurns(conversationID, turns, true); writeErr != nil {
+				c.client.LogError("Failed to write tool turns", "error", writeErr, "conversation_id", conversationID)
+			}
+		},
+		llm.WithReasoningDisabled(),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("tool runner failed: %w", err)
+	}
+	return runResult.Stream, nil
 }
 
 // Interval fetches posts for a time range and creates a conversation entity

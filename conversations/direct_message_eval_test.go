@@ -130,7 +130,6 @@ func TestDirectMessageConversations(t *testing.T) {
 				nil,
 				licenseChecker,
 				i18n.Init(),
-				nil,
 				nil, // configProvider - nil means channel tool calling is disabled (default)
 			)
 

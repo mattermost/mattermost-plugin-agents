@@ -1714,3 +1714,62 @@ func TestBuildContentBlocksServerToolPayloadComesFromLatestSnapshot(t *testing.T
 	assert.Equal(t, "ok", blocks[0].ServerTool.Output)
 	assert.Equal(t, conversation.BlockTypeText, blocks[1].Type)
 }
+
+func TestStreamToPostWarnsWithoutConversationID(t *testing.T) {
+	const (
+		postID      = "post-id"
+		channelID   = "channel-id"
+		botID       = "bot-id"
+		requesterID = "requester-id"
+		warning     = "Streaming to post without a conversation_id; no assistant turn will be persisted"
+	)
+
+	tests := []struct {
+		name           string
+		withTurnStore  bool
+		conversationID string
+		expectWarning  bool
+		expectTurns    int
+	}{
+		{name: "turn store without conversation_id warns", withTurnStore: true, expectWarning: true},
+		{name: "turn store with conversation_id does not warn", withTurnStore: true, conversationID: "conv-id", expectTurns: 1},
+		{name: "no turn store does not warn", withTurnStore: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ts := &fakeTurnStore{}
+			client := &fakeStreamingClient{
+				channels: map[string]*model.Channel{
+					channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+				},
+			}
+			service := NewMMPostStreamService(client, i18n.Init())
+			if tt.withTurnStore {
+				service.SetTurnStore(ts)
+			}
+
+			post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+			if tt.conversationID != "" {
+				post.AddProp(ConversationIDProp, tt.conversationID)
+			}
+
+			streamChannel := make(chan llm.TextStreamEvent, 2)
+			streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Hello"}
+			streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+			close(streamChannel)
+
+			service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+			if tt.expectWarning {
+				assert.Contains(t, client.warnings, warning)
+			} else {
+				assert.NotContains(t, client.warnings, warning)
+			}
+			ts.mu.Lock()
+			defer ts.mu.Unlock()
+			assert.Len(t, ts.turns, tt.expectTurns)
+			require.NotEmpty(t, client.updatedPosts)
+		})
+	}
+}
