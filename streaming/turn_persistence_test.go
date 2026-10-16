@@ -29,6 +29,19 @@ type fakeTurnStore struct {
 	demoteErr error
 }
 
+// eventCountingTurnStore records how many websocket events had been published
+// when the turn was persisted.
+type eventCountingTurnStore struct {
+	fakeTurnStore
+	client         *fakeStreamingClient
+	eventsAtCreate int
+}
+
+func (s *eventCountingTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
+	s.eventsAtCreate = len(s.client.events)
+	return s.fakeTurnStore.CreateTurnAutoSequence(turn)
+}
+
 func (f *fakeTurnStore) CreateTurnAutoSequence(turn *store.Turn) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -170,6 +183,49 @@ func TestStreamToPostTurnPersistence(t *testing.T) {
 				"post text must stay empty when the stream produced tool calls; the tool UI renders via the turn instead")
 		}
 		require.Empty(t, post.Message, "post.Message should remain empty when only tool calls were produced")
+	})
+
+	// Regression: the webapp renders Accept from the pending tool_call event,
+	// and the approval handler looks the pending turn up by post ID. If the
+	// event precedes the turn insert, a fast click is rejected as stale.
+	t.Run("pending tool_call event is broadcast only after the turn is persisted", func(t *testing.T) {
+		client := &fakeStreamingClient{
+			channels: map[string]*model.Channel{
+				channelID: {Id: channelID, Type: model.ChannelTypeDirect, Name: botID + "__" + requesterID},
+			},
+		}
+		ts := &eventCountingTurnStore{client: client, eventsAtCreate: -1}
+		service := NewMMPostStreamService(client, i18n.Init())
+		service.SetTurnStore(ts)
+
+		post := &model.Post{Id: postID, ChannelId: channelID, UserId: botID}
+		post.AddProp(ConversationIDProp, conversationID)
+
+		streamChannel := make(chan llm.TextStreamEvent, 3)
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeText, Value: "Let me search."}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+			{ID: "tc1", Name: "search", Status: llm.ToolCallStatusPending},
+		}}
+		streamChannel <- llm.TextStreamEvent{Type: llm.EventTypeEnd}
+		close(streamChannel)
+
+		service.StreamToPost(context.Background(), &llm.TextStreamResult{Stream: streamChannel}, post, "en", requesterID)
+
+		require.GreaterOrEqual(t, ts.eventsAtCreate, 0, "turn was never persisted")
+		toolCallIdx, endIdx := -1, -1
+		for i, ev := range client.events {
+			switch ev.payload["control"] {
+			case "tool_call":
+				if toolCallIdx == -1 {
+					toolCallIdx = i
+				}
+			case PostStreamingControlEnd:
+				endIdx = i
+			}
+		}
+		require.NotEqual(t, -1, toolCallIdx, "pending tool_call event was never broadcast")
+		require.GreaterOrEqual(t, toolCallIdx, ts.eventsAtCreate, "pending tool_call broadcast before its turn was persisted")
+		require.Less(t, toolCallIdx, endIdx, "pending tool_call must precede the end event")
 	})
 
 	// Regression: the streaming assistant turn must land AFTER the tool-round

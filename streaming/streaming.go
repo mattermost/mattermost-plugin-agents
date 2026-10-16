@@ -440,9 +440,15 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	// Pending calls are broadcast only after finalizeTurn persists them, so an
+	// approval click can never reach the server before its turn exists.
+	var pendingToolCalls []llm.ToolCall
 	defer func() {
 		if acc != nil {
 			p.finalizeTurn(acc)
+		}
+		if pendingToolCalls != nil {
+			p.broadcastToolCalls(post, pendingToolCalls, requesterUserID)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -601,7 +607,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							acc.toolCalls = toolCalls
 						}
 					}
-					p.broadcastToolCalls(post, toolCalls, requesterUserID)
+					if llm.IsResolvedToolCallBatch(toolCalls) {
+						p.broadcastToolCalls(post, toolCalls, requesterUserID)
+					} else {
+						pendingToolCalls = toolCalls
+					}
 				}
 			case llm.EventTypeAnnotations:
 				if annotationMap, ok := event.Value.(map[string]any); ok {
