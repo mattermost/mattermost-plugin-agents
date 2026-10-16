@@ -593,7 +593,7 @@ func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
 
 type stubAdminEmbeddedServer struct{}
 
-func (s *stubAdminEmbeddedServer) CreateClientTransport(string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubAdminEmbeddedServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, errors.New("stub: discovery not needed for ID assertions")
 }
 

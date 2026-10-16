@@ -455,12 +455,12 @@ type recordingEmbeddedMCPServer struct {
 	sessionIDs []string
 }
 
-func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (f *recordingEmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	f.mu.Lock()
 	f.userIDs = append(f.userIDs, userID)
 	f.sessionIDs = append(f.sessionIDs, sessionID)
 	f.mu.Unlock()
-	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, pluginAPI)
+	return f.fakeEmbeddedMCPServer.CreateClientTransport(userID, sessionID, sessionToken, pluginAPI)
 }
 
 func (f *recordingEmbeddedMCPServer) recordedUserIDs() []string {

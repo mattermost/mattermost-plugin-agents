@@ -6,10 +6,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -507,9 +509,37 @@ func (a *API) aiBotRequired(c *gin.Context) {
 func (a *API) ginlogger(c *gin.Context) {
 	c.Next()
 
-	for _, ginErr := range c.Errors {
-		a.pluginAPI.Log.Error(ginErr.Error())
+	if len(c.Errors) == 0 {
+		return
 	}
+
+	path := c.FullPath()
+	if path == "" {
+		path = c.Request.URL.Path
+	}
+	status := c.Writer.Status()
+
+	for _, ginErr := range c.Errors {
+		fields := []any{"method", c.Request.Method, "path", path, "status", status, "error", ginErr.Error()}
+		switch {
+		case isClientDisconnect(ginErr.Err):
+			a.pluginAPI.Log.Debug("Client disconnected during request", fields...)
+		case status >= http.StatusInternalServerError:
+			a.pluginAPI.Log.Error("Request failed", fields...)
+		default:
+			// 4xx responses are expected outcomes (missing resources,
+			// permission checks, bad input), not server faults.
+			a.pluginAPI.Log.Debug("Request rejected", fields...)
+		}
+	}
+}
+
+// isClientDisconnect reports whether err came from the client going away
+// mid-request rather than from a server fault.
+func isClientDisconnect(err error) bool {
+	return errors.Is(err, context.Canceled) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET)
 }
 
 func (a *API) MattermostAuthorizationRequired(c *gin.Context) {

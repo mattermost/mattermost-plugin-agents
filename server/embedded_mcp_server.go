@@ -75,23 +75,12 @@ func NewEmbeddedMCPServer(pluginAPI *pluginapi.Client, logger pluginapi.LogServi
 }
 
 // CreateClientTransport creates a new in-memory transport for a client connection.
-func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
-	// Create token resolver that has closure over pluginAPI
-	// This allows the mcpserver to get fresh tokens without storing raw tokens in context
-	tokenResolver := func(sid string) (string, error) {
-		session, err := pluginAPI.Session.Get(sid)
-		if err != nil {
-			e.logger.Debug("Failed to get session for token resolution",
-				"user_id", userID,
-				"session_id", sid,
-				"error", err)
-			return "", fmt.Errorf("failed to get session: %w", err)
-		}
-		if session == nil {
-			return "", fmt.Errorf("session not found")
-		}
-		return session.Token, nil
-	}
+// sessionToken is the session's token when the caller already holds it; it
+// covers lookups that miss a just-created session on a lagging DB read replica.
+func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+	// The resolver closes over pluginAPI so the mcpserver can get fresh
+	// tokens without storing raw tokens in context.
+	tokenResolver := newSessionTokenResolver(pluginAPI.Session.Get, e.logger, userID, sessionID, sessionToken)
 
 	// Create the connection through the server with resolver
 	clientTransport, err := e.server.CreateConnectionForUser(userID, sessionID, tokenResolver)
@@ -104,6 +93,30 @@ func (e *EmbeddedMCPServer) CreateClientTransport(userID, sessionID string, plug
 		"session_id", sessionID)
 
 	return clientTransport, nil
+}
+
+// newSessionTokenResolver resolves a session ID to its token, preferring a
+// fresh lookup. Session lookups by ID read from a DB read replica, so when the
+// lookup for knownSessionID fails, the token the caller already held is used;
+// the Mattermost server still validates it on every API call.
+func newSessionTokenResolver(getSession func(string) (*model.Session, error), logger pluginapi.LogService, userID, knownSessionID, knownToken string) func(string) (string, error) {
+	return func(sid string) (string, error) {
+		session, err := getSession(sid)
+		if err == nil && session != nil {
+			return session.Token, nil
+		}
+		if sid == knownSessionID && knownToken != "" {
+			return knownToken, nil
+		}
+		if err != nil {
+			logger.Debug("Failed to get session for token resolution",
+				"user_id", userID,
+				"session_id", sid,
+				"error", err)
+			return "", fmt.Errorf("failed to get session: %w", err)
+		}
+		return "", fmt.Errorf("session not found")
+	}
 }
 
 // deriveInternalServerURL determines the internal server URL for API

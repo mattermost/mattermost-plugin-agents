@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -283,7 +284,7 @@ func connectEmbeddedServer(uc *UserClients, sessionID string, embeddedClient *Em
 		return nil
 	}
 	ctx := context.Background()
-	return uc.ensureConnections(ctx, []connectTask{uc.embeddedConnectTask(ctx, sessionID, embeddedClient)})
+	return uc.ensureConnections(ctx, []connectTask{uc.embeddedConnectTask(ctx, sessionID, nil, embeddedClient)})
 }
 
 func TestOriginAttemptWaitFinishedOutcomeWinsCanceledContext(t *testing.T) {
@@ -541,9 +542,15 @@ func callSessionIdentityTool(t *testing.T, tools []llm.Tool) string {
 
 type sessionEchoEmbeddedMCPServer struct {
 	ctx context.Context
+
+	tokenMu   sync.Mutex
+	lastToken string
 }
 
-func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ string, sessionID string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ string, sessionID, sessionToken string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	s.tokenMu.Lock()
+	s.lastToken = sessionToken
+	s.tokenMu.Unlock()
 	server := gomcp.NewServer(&gomcp.Implementation{Name: "session-echo", Version: "1.0"}, nil)
 	server.AddTool(&gomcp.Tool{
 		Name:        "session_identity",
@@ -659,4 +666,109 @@ func testClientWithTools(name, baseURL string, toolNames ...string) *Client {
 		},
 		tools: tools,
 	}
+}
+
+// A freshly minted embedded session can be invisible to lookups by ID for a
+// while (the plugin API reads them from a DB read replica). The connect on the
+// same turn must still yield the tools, and a failed connect must be logged
+// at a level operators see.
+func TestClientManagerGetToolsForUser_NewSessionNotYetReadable(t *testing.T) {
+	const (
+		userID       = "alice"
+		newSessionID = "new-session"
+	)
+
+	tests := []struct {
+		name         string
+		transportErr error
+		wantTools    bool
+	}{
+		{name: "connects without reading the new session back", wantTools: true},
+		{name: "warns when the embedded server is unreachable", transportErr: errors.New("embedded server down")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var storedSessionID string
+			fakeAPI := &plugintest.API{}
+			setupTestLogger(fakeAPI)
+			fakeAPI.On("KVGet", mock.AnythingOfType("string")).Return(func(key string) []byte {
+				if key == buildEmbeddedSessionKey(userID) && storedSessionID != "" {
+					return []byte(storedSessionID)
+				}
+				return nil
+			}, (*model.AppError)(nil))
+			fakeAPI.On("KVDelete", mock.AnythingOfType("string")).Return((*model.AppError)(nil))
+			fakeAPI.On("KVSetWithOptions", mock.AnythingOfType("string"), mock.Anything, mock.AnythingOfType("model.PluginKVSetOptions")).Run(func(args mock.Arguments) {
+				if args.String(0) == buildEmbeddedSessionKey(userID) {
+					storedSessionID = string(args.Get(1).([]byte))
+				}
+			}).Return(true, (*model.AppError)(nil))
+			fakeAPI.On("GetUser", userID).Return(&model.User{Id: userID, Roles: "system_user"}, (*model.AppError)(nil))
+			// The replica never catches up during the turn.
+			fakeAPI.On("GetSession", mock.AnythingOfType("string")).Return((*model.Session)(nil),
+				model.NewAppError("GetSessionById", "app.session.get.app_error", nil, "", http.StatusBadRequest)).Maybe()
+			fakeAPI.On("CreateSession", mock.AnythingOfType("*model.Session")).Return(func(session *model.Session) *model.Session {
+				session.Id = newSessionID
+				session.Token = "new-token"
+				return session
+			}, (*model.AppError)(nil))
+			defaultConfig := &model.Config{}
+			defaultConfig.SetDefaults()
+			fakeAPI.On("GetConfig").Return(defaultConfig)
+
+			pluginAPI := pluginapi.NewClient(fakeAPI, nil)
+			runCtx, cancelRun := context.WithCancel(context.Background())
+			t.Cleanup(cancelRun)
+			echoServer := &sessionEchoEmbeddedMCPServer{ctx: runCtx}
+			var server EmbeddedMCPServer = echoServer
+			if tt.transportErr != nil {
+				server = failingEmbeddedMCPServer{err: tt.transportErr}
+			}
+			manager := NewClientManager(
+				Config{
+					EmbeddedServer: EmbeddedServerConfig{
+						Enabled: true,
+						ToolConfigs: []ToolConfig{{
+							Name:    "session_identity",
+							Policy:  "auto_run_in_dm",
+							Enabled: true,
+						}},
+					},
+				},
+				pluginAPI.Log,
+				pluginAPI,
+				nil,
+				server,
+				http.DefaultClient,
+				nil,
+				RemoteMCPAlwaysAllowed,
+				nil)
+			t.Cleanup(manager.Close)
+
+			tools, mcpErrors := manager.GetTools(context.Background(), UserCatalogRequest(userID))
+			require.Nil(t, mcpErrors)
+			require.Equal(t, newSessionID, storedSessionID)
+			if !tt.wantTools {
+				require.Empty(t, tools)
+				fakeAPI.AssertCalled(t, "LogWarn", "MCP server unavailable for user; continuing without its tools",
+					mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+				return
+			}
+			require.Equal(t, newSessionID, callSessionIdentityTool(t, tools))
+			// The embedded server must get the token too: its own lookup
+			// by ID would hit the same lagging replica.
+			echoServer.tokenMu.Lock()
+			defer echoServer.tokenMu.Unlock()
+			require.Equal(t, "new-token", echoServer.lastToken)
+		})
+	}
+}
+
+type failingEmbeddedMCPServer struct {
+	err error
+}
+
+func (s failingEmbeddedMCPServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+	return nil, s.err
 }

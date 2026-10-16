@@ -4,9 +4,13 @@
 package main
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -112,6 +116,59 @@ func TestDeriveInternalServerURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := deriveInternalServerURLFromConfig(tt.cfg, tt.siteURL)
 			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSessionTokenResolver(t *testing.T) {
+	const (
+		knownSessionID = "new-session"
+		knownToken     = "known-token"
+	)
+	replicaMiss := errors.New("We encountered an error finding the session")
+
+	tests := []struct {
+		name      string
+		sessionID string
+		session   *model.Session
+		getErr    error
+		wantToken string
+		wantErr   bool
+	}{
+		{
+			name:      "uses the token the caller holds when the lookup misses a new session",
+			sessionID: knownSessionID,
+			getErr:    replicaMiss,
+			wantToken: knownToken,
+		},
+		{
+			name:      "prefers a successful lookup",
+			sessionID: knownSessionID,
+			session:   &model.Session{Id: knownSessionID, Token: "fresh-token"},
+			wantToken: "fresh-token",
+		},
+		{
+			name:      "never hands the known token to another session",
+			sessionID: "other-session",
+			getErr:    replicaMiss,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			api := &plugintest.API{}
+			api.On("LogDebug", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Maybe()
+			getSession := func(string) (*model.Session, error) { return tt.session, tt.getErr }
+
+			resolve := newSessionTokenResolver(getSession, pluginapi.NewClient(api, nil).Log, "user", knownSessionID, knownToken)
+			token, err := resolve(tt.sessionID)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantToken, token)
 		})
 	}
 }

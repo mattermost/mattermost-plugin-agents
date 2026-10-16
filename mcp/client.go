@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.opentelemetry.io/otel/codes"
@@ -53,7 +54,9 @@ func IsToolPolicyAutoRunEverywhere(policy string) bool {
 
 // EmbeddedMCPServer interface for dependency injection
 type EmbeddedMCPServer interface {
-	CreateClientTransport(userID, sessionID string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
+	// sessionToken is the session's token when the caller already holds it
+	// (empty otherwise); the server can use it when a lookup by ID misses.
+	CreateClientTransport(userID, sessionID, sessionToken string, pluginAPI *pluginapi.Client) (*mcp.InMemoryTransport, error)
 }
 
 // EmbeddedServerClient handles connections to the embedded MCP server
@@ -299,6 +302,7 @@ func (c *Client) adoptSession(ctx context.Context, session *mcp.ClientSession, s
 // If sessionID is empty, creates an unauthenticated client (used for tool discovery).
 func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, sessionID string) (*Client, error) {
 	// Validate session exists before creating transport (unless empty for tool discovery)
+	var sessionToken string
 	if sessionID != "" {
 		if c.pluginAPI == nil {
 			return nil, fmt.Errorf("plugin API is required when sessionID is provided")
@@ -313,10 +317,28 @@ func (c *EmbeddedServerClient) CreateClient(ctx context.Context, userID, session
 		if mmSession.UserId != userID {
 			return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, mmSession.UserId)
 		}
+		sessionToken = mmSession.Token
 	}
 
+	return c.connect(ctx, userID, sessionID, sessionToken)
+}
+
+// CreateClientForSession connects using a session the caller has already
+// created or validated. It skips re-reading the session: the plugin API reads
+// sessions by ID from a DB read replica, which can miss a just-created session.
+func (c *EmbeddedServerClient) CreateClientForSession(ctx context.Context, userID string, session *model.Session) (*Client, error) {
+	if session == nil || session.Id == "" {
+		return nil, fmt.Errorf("session not found")
+	}
+	if session.UserId != userID {
+		return nil, fmt.Errorf("session user ID does not match: expected %s, got %s", userID, session.UserId)
+	}
+	return c.connect(ctx, userID, session.Id, session.Token)
+}
+
+func (c *EmbeddedServerClient) connect(ctx context.Context, userID, sessionID, sessionToken string) (*Client, error) {
 	// Get the in-memory transport from the embedded server
-	transport, err := c.server.CreateClientTransport(userID, sessionID, c.pluginAPI)
+	transport, err := c.server.CreateClientTransport(userID, sessionID, sessionToken, c.pluginAPI)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create in-memory transport: %w", err)
 	}

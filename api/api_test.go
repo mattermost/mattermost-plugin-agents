@@ -1071,7 +1071,7 @@ func TestEmptyBodyCheckerInApi(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
 
-			e.mockAPI.On("LogError", "request body must be empty")
+			e.mockAPI.On("LogDebug", "Request rejected", "method", http.MethodPost, "path", mock.Anything, "status", http.StatusBadRequest, "error", "request body must be empty")
 			e.mockAPI.On("GetPost", mock.Anything).Return(&model.Post{}, nil).Maybe()
 			e.mockAPI.On("GetChannel", mock.Anything).Return(&model.Channel{}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(true).Maybe()

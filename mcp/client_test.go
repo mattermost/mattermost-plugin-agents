@@ -78,7 +78,7 @@ type fakeEmbeddedMCPServer struct {
 	server *mcp.Server
 }
 
-func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
+func (f *fakeEmbeddedMCPServer) CreateClientTransport(_ string, _ string, _ string, _ *pluginapi.Client) (*mcp.InMemoryTransport, error) {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	go func() {
 		_ = f.server.Run(f.ctx, serverTransport)

@@ -182,7 +182,7 @@ type delayedEmbeddedServer struct {
 	transports atomic.Int64
 }
 
-func (d *delayedEmbeddedServer) CreateClientTransport(_ string, _ string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (d *delayedEmbeddedServer) CreateClientTransport(_ string, _ string, _ string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	d.transports.Add(1)
 	if d.delay > 0 {
 		d.delayOnce.Do(func() { time.Sleep(d.delay) })
