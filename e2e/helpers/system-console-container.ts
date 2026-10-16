@@ -37,6 +37,7 @@ export interface MCPServerConfig {
     enabled?: boolean;
     baseURL?: string;
     headers?: Record<string, string>;
+    description?: string;
     clientID?: string;
     clientSecret?: string;
     tool_configs?: Array<{ name?: string; policy?: string; enabled?: boolean }>;

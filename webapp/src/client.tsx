@@ -712,6 +712,32 @@ export async function updatePluginServer(
     });
 }
 
+// A draft of a saved remote MCP server's description, taken from how the
+// server describes itself to the requesting admin (api.MCPSuggestedDescriptionResponse).
+export type MCPSuggestedDescription = {
+    description: string;
+    source: '' | 'description' | 'instructions';
+    needsOAuth: boolean;
+    authURL?: string;
+};
+
+export async function getMCPSuggestedDescription(serverID: string): Promise<MCPSuggestedDescription> {
+    const url = `${baseRoute()}/admin/mcp/${encodeURIComponent(serverID)}/suggested-description`;
+    const response = await fetch(url, Client4.getOptions({
+        method: 'GET',
+    }));
+
+    if (response.ok) {
+        return response.json();
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 /** Authoritative vetted default tool_configs for a base URL (matches mcp.SeedVettedToolConfigs). */
 export async function getVettedToolSeed(baseURL: string): Promise<VettedToolConfig[]> {
     const trimmed = baseURL.trim();

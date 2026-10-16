@@ -56,6 +56,7 @@ jest.mock('../../client', () => ({
     clearMCPToolsCache: jest.fn(),
     getVettedToolSeed: jest.fn().mockResolvedValue([]),
     updatePluginServer: jest.fn().mockResolvedValue({}),
+    getMCPSuggestedDescription: jest.fn(),
 }));
 
 jest.mock('./mcp_tools_viewer', () => ({
@@ -109,13 +110,14 @@ function makeRemoteServer(overrides: Partial<MCPServerConfig> = {}): MCPServerCo
     };
 }
 
-function renderServers(mcpConfig: MCPConfig) {
+function renderServers(mcpConfig: MCPConfig, savedServers?: MCPServerConfig[]) {
     const onChange = jest.fn();
     return {
         ...render(
             <IntlProvider locale='en'>
                 <MCPServers
                     mcpConfig={mcpConfig}
+                    savedServers={savedServers}
                     onChange={onChange}
                 />
             </IntlProvider>,
@@ -485,5 +487,40 @@ describe('MCPServers built-in & plugin section', () => {
         const config: MCPConfig = onChange.mock.calls[onChange.mock.calls.length - 1][0];
         expect(config.plugin_servers).toEqual(pluginServers);
         expect(config.enablePluginServer).toBe(true);
+    });
+});
+
+describe('MCPServers description auto-fill', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        mockUseIsLicensedFor.mockReturnValue(true);
+        mockGetMCPTools.mockReturnValue(new Promise(() => null));
+    });
+
+    const autoFillButton = () => screen.getByRole('button', {name: 'Auto-fill from server'}) as HTMLButtonElement;
+
+    test('is available for a server that matches its saved configuration', () => {
+        renderServers(makeMCPConfig([existingServer]), [existingServer]);
+
+        expect(autoFillButton().disabled).toBe(false);
+    });
+
+    test.each([
+        ['a server that was never saved', makeRemoteServer(), []],
+        ['a server whose URL has unsaved changes', {...existingServer, baseURL: 'https://jira-new.example.com'}, [existingServer]],
+    ])('is unavailable for %s', (_name, server, saved) => {
+        renderServers(makeMCPConfig([server]), saved);
+
+        expect(autoFillButton().disabled).toBe(true);
+    });
+
+    test('editing the description keeps the server id', () => {
+        const {onChange} = renderServers(makeMCPConfig([existingServer]), [existingServer]);
+
+        fireEvent.change(screen.getByPlaceholderText(/What this integration is for/), {target: {value: 'Jira issues'}});
+
+        const servers = lastChangedServers(onChange);
+        expect(servers[0].description).toBe('Jira issues');
+        expect(servers[0].id).toBe(STABLE_ID);
     });
 });

@@ -34,6 +34,15 @@ type MCPToolRetrievalOverrideProvider interface {
 	GetToolRetrievalOverrides() map[string]mcp.ToolRetrievalOverride
 }
 
+// MCPServerDescriber describes configured MCP servers beyond the tools a
+// catalog request returned, so the model can ask the requester to connect one.
+type MCPServerDescriber interface {
+	DescribeUnconnectedMCPServers(authErrors []llm.ToolAuthError) []llm.UnconnectedMCPServer
+	MCPServerOriginsByName() map[string]string
+}
+
+var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
+
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
@@ -336,6 +345,12 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 				store.AddAuthError(authError)
 			}
 		}
+
+		// Someone has to click Connect, and service-account catalogs never
+		// use the requester's own OAuth grants.
+		if c.ToolCatalog.InteractiveUserPresent && !useServiceAccount {
+			b.offerMCPConnections(store, c, botCfg)
+		}
 	}
 
 	if botCfg.MCPDynamicToolLoading && !forceConcrete {
@@ -352,6 +367,50 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 	b.preloadMCPTools(store, mcpTools, c.ToolCatalog.PreloadedMCPTools)
 
 	return store
+}
+
+// offerMCPConnections catalogs the connection request tool for the servers in
+// store's auth errors, with everything known about them for the prompt.
+func (b *Builder) offerMCPConnections(store *llm.ToolStore, c *llm.Context, botCfg llm.BotConfig) {
+	describer, ok := b.mcpToolProvider.(MCPServerDescriber)
+	if !ok {
+		return
+	}
+	// Set even when every server is connected: an answered request resolves
+	// against a context rebuilt after the user connected, and a server can
+	// still lapse mid-turn (MCPToolErrorResult).
+	c.ToolCatalog.MCPServerOrigins = describer.MCPServerOriginsByName()
+
+	authErrors := store.GetAuthErrors()
+	if len(authErrors) == 0 {
+		return
+	}
+	servers := describer.DescribeUnconnectedMCPServers(authErrors)
+	if len(servers) == 0 {
+		return
+	}
+	if !botCfg.AutoEnableNewMCPTools {
+		for i := range servers {
+			servers[i].Tools = filterToolInfosForAllowlist(servers[i].Tools, botCfg.EnabledMCPTools)
+		}
+	}
+
+	c.UnconnectedMCPServers = servers
+	store.AddTools([]llm.Tool{mcp.NewRequestConnectionTool(servers)})
+}
+
+// filterToolInfosForAllowlist keeps the bare-named tools the agent's allowlist
+// would let it use once the server is connected.
+func filterToolInfosForAllowlist(tools []llm.ToolInfo, allowlist []llm.EnabledMCPTool) []llm.ToolInfo {
+	return slices.DeleteFunc(tools, func(tool llm.ToolInfo) bool {
+		origin := llm.NormalizeMCPServerOrigin(tool.ServerOrigin)
+		return !slices.ContainsFunc(allowlist, func(enabled llm.EnabledMCPTool) bool {
+			if llm.NormalizeMCPServerOrigin(enabled.ServerOrigin) != origin {
+				return false
+			}
+			return enabled.ToolName == llm.MCPServerToolWildcard || llm.BareMCPToolName(enabled.ToolName) == tool.Name
+		})
+	})
 }
 
 func (b *Builder) buildStrictMCPToolStore(store *llm.ToolStore, mcpTools []llm.Tool, c *llm.Context, registryOpts ...mcp.ToolRegistryOption) {

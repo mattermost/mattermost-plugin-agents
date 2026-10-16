@@ -22,6 +22,10 @@ export type JSONValue =
 // of options. Mirrors llm.UserInteractionSelect on the server.
 export const UserInteractionSelect = 'select';
 
+// UserInteractionConnect marks a tool answered by the user connecting their
+// account to an MCP server. Mirrors llm.UserInteractionConnect on the server.
+export const UserInteractionConnect = 'connect';
+
 // ToolAnswer is a user's answer to a user-interaction tool call. Mirrors
 // mmtools.UserInteractionAnswer on the server.
 export interface ToolAnswer {

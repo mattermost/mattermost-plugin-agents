@@ -24,8 +24,9 @@ const MaxToolRounds = limits.MaxToolRounds
 // It calls the LLM, checks for tool calls in the stream, executes
 // approved ones, appends results back to the request, and calls again.
 type ToolRunner struct {
-	llm       llm.LanguageModel
-	maxRounds int
+	llm         llm.LanguageModel
+	maxRounds   int
+	errorResult func(*llm.Context, error) string
 }
 
 // Option configures a ToolRunner at construction time.
@@ -38,6 +39,16 @@ func WithMaxRounds(n int) Option {
 		if n > 0 {
 			r.maxRounds = n
 		}
+	}
+}
+
+// WithToolErrorResult sets how a failed tool call's error becomes its result
+// text. It runs on the loop's goroutine between tool calls, so it may change
+// the request context's tool store for the rest of the run. The default is
+// the error's text.
+func WithToolErrorResult(f func(*llm.Context, error) string) Option {
+	return func(r *ToolRunner) {
+		r.errorResult = f
 	}
 }
 
@@ -440,6 +451,9 @@ func (r *ToolRunner) executeTools(ctx context.Context, toolCalls []llm.ToolCall,
 
 		if resolveErr != nil {
 			result = resolveErr.Error()
+			if r.errorResult != nil {
+				result = r.errorResult(request.Context, resolveErr)
+			}
 		}
 		toolResults[i] = ToolResult{
 			ToolCallID: tc.ID,

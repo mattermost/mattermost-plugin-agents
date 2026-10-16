@@ -52,6 +52,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		{name: "tools_without_websearch", tools: buildToolStore("ReadPost")},
 		{name: "tools_with_websearch", tools: buildToolStore("WebSearch")},
 		{name: "tools_with_dynamic_mcp_meta_tools", tools: buildToolStore("search_tools", "load_tool"), mcpDynamicToolLoading: true},
+		{name: "tools_with_mcp_connection_request", tools: buildToolStore("RequestMCPConnection")},
 	}
 	channelModes := []struct {
 		name    string
@@ -90,6 +91,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 			}
 		},
 		func(c *llm.Context) { c.Team = &model.Team{Name: "eng", DisplayName: "Engineering"} },
+		func(c *llm.Context) { c.UnconnectedMCPServers = testUnconnectedMCPServers() },
 	}
 
 	for _, toolMode := range toolModes {
@@ -376,6 +378,89 @@ func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
 				assert.NotContains(t, output, guidance)
 			}
 		})
+	}
+}
+
+func TestStandardPersonalityUnconnectedMCPServers(t *testing.T) {
+	const guidance = "call RequestMCPConnection with the integration's exact name"
+
+	connectStore := func() *llm.ToolStore {
+		store := llm.NewToolStore()
+		store.AddTools([]llm.Tool{{
+			Name:        "RequestMCPConnection",
+			Description: "Ask the user to connect",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		}})
+		return store
+	}
+	jira := []llm.UnconnectedMCPServer{{Name: "Jira", Description: "Issues and sprints", Tools: []llm.ToolInfo{{Name: "search"}}}}
+
+	tests := []struct {
+		name    string
+		context *llm.Context
+		want    []string
+	}{
+		{
+			name:    "points the model at the connection request tool",
+			context: &llm.Context{BotName: "agent", Tools: connectStore(), UnconnectedMCPServers: jira},
+			want:    []string{guidance, "its server parameter lists integrations", "never write connection links yourself"},
+		},
+		{
+			name:    "omitted when the request tool is not cataloged",
+			context: &llm.Context{BotName: "agent", Tools: llm.NewToolStore(), UnconnectedMCPServers: jira},
+		},
+		{
+			name: "omitted when tools are disabled in this context",
+			context: &llm.Context{
+				BotName:               "agent",
+				Tools:                 connectStore(),
+				DisabledToolsInfo:     []llm.ToolInfo{{Name: "RequestMCPConnection"}},
+				UnconnectedMCPServers: jira,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, tt.context)
+			assert.NotContains(t, output, "Jira", "servers are listed in the tool schema, not the prompt")
+			assert.NotContains(t, output, "Issues and sprints")
+			if len(tt.want) == 0 {
+				assert.NotContains(t, output, guidance)
+				return
+			}
+			for _, expected := range tt.want {
+				assert.Contains(t, output, expected)
+			}
+		})
+	}
+}
+
+// The system prompt is stored once per conversation and is part of the cached
+// prompt prefix, so which servers are unconnected must not change it.
+func TestStandardPersonalityIsTheSameWhicheverServersAreUnconnected(t *testing.T) {
+	render := func(servers []llm.UnconnectedMCPServer) string {
+		store := llm.NewToolStore()
+		store.AddTools([]llm.Tool{{
+			Name: "RequestMCPConnection",
+			Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+				return "", nil
+			},
+		}})
+		return renderStandardPersonalityWithoutLocale(t, &llm.Context{BotName: "agent", Tools: store, UnconnectedMCPServers: servers})
+	}
+
+	assert.Equal(t,
+		render([]llm.UnconnectedMCPServer{{Name: "Jira", Description: "Issues"}}),
+		render([]llm.UnconnectedMCPServer{{Name: "GitHub"}, {Name: "Linear", Description: "Projects"}}))
+}
+
+func testUnconnectedMCPServers() []llm.UnconnectedMCPServer {
+	return []llm.UnconnectedMCPServer{
+		{Name: "Jira", Description: "Issues and sprints", Tools: []llm.ToolInfo{{Name: "search"}}},
+		{Name: "GitHub"},
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"strings"
+	"unicode/utf8"
 )
 
 // ErrDuplicateMCPServer reports a remote MCP server list that reuses a name or
@@ -169,20 +170,28 @@ func (c MCPConfig) ServerConflicts() []MCPServerConflict {
 	return conflicts
 }
 
-// Validate reports duplicate remote MCP server names and endpoint URLs. It is
-// used to reject a new or updated configuration before it is persisted;
-// already-stored duplicates are tolerated at runtime (see ServerConflicts) so
-// a bad stored config cannot block plugin activation.
+// MaxMCPServerDescriptionRunes caps a remote MCP server's admin-written
+// description, which is sent to the model on every request from a user who
+// has not connected the server.
+const MaxMCPServerDescriptionRunes = 500
+
+// Validate reports duplicate remote MCP server names and endpoint URLs, and
+// descriptions longer than MaxMCPServerDescriptionRunes. It is used to reject
+// a new or updated configuration before it is persisted; already-stored
+// duplicates are tolerated at runtime (see ServerConflicts) so a bad stored
+// config cannot block plugin activation.
 func (c MCPConfig) Validate() error {
-	conflicts := c.ServerConflicts()
-	if len(conflicts) == 0 {
-		return nil
+	var err error
+	for _, server := range c.Servers {
+		if n := utf8.RuneCountInString(server.Description); n > MaxMCPServerDescriptionRunes {
+			err = errors.Join(err, fmt.Errorf("MCP server %q description is %d characters; the limit is %d", server.Name, n, MaxMCPServerDescriptionRunes))
+		}
 	}
 
 	// One error per colliding value rather than per colliding entry: repeating
 	// the same collision for every member of a group is just noise.
+	conflicts := c.ServerConflicts()
 	seen := make(map[string]bool, len(conflicts))
-	var err error
 	for _, conflict := range conflicts {
 		key := conflict.conflictKey()
 		if seen[key] {

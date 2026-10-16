@@ -90,6 +90,11 @@ CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output fo
 
 {{- end}}
 
+{{- if .IsToolCallable "RequestMCPConnection"}}
+
+When the RequestMCPConnection tool is available, its server parameter lists integrations set up on this server that the user has not connected their own account to yet, and what each is for. Their tools are not available to you until the user connects. When answering the user's request needs one of them, call RequestMCPConnection with the integration's exact name and a short reason instead of saying you cannot help; the user is then shown a Connect button. Do not request a connection the current request does not need, do not tell the user to look for a settings page, and never write connection links yourself.
+{{- end}}
+
 {{- if .CustomInstructions}}
 {{.CustomInstructions}}
 {{- end}}

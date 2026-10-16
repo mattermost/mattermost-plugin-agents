@@ -28,6 +28,7 @@ import {UnderlineTab, UnderlineTabs} from '../underline_tabs';
 
 import {CopyableTextItem} from './copyable_text_item';
 import {BuiltInPluginServersSection} from './mcp_builtin_servers_section';
+import MCPServerDescription from './mcp_server_description';
 import MCPToolsViewer from './mcp_tools_viewer';
 import type {
     MCPConfig as BaseMCPConfig,
@@ -56,8 +57,20 @@ export type MCPConfig = Omit<BaseMCPConfig, 'servers'> & {
 
 type Props = {
     mcpConfig: MCPConfig;
+
+    // The servers as last saved, matched by id, for actions that run against
+    // the saved configuration.
+    savedServers?: MCPServerConfig[];
     onChange: (config: MCPConfig) => void;
 };
+
+// connectionSettings is what determines how the server is reached and as whom.
+const connectionSettings = (server: MCPServerConfig) => JSON.stringify([
+    server.baseURL || '',
+    server.headers || {},
+    server.clientID || '',
+    server.clientSecret || '',
+]);
 
 const getIdleTimeoutInputValue = (idleTimeoutMinutes?: number): string => {
     if (typeof idleTimeoutMinutes !== 'number' || idleTimeoutMinutes <= 0) {
@@ -73,6 +86,7 @@ const defaultServerConfig: MCPServerConfig = {
     enabled: true,
     baseURL: '',
     headers: {},
+    description: '',
     serviceAccountHeaders: {},
     clientID: '',
     clientSecret: '',
@@ -166,11 +180,13 @@ const HeaderMapEditor = ({
 const MCPServer = ({
     serverIndex,
     serverConfig,
+    savedServer,
     onChange,
     onDelete,
 }: {
     serverIndex: number;
     serverConfig: MCPServerConfig;
+    savedServer?: MCPServerConfig;
     onChange: (serverIndex: number, config: MCPServerConfig) => void;
     onDelete: () => void;
 }) => {
@@ -194,6 +210,7 @@ const MCPServer = ({
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
+        description: serverConfig.description || '',
         serviceAccountHeaders: serverConfig.serviceAccountHeaders || {},
         tool_configs: serverConfig.tool_configs,
         clientID: serverConfig.clientID || '',
@@ -333,6 +350,13 @@ const MCPServer = ({
                 helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
             />
 
+            <MCPServerDescription
+                serverID={config.id}
+                description={config.description}
+                connectionSaved={Boolean(savedServer) && connectionSettings(savedServer as MCPServerConfig) === connectionSettings(config)}
+                onChange={(description) => onChange(serverIndex, {...config, description})}
+            />
+
             <FormRow>
                 <ItemLabel>{intl.formatMessage({defaultMessage: 'Headers'})}</ItemLabel>
                 <TextFieldContainer>
@@ -434,7 +458,7 @@ const MCPServer = ({
 };
 
 // Main component for MCP servers configuration
-const MCPServers = ({mcpConfig, onChange}: Props) => {
+const MCPServers = ({mcpConfig, savedServers = [], onChange}: Props) => {
     const intl = useIntl();
     const titleId = useId();
     const remoteMcpLicensed = useIsLicensedFor('remote_mcp');
@@ -712,6 +736,7 @@ const MCPServers = ({mcpConfig, onChange}: Props) => {
                                                 key={index}
                                                 serverIndex={index}
                                                 serverConfig={serverConfig}
+                                                savedServer={serverConfig.id ? savedServers.find((saved) => saved.id === serverConfig.id) : undefined} // eslint-disable-line no-undefined
                                                 onChange={updateServer}
                                                 onDelete={() => deleteServer(index)}
                                             />

@@ -5,6 +5,10 @@ package mcp
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -13,12 +17,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 )
-
-// mockListKeysOptions mimics the internal options struct used by pluginapi
-type mockListKeysOptions struct {
-	prefix  string
-	checker func(key string) (keep bool, err error)
-}
 
 // mockKVService implements pluginapi.KVService for testing with thread-safety
 type mockKVService struct {
@@ -72,63 +70,20 @@ func (m *mockKVService) DeleteAll() error {
 	return nil
 }
 
+// ListKeys pages through keys sorted by name, like the Mattermost KV store.
+// Options are not supported: pluginapi applies them in memory to a single page.
 func (m *mockKVService) ListKeys(page, count int, options ...pluginapi.ListKeysOption) ([]string, error) {
+	if len(options) > 0 {
+		return nil, errors.New("mockKVService.ListKeys does not support options")
+	}
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Apply options to extract filtering criteria
-	opts := &mockListKeysOptions{}
-	for _, opt := range options {
-		// The pluginapi options are functions that modify an internal struct
-		// We can't directly extract values, but we can test by applying to our mock
-		// For simplicity, we'll create helper functions that match pluginapi's behavior
-		mockOpt := convertToMockOption(opt)
-		mockOpt(opts)
-	}
-
-	// Collect keys matching the filter
-	var keys []string
-	for key := range m.store {
-		// Apply prefix filter if specified
-		if opts.prefix != "" {
-			if len(key) < len(opts.prefix) || key[:len(opts.prefix)] != opts.prefix {
-				continue
-			}
-		}
-
-		// Apply checker function if specified
-		if opts.checker != nil {
-			keep, err := opts.checker(key)
-			if err != nil {
-				return nil, err
-			}
-			if !keep {
-				continue
-			}
-		}
-
-		keys = append(keys, key)
-	}
-
-	return keys, nil
-}
-
-// convertToMockOption converts a pluginapi.ListKeysOption to work with our mock
-// This is a workaround since we can't directly extract option values
-func convertToMockOption(opt pluginapi.ListKeysOption) func(*mockListKeysOptions) {
-	return func(opts *mockListKeysOptions) {
-		// We'll use a temporary struct that matches pluginapi's internal structure
-		// and apply the option to see what it does
-		// This is testing-specific code
-
-		// Create a test key to see if the option filters it
-		// For WithPrefix, we can infer the prefix by testing different keys
-		// This is a simplified approach for testing
-
-		// For now, we'll assume the option is WithPrefix with cacheKeyPrefix
-		// In real usage, the pluginapi will handle this correctly
-		opts.prefix = cacheKeyPrefix
-	}
+	keys := slices.Sorted(maps.Keys(m.store))
+	start := min(page*count, len(keys))
+	end := min(start+count, len(keys))
+	return keys[start:end], nil
 }
 
 // mockLogService implements pluginapi.LogService for testing
@@ -349,6 +304,42 @@ func TestClearAll(t *testing.T) {
 	for _, serverID := range servers {
 		cachedTools := cache.GetTools(serverID)
 		require.Nil(t, cachedTools)
+	}
+}
+
+func TestClearAllBeyondFirstKeyPage(t *testing.T) {
+	tests := []struct {
+		name          string
+		unrelatedKeys int
+	}{
+		{name: "cache keys sort after more than a page of other keys", unrelatedKeys: 2500},
+		{name: "total key count is an exact multiple of the page size", unrelatedKeys: 2*listKeysPageSize - 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			kvAPI := newMockKVService()
+			cache := NewToolsCache(kvAPI, &mockLogService{})
+
+			// Per-user OAuth token keys sort before the cache and profile keys.
+			for i := range tc.unrelatedKeys {
+				_, err := kvAPI.Set(fmt.Sprintf("mcp_oauth_token_v1_user%05d_server", i), "token")
+				require.NoError(t, err)
+			}
+			servers := []string{"server1", "server2"}
+			for _, serverID := range servers {
+				require.NoError(t, cache.SetTools(serverID, serverID, "http://test.com", createTestTools(), time.Now()))
+			}
+
+			clearedCount, err := cache.ClearAll()
+			require.NoError(t, err)
+			require.Equal(t, len(servers), clearedCount)
+
+			for _, serverID := range servers {
+				require.Nil(t, cache.GetTools(serverID))
+			}
+			require.Len(t, kvAPI.store, tc.unrelatedKeys)
+		})
 	}
 }
 

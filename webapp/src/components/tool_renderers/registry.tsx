@@ -10,9 +10,10 @@ import React from 'react';
 
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
-import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
+import {ToolApprovalStage, ToolCall, UserInteractionConnect, UserInteractionSelect} from '../tool_types';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
+import ConnectionRequestCard, {parseConnectionRequestArgs} from '../connection_request_card';
 
 import {RichCardProps} from './tool_card_shell';
 import ReadPostPreviewCard from './posts/read_post';
@@ -84,6 +85,30 @@ const registry: RendererEntry[] = [
                     localDecision={ctx.localDecision}
                     canAnswer={ctx.canAnswer}
                     onAnswer={ctx.onAnswer}
+                    onSkip={ctx.onSkip}
+                />
+            );
+        },
+    },
+
+    // ConnectionRequestCard: a connect-interaction tool asking the user to
+    // connect an MCP server. Accepting needs no answer payload, so Continue
+    // maps to approve. Redacted payloads render the generic card.
+    {
+        match: (tool) => tool.user_interaction === UserInteractionConnect,
+        render: (ctx) => {
+            const request = parseConnectionRequestArgs(ctx.tool.arguments);
+            if (!request) {
+                return <ToolCard {...toRichProps(ctx)}/>;
+            }
+            return (
+                <ConnectionRequestCard
+                    tool={ctx.tool}
+                    request={request}
+                    isProcessing={ctx.isProcessing}
+                    localDecision={ctx.localDecision}
+                    canAnswer={ctx.canAnswer}
+                    onContinue={ctx.onApprove}
                     onSkip={ctx.onSkip}
                 />
             );

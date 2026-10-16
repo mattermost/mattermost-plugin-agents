@@ -721,6 +721,48 @@ func TestToolRunner_ToolExecutionError(t *testing.T) {
 	assert.Contains(t, botPost.ToolUse[0].Result, "connection timeout")
 }
 
+// The error-result hook turns a failure into the text the model sees and can
+// change the tool catalog for the rest of the run.
+func TestToolRunner_ToolErrorResultHook(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "failing_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "Let me fix that"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	store := newTestToolStore(testToolDef{name: "failing_tool", err: fmt.Errorf("authorization lapsed")})
+	runner := New(inner, WithToolErrorResult(func(c *llm.Context, err error) string {
+		c.Tools.AddTools([]llm.Tool{{Name: "recovery_tool"}})
+		return "rewritten: " + err.Error()
+	}))
+	request := llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: &llm.Context{Tools: store},
+	}
+
+	result, err := runner.Run(context.Background(), request, alwaysExecute, nil)
+	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
+
+	require.Len(t, result.ToolTurns, 1)
+	toolResult := result.ToolTurns[0].ToolResults[0]
+	assert.True(t, toolResult.IsError)
+	assert.Equal(t, "rewritten: authorization lapsed", toolResult.Result)
+
+	require.Len(t, inner.capturedRequests, 2)
+	assert.NotNil(t, inner.capturedRequests[1].Context.Tools.GetTool("recovery_tool"),
+		"the next round must see the catalog the hook changed")
+}
+
 func TestToolRunner_LLMError(t *testing.T) {
 	// ChatCompletion returns an error directly on the first call.
 	inner := &testLLM{

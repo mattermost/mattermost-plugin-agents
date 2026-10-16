@@ -75,6 +75,12 @@ type MCPServerConfig struct {
 	BaseURL string            `json:"baseURL"`
 	Headers map[string]string `json:"headers,omitempty"`
 
+	// Description is admin-written text telling agents what the server is
+	// for, shown to users who have not connected it yet. It is the only
+	// description agents see: text the server reports about itself is
+	// never shared across users.
+	Description string `json:"description,omitempty"`
+
 	// ServiceAccountHeaders are static headers (e.g. a PAT Authorization header)
 	// sent in place of per-user OAuth on service-account-mode connections.
 	ServiceAccountHeaders map[string]string `json:"serviceAccountHeaders,omitempty"`

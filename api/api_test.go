@@ -950,9 +950,10 @@ func TestAdminRouter(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	for urlName, url := range map[string]string{
-		"reindex_status":  "/admin/reindex/status",
-		"mcp_tools":       "/admin/mcp/tools",
-		"mcp_vetted_seed": "/admin/mcp/vetted-tool-seed",
+		"reindex_status":            "/admin/reindex/status",
+		"mcp_tools":                 "/admin/mcp/tools",
+		"mcp_vetted_seed":           "/admin/mcp/vetted-tool-seed",
+		"mcp_suggested_description": "/admin/mcp/server-id/suggested-description",
 	} {
 		for name, test := range map[string]struct {
 			request        *http.Request

@@ -120,6 +120,8 @@ Tool availability depends on your user permissions, provider connection status, 
 
 Some MCP providers require each user to connect their own account before those tools become available. When that applies, open the **Tools** menu in the Agents pane or RHS, select **Connect** for the provider, and wait for the list to refresh with the newly available tools.
 
+You don't have to connect providers ahead of time. When you ask for something that needs a provider you haven't connected, the agent can show a **Connect** card in the conversation explaining why it needs that provider. Select **Connect** to sign in with your own account in a new window. As soon as you're connected, the agent picks up where it left off with the provider's tools. If you close the window before finishing, select **Connect** again to retry. Select **Skip** if you'd rather not connect; the agent continues without it. If your sign-in to a provider expires during a conversation, the agent shows the card again so you can reconnect. Only the person who started the conversation can respond to the card.
+
 Some agents are configured by an admin to use **service account authentication** instead of per-user connections. When you chat with one of those agents, you're never asked to connect an account and the **Tools** menu isn't shown for that agent. External MCP tools run under admin-configured credentials; Mattermost and plugin tools still run with your own permissions. Tool approval works the same as with any other agent: if a tool call requires review, you still see the **Accept** and **Reject** options.
 
 ### Ask agents to create files

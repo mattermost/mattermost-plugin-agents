@@ -124,6 +124,100 @@ export function buildMCPOAuthMocks(completionResponse?: string): SmockerMock[] {
     return mocks;
 }
 
+export const MOCK_OAUTH_ACCESS_TOKEN = 'mock-mcp-access-token';
+export const MOCK_OAUTH_AUTHORIZE_URL = `${MOCK_MCP_BASE}/authorize`;
+export const MOCK_CONNECTED_TOOL_NAME = 'list_my_tickets';
+export const MOCK_SERVER_SELF_DESCRIPTION = 'Look up and update your support tickets.';
+
+type SmockerDynamicMock = {
+    request: {
+        method: string;
+        path: string;
+        headers?: Record<string, string>;
+        body?: { matcher: string; value: string };
+    };
+    context?: { times?: number };
+    dynamic_response: { engine: 'go_template_json'; script: string };
+};
+
+// rpcMethod matches the JSON-RPC method exactly; a trailing "/" matches every method under that prefix.
+function authorizedMCPRequest(method: string, rpcMethod?: string): SmockerDynamicMock['request'] {
+    const methodMatch = rpcMethod?.endsWith('/') ? `"method":"${rpcMethod}` : `"method":"${rpcMethod}"`;
+    return {
+        method,
+        path: MOCK_MCP_PATH,
+        headers: { Authorization: `Bearer ${MOCK_OAUTH_ACCESS_TOKEN}` },
+        ...(rpcMethod ? { body: { matcher: 'ShouldContainSubstring', value: methodMatch } } : {}),
+    };
+}
+
+// jsonRPCResponse echoes the request's JSON-RPC id, which the MCP client matches responses on.
+function jsonRPCResponse(payload: string): SmockerDynamicMock['dynamic_response'] {
+    return {
+        engine: 'go_template_json',
+        script: `{"status":200,"headers":{"Content-Type":"application/json"},"body":{"jsonrpc":"2.0","id":{{ toJson .Request.Body.id }},${payload}}}`,
+    };
+}
+
+/**
+ * Mocks that let the OAuth flow from buildMCPOAuthMocks complete: the token
+ * endpoint issues MOCK_OAUTH_ACCESS_TOKEN, and MCP requests carrying it get a
+ * working session with one tool, from a server that describes itself as
+ * MOCK_SERVER_SELF_DESCRIPTION. Servers configured with that token as a static
+ * Authorization header reach the same session without OAuth. Register them after buildMCPOAuthMocks so they
+ * take priority over its 401 responses. The authorization endpoint itself is
+ * not mocked: it lives on the Docker network, so tests intercept
+ * MOCK_OAUTH_AUTHORIZE_URL in the browser instead.
+ */
+export function buildMCPOAuthConnectedMocks(): Array<SmockerMock | SmockerDynamicMock> {
+    return [
+        {
+            request: { method: 'POST', path: '/token' },
+            context: { times: 100 },
+            response: {
+                status: 200,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: MOCK_OAUTH_ACCESS_TOKEN, token_type: 'Bearer', expires_in: 3600 }),
+            },
+        },
+        {
+            request: authorizedMCPRequest('GET'),
+            context: { times: 100 },
+            response: { status: 405, headers: {}, body: '' },
+        },
+        {
+            request: authorizedMCPRequest('DELETE'),
+            context: { times: 100 },
+            response: { status: 200, headers: {}, body: '' },
+        },
+        {
+            request: authorizedMCPRequest('POST', 'notifications/'),
+            context: { times: 100 },
+            response: { status: 202, headers: {}, body: '' },
+        },
+        {
+            // The client falls back to the initialize handshake when discovery is unsupported.
+            request: authorizedMCPRequest('POST', 'server/discover'),
+            context: { times: 100 },
+            dynamic_response: jsonRPCResponse('"error":{"code":-32601,"message":"Method not found"}'),
+        },
+        {
+            request: authorizedMCPRequest('POST', 'initialize'),
+            context: { times: 100 },
+            dynamic_response: jsonRPCResponse(
+                `"result":{"protocolVersion":{{ toJson .Request.Body.params.protocolVersion }},"capabilities":{"tools":{}},"serverInfo":{"name":"mock-tickets","version":"1.0.0","description":"${MOCK_SERVER_SELF_DESCRIPTION}"}}`,
+            ),
+        },
+        {
+            request: authorizedMCPRequest('POST', 'tools/list'),
+            context: { times: 100 },
+            dynamic_response: jsonRPCResponse(
+                `"result":{"tools":[{"name":"${MOCK_CONNECTED_TOOL_NAME}","description":"List the user's open tickets","inputSchema":{"type":"object","properties":{}}}]}`,
+            ),
+        },
+    ];
+}
+
 export async function registerMCPOAuthMocks(
     openAIMock: OpenAIMockContainer,
     completionResponse?: string,

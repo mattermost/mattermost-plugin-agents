@@ -20,6 +20,18 @@ type ToolInfo struct {
 	ServerOrigin string
 }
 
+// UnconnectedMCPServer describes an MCP server the requesting user could use
+// after connecting their own account to it. Every field comes from admin
+// configuration.
+type UnconnectedMCPServer struct {
+	// Name is the admin-configured server name, the identifier a connection
+	// request must use.
+	Name         string
+	ServerOrigin string
+	Description  string
+	Tools        []ToolInfo
+}
+
 // Context represents the per-turn data necessary to build the context of the LLM.
 // For consumers none of the fields can be assumed to be present.
 type Context struct {
@@ -51,7 +63,10 @@ type Context struct {
 
 	Tools             *ToolStore
 	DisabledToolsInfo []ToolInfo // Info about tools that are unavailable in the current context (e.g., DM-only tools in a channel)
-	Parameters        map[string]any
+	// UnconnectedMCPServers lists servers the requester can connect from the
+	// conversation; set only when the connection request tool is cataloged.
+	UnconnectedMCPServers []UnconnectedMCPServer
+	Parameters            map[string]any
 
 	// ToolCatalog holds request-scoped inputs used while building the tool store.
 	ToolCatalog ToolCatalogContext
@@ -82,6 +97,11 @@ type ToolCatalogContext struct {
 	// pending tool approvals. Tools that require a user response (see
 	// Tool.UserInteraction) are only cataloged when this is set.
 	InteractiveUserPresent bool
+
+	// MCPServerOrigins maps configured remote MCP server names to their
+	// origins so an answered connection request can find the server's tools.
+	// It is nil where connection requests cannot be offered.
+	MCPServerOrigins map[string]string
 
 	// ResponseFilesSupported indicates the current flow attaches
 	// ToolRuntime.CreatedFiles to the bot's streamed response post, so

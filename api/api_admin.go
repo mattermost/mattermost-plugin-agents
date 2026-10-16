@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sync"
 
 	"github.com/gin-gonic/gin"
@@ -478,6 +479,52 @@ func toMCPToolInfos(toolInfos []mcp.ToolInfo) []MCPToolInfo {
 		})
 	}
 	return tools
+}
+
+// MCPSuggestedDescriptionResponse is a draft description for a remote MCP
+// server, taken from how the server describes itself to the requesting admin.
+// When the admin must sign in to the server first, NeedsOAuth is set and
+// AuthURL starts that flow.
+type MCPSuggestedDescriptionResponse struct {
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	NeedsOAuth  bool   `json:"needsOAuth"`
+	AuthURL     string `json:"authURL,omitempty"`
+}
+
+// handleGetMCPSuggestedDescription drafts the configured description of a
+// saved remote MCP server by connecting to it as the requesting admin, the same
+// identity Tools-tab discovery uses. It only returns the draft; the admin edits
+// it and saves it with the rest of the configuration.
+func (a *API) handleGetMCPSuggestedDescription(c *gin.Context) {
+	if !a.requireCapability(c, enterprise.CapRemoteMCP) {
+		return
+	}
+
+	servers := a.config.MCP().Servers
+	index := slices.IndexFunc(servers, func(server mcp.ServerConfig) bool {
+		return server.ID == c.Param("serverid")
+	})
+	if index < 0 {
+		c.AbortWithError(http.StatusNotFound, errors.New("MCP server not found"))
+		return
+	}
+	serverConfig := servers[index]
+
+	suggestion, err := mcp.SuggestRemoteServerDescription(c.Request.Context(), c.GetHeader("Mattermost-User-Id"), serverConfig,
+		a.pluginAPI.Log, a.mcpClientManager.GetOAuthManager(), a.mcpClientManager.GetHTTPClient())
+	if oauthErr, ok := errors.AsType[*mcp.OAuthNeededError](err); ok {
+		c.JSON(http.StatusOK, MCPSuggestedDescriptionResponse{NeedsOAuth: true, AuthURL: oauthErr.AuthURL()})
+		return
+	}
+	if err != nil {
+		// Connection errors can carry server-supplied text; it stays in the log.
+		a.pluginAPI.Log.Warn("Failed to fetch MCP server description", "server", serverConfig.Name, "error", err)
+		c.AbortWithError(http.StatusBadGateway, errors.New("could not get a description from the MCP server"))
+		return
+	}
+
+	c.JSON(http.StatusOK, MCPSuggestedDescriptionResponse{Description: suggestion.Text, Source: suggestion.Source})
 }
 
 // discoverRemoteServerTools connects to a single remote MCP server and discovers its tools
