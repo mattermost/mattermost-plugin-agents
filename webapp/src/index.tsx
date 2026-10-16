@@ -57,6 +57,7 @@ import AgentsTour from './components/tutorial/agents_tour';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
+import {AGENTS_SEARCH_PRIORITY, syncSearchRegistration} from './search_registration';
 
 type WebappStore = Store<GlobalState, UnknownAction>
 
@@ -324,10 +325,11 @@ export default class Plugin {
         }
 
         if (registry.registerSearchComponents) {
-            registry.registerSearchComponents({
+            const registerSearch = (): string => registry.registerSearchComponents({
                 buttonComponent: SearchButton,
                 suggestionsComponent: () => null,
                 hintsComponent: SearchHints,
+                priority: AGENTS_SEARCH_PRIORITY,
                 action: async (searchTerms: string) => {
                     if (!licenseAllows(store.getState(), 'semantic_search')) {
                         return;
@@ -350,6 +352,11 @@ export default class Plugin {
                     }
                 },
             });
+            syncSearchRegistration(store, registerSearch, (id) => registry.unregisterComponent(id));
+
+            // Search availability comes from the bots response, so load it
+            // before the user first opens search.
+            fetchAndStoreBots(store.dispatch).catch(() => { /* best effort */ });
         }
 
         // Register Custom Prompts AI action menu item

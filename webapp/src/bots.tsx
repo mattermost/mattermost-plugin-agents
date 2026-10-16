@@ -13,7 +13,7 @@ import {PreferenceType} from '@mattermost/types/preferences';
 import {getAIBots, savePreferences} from '@/client';
 
 import manifest from './manifest';
-import {BotsHandler} from './redux';
+import {BotsHandler, SearchEnabledHandler} from './redux';
 import {ChannelAccessLevel, UserAccessLevel} from './components/system_console/bot';
 import {EnabledTool} from './types/agents';
 
@@ -86,6 +86,11 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
     dispatch({
         type: 'SET_ALLOW_UNSAFE_LINKS',
         allowUnsafeLinks: Boolean(response.allowUnsafeLinks),
+    });
+
+    dispatch({
+        type: SearchEnabledHandler,
+        searchEnabled: Boolean(response.searchEnabled),
     });
 
     return response.bots;

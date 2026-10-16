@@ -6,6 +6,11 @@ import {render, screen} from '@testing-library/react';
 
 import SearchButton from './search_button';
 
+jest.mock('react-intl', () => ({
+    ...jest.requireActual('react-intl'),
+    FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+}));
+
 jest.mock('@/license', () => ({
     useIsLicensedFor: jest.fn(() => true),
 }));
@@ -15,6 +20,8 @@ jest.mock('./assets/icon_ai', () => ({
     default: () => <span>{'ai-icon'}</span>,
 }));
 
+const renderButton = () => render(<SearchButton/>);
+
 describe('SearchButton license gating', () => {
     const {useIsLicensedFor} = jest.requireMock('@/license') as {useIsLicensedFor: jest.Mock};
 
@@ -23,13 +30,13 @@ describe('SearchButton license gating', () => {
     });
 
     test('shows the search entry at Enterprise', () => {
-        render(<SearchButton/>);
-        expect(screen.getByText('Agents')).not.toBeNull();
+        renderButton();
+        expect(screen.getByText('Ask Agents')).not.toBeNull();
     });
 
     test('hides the search entry below Enterprise', () => {
         useIsLicensedFor.mockReturnValue(false);
-        render(<SearchButton/>);
-        expect(screen.queryByText('Agents')).toBeNull();
+        renderButton();
+        expect(screen.queryByText('Ask Agents')).toBeNull();
     });
 });

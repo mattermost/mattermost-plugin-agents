@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -166,6 +167,65 @@ func TestSearchBarFlowEval(t *testing.T) {
 			for _, rubric := range tt.rubrics {
 				evals.LLMRubricT(e, rubric, result.response)
 			}
+		})
+	}
+}
+
+// TestSearchBarSyntaxHintsEval covers search syntax typed into the search bar:
+// modifiers are hints the agent turns into search_posts filters rather than
+// literal query text. Only the tool arguments are asserted, since the eval
+// server image does not apply from: to cross-team searches.
+func TestSearchBarSyntaxHintsEval(t *testing.T) {
+	evals.NumEvalsOrSkip(t)
+
+	suite := SetupTestSuite(t)
+	defer suite.TearDown()
+	suite.CreateMCPServer(false)
+
+	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+
+	type searchArgs struct {
+		Query     string `json:"query"`
+		ChannelID string `json:"channel_id"`
+		From      string `json:"from"`
+		In        string `json:"in"`
+	}
+
+	tests := []struct {
+		name      string
+		query     string
+		wantMatch func(args searchArgs) bool
+	}{
+		{
+			name:  "from: becomes the from filter",
+			query: "from:@" + data.alice.Username + " MySQL",
+			wantMatch: func(args searchArgs) bool {
+				return strings.TrimPrefix(args.From, "@") == data.alice.Username && !strings.Contains(args.Query, "from:")
+			},
+		},
+		{
+			name:  "in: becomes a channel filter",
+			query: "in:" + data.designChannel.Name + " dashboard mockups",
+			wantMatch: func(args searchArgs) bool {
+				inChannel := args.In == data.designChannel.Name || args.In == data.designChannel.Id || args.ChannelID == data.designChannel.Id
+				return inChannel && !strings.Contains(args.Query, "in:")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		evals.Run(t, "search bar syntax "+tt.name, func(e *evals.EvalT) {
+			result := runSearchFlowEval(e, suite, data, tt.query, nil)
+
+			calls := searchPostsCalls(result.toolCalls)
+			require.NotEmpty(e.T, calls, "the agent must search with search_posts")
+
+			matched := slices.ContainsFunc(calls, func(call llm.ToolCall) bool {
+				var args searchArgs
+				require.NoError(e.T, json.Unmarshal(call.Arguments, &args))
+				return tt.wantMatch(args)
+			})
+			assert.True(e.T, matched, "the agent must pass the search syntax as a search_posts filter instead of query text")
 		})
 	}
 }

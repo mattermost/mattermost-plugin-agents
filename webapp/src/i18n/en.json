@@ -37,6 +37,7 @@
   "1JOdmR1n": "No Service Selected",
   "1L2Ty0Hr": "Advanced configuration",
   "1L3h6CCI": "Service Account JSON (Optional)",
+  "1QrW5/Un": "Ask Agents",
   "1XWNEdI4": "Loading configuration...",
   "1Z8OKy/b": "Allowed Upstream Hostnames (csv)",
   "1lBvE3WM": "Paste the full service account JSON. Leave blank to use Application Default Credentials (ADC) or an attached IAM role.",

@@ -17,9 +17,11 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -530,6 +532,60 @@ func TestHandleSaveConfig(t *testing.T) {
 			if tt.validateClusterNotify != nil {
 				tt.validateClusterNotify(t, notifier)
 			}
+		})
+	}
+}
+
+// TestHandleSaveConfigNotifiesClients verifies that open clients are told to
+// refetch agents after a save, since agent and search availability (and the
+// webapp's search registration) come from config.
+func TestHandleSaveConfigNotifiesClients(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestBody string
+		wantStatus  int
+		wantEvents  []string
+	}{
+		{
+			name:        "successful save publishes bots_invalidate",
+			requestBody: `{"defaultBotName":"ai","services":[{"id":"svc-1","name":"OpenAI","type":"openai"}],"bots":[{"id":"bot-1","name":"ai","serviceID":"svc-1"}]}`,
+			wantStatus:  http.StatusOK,
+			wantEvents:  []string{WebsocketEventBotsInvalidate},
+		},
+		{
+			name:        "rejected save publishes nothing",
+			requestBody: `{not json`,
+			wantStatus:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var events []string
+			mmClient := mmapimocks.NewMockClient(t)
+			mmClient.On("PublishWebSocketEvent", mock.AnythingOfType("string"), mock.AnythingOfType("map[string]interface {}"), mock.AnythingOfType("*model.WebsocketBroadcast")).
+				Run(func(args mock.Arguments) {
+					events = append(events, args.String(0))
+				}).Return().Maybe()
+
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			a := &API{
+				configStore:     &testConfigStore{},
+				configUpdater:   &testConfigUpdater{},
+				clusterNotifier: &testClusterNotifier{},
+				licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
+				mmClient:        mmClient,
+			}
+			router.PUT("/admin/config", a.handleSaveConfig)
+
+			req := httptest.NewRequest(http.MethodPut, "/admin/config", bytes.NewReader([]byte(tt.requestBody)))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+
+			assert.Equal(t, tt.wantStatus, w.Code)
+			assert.Equal(t, tt.wantEvents, events)
 		})
 	}
 }
