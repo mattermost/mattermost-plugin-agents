@@ -20,7 +20,7 @@ Mattermost server plugin (`mattermost-ai`) that integrates LLM providers. Go 1.2
 - Single e2e spec: `cd e2e && npx playwright test tests/path/spec.ts --reporter=list`
 - Prompt evals (non-interactive): `make evals-ci`
   Provider: `LLM_PROVIDER=openai|anthropic|azure|openaicompatible|all make evals-ci`
-  Model: `ANTHROPIC_MODEL=claude-sonnet-4-5-20250929 make evals-ci`
+  Model: `ANTHROPIC_MODEL=claude-opus-5-5 make evals-ci`
 - Streaming benchmarks: `go test -bench=. -benchmem ./llm/... ./streaming/...`
 
 When `make check` fails, run the underlying targets individually (`make check-style`, `make test`, `make check-shards`, `make check-i18n`, `make check-locks`) to isolate which step broke. CI runs the same drift checks; if i18n or a lockfile is out of sync, those targets regenerate the file in place — review and commit.

@@ -1,0 +1,131 @@
+name: nightly-evals
+
+# Runs every eval several times against master each night, compares the
+# results with the previous night, and keeps the history in S3:
+#
+#   s3://$AWS_S3_BUCKET/mattermost-plugin-agents/evals/nightly/
+#     YYYY-MM-DD/<run id>/eval-results-<provider>/evals.jsonl
+#     YYYY-MM-DD/<run id>/summary.json   (input to `evalviewer trend`)
+#     YYYY-MM-DD/<run id>/summary.md
+#     latest/eval-results-<provider>/evals.jsonl   (next night's baseline)
+#
+# Runs started from another branch are stored under evals/branch-runs/ and
+# never become the baseline. The run fails when a check newly fails or input
+# tokens grow compared with the previous night, so GitHub notifies the owner;
+# the first night has nothing to compare with and does not fail.
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: Runs per eval
+        type: string
+        default: '3'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly-evals-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    uses: ./.github/workflows/evals.yml
+    with:
+      runs: ${{ inputs.runs || vars.NIGHTLY_EVAL_RUNS || '3' }}
+    secrets: inherit
+
+  publish:
+    needs: evals
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      EVALS_S3: s3://${{ secrets.AWS_S3_BUCKET }}/mattermost-plugin-agents/evals
+      HISTORY_KIND: ${{ github.ref == 'refs/heads/master' && 'nightly' || 'branch-runs' }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Download evaluation results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: eval-results-*
+          path: eval-results
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@a03048d87541d1d9fcf2ecf528a4a65ba9bd7838
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Download previous night's results
+        run: aws s3 sync "$EVALS_S3/nightly/latest/" eval-baseline
+
+      - name: Build report
+        run: |
+          make evalviewer
+          ./bin/evalviewer report \
+            --results eval-results \
+            --baseline eval-baseline \
+            --providers openai,anthropic,azure,mistral,bedrock \
+            --comment regressions.md \
+            --summary summary.md \
+            --json summary.json \
+            --change-label "this run" \
+            --baseline-label "the previous night" \
+            --commit "$GITHUB_SHA" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Store results in S3
+        run: |
+          dest="$EVALS_S3/$HISTORY_KIND/$(date -u +%F)/$GITHUB_RUN_ID"
+          aws s3 cp eval-results "$dest/" --recursive
+          aws s3 cp summary.json "$dest/summary.json"
+          aws s3 cp summary.md "$dest/summary.md"
+          # Only providers that produced results replace their baseline, so a
+          # night with a provider outage keeps that provider's last good one.
+          # The eval jobs never fail on eval results, so a failed matrix means
+          # a job timed out or was cancelled and its results may be partial.
+          if [ "$HISTORY_KIND" = nightly ] && [ "${{ needs.evals.result }}" = success ]; then
+            for p in $(jq -r '.providers[] | select(.available) | .name' summary.json); do
+              results="eval-results/eval-results-$p/evals.jsonl"
+              if [ -f "$results" ]; then
+                aws s3 cp "$results" "$EVALS_S3/nightly/latest/eval-results-$p/evals.jsonl"
+              fi
+            done
+          fi
+
+      - name: Build trend
+        run: |
+          aws s3 cp "$EVALS_S3/$HISTORY_KIND/" eval-history --recursive --exclude '*' --include '*/summary.json'
+          ./bin/evalviewer trend --history eval-history --limit 14 > trend.md
+          {
+            if [ -s regressions.md ]; then cat regressions.md; echo; fi
+            cat summary.md
+            echo
+            cat trend.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-eval-report
+          path: |
+            regressions.md
+            summary.md
+            summary.json
+            trend.md
+          retention-days: 90
+
+      - name: Fail on regressions
+        run: |
+          if [ -s regressions.md ] && [ -n "$(ls -A eval-baseline 2>/dev/null)" ]; then
+            echo "::error title=Nightly eval regressions::Checks newly fail or input tokens grew compared with the previous night. See the run summary."
+            exit 1
+          fi

@@ -436,6 +436,13 @@ evalviewer:
 	@echo Building evalviewer...
 	$(GO) build $(GO_BUILD_FLAGS) -C cmd/evalviewer -o ../../bin/evalviewer .
 
+# Packages with evals. Eval test names end in "Eval" so -run skips unit tests;
+# mcpserver evals boot Mattermost containers and need Docker.
+EVAL_PACKAGES = ./conversations ./threads ./channels ./react ./mcpserver
+# EVAL_TEST_PARALLEL limits how many packages run at once, for providers with
+# low rate limits.
+EVAL_TEST_FLAGS = -run 'Eval$$' -timeout 30m $(if $(EVAL_TEST_PARALLEL),-p $(EVAL_TEST_PARALLEL))
+
 ## Runs evaluations interactively with TUI for packages with evals.
 ## Environment variables:
 ##   LLM_PROVIDER: openai, anthropic, azure, all, or comma-separated (default: all)
@@ -446,24 +453,18 @@ evalviewer:
 ##   AZURE_OPENAI_API_KEY: Azure OpenAI API key
 ##   AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
 ##   AZURE_OPENAI_MODEL: Model to use for Azure OpenAI (overrides code default)
+##   GOEVALS: Runs per eval; repeated runs are combined by majority vote (default: 1)
 .PHONY: evals
 evals: evalviewer
 	@echo Running evaluations interactively...
-	./bin/evalviewer run -v ./conversations ./threads ./channels ./react
+	./bin/evalviewer run -v $(EVAL_TEST_FLAGS) $(EVAL_PACKAGES)
 
 ## Runs evaluations in CI mode (non-interactive) for packages with evals.
 ## Uses the same environment variables as the evals target.
 .PHONY: evals-ci
 evals-ci: evalviewer
 	@echo Running evaluations in CI mode...
-	./bin/evalviewer check -v ./conversations ./threads ./channels ./react
-
-## Runs evaluations and generates GitHub comment (always succeeds).
-## Uses the same environment variables as the evals target.
-.PHONY: evals-comment
-evals-comment: evalviewer
-	@echo Running evaluations and generating GitHub comment...
-	./bin/evalviewer comment -v ./conversations ./threads ./channels ./react
+	./bin/evalviewer check -v $(EVAL_TEST_FLAGS) $(EVAL_PACKAGES)
 
 ## Runs MCP server evaluations testing tool output quality and agentic flows.
 ## Requires: OPENAI_API_KEY (or other provider keys), Docker for testcontainers.
@@ -471,7 +472,7 @@ evals-comment: evalviewer
 .PHONY: mcp-evals
 mcp-evals:
 	@echo Running MCP server evaluations...
-	GOEVALS=1 $(GO) test -v ./mcpserver/ -run "Eval" -timeout 10m
+	GOEVALS=1 $(GO) test -v ./mcpserver/ $(EVAL_TEST_FLAGS)
 
 ## Builds and installs the plugin to a server, updating the webapp automatically when changed.
 .PHONY: watch

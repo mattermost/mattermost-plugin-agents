@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,6 +47,7 @@ type fakeMMClient struct {
 	ephemeralPosts       []*model.Post
 	ephemeralPostUserIDs []string
 	fileInfos            map[string]*model.FileInfo
+	files                map[string][]byte
 	onUpdatePost         func(*model.Post)
 	websocketEvents      []fakeWebSocketEvent
 	// dmChannelID, when set, is the channel DM posts are created in.
@@ -273,7 +275,10 @@ func (c *fakeMMClient) GetFileInfo(fileID string) (*model.FileInfo, error) {
 	return nil, errors.New("not implemented")
 }
 
-func (c *fakeMMClient) GetFile(string) (io.ReadCloser, error) {
+func (c *fakeMMClient) GetFile(fileID string) (io.ReadCloser, error) {
+	if data, ok := c.files[fileID]; ok {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}
 	return nil, errors.New("not implemented")
 }
 

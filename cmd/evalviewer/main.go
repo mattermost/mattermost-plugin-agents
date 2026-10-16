@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -19,6 +20,7 @@ import (
 // EvalLogLine matches the structure from evals/record.go
 type EvalLogLine struct {
 	Name      string  `json:"name"`
+	Package   string  `json:"package"`
 	Timestamp string  `json:"timestamp"`
 	RunNumber int     `json:"run_number"`
 	Rubric    string  `json:"rubric"`
@@ -26,12 +28,51 @@ type EvalLogLine struct {
 	Reasoning string  `json:"reasoning"`
 	Score     float64 `json:"score"`
 	Pass      bool    `json:"pass"`
+	Error     string  `json:"error"`
+	// Usage is set on the one line per run that carries token usage, cost,
+	// and latency instead of a graded result.
+	Usage *UsageRecord `json:"usage"`
+}
+
+// RunUsage matches evals.RunUsage.
+type RunUsage struct {
+	Model            string  `json:"model"`
+	Calls            int     `json:"calls"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CachedReadTokens int64   `json:"cached_read_tokens"`
+	ReasoningTokens  int64   `json:"reasoning_tokens"`
+	CostUSD          float64 `json:"cost_usd"`
+	LatencyMS        int64   `json:"latency_ms"`
+	FirstTokenMS     int64   `json:"first_token_ms"`
+}
+
+// UsageRecord matches evals.UsageRecord.
+type UsageRecord struct {
+	Agent  RunUsage `json:"agent"`
+	Grader RunUsage `json:"grader"`
 }
 
 var (
 	// Flags for view command
 	filename         string
 	showOnlyFailures bool
+
+	// Flags for report command
+	reportResultsDir  string
+	reportBaselineDir string
+	reportProviders   []string
+	reportCommentFile string
+	reportSummaryFile string
+	reportJSONFile    string
+	reportCommit      string
+	reportRunURL      string
+	reportChangeLabel string
+	reportBaseLabel   string
+
+	// Flags for trend command
+	trendHistoryDir string
+	trendLimit      int
 )
 
 func main() {
@@ -87,22 +128,35 @@ All arguments after 'check' are passed directly to 'go test'.`,
 		},
 	}
 
-	var commentCmd = &cobra.Command{
-		Use:   "comment [go test flags and args]",
-		Short: "Run eval tests and generate GitHub comment (CI-friendly)",
-		Long: `Run go test with GOEVALS=1 environment variable set, then generate a GitHub-formatted
-comment with the results. This command always exits with status code 0 (success) regardless
-of test results, making it suitable for posting results as PR comments in CI.
+	var reportCmd = &cobra.Command{
+		Use:   "report",
+		Short: "Summarize eval results for a pull request (CI-friendly)",
+		Long: `Aggregate evals.jsonl files from one or more providers, compare them with a
+baseline from the target branch, and write:
 
-The output is written to comment.md in the current directory.
+  - a pull request comment listing only checks that newly fail (empty when
+    there is nothing to act on), and
+  - a full summary for the workflow run, including pre-existing failures,
+    flaky checks, and providers that could not run.
 
-All arguments after 'comment' are passed directly to 'go test'.`,
-		Example: `  evalviewer comment ./conversations         # Run and generate comment for conversations
-  evalviewer comment ./...                   # Run and generate comment for all evals
-  evalviewer comment -v ./...                # Run with verbose output`,
-		DisableFlagParsing: true,
+Repeated runs (GOEVALS=N) are combined by majority vote. Results are read from
+evals.jsonl files in the directory or its immediate subdirectories.`,
+		Example: `  evalviewer report --results eval-results --baseline eval-baseline --providers openai,anthropic
+  evalviewer report --results . --comment comment.md`,
 		Run: func(cmd *cobra.Command, args []string) {
-			commentCommand(args)
+			reportCommand()
+		},
+	}
+
+	var trendCmd = &cobra.Command{
+		Use:   "trend",
+		Short: "Render eval trends from past report --json summaries",
+		Long: `Read every summary.json under a directory (for example, nightly summaries
+downloaded from S3) and render pass rate, tokens, cost, and latency per
+provider across runs, newest first.`,
+		Example: `  evalviewer trend --history eval-history --limit 14`,
+		Run: func(cmd *cobra.Command, args []string) {
+			trendCommand()
 		},
 	}
 
@@ -110,11 +164,26 @@ All arguments after 'comment' are passed directly to 'go test'.`,
 	viewCmd.Flags().StringVarP(&filename, "file", "f", "evals.jsonl", "Path to the evals.jsonl file")
 	viewCmd.Flags().BoolVar(&showOnlyFailures, "failures-only", false, "Show only failed evaluations")
 
+	reportCmd.Flags().StringVar(&reportResultsDir, "results", ".", "Directory containing evals.jsonl results")
+	reportCmd.Flags().StringVar(&reportBaselineDir, "baseline", "", "Directory containing baseline evals.jsonl results from the target branch")
+	reportCmd.Flags().StringSliceVar(&reportProviders, "providers", nil, "Providers expected to have results; missing ones are reported as unavailable")
+	reportCmd.Flags().StringVar(&reportCommentFile, "comment", "comment.md", "Where to write the pull request comment (empty when nothing is actionable)")
+	reportCmd.Flags().StringVar(&reportSummaryFile, "summary", "summary.md", "Where to write the workflow run summary")
+	reportCmd.Flags().StringVar(&reportJSONFile, "json", "", "Where to write a machine-readable summary for history (optional)")
+	reportCmd.Flags().StringVar(&reportCommit, "commit", "", "Commit the results belong to, recorded in the JSON summary")
+	reportCmd.Flags().StringVar(&reportRunURL, "run-url", "", "Workflow run URL, recorded in the JSON summary")
+	reportCmd.Flags().StringVar(&reportChangeLabel, "change-label", pullRequestLabels.change, "How the report refers to the results being checked")
+	reportCmd.Flags().StringVar(&reportBaseLabel, "baseline-label", pullRequestLabels.baseline, "How the report refers to the baseline")
+
+	trendCmd.Flags().StringVar(&trendHistoryDir, "history", ".", "Directory containing summary.json files")
+	trendCmd.Flags().IntVar(&trendLimit, "limit", 14, "Number of most recent runs to show (0 for all)")
+
 	// Add commands to root
 	rootCmd.AddCommand(runCmd)
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(checkCmd)
-	rootCmd.AddCommand(commentCmd)
+	rootCmd.AddCommand(reportCmd)
+	rootCmd.AddCommand(trendCmd)
 
 	// Execute
 	if err := rootCmd.Execute(); err != nil {
@@ -134,7 +203,10 @@ func runEvals(args []string) error {
 	fmt.Println("Running evaluations...")
 
 	cmd := exec.Command("go", append([]string{"test"}, args...)...)
-	cmd.Env = append(os.Environ(), "GOEVALS=1")
+	cmd.Env = os.Environ()
+	if os.Getenv("GOEVALS") == "" {
+		cmd.Env = append(cmd.Env, "GOEVALS=1")
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
@@ -212,6 +284,11 @@ func checkCommand(args []string) {
 
 	// Print summary
 	printSummary(results)
+	if lines, err := loadLines(evalFile); err == nil {
+		var usage strings.Builder
+		buildReport(buildResultSet(lines), nil, nil).writeUsage(&usage)
+		fmt.Print(usage.String())
+	}
 
 	// Exit with appropriate status code
 	hasFailures := false
@@ -227,49 +304,71 @@ func checkCommand(args []string) {
 	}
 }
 
-func commentCommand(args []string) {
-	_ = runEvals(args) // Ignore test errors - we want to generate comment regardless
-
-	// Find and check results
-	evalFile, err := findEvalsFile()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "\nError finding evals.jsonl: %v\n", err)
-		fmt.Println("No evaluation results found to generate comment.")
-
-		// Write empty comment to file
-		if err := os.WriteFile("comment.md", []byte(""), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing comment.md: %v\n", err)
-		}
-		// Exit with success - we want the CI job to pass
-		os.Exit(0)
-	}
-
-	// Load and check results
-	results, err := loadResults(evalFile, false)
+func reportCommand() {
+	results, err := loadResultDir(reportResultsDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading results: %v\n", err)
-
-		// Write empty comment to file
-		if err := os.WriteFile("comment.md", []byte(""), 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing comment.md: %v\n", err)
-		}
-		// Exit with success - we want the CI job to pass
-		os.Exit(0)
+		os.Exit(1)
+	}
+	if results == nil {
+		results = resultSet{}
 	}
 
-	// Generate GitHub comment
-	comment := generateGitHubComment(results)
+	var baseline resultSet
+	if reportBaselineDir != "" {
+		baseline, err = loadResultDir(reportBaselineDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error loading baseline: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
-	// Write to file
-	if err := os.WriteFile("comment.md", []byte(comment), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing comment.md: %v\n", err)
+	r := buildReport(results, baseline, reportProviders)
+	r.labels = reportLabels{change: reportChangeLabel, baseline: reportBaseLabel}
+
+	comment := r.commentMarkdown()
+	if err := os.WriteFile(reportCommentFile, []byte(comment), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", reportCommentFile, err)
+		os.Exit(1)
+	}
+	summary := r.summaryMarkdown()
+	if err := os.WriteFile(reportSummaryFile, []byte(summary), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", reportSummaryFile, err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n✓ Generated comment (%d lines) → comment.md\n", len(strings.Split(comment, "\n")))
+	if reportJSONFile != "" {
+		data, err := json.MarshalIndent(r.runSummary(time.Now(), reportCommit, reportRunURL), "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error encoding summary: %v\n", err)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(reportJSONFile, data, 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", reportJSONFile, err)
+			os.Exit(1)
+		}
+	}
 
-	// Always exit with success
-	os.Exit(0)
+	if os.Getenv("GITHUB_ACTIONS") == "true" {
+		for _, line := range r.annotations() {
+			fmt.Println(line)
+		}
+	}
+	fmt.Print(summary)
+	if comment == "" {
+		fmt.Println("\nNothing actionable for the pull request; comment left empty.")
+	} else {
+		fmt.Printf("\n%d regressions written to %s\n", len(r.regressions), reportCommentFile)
+	}
+}
+
+func trendCommand() {
+	history, err := loadHistory(trendHistoryDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading history: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Print(trendMarkdown(history, trendLimit))
 }
 
 // providerStat accumulates per-provider pass/fail counts and failed results.
@@ -308,73 +407,6 @@ func groupByProvider(results []EvalLogLine) (map[string]providerStat, int, int) 
 	}
 
 	return providerStats, totalPassed, totalFailed
-}
-
-func generateGitHubComment(results []EvalLogLine) string {
-	if len(results) == 0 {
-		return "⚠️ No evaluation results found."
-	}
-
-	var sb strings.Builder
-
-	providerStats, totalPassed, totalFailed := groupByProvider(results)
-
-	// Overall summary
-	total := totalPassed + totalFailed
-	passRate := float64(totalPassed) / float64(total) * 100
-
-	statusEmoji := "✅"
-	if totalFailed > 0 {
-		statusEmoji = "⚠️"
-	}
-
-	sb.WriteString(fmt.Sprintf("%s **Overall: %d/%d tests passed (%.1f%%)**\n\n", statusEmoji, totalPassed, total, passRate))
-
-	// Per-provider summary table (no subheading - will be under provider section in aggregation)
-	sb.WriteString("| Provider | Total | Passed | Failed | Pass Rate |\n")
-	sb.WriteString("|----------|-------|--------|--------|----------|\n")
-
-	for provider, stats := range providerStats {
-		total := stats.passed + stats.failed
-		passRate := float64(stats.passed) / float64(total) * 100
-		emoji := "✅"
-		if stats.failed > 0 {
-			emoji = "⚠️"
-		}
-		sb.WriteString(fmt.Sprintf("| %s %s | %d | %d | %d | %.1f%% |\n",
-			emoji, strings.ToUpper(provider), total, stats.passed, stats.failed, passRate))
-	}
-
-	// Failures section
-	if totalFailed > 0 {
-		sb.WriteString("\n### ❌ Failed Evaluations\n\n")
-		sb.WriteString("<details>\n")
-		sb.WriteString(fmt.Sprintf("<summary>Show %d failures</summary>\n\n", totalFailed))
-
-		failureNum := 1
-		for provider, stats := range providerStats {
-			if len(stats.failures) > 0 {
-				sb.WriteString(fmt.Sprintf("\n#### %s\n\n", strings.ToUpper(provider)))
-				for _, failure := range stats.failures {
-					sb.WriteString(fmt.Sprintf("**%d. %s**\n\n", failureNum, failure.Name))
-					sb.WriteString(fmt.Sprintf("- **Score:** %.2f\n", failure.Score))
-					if failure.Rubric != "" {
-						sb.WriteString(fmt.Sprintf("- **Rubric:** %s\n", truncateString(failure.Rubric, 150)))
-					}
-					if failure.Reasoning != "" {
-						sb.WriteString(fmt.Sprintf("- **Reason:** %s\n", truncateString(failure.Reasoning, 300)))
-					}
-					sb.WriteString("\n")
-					failureNum++
-				}
-			}
-		}
-
-		sb.WriteString("</details>\n")
-	}
-
-	// No footer - aggregation script adds a single unified footer
-	return sb.String()
 }
 
 func printSummary(results []EvalLogLine) {
@@ -417,6 +449,11 @@ func printSummary(results []EvalLogLine) {
 				fmt.Printf("\n%s Failures:\n", strings.ToUpper(provider))
 				for _, failure := range stats.failures {
 					fmt.Printf("\n%d. %s\n", failureNum, failure.Name)
+					if failure.Error != "" {
+						fmt.Printf("   Error:  %s\n", truncateString(failure.Error, 250))
+						failureNum++
+						continue
+					}
 					fmt.Printf("   Rubric: %s\n", truncateString(failure.Rubric, 70))
 					fmt.Printf("   Score:  %.2f\n", failure.Score)
 					if failure.Reasoning != "" {
@@ -432,10 +469,11 @@ func printSummary(results []EvalLogLine) {
 }
 
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }
 
 var errEvalsFileNotFound = errors.New("evals.jsonl not found in current directory or parent directories")
@@ -477,7 +515,25 @@ func findEvalsFile() (string, error) {
 	}
 }
 
+// loadResults loads graded and errored results, skipping usage lines.
 func loadResults(filename string, showOnlyFailures bool) ([]EvalLogLine, error) {
+	lines, err := loadLines(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []EvalLogLine
+	for _, result := range lines {
+		if result.Usage != nil || (showOnlyFailures && result.Pass) {
+			continue
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+// loadLines loads every line of an evals.jsonl file, including usage lines.
+func loadLines(filename string) ([]EvalLogLine, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, fmt.Errorf("error opening file %s: %v", filename, err)
@@ -486,6 +542,8 @@ func loadResults(filename string, showOnlyFailures bool) ([]EvalLogLine, error) 
 
 	var results []EvalLogLine
 	scanner := bufio.NewScanner(file)
+	// Lines carry full agent outputs, which can exceed the default 64KB limit.
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -498,12 +556,6 @@ func loadResults(filename string, showOnlyFailures bool) ([]EvalLogLine, error) 
 			fmt.Fprintf(os.Stderr, "Error parsing line: %v\n", err)
 			continue
 		}
-
-		// Filter based on failures-only flag
-		if showOnlyFailures && result.Pass {
-			continue
-		}
-
 		results = append(results, result)
 	}
 

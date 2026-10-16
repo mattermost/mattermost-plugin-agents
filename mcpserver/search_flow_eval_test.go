@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -39,9 +40,9 @@ func runSearchFlowEval(e *evals.EvalT, suite *TestSuite, data *evalChannelData, 
 	setup.llmContext.SiteURL = suite.serverURL
 
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
-	require.NoError(e.T, err)
+	require.NoError(e, err)
 	systemPrompt, err := conversations.FormatSearchSystemPrompt(promptsObj, setup.llmContext, scope)
-	require.NoError(e.T, err)
+	require.NoError(e, err)
 
 	runResult, err := toolrunner.New(setup.llm).Run(context.Background(), llm.CompletionRequest{
 		Posts: []llm.Post{
@@ -51,17 +52,17 @@ func runSearchFlowEval(e *evals.EvalT, suite *TestSuite, data *evalChannelData, 
 		Context:   setup.llmContext,
 		Operation: llm.OperationSearch,
 	}, func(llm.ToolCall) bool { return true }, nil)
-	require.NoError(e.T, err)
+	require.NoError(e, err)
 
 	response, err := runResult.Stream.ReadAll()
-	require.NoError(e.T, err)
-	require.NotEmpty(e.T, response)
+	require.NoError(e, err)
+	require.NotEmpty(e, response)
 	e.Logf("LLM response:\n%s", response)
 
 	var citedIDs []string
 	for _, link := range citationPermalinkPattern.FindAllStringSubmatch(response, -1) {
 		match := citedPostIDPattern.FindStringSubmatch(link[1])
-		require.NotNil(e.T, match, "citation %q does not use the post permalink format", link[1])
+		require.NotNil(e, match, "citation %q does not use the post permalink format", link[1])
 		citedIDs = append(citedIDs, match[1])
 	}
 
@@ -151,16 +152,16 @@ func TestSearchBarFlowEval(t *testing.T) {
 		evals.Run(t, "search bar "+tt.name, func(e *evals.EvalT) {
 			result := runSearchFlowEval(e, suite, data, tt.query, nil)
 
-			assert.NotEmpty(e.T, searchPostsCalls(result.toolCalls), "the agent must search with search_posts")
+			assert.NotEmpty(e, searchPostsCalls(result.toolCalls), "the agent must search with search_posts")
 
 			for _, id := range result.citedIDs {
-				assert.True(e.T, knownPostIDs[id], "citation references post %s, which does not exist", id)
+				assert.True(e, knownPostIDs[id], "citation references post %s, which does not exist", id)
 			}
 			if tt.requireCitation {
-				assert.NotEmpty(e.T, result.citedIDs, "the answer must cite at least one post")
+				assert.NotEmpty(e, result.citedIDs, "the answer must cite at least one post")
 			}
 			for _, id := range tt.mustCite {
-				assert.True(e.T, slices.Contains(result.citedIDs, id), "the answer must cite post %s (cited: %v)", id, result.citedIDs)
+				assert.True(e, slices.Contains(result.citedIDs, id), "the answer must cite post %s (cited: %v)", id, result.citedIDs)
 			}
 
 			for _, rubric := range tt.rubrics {
@@ -170,9 +171,11 @@ func TestSearchBarFlowEval(t *testing.T) {
 	}
 }
 
-// lookupChannelIDs returns the channel_id of each search_posts or read_channel
-// call in order; an empty ID means the lookup was not limited to a channel.
-func lookupChannelIDs(t *testing.T, calls []llm.ToolCall) []string {
+// lookupChannelIDs returns the channel each search_posts or read_channel call
+// was limited to, in order; an empty ID means the lookup was not limited to a
+// channel. search_posts may also be limited with its in filter, which takes a
+// channel name or ID; names are resolved against channels.
+func lookupChannelIDs(t *testing.T, calls []llm.ToolCall, channels ...*model.Channel) []string {
 	t.Helper()
 	var ids []string
 	for _, call := range calls {
@@ -183,9 +186,19 @@ func lookupChannelIDs(t *testing.T, calls []llm.ToolCall) []string {
 		}
 		var args struct {
 			ChannelID string `json:"channel_id"`
+			In        string `json:"in"`
 		}
 		require.NoError(t, json.Unmarshal(call.Arguments, &args))
-		ids = append(ids, args.ChannelID)
+		id := args.ChannelID
+		if in := strings.TrimPrefix(strings.TrimSpace(args.In), "~"); id == "" && in != "" {
+			id = in
+			for _, channel := range channels {
+				if in == channel.Id || strings.EqualFold(in, channel.Name) || strings.EqualFold(in, channel.DisplayName) {
+					id = channel.Id
+				}
+			}
+		}
+		ids = append(ids, id)
 	}
 	return ids
 }
@@ -231,17 +244,17 @@ func TestAskChannelSearchFlowEval(t *testing.T) {
 		evals.Run(t, "ask-channel "+tt.name, func(e *evals.EvalT) {
 			result := runSearchFlowEval(e, suite, data, tt.query, data.designChannel)
 
-			channelIDs := lookupChannelIDs(e.T, result.toolCalls)
-			require.NotEmpty(e.T, channelIDs, "the agent must search or read Mattermost")
-			assert.Equal(e.T, data.designChannel.Id, channelIDs[0], "the first lookup must start in the requested channel (lookups: %v)", channelIDs)
+			channelIDs := lookupChannelIDs(e.T, result.toolCalls, data.channel, data.designChannel)
+			require.NotEmpty(e, channelIDs, "the agent must search or read Mattermost")
+			assert.Equal(e, data.designChannel.Id, channelIDs[0], "the first lookup must start in the requested channel (lookups: %v)", channelIDs)
 
 			leftChannel := slices.ContainsFunc(channelIDs, func(id string) bool { return id != data.designChannel.Id })
 			if tt.wantBroadSearch {
-				assert.True(e.T, leftChannel, "the agent must search beyond the requested channel when the answer is elsewhere (lookups: %v)", channelIDs)
+				assert.True(e, leftChannel, "the agent must search beyond the requested channel when the answer is elsewhere (lookups: %v)", channelIDs)
 			}
 
 			for _, id := range result.citedIDs {
-				assert.True(e.T, knownPostIDs[id], "citation references post %s, which does not exist", id)
+				assert.True(e, knownPostIDs[id], "citation references post %s, which does not exist", id)
 			}
 			for _, rubric := range tt.rubrics {
 				evals.LLMRubricT(e, rubric, result.response)

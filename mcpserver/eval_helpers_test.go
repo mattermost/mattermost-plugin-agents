@@ -8,25 +8,14 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/jmoiron/sqlx"
-	_ "github.com/lib/pq"
 	gomcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/testhelpers"
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
-	"github.com/mattermost/mattermost-plugin-agents/v2/postgres"
-	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -43,17 +32,6 @@ type evalChannelData struct {
 	bobTimelinePost *model.Post
 	// aliceRollbackPost is Alice's description of the migration rollback plan.
 	aliceRollbackPost *model.Post
-}
-
-// extractMCPText extracts all text content from an MCP tool result.
-func extractMCPText(result *gomcp.CallToolResult) string {
-	var text string
-	for _, c := range result.Content {
-		if tc, ok := c.(*gomcp.TextContent); ok {
-			text += tc.Text
-		}
-	}
-	return text
 }
 
 // seedChannelConversation creates a realistic multi-user conversation in a channel
@@ -179,219 +157,6 @@ func seedChannelConversation(t *testing.T, serverURL, adminToken string) *evalCh
 		charlie:           charlie,
 		bobTimelinePost:   bobTimelinePost,
 		aliceRollbackPost: aliceRollbackPost,
-	}
-}
-
-// embeddingSearchService wraps a real embeddings.EmbeddingSearch to implement tools.SemanticSearchService.
-// This bridges the real PGVector+CompositeSearch pipeline to the MCP server's search interface.
-// It enriches results with channel/user metadata from the Mattermost API, mirroring what
-// search.Search.enrichResults() does in production.
-type embeddingSearchService struct {
-	search    embeddings.EmbeddingSearch
-	serverURL string
-	token     string
-}
-
-func (s *embeddingSearchService) Enabled() bool { return s.search != nil }
-
-func (s *embeddingSearchService) Search(ctx context.Context, query string, opts search.Options) ([]search.RAGResult, error) {
-	results, err := s.search.Search(ctx, query, embeddings.SearchOptions{
-		Limit:     opts.Limit,
-		Offset:    opts.Offset,
-		TeamID:    opts.TeamID,
-		ChannelID: opts.ChannelID,
-		UserID:    opts.UserID,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	// Enrich results with channel/user metadata (mirrors search.Search.enrichResults)
-	client := model.NewAPIv4Client(s.serverURL)
-	client.SetToken(s.token)
-
-	ragResults := make([]search.RAGResult, len(results))
-	for i, r := range results {
-		var channelName, username string
-		if ch, _, chErr := client.GetChannel(ctx, r.Document.ChannelID); chErr == nil {
-			channelName = ch.DisplayName
-		}
-		if u, _, uErr := client.GetUser(ctx, r.Document.UserID, ""); uErr == nil {
-			username = u.Username
-		}
-
-		ragResults[i] = search.RAGResult{
-			PostID:      r.Document.PostID,
-			ChannelID:   r.Document.ChannelID,
-			ChannelName: channelName,
-			UserID:      r.Document.UserID,
-			Username:    username,
-			Content:     r.Document.Content,
-			Score:       r.Score,
-		}
-	}
-	return ragResults, nil
-}
-
-// setupPGVectorContainer starts a pgvector PostgreSQL container and returns a connection.
-// The container is automatically cleaned up when the test finishes.
-func setupPGVectorContainer(t *testing.T) *sqlx.DB {
-	t.Helper()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	pgContainer, err := tcpostgres.Run(ctx,
-		"pgvector/pgvector:pg15",
-		tcpostgres.WithDatabase("embeddings_test"),
-		tcpostgres.WithUsername("user"),
-		tcpostgres.WithPassword("pass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(30*time.Second)),
-	)
-	require.NoError(t, err, "Failed to start pgvector container")
-
-	t.Cleanup(func() {
-		if termErr := pgContainer.Terminate(context.Background()); termErr != nil {
-			t.Logf("Failed to terminate pgvector container: %v", termErr)
-		}
-	})
-
-	dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
-	require.NoError(t, err, "Failed to get pgvector DSN")
-
-	db, err := sqlx.Connect("postgres", dsn)
-	require.NoError(t, err, "Failed to connect to pgvector")
-
-	// Enable pgvector extension
-	_, err = db.Exec("CREATE EXTENSION IF NOT EXISTS vector")
-	require.NoError(t, err, "Failed to enable pgvector extension")
-
-	// Create stub Mattermost tables required by PGVector's foreign keys and access control
-	// (same schema as embeddings/integration_test.go)
-	for _, tableSQL := range []string{
-		`CREATE TABLE IF NOT EXISTS Posts (
-			Id TEXT PRIMARY KEY,
-			CreateAt BIGINT NOT NULL,
-			DeleteAt BIGINT NOT NULL DEFAULT 0,
-			Message TEXT NOT NULL DEFAULT '',
-			UserId TEXT NOT NULL DEFAULT '',
-			ChannelId TEXT NOT NULL DEFAULT '',
-			Type TEXT NOT NULL DEFAULT ''
-		)`,
-		`CREATE TABLE IF NOT EXISTS Channels (
-			Id TEXT PRIMARY KEY,
-			Name TEXT NOT NULL,
-			DisplayName TEXT NOT NULL,
-			Type TEXT NOT NULL,
-			TeamId TEXT NOT NULL DEFAULT '',
-			DeleteAt BIGINT NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS ChannelMembers (
-			ChannelId TEXT NOT NULL,
-			UserId TEXT NOT NULL,
-			PRIMARY KEY(ChannelId, UserId)
-		)`,
-	} {
-		_, err = db.Exec(tableSQL)
-		require.NoError(t, err, "Failed to create stub table")
-	}
-
-	return db
-}
-
-// setupEmbeddingSearch creates a real CompositeSearch with PGVector + mock embedding provider,
-// indexes the test posts, and returns a SemanticSearchService ready for the MCP server.
-func setupEmbeddingSearch(t *testing.T, data *evalChannelData, serverURL, adminToken string) tools.SemanticSearchService {
-	t.Helper()
-
-	db := setupPGVectorContainer(t)
-	ctx := context.Background()
-
-	const dimensions = 64 // Small for test speed
-
-	// Create real CompositeSearch: PGVector vector store + mock embedding provider
-	provider := embeddings.NewMockEmbeddingProvider(dimensions)
-	vectorStore, err := postgres.NewPGVector(db, postgres.PGVectorConfig{Dimensions: dimensions})
-	require.NoError(t, err, "Failed to create PGVector store")
-
-	compositeSearch := embeddings.NewCompositeSearch(vectorStore, provider, chunking.Options{
-		ChunkSize:        500,
-		ChunkOverlap:     50,
-		ChunkingStrategy: "sentences",
-	}, embeddings.RecencyBiasSettings{})
-
-	// Fetch all posts from Mattermost and index them into PGVector
-	client := model.NewAPIv4Client(serverURL)
-	client.SetToken(adminToken)
-
-	// Get the admin user ID — the MCP server authenticates as this user,
-	// so they must be in ChannelMembers for PGVector access control to work.
-	adminUser, _, err := client.GetMe(ctx, "")
-	require.NoError(t, err, "Failed to get admin user")
-
-	for _, ch := range []*model.Channel{data.channel, data.designChannel} {
-		// Register channel in pgvector DB stub (required for access control)
-		_, err = db.Exec(
-			"INSERT INTO Channels (Id, Name, DisplayName, Type, TeamId, DeleteAt) VALUES ($1, $2, $3, $4, $5, 0) ON CONFLICT (Id) DO NOTHING",
-			ch.Id, ch.Name, ch.DisplayName, string(ch.Type), ch.TeamId)
-		require.NoError(t, err)
-
-		var posts *model.PostList
-		posts, _, err = client.GetPostsForChannel(ctx, ch.Id, 0, 100, "", false, false)
-		require.NoError(t, err)
-
-		var docs []embeddings.PostDocument
-		for _, post := range posts.Posts {
-			if post.Message == "" {
-				continue
-			}
-
-			// Insert post into stub Posts table (foreign key for llm_posts_embeddings)
-			_, err = db.Exec(
-				"INSERT INTO Posts (Id, CreateAt, DeleteAt, Message, UserId, ChannelId, Type) VALUES ($1, $2, 0, $3, $4, $5, '') ON CONFLICT (Id) DO NOTHING",
-				post.Id, post.CreateAt, post.Message, post.UserId, post.ChannelId)
-			require.NoError(t, err)
-
-			// Register user as channel member for search access control
-			_, _ = db.Exec(
-				"INSERT INTO ChannelMembers (ChannelId, UserId) VALUES ($1, $2) ON CONFLICT (ChannelId, UserId) DO NOTHING",
-				ch.Id, post.UserId)
-
-			docs = append(docs, embeddings.PostDocument{
-				PostID:    post.Id,
-				CreateAt:  post.CreateAt,
-				TeamID:    ch.TeamId,
-				ChannelID: ch.Id,
-				UserID:    post.UserId,
-				Content:   post.Message,
-			})
-		}
-
-		// Add the admin user (MCP session identity) as a channel member so
-		// semantic search access control includes them in results.
-		_, _ = db.Exec(
-			"INSERT INTO ChannelMembers (ChannelId, UserId) VALUES ($1, $2) ON CONFLICT (ChannelId, UserId) DO NOTHING",
-			ch.Id, adminUser.Id)
-
-		if len(docs) > 0 {
-			err = compositeSearch.Store(ctx, docs)
-			require.NoError(t, err, "Failed to index posts for channel %s", ch.DisplayName)
-		}
-	}
-
-	// Verify indexing
-	var count int
-	err = db.Get(&count, "SELECT COUNT(*) FROM llm_posts_embeddings")
-	require.NoError(t, err)
-	t.Logf("Indexed %d documents into PGVector", count)
-
-	return &embeddingSearchService{
-		search:    compositeSearch,
-		serverURL: serverURL,
-		token:     adminToken,
 	}
 }
 

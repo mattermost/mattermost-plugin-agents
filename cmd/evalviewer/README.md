@@ -74,14 +74,53 @@ The check command will:
 4. Print a summary of evaluation results
 5. Exit with status code 1 if any evaluations failed
 
+### Report Command (CI)
+Summarize existing results for a pull request. Reads `evals.jsonl` files from a directory (or its immediate subdirectories, the layout `actions/download-artifact` produces) and compares them with an optional baseline from the target branch.
+
+```bash
+evalviewer report --results eval-results --baseline eval-baseline \
+  --providers openai,anthropic,azure,mistral,bedrock \
+  --comment comment.md --summary summary.md
+```
+
+The report writes:
+- `comment.md`: only checks that fail on this change but not on the baseline. It is empty when there is nothing to act on, and CI posts no comment in that case.
+- `summary.md`: every provider's status, including pre-existing failures, flaky checks, providers that could not run (missing credentials, retired models), and failures of providers that have no usable baseline while other providers do. CI adds it to the workflow run summary.
+
+Besides one check per rubric, every graded run records a "Passes the eval's code assertions" check for the eval's other assertions, such as required tool calls or valid citations, so they are reported even when the rubrics pass. Each run of an eval is its own subtest (`run_0`, `run_1`, ...), so a `require` failure in one run does not skip the others.
+
+The summary also has a cost and latency table per provider and per eval, compared with the baseline. Every run records the agent's and the grader's input, output, cached, and reasoning tokens, the cost (reported by the provider, or estimated from `modelPrices` in `evals/usage.go`), and the summed latency of the agent's calls. The pull request comment additionally lists evals whose mean input tokens per run grew by at least 20% and 1,000 tokens, which usually means a change sends more context or a longer prompt.
+
+Repeated runs (`GOEVALS=N`) are combined by majority vote, so a check that fails one run out of three is reported as flaky rather than failing. A run that errors before grading (for example, the provider rejects the request) is recorded with its error, with credential values redacted.
+
+### How CI uses the evals
+- `make evals-ci` runs every test whose name ends in `Eval` in `conversations`, `threads`, `channels`, `react`, and `mcpserver`. The `mcpserver` evals start Mattermost containers and need Docker.
+- Before the first eval, each provider and the grader get one small request. If a model is unusable (bad key, no access to the model, missing deployment), every eval for that provider is recorded with that error instead of failing one by one.
+- Evals run on pull requests that change more than `webapp/`, `e2e/`, `docs/`, `loadtest/`, images, or Markdown, and on every push to `master`.
+- The `evals-comment` job compares pull request results with the latest `master` results and comments only when a check newly fails. When a later push fixes them, the comment is replaced with a short resolved note.
+- Set the `EVAL_RUNS` repository variable to run each eval several times per CI run.
+
+### Nightly runs and history
+`.github/workflows/nightly-evals.yml` runs every eval against `master` at 06:00 UTC (and on manual dispatch), three times each by default (`NIGHTLY_EVAL_RUNS` repository variable). It compares the results with the previous night and stores them in S3 under `s3://$AWS_S3_BUCKET/mattermost-plugin-agents/evals/nightly/<date>/<run id>/`, along with `summary.json` (written by `report --json`). The run summary shows the report and a 14-night trend, and the run fails when a check newly fails or input tokens grow, so GitHub notifies the workflow's owner.
+
+To look at history locally, download the summaries and render the trend:
+
+```bash
+aws s3 cp s3://$AWS_S3_BUCKET/mattermost-plugin-agents/evals/nightly/ eval-history \
+  --recursive --exclude '*' --include '*/summary.json'
+evalviewer trend --history eval-history --limit 30
+```
+
 ## Environment Variables
+
+- **`GOEVALS`**: Number of runs per eval (default: `1`). The `run`, `check`, and CI commands set it to `1` when unset.
 
 The evalviewer and evaluation tests support multiple LLM providers. Configure which providers to use and their settings with these environment variables:
 
 ### Provider Selection
 
 - **`LLM_PROVIDER`**: Choose which provider(s) to run evaluations with
-  - Values: `openai`, `anthropic`, `azure`, `all`, or comma-separated (e.g., `openai,azure`)
+  - Values: `openai`, `anthropic`, `azure`, `mistral`, `bedrock`, `cohere`, `openaicompatible`, `all`, or comma-separated (e.g., `openai,azure`)
   - Default: `all` (runs all providers)
 
 ### OpenAI Configuration
@@ -102,13 +141,13 @@ The evalviewer and evaluation tests support multiple LLM providers. Configure wh
 
 ### Grader Configuration
 
-The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI. You can configure a different provider or model for grading:
+The grader LLM is used to evaluate the quality of responses from the main LLM. By default, it uses OpenAI with `DefaultGraderModel` from `evals/evals.go`, which is pinned separately from the model under test. `TestLLMRubricEval` in `evals/graders_test.go` checks the grader against outputs with known verdicts; run it after changing the grader prompt or model. You can configure a different provider or model for grading:
 
 - **`GRADER_LLM_PROVIDER`**: Provider to use for grading (e.g., `openai`, `anthropic`, `azure`)
   - Default: `openai`
   - Uses the same API key environment variables as the main LLM (e.g., `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`)
 - **`GRADER_LLM_MODEL`**: Model to use for grading
-  - For each provider, uses its code default model unless specified
+  - Defaults to `DefaultGraderModel` for OpenAI, and to each provider's code default otherwise
 
 ### Examples
 
@@ -126,7 +165,7 @@ LLM_PROVIDER=openai,azure evalviewer run ./conversations
 evalviewer run ./conversations
 
 # Use a specific model for OpenAI
-OPENAI_MODEL=gpt-4-turbo evalviewer run ./conversations
+OPENAI_MODEL=gpt-5.6-sol evalviewer run ./conversations
 
 # Use Anthropic for the main LLM and OpenAI for grading (default grader)
 LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... evalviewer run ./conversations
@@ -135,7 +174,7 @@ LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... evalvi
 LLM_PROVIDER=openai GRADER_LLM_PROVIDER=anthropic OPENAI_API_KEY=sk-... ANTHROPIC_API_KEY=sk-ant-... evalviewer run ./conversations
 
 # Use a specific model for grading
-GRADER_LLM_MODEL=gpt-4o evalviewer run ./conversations
+GRADER_LLM_MODEL=gpt-5.6-sol evalviewer run ./conversations
 ```
 
 If a provider's API key is not set, an error will be thrown.

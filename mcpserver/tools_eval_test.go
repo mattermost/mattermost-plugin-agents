@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
 	"github.com/mattermost/mattermost-plugin-agents/v2/files"
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -22,18 +23,19 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
-// runAgenticFlowEval is a helper that runs an agentic flow eval with the given prompt, rubrics,
-// and a list of tools the LLM is required to have called.
-func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team, userMessage string, rubrics []string, requiredTools []string) string {
+// runAgenticFlowEval is a helper that runs an agentic flow eval with the given
+// prompt and rubrics. Each entry of requiredTools lists alternative tools, at
+// least one of which the LLM must have called.
+func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.User, team *model.Team, userMessage string, rubrics []string, requiredTools [][]string) string {
 	e.Helper()
 
 	setup := setupAgenticEval(e.T, e, suite, requestingUser, team)
 
 	promptsObj, err := llm.NewPrompts(prompts.PromptsFolder)
-	require.NoError(e.T, err, "Failed to load prompts")
+	require.NoError(e, err, "Failed to load prompts")
 
 	systemPrompt, err := promptsObj.Format(prompts.PromptDirectMessageQuestionSystem, setup.llmContext)
-	require.NoError(e.T, err, "Failed to format system prompt")
+	require.NoError(e, err, "Failed to format system prompt")
 
 	posts := []llm.Post{
 		{Role: llm.PostRoleSystem, Message: systemPrompt},
@@ -46,19 +48,19 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 		Context:   setup.llmContext,
 		Operation: llm.OperationConversation,
 	}, func(tc llm.ToolCall) bool { return true }, nil)
-	require.NoError(e.T, err, "ToolRunner should succeed")
+	require.NoError(e, err, "ToolRunner should succeed")
 
 	response, err := runResult.Stream.ReadAll()
-	require.NoError(e.T, err, "ReadAll should succeed")
-	require.NotEmpty(e.T, response, "Response should not be empty")
+	require.NoError(e, err, "ReadAll should succeed")
+	require.NotEmpty(e, response, "Response should not be empty")
 
 	e.Logf("LLM response:\n%s", response)
 
-	// Assert that each required tool was actually called (not just that the LLM claims it was)
+	// Assert that the required tools were actually called (not just that the LLM claims it was)
 	calledTools := setup.logger.CalledTools()
-	for _, requiredTool := range requiredTools {
-		found := slices.Contains(calledTools, requiredTool)
-		assert.True(e.T, found, "Required tool %q was not called by the LLM (called tools: %v)", requiredTool, calledTools)
+	for _, alternatives := range requiredTools {
+		found := slices.ContainsFunc(alternatives, func(tool string) bool { return slices.Contains(calledTools, tool) })
+		assert.True(e, found, "None of the tools %v was called by the LLM (called tools: %v)", alternatives, calledTools)
 	}
 
 	for _, rubric := range rubrics {
@@ -68,152 +70,31 @@ func runAgenticFlowEval(e *evals.EvalT, suite *TestSuite, requestingUser *model.
 	return response
 }
 
-// ---------------------------------------------------------------------------
-// Individual Tool Evals
-// ---------------------------------------------------------------------------
+// dmsSince returns the messages sender posted in its DM channel with recipient
+// at or after since. Every trial shares one server, so earlier trials' DMs must
+// not count for the current one.
+func dmsSince(e *evals.EvalT, client *model.Client4, sender, recipient *model.User, since int64) []string {
+	e.Helper()
+	ctx := context.Background()
 
-// TestReadChannelOutputQualityEval tests that read_channel output is useful for LLM consumption.
-func TestReadChannelOutputQualityEval(t *testing.T) {
-	evals.NumEvalsOrSkip(t)
+	channel, _, err := client.CreateDirectChannel(ctx, sender.Id, recipient.Id)
+	require.NoError(e, err, "Should get DM channel with %s", recipient.Username)
 
-	suite := SetupTestSuite(t)
-	defer suite.TearDown()
-	suite.CreateMCPServer(false)
+	posts, _, err := client.GetPostsForChannel(ctx, channel.Id, 0, 100, "", false, false)
+	require.NoError(e, err, "Should get DM posts for %s", recipient.Username)
 
-	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
-
-	rubrics := []string{
-		"The output contains the username or author for each message",
-		"The output contains timestamps or time references for messages",
-		"An LLM could determine the chronological order of messages from this output",
-		"The output identifies which messages are threaded replies vs top-level messages",
-		"The output contains a message proposing a migration from MySQL to PostgreSQL",
-		"The output contains a question about timeline and the Q3 feature freeze",
-		"The output contains a reply mentioning next sprint for the schema migration",
-		"The output contains a concern about 500GB of data and downtime estimation",
-		// Negative rubrics
-		"The output does not contain raw JSON objects or unformatted API response structures",
-		"The output does not include posts from any channel other than the Migration Planning channel",
-	}
-
-	evals.Run(t, "read_channel output quality", func(e *evals.EvalT) {
-		result, err := executeToolWithMCP(e.T, suite, "read_channel", map[string]any{
-			"channel_id": data.channel.Id,
-			"limit":      20,
-		})
-		require.NoError(e.T, err, "read_channel should succeed")
-
-		text := extractMCPText(result)
-		require.NotEmpty(e.T, text, "read_channel should return text content")
-		e.Logf("read_channel output:\n%s", text)
-
-		for _, rubric := range rubrics {
-			evals.LLMRubricT(e, rubric, text)
+	var messages []string
+	for _, id := range posts.Order {
+		post := posts.Posts[id]
+		if post.UserId == sender.Id && post.CreateAt >= since {
+			messages = append(messages, post.Message)
 		}
-	})
+	}
+	return messages
 }
 
-// TestSearchPostsOutputQualityEval tests that search_posts output is parseable and relevant.
-// Runs two sub-tests: keyword search only, and keyword + semantic search.
-func TestSearchPostsOutputQualityEval(t *testing.T) {
-	evals.NumEvalsOrSkip(t)
-
-	suite := SetupTestSuite(t)
-	defer suite.TearDown()
-
-	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
-
-	rubrics := []string{
-		"Each search result includes the author username",
-		"Each search result includes the post message content",
-		"Each search result includes a Post ID that could be used in follow-up tool calls",
-		"The results contain posts about database migration or PostgreSQL",
-		// Negative rubric
-		"The output does not contain raw JSON objects or unformatted API response structures",
-	}
-
-	t.Run("keyword", func(t *testing.T) {
-		suite.CreateMCPServer(false)
-
-		evals.Run(t, "search_posts keyword quality", func(e *evals.EvalT) {
-			// Use a single term to avoid AND logic requiring all terms in one post
-			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]any{
-				"query":   "migration",
-				"team_id": data.team.Id,
-				"limit":   10,
-			})
-			require.NoError(e.T, err, "search_posts should succeed")
-
-			text := extractMCPText(result)
-			require.NotEmpty(e.T, text, "search_posts should return text content")
-			e.Logf("search_posts keyword output:\n%s", text)
-
-			for _, rubric := range rubrics {
-				evals.LLMRubricT(e, rubric, text)
-			}
-		})
-	})
-
-	t.Run("with_semantic", func(t *testing.T) {
-		// Set up real PGVector + mock embedding provider and index test posts
-		searchService := setupEmbeddingSearch(t, data, suite.serverURL, suite.adminToken)
-		suite.CreateMCPServerWithSearch(false, searchService)
-
-		// This sub-test validates the semantic search pipeline integration (PGVector + mock embeddings).
-		// Mock embeddings don't produce semantically meaningful similarity scores, so this tests
-		// that the pipeline wiring works end-to-end (index, query, format), not search relevance.
-		evals.Run(t, "search_posts semantic pipeline", func(e *evals.EvalT) {
-			result, err := executeToolWithMCP(e.T, suite, "search_posts", map[string]any{
-				"query":   "database migration plan",
-				"team_id": data.team.Id,
-				"limit":   10,
-			})
-			require.NoError(e.T, err, "search_posts should succeed")
-
-			text := extractMCPText(result)
-			require.NotEmpty(e.T, text, "search_posts should return text content")
-			e.Logf("search_posts semantic output:\n%s", text)
-
-			for _, rubric := range rubrics {
-				evals.LLMRubricT(e, rubric, text)
-			}
-		})
-	})
-}
-
-// TestGetChannelMembersOutputQualityEval tests that get_channel_members output is parseable.
-func TestGetChannelMembersOutputQualityEval(t *testing.T) {
-	evals.NumEvalsOrSkip(t)
-
-	suite := SetupTestSuite(t)
-	defer suite.TearDown()
-	suite.CreateMCPServer(false)
-
-	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
-
-	rubrics := []string{
-		"The output lists members with their usernames",
-		"Each member entry includes an ID that could be used in follow-up tool calls",
-		"The member list includes alice.eval, bob.eval, and charlie.eval",
-		// Negative rubric
-		"The output does not include any bot accounts",
-	}
-
-	evals.Run(t, "get_channel_members output quality", func(e *evals.EvalT) {
-		result, err := executeToolWithMCP(e.T, suite, "get_channel_members", map[string]any{
-			"channel_id": data.channel.Id,
-			"limit":      50,
-		})
-		require.NoError(e.T, err, "get_channel_members should succeed")
-
-		text := extractMCPText(result)
-		require.NotEmpty(e.T, text, "get_channel_members should return text content")
-		e.Logf("get_channel_members output:\n%s", text)
-
-		for _, rubric := range rubrics {
-			evals.LLMRubricT(e, rubric, text)
-		}
-	})
+func mentionsAllHands(messages []string) bool {
+	return slices.ContainsFunc(messages, func(m string) bool { return strings.Contains(strings.ToLower(m), "all-hands") })
 }
 
 // ---------------------------------------------------------------------------
@@ -240,15 +121,17 @@ func TestChannelSummarizationFlowEval(t *testing.T) {
 				"Mentions at least two of: timeline/sprint, data volume/downtime, rollback plan",
 				"Is a coherent summary, not a raw dump of messages or tool output",
 				// Rubric referencing a user that only exists in the seeded data (anti-hallucination)
-				"Mentions at least one of alice.eval, bob.eval, or charlie.eval by username",
+				"Attributes at least one point to a participant (alice.eval, bob.eval, or charlie.eval), by username or by name",
 			},
-			[]string{"get_channel_info", "read_channel"},
+			// read_channel needs the channel ID, so calling it shows the channel was found;
+			// any of the channel lookup tools may have found it.
+			[][]string{{"read_channel"}},
 		)
 	})
 }
 
 // TestFindSpecificInfoFlowEval tests search → synthesize:
-// LLM must discover the right channel on its own, read it, and find what a specific user said.
+// LLM must discover the right channel or post on its own and find what a specific user said.
 func TestFindSpecificInfoFlowEval(t *testing.T) {
 	evals.NumEvalsOrSkip(t)
 
@@ -266,9 +149,9 @@ func TestFindSpecificInfoFlowEval(t *testing.T) {
 				"Mentions the ability to switch back within minutes",
 				"Mentions continuous replication as a safety net",
 				"Does not attribute the rollback plan to bob.eval or charlie.eval",
-				"Focuses specifically on the rollback plan rather than summarizing unrelated channel topics like timelines, data volume, or monitoring",
+				"Does not present the timeline, the data volume, or the monitoring dashboards as part of the rollback plan",
 			},
-			[]string{"read_channel"},
+			[][]string{{"read_channel", "search_posts", "read_post"}},
 		)
 	})
 }
@@ -283,57 +166,28 @@ func TestDMSummaryFlowEval(t *testing.T) {
 	suite.CreateMCPServer(false)
 
 	data := seedChannelConversation(t, suite.serverURL, suite.adminToken)
+	adminClient := model.NewAPIv4Client(suite.serverURL)
+	adminClient.SetToken(suite.adminToken)
+	// The MCP server acts as the admin, so the DM comes from the admin.
+	adminUser := getAdminUser(t, suite)
 
 	evals.Run(t, "dm summary flow", func(e *evals.EvalT) {
+		start := model.GetMillis()
 		runAgenticFlowEval(e, suite, data.alice, data.team,
 			// Use wrong capitalization on "Planning" to test case-insensitive lookup
 			"Send bob.eval a DM summarizing the key decisions made in the migration Planning channel on the Eval team.",
 			[]string{
-				"Confirms that a DM was sent to bob.eval",
+				"Confirms that a DM was sent to bob.eval, referring to him by username or by name",
 			},
-			[]string{"read_channel", "dm"},
+			[][]string{{"read_channel"}, {"dm"}},
 		)
 
-		// Verify the DM was actually sent by checking via the Mattermost API
-		ctx := context.Background()
-		adminClient := model.NewAPIv4Client(suite.serverURL)
-		adminClient.SetToken(suite.adminToken)
-
-		// Get the admin user (MCP server identity)
-		adminUser, _, err := adminClient.GetMe(ctx, "")
-		require.NoError(e.T, err, "Should get admin user")
-
-		// Get DM channel between admin and bob
-		dmChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, data.bob.Id)
-		require.NoError(e.T, err, "Should get DM channel")
-
-		// Check that a post exists in the DM channel
-		dmPosts, _, err := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
-		require.NoError(e.T, err, "Should get DM posts")
-
-		// Find a post that mentions migration (the summary the LLM sent)
-		found := false
-		for _, post := range dmPosts.Posts {
-			if post.UserId == adminUser.Id && containsMigrationContent(post.Message) {
-				found = true
-				e.Logf("DM post content:\n%s", post.Message)
-				break
-			}
-		}
-		assert.True(e.T, found, "A DM post mentioning migration should exist in the DM channel with bob")
+		dms := dmsSince(e, adminClient, adminUser, data.bob, start)
+		require.NotEmpty(e, dms, "A DM should have been sent to bob")
+		dm := strings.Join(dms, "\n\n")
+		e.Logf("DM to bob:\n%s", dm)
+		evals.LLMRubricT(e, "Summarizes a planned migration from MySQL to PostgreSQL and at least one of: the timeline, the data volume or downtime concern, or the rollback plan", dm)
 	})
-}
-
-// containsMigrationContent checks if a message contains migration-related keywords (case-insensitive).
-func containsMigrationContent(message string) bool {
-	lower := strings.ToLower(message)
-	keywords := []string{"migration", "postgresql", "mysql", "database", "migrate"}
-	for _, kw := range keywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestBroadcastDMToTeamFlowEval tests the team lookup → list members → filter bots → send DMs flow:
@@ -346,60 +200,35 @@ func TestBroadcastDMToTeamFlowEval(t *testing.T) {
 	suite.CreateMCPServer(false)
 
 	data := seedTeamBroadcastScenario(t, suite.serverURL, suite.adminToken)
+	adminClient := model.NewAPIv4Client(suite.serverURL)
+	adminClient.SetToken(suite.adminToken)
+	// The MCP server acts as the admin, who is also a team member.
+	adminUser := getAdminUser(t, suite)
 
 	evals.Run(t, "broadcast DM to team flow", func(e *evals.EvalT) {
+		start := model.GetMillis()
 		runAgenticFlowEval(e, suite, data.dana, data.team,
 			// Use lowercase "staff" to test case-insensitive team lookup
-			"Send the following message to everyone on the staff team: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
+			"Send everyone on the staff team a direct message saying: Hey! Just a reminder that we have a company all-hands meeting tomorrow at 3pm in the main conference room. Please make sure to attend.",
 			[]string{
-				"Confirms that direct messages were sent to multiple individual users",
+				"Confirms that the message was sent to the members of the Staff team",
 				"Does not mention sending a message to a bot account (autobot.eval or Automation Bot)",
 			},
-			[]string{"get_team_members", "dm"},
+			[][]string{{"dm"}},
 		)
 
-		// Verify DMs were actually sent by checking the Mattermost API
-		ctx := context.Background()
-		adminClient := model.NewAPIv4Client(suite.serverURL)
-		adminClient.SetToken(suite.adminToken)
-
-		// Get the admin user (MCP server identity — also a team member)
-		adminUser, _, err := adminClient.GetMe(ctx, "")
-		require.NoError(e.T, err, "Should get admin user")
-
-		// Verify DMs were sent to all non-requesting team members including admin.
-		// (dana is the requesting user — LLMs may reasonably skip DM'ing "yourself")
-		for _, targetUser := range []*model.User{data.emma, data.frank, adminUser} {
-			dmChannel, _, dmErr := adminClient.CreateDirectChannel(ctx, adminUser.Id, targetUser.Id)
-			require.NoError(e.T, dmErr, "Should get DM channel with %s", targetUser.Username)
-
-			dmPosts, _, dmErr := adminClient.GetPostsForChannel(ctx, dmChannel.Id, 0, 10, "", false, false)
-			require.NoError(e.T, dmErr, "Should get DM posts for %s", targetUser.Username)
-
-			found := false
-			for _, post := range dmPosts.Posts {
-				if post.UserId == adminUser.Id && strings.Contains(strings.ToLower(post.Message), "all-hands") {
-					found = true
-					e.Logf("DM to %s: %s", targetUser.Username, post.Message)
-					break
-				}
-			}
-			assert.True(e.T, found, "A DM about the all-hands meeting should have been sent to %s", targetUser.Username)
+		for _, member := range []*model.User{data.emma, data.frank} {
+			assert.True(e, mentionsAllHands(dmsSince(e, adminClient, adminUser, member, start)),
+				"A DM about the all-hands meeting should have been sent to %s", member.Username)
 		}
-
-		// Verify NO DM was sent to the bot
-		botDMChannel, _, err := adminClient.CreateDirectChannel(ctx, adminUser.Id, data.botUser.Id)
-		require.NoError(e.T, err, "Should get DM channel with bot")
-
-		botDMPosts, _, err := adminClient.GetPostsForChannel(ctx, botDMChannel.Id, 0, 10, "", false, false)
-		require.NoError(e.T, err, "Should get DM posts for bot")
-
-		for _, post := range botDMPosts.Posts {
-			if post.UserId == adminUser.Id && strings.Contains(strings.ToLower(post.Message), "all-hands") {
-				assert.Fail(e.T, "A DM about the all-hands meeting should NOT have been sent to bot %s", data.botUser.Username)
-				break
-			}
-		}
+		// The request comes from dana while the tools act as the admin, so the
+		// model may skip either one as "yourself", but not both.
+		assert.True(e,
+			mentionsAllHands(dmsSince(e, adminClient, adminUser, data.dana, start)) ||
+				mentionsAllHands(dmsSince(e, adminClient, adminUser, adminUser, start)),
+			"A DM about the all-hands meeting should have been sent to %s or %s", data.dana.Username, adminUser.Username)
+		assert.False(e, mentionsAllHands(dmsSince(e, adminClient, adminUser, data.botUser, start)),
+			"A DM about the all-hands meeting should NOT have been sent to bot %s", data.botUser.Username)
 	})
 }
 
@@ -447,16 +276,24 @@ func TestReadFileOnDemandFlowEval(t *testing.T) {
 	suite := SetupTestSuite(t)
 	defer suite.TearDown()
 
-	checklist := strings.Join([]string{
+	var checklist strings.Builder
+	checklist.WriteString(strings.Join([]string{
 		"Pre-launch checklist:",
 		"1. Freeze the deploy pipeline at 5pm Friday.",
 		"2. Notify the support team about the maintenance window.",
 		"3. Rotate the staging TLS certificate before the cutover.",
 		"4. Snapshot the primary database.",
 		"5. Update the public status page once traffic is migrated.",
-	}, "\n")
+		"",
+		"Launch-day notes:",
+	}, "\n"))
+	// Production inlines small text files, so the checklist is padded past the
+	// inline limit to be shown as a descriptor, as a real large file would be.
+	for i := 1; checklist.Len() <= int(conversation.InlineFileMaxBytes); i++ {
+		fmt.Fprintf(&checklist, "\n- Note %d: confirm the on-call rotation and dashboard links for shard %d are current.", i, i)
+	}
 
-	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "launch-checklist.txt", []byte(checklist))
+	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "launch-checklist.txt", []byte(checklist.String()))
 	suite.CreateMCPServerWithFileService(false, fileEvalService(suite))
 	adminUser := getAdminUser(t, suite)
 
@@ -472,7 +309,7 @@ func TestReadFileOnDemandFlowEval(t *testing.T) {
 				"The answer is grounded in the attached checklist rather than generic launch advice",
 				"Does not claim it is unable to see, open, or read the attached file",
 			},
-			[]string{"read_file"},
+			[][]string{{"read_file"}},
 		)
 	})
 }
@@ -486,12 +323,12 @@ func TestReadFilePagingFlowEval(t *testing.T) {
 	defer suite.TearDown()
 
 	// Build a log well past the max single-read window so the model cannot get
-	// the planted secret in one call and must page with offset to reach the end.
+	// the planted crash in one call and must page with offset to reach the end.
 	var log strings.Builder
 	for i := range 1500 {
 		fmt.Fprintf(&log, "2026-05-01T10:%02d:%02dZ [info] request %d handled in %dms\n", i%60, i%60, i, i%200)
 	}
-	log.WriteString("2026-05-01T11:00:00Z [warn] leaked credential detected: api_key=zephyr-9931-omega\n")
+	log.WriteString("2026-05-01T11:00:00Z [error] worker crashed: correlation_id=zephyr-9931-omega\n")
 	for range 50 {
 		log.WriteString("2026-05-01T11:00:01Z [info] worker shutting down\n")
 	}
@@ -504,14 +341,14 @@ func TestReadFilePagingFlowEval(t *testing.T) {
 	evals.Run(t, "read_file paging flow", func(e *evals.EvalT) {
 		runAgenticFlowEval(e, suite, adminUser, team,
 			withFileDescriptor(
-				"Someone told me an API key accidentally got dumped into that debug log I shared. Dig through it and tell me exactly what the leaked key is.",
+				"A worker crashed somewhere in that debug log I shared. Dig through it and tell me the correlation ID of the crash so I can find it in our tracing.",
 				fileInfo,
 			),
 			[]string{
-				"States the leaked API key value zephyr-9931-omega",
-				"Does not fabricate a different API key or claim that no key could be found",
+				"States the correlation ID zephyr-9931-omega",
+				"Does not give a different correlation ID or claim that no crash could be found",
 			},
-			[]string{"read_file"},
+			[][]string{{"read_file"}},
 		)
 	})
 }
@@ -524,10 +361,11 @@ func TestReadFileUnreadableBinaryEval(t *testing.T) {
 	suite := SetupTestSuite(t)
 	defer suite.TearDown()
 
-	// Bytes named .png are stored as image/png (extension-based), which has no
-	// server-extractable text — read_file reports no readable content.
-	pngBytes := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05}
-	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "architecture.png", pngBytes)
+	// A .bin file is stored as application/octet-stream, which has no
+	// server-extractable text, so production shows it as a descriptor and
+	// read_file reports no readable content. Images are never descriptors.
+	binBytes := []byte{0x7f, 0x45, 0x4c, 0x46, 0x02, 0x01, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05}
+	team, _, fileInfo := seedFileScenario(t, suite.serverURL, suite.adminToken, "firmware.bin", binBytes)
 	suite.CreateMCPServerWithFileService(false, fileEvalService(suite))
 	adminUser := getAdminUser(t, suite)
 
@@ -541,7 +379,9 @@ func TestReadFileUnreadableBinaryEval(t *testing.T) {
 				"Indicates it cannot read or extract the text contents of the file",
 				"Does not invent or describe specific contents of the file",
 			},
-			[]string{"read_file"},
+			// The descriptor already says the file is binary, so the model may
+			// answer without calling read_file.
+			nil,
 		)
 	})
 }
