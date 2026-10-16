@@ -97,7 +97,8 @@ test('meeting summary stays visible in the DM after it is generated', async ({ p
     await openAIMock.addCompletionMock(buildTextResponse(SUMMARY_TEXT));
 
     // 4) Trigger "Create meeting summary" exactly as the Calls button does.
-    const summarizeUrl = `${mattermost.url()}/plugins/mattermost-ai/post/${transcriptionPost.id}/summarize_transcription?botUsername=${agentBotUsername}`;
+    const agentBot = await userClient.getUserByUsername(agentBotUsername);
+    const summarizeUrl = `${mattermost.url()}/plugins/mattermost-ai/post/${transcriptionPost.id}/summarize_transcription?botId=${agentBot.id}`;
     const summarizeResp = await fetch(summarizeUrl, {
         method: 'POST',
         headers: { Authorization: `Bearer ${userClient.getToken()}` },

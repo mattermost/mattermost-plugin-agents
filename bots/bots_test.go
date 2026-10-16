@@ -39,9 +39,11 @@ func (failingAgentStore) ListAgents() ([]*llm.BotConfig, error) {
 }
 
 type mockConfig struct {
-	bots               []llm.BotConfig
-	services           []llm.ServiceConfig
-	enableTokenLogging bool
+	bots                []llm.BotConfig
+	services            []llm.ServiceConfig
+	enableTokenLogging  bool
+	transcriptBotName   string
+	transcriptBotUserID string
 }
 
 func (m *mockConfig) GetBots() []llm.BotConfig {
@@ -78,7 +80,11 @@ func (m *mockConfig) EnableTokenUsageLogToFile() bool {
 }
 
 func (m *mockConfig) GetTranscriptGenerator() string {
-	return "testbot"
+	return m.transcriptBotName
+}
+
+func (m *mockConfig) GetTranscriptBotUserID() string {
+	return m.transcriptBotUserID
 }
 
 func newTestMMBots(t *testing.T, cfg *mockConfig) *MMBots {
@@ -1126,6 +1132,44 @@ func TestGetBotByUsernameFindsRenamedBotAccount(t *testing.T) {
 
 			assert.Same(t, tc.expected, mmBots.GetBotByUsername(tc.username))
 			assert.Same(t, tc.expectedFirst, mmBots.GetBotByUsernameOrFirst(tc.username))
+		})
+	}
+}
+
+func TestGetBotByIDOrUsername(t *testing.T) {
+	alpha := NewBot(llm.BotConfig{Name: "alpha"}, llm.ServiceConfig{}, &model.Bot{UserId: "bot-a", Username: "alpha"}, nil)
+	beta := NewBot(llm.BotConfig{Name: "beta"}, llm.ServiceConfig{}, &model.Bot{UserId: "bot-b", Username: "beta"}, nil)
+	notFound := model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)
+
+	testCases := []struct {
+		name           string
+		botUserID      string
+		legacyUsername string
+		// alphaHolds is the username alpha's account holds now.
+		alphaHolds string
+		expected   *Bot
+	}{
+		{name: "ID of an available agent", botUserID: "bot-b", expected: beta},
+		{name: "ID wins over the legacy name", botUserID: "bot-b", legacyUsername: "alpha", expected: beta},
+		{name: "ID of a missing agent does not fall back to the legacy name", botUserID: "bot-gone", legacyUsername: "alpha"},
+		{name: "ID of a missing agent does not fall back to the first agent", botUserID: "bot-gone"},
+		{name: "legacy name held by the agent's account", legacyUsername: "alpha", expected: alpha},
+		{name: "legacy name the agent's account released", legacyUsername: "alpha", alphaHolds: "alpha-renamed"},
+		{name: "nothing configured"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &mockConfig{transcriptBotUserID: tc.botUserID, transcriptBotName: tc.legacyUsername}
+			mmBots := newTestMMBots(t, cfg)
+			mockAPI := mmBots.ensureBotsClusterMutex.(*plugintest.API)
+			mockAPI.On("GetUser", "bot-a").Return(&model.User{Id: "bot-a", Username: cmp.Or(tc.alphaHolds, "alpha"), IsBot: true}, nil).Maybe()
+			mockAPI.On("GetUser", "bot-b").Return(&model.User{Id: "bot-b", Username: "beta", IsBot: true}, nil).Maybe()
+			mockAPI.On("GetUserByUsername", mock.Anything).Return(nil, notFound).Maybe()
+			mmBots.SetBotsForTesting([]*Bot{alpha, beta})
+
+			assert.Same(t, tc.expected, mmBots.GetBotByIDOrUsername(tc.botUserID, tc.legacyUsername))
+			assert.Same(t, tc.expected, mmBots.getTranscriberBot(), "the transcript agent setting must resolve the same way")
 		})
 	}
 }

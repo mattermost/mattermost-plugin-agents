@@ -90,7 +90,7 @@ const CustomPromptsDropdown = ({updateText, channelId}: Props) => {
         dismissMenu();
         try {
             const botUsername = selectedBot?.username;
-            const result = await renderCustomPrompt(prompt.id, channelId, botUsername);
+            const result = await renderCustomPrompt(prompt.id, channelId, selectedBot?.id);
             if (!isBotDMChannel && botUsername) {
                 updateText(`@${botUsername} ${result.rendered}`);
             } else {

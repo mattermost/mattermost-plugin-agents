@@ -69,7 +69,12 @@ type testConfigImpl struct {
 	enableChannelMentionToolCalling bool
 	mcpConfig                       mcp.Config
 	services                        []llm.ServiceConfig
+	defaultBotUserID                string
 	defaultBotName                  string
+}
+
+func (tc *testConfigImpl) GetDefaultBotUserID() string {
+	return tc.defaultBotUserID
 }
 
 func (tc *testConfigImpl) GetDefaultBotName() string {
@@ -881,28 +886,42 @@ func TestAIBotRequiredUsesConfiguredDefaultBot(t *testing.T) {
 }
 
 func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
+	const firstID = "firstbotuserid123456789012"
+	const namedID = "namedbotuserid123456789012"
+	const missingID = "missingbotuserid1234567890"
 	first := bots.NewBot(
 		llm.BotConfig{Name: "first", DisplayName: "First"},
 		llm.ServiceConfig{},
-		&model.Bot{UserId: "firstbotuserid12345678901", Username: "first", DisplayName: "First"},
+		&model.Bot{UserId: firstID, Username: "first", DisplayName: "First"},
 		nil,
 	)
 	named := bots.NewBot(
 		llm.BotConfig{Name: "named", DisplayName: "Named"},
 		llm.ServiceConfig{},
-		&model.Bot{UserId: "namedbotuserid12345678901", Username: "named", DisplayName: "Named"},
+		&model.Bot{UserId: namedID, Username: "named", DisplayName: "Named"},
 		nil,
 	)
 
 	tests := []struct {
-		name           string
-		query          string
-		defaultBotName string
-		expected       *bots.Bot
+		name             string
+		query            string
+		defaultBotUserID string
+		defaultBotName   string
+		expected         *bots.Bot
+		expectedStatus   int
 	}{
-		{name: "requested agent is served", query: "?botUsername=named", expected: named},
-		{name: "requested agent is unavailable", query: "?botUsername=renamed"},
-		{name: "configured default agent is unavailable", defaultBotName: "renamed"},
+		{name: "agent requested by ID is served", query: "?botId=" + namedID, expected: named},
+		{name: "requested ID wins over requested username", query: "?botId=" + namedID + "&botUsername=first", expected: named},
+		{name: "agent requested by ID is unavailable", query: "?botId=" + missingID + "&botUsername=named", expectedStatus: http.StatusNotFound},
+		{name: "requested ID is not a bot user ID", query: "?botId=named", expectedStatus: http.StatusBadRequest},
+		{name: "agent requested by username is served", query: "?botUsername=named", expected: named},
+		{name: "agent requested by username is unavailable", query: "?botUsername=renamed", expectedStatus: http.StatusNotFound},
+		{name: "default agent by ID is served", defaultBotUserID: namedID, expected: named},
+		{name: "default agent ID wins over legacy name", defaultBotUserID: namedID, defaultBotName: "first", expected: named},
+		{name: "default agent by legacy name is served", defaultBotName: "named", expected: named},
+		{name: "default agent ID is unavailable", defaultBotUserID: missingID, defaultBotName: "named", expectedStatus: http.StatusNotFound},
+		{name: "default agent legacy name is unavailable", defaultBotName: "renamed", expectedStatus: http.StatusNotFound},
+		{name: "requested agent wins over the default", query: "?botId=" + firstID, defaultBotUserID: namedID, expected: first},
 		{name: "no agent requested and no default configured", expected: first},
 	}
 
@@ -910,6 +929,7 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
+			e.config.defaultBotUserID = tc.defaultBotUserID
 			e.config.defaultBotName = tc.defaultBotName
 			e.mockAPI.On("GetUserByUsername", "renamed").
 				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
@@ -923,7 +943,7 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 
 			if tc.expected == nil {
 				require.True(t, ctx.IsAborted())
-				require.Equal(t, http.StatusNotFound, w.Code)
+				require.Equal(t, tc.expectedStatus, w.Code)
 				_, set := ctx.Get(ContextBotKey)
 				require.False(t, set, "no other agent may be selected in place of the requested one")
 				return
@@ -931,6 +951,57 @@ func TestAIBotRequiredDoesNotSubstituteAnotherAgent(t *testing.T) {
 			require.False(t, ctx.IsAborted())
 			require.Same(t, tc.expected, ctx.MustGet(ContextBotKey).(*bots.Bot))
 		})
+	}
+}
+
+// TestBotRequiredRoutesAcceptBotID drives every route behind aiBotRequired
+// through the router, so a route that stops honoring botId fails here.
+func TestBotRequiredRoutesAcceptBotID(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	const missingID = "missingbotuserid1234567890"
+	routes := map[string]string{
+		"react":                   "/post/postid/react",
+		"analyze post":            "/post/postid/analyze",
+		"transcribe":              "/post/postid/transcribe/file/fileid",
+		"summarize_transcription": "/post/postid/summarize_transcription",
+		"stop":                    "/post/postid/stop",
+		"regenerate":              "/post/postid/regenerate",
+		"tool_call":               "/post/postid/tool_call",
+		"tool_result":             "/post/postid/tool_result",
+		"postback_summary":        "/post/postid/postback_summary",
+		"loop_in_agent":           "/post/postid/loop_in_agent",
+		"analyze channel":         "/channel/channelid/analyze",
+		"interval":                "/channel/channelid/interval",
+		"search run":              "/search/run",
+	}
+	tests := []struct {
+		name           string
+		query          string
+		expectedStatus int
+	}{
+		{name: "missing agent", query: "?botId=" + missingID, expectedStatus: http.StatusNotFound},
+		{name: "malformed bot user ID", query: "?botId=permtest", expectedStatus: http.StatusBadRequest},
+	}
+
+	for routeName, url := range routes {
+		for _, tc := range tests {
+			t.Run(routeName+" "+tc.name, func(t *testing.T) {
+				e := SetupTestEnvironment(t)
+				defer e.Cleanup(t)
+				e.setupTestBot(llm.BotConfig{Name: "permtest"})
+				e.mockAPI.On("GetPost", "postid").Return(&model.Post{ChannelId: "channelid"}, nil).Maybe()
+				e.mockAPI.On("GetChannel", "channelid").Return(&model.Channel{Id: "channelid", Type: model.ChannelTypeOpen, TeamId: "teamid"}, nil).Maybe()
+				e.mockAPI.On("HasPermissionToChannel", testUserID, "channelid", model.PermissionReadChannel).Return(true).Maybe()
+
+				request := httptest.NewRequest(http.MethodPost, url+tc.query, nil)
+				request.Header.Add("Mattermost-User-ID", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, request)
+				require.Equal(t, tc.expectedStatus, recorder.Code)
+			})
+		}
 	}
 }
 
@@ -997,21 +1068,26 @@ func TestDefaultAgentFlagFollowsLiveAccount(t *testing.T) {
 	const otherID = "otherbotuserid12345678901a"
 
 	tests := []struct {
-		name           string
-		defaultBotName string
-		expectDefault  string
+		name             string
+		defaultBotUserID string
+		defaultBotName   string
+		expectDefault    string
 	}{
-		{name: "default setting follows the rename", defaultBotName: "new-name", expectDefault: defaultID},
-		{name: "default setting names the released username", defaultBotName: "old-name"},
+		{name: "default setting holds the agent's bot user ID", defaultBotUserID: defaultID, expectDefault: defaultID},
+		{name: "default bot user ID wins over legacy name", defaultBotUserID: defaultID, defaultBotName: "other", expectDefault: defaultID},
+		{name: "default bot user ID names no agent", defaultBotUserID: "missingbotuserid1234567890"},
+		{name: "legacy default name follows the rename", defaultBotName: "new-name", expectDefault: defaultID},
+		{name: "legacy default name is the released username", defaultBotName: "old-name"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			e := SetupTestEnvironment(t)
 			defer e.Cleanup(t)
+			e.config.defaultBotUserID = tc.defaultBotUserID
 			e.config.defaultBotName = tc.defaultBotName
 
-			e.mockAPI.On("GetUser", defaultID).Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil)
+			e.mockAPI.On("GetUser", defaultID).Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUser", otherID).Return(&model.User{Id: otherID, Username: "other", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUserByUsername", "new-name").Return(&model.User{Id: defaultID, Username: "new-name", IsBot: true}, nil).Maybe()
 			e.mockAPI.On("GetUserByUsername", "old-name").

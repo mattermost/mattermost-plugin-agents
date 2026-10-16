@@ -20,9 +20,14 @@ const (
 	tokenUsageLogToFileEnvKey   = "MM_FEATUREFLAGS_AI_TOKEN_USAGE_LOG_TO_FILE"   // #nosec G101 -- env var key name, not a credential
 )
 
+// Config is the plugin configuration. DefaultBotName and TranscriptGenerator
+// are legacy username references, read only when the matching bot user ID
+// field is empty.
 type Config struct {
 	Services                        []llm.ServiceConfig              `json:"services"`
 	Bots                            []llm.BotConfig                  `json:"bots"`
+	DefaultBotUserID                string                           `json:"defaultBotUserID"`
+	TranscriptBotUserID             string                           `json:"transcriptBotUserID"`
 	DefaultBotName                  string                           `json:"defaultBotName"`
 	TranscriptGenerator             string                           `json:"transcriptBackend"`
 	EnableTokenUsageLogging         bool                             `json:"enableTokenUsageLogging"`
@@ -109,12 +114,20 @@ func (c *Container) GetTranscriptGenerator() string {
 	return c.Config().TranscriptGenerator
 }
 
+func (c *Container) GetTranscriptBotUserID() string {
+	return c.Config().TranscriptBotUserID
+}
+
 func (c *Container) GetBots() []llm.BotConfig {
 	return c.Config().Bots
 }
 
 func (c *Container) GetDefaultBotName() string {
 	return c.Config().DefaultBotName
+}
+
+func (c *Container) GetDefaultBotUserID() string {
+	return c.Config().DefaultBotUserID
 }
 
 func (c *Container) EnableTokenUsageLogging() bool {

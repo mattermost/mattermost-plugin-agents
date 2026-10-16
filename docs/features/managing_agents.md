@@ -182,7 +182,7 @@ Changing **Agent username** renames the agent's existing Mattermost bot account 
 - People must mention the new username to reach the agent, and slash commands (such as `/summarize-channel --bot`), scripts, or integrations that use the old username must be updated.
 - The old username becomes available, so another user or bot could claim it.
 
-If the renamed agent is the plugin's default agent, the default agent setting is updated to the new username. Renaming fails with "This username is already taken" when any Mattermost user or bot, including a deactivated one, already has the new username. Agents defined only in the plugin configuration file, rather than on the **Agents** page, can't be renamed this way.
+The default agent and transcript agent settings select an agent by its bot user ID, so they keep selecting the agent after a rename. Renaming fails with "This username is already taken" when any Mattermost user or bot, including a deactivated one, already has the new username. Agents defined only in the plugin configuration file, rather than on the **Agents** page, can't be renamed this way.
 
 ### Unsaved-changes warning
 

@@ -29,16 +29,48 @@ type Config = PluginConfig;
 
 /** Minimal fields from GET /ai_bots used for the default-bot dropdown. */
 type RuntimeBotOption = {
+    id: string;
     username: string;
     displayName: string;
 };
 
-// The server answers with the first bot when the configured default is empty or unknown.
-export const effectiveDefaultBotName = (configured: string, bots: RuntimeBotOption[]) => {
-    if (bots.some((bot) => bot.username === configured)) {
-        return configured;
+// Resolves an agent reference to a bot ID. The ID wins; the legacy username is
+// only consulted when the ID is empty (installs that haven't migrated yet).
+const resolveBotID = (id: string | undefined, legacyName: string | undefined, bots: RuntimeBotOption[]) => {
+    if (id) {
+        return bots.find((bot) => bot.id === id)?.id ?? '';
     }
-    return bots[0]?.username ?? '';
+    if (legacyName) {
+        return bots.find((bot) => bot.username === legacyName)?.id ?? '';
+    }
+    return '';
+};
+
+// The server answers with the first bot when the configured default is empty or unknown.
+export const effectiveDefaultBotID = (configuredID: string | undefined, legacyName: string | undefined, bots: RuntimeBotOption[]) => {
+    return resolveBotID(configuredID, legacyName, bots) || (bots[0]?.id ?? '');
+};
+
+// Builds the agent reference fields to save. A legacy username that resolves to
+// an agent is converted to its ID and the legacy field is cleared. A reference
+// that cannot be resolved (agent list unavailable or agent gone) is sent as
+// loaded so the server can still convert it instead of silently dropping it.
+export const normalizeAgentReferences = (cfg: Config, bots: RuntimeBotOption[]): Config => {
+    let {defaultBotUserID, defaultBotName, transcriptBotUserID, transcriptBackend} = cfg;
+
+    const defaultID = defaultBotUserID || resolveBotID('', defaultBotName, bots);
+    if (defaultID) {
+        defaultBotUserID = defaultID;
+        defaultBotName = '';
+    }
+
+    const transcriptID = transcriptBotUserID || resolveBotID('', transcriptBackend, bots);
+    if (transcriptID) {
+        transcriptBotUserID = transcriptID;
+        transcriptBackend = '';
+    }
+
+    return {...cfg, defaultBotUserID, defaultBotName, transcriptBotUserID, transcriptBackend};
 };
 
 type Props = {
@@ -86,6 +118,8 @@ const LoadingContainer = styled.div`
 const defaultConfig: Config = {
     services: [],
     bots: [],
+    defaultBotUserID: '',
+    transcriptBotUserID: '',
     defaultBotName: '',
     transcriptBackend: '',
     telemetryOutput: 'off',
@@ -219,7 +253,7 @@ const Config = (props: Props) => {
     useEffect(() => {
         const save = async () => {
             try {
-                const saved = await savePluginConfig(localConfig);
+                const saved = await savePluginConfig(normalizeAgentReferences(localConfig, runtimeBots));
 
                 // Adopt the normalized saved config so server-minted
                 // service/MCP IDs (and the UI gated on them) appear
@@ -234,7 +268,7 @@ const Config = (props: Props) => {
         return () => {
             props.unRegisterSaveAction(save);
         };
-    }, [localConfig, intl, props.registerSaveAction, props.unRegisterSaveAction]);
+    }, [localConfig, runtimeBots, intl, props.registerSaveAction, props.unRegisterSaveAction]);
 
     const updateConfig = useCallback((updates: Partial<Config>) => {
         setLocalConfig((prev) => ({...prev, ...updates}));
@@ -326,11 +360,11 @@ const Config = (props: Props) => {
                     )}
                     <SelectionItem
                         label={intl.formatMessage({defaultMessage: 'Default bot'})}
-                        value={effectiveDefaultBotName(value.defaultBotName, runtimeBots)}
-                        onChange={(defaultBotName) => {
-                            updateConfig({defaultBotName});
+                        value={effectiveDefaultBotID(value.defaultBotUserID, value.defaultBotName, runtimeBots)}
+                        onChange={(defaultBotUserID) => {
+                            updateConfig({defaultBotUserID, defaultBotName: ''});
                         }}
-                        options={runtimeBots.map((bot) => ({value: bot.username, label: bot.displayName}))}
+                        options={runtimeBots.map((bot) => ({value: bot.id, label: bot.displayName}))}
                     />
                     <TextItem
                         label={intl.formatMessage({defaultMessage: 'Allowed Upstream Hostnames (csv)'})}

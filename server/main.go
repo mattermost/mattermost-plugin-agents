@@ -313,6 +313,8 @@ func (p *Plugin) OnActivate() error {
 	}
 	migrateAndRefresh("activation")
 
+	p.migrateAgentReferences(pluginAPI, p.store, bots)
+
 	autoreplyStore := autoreply.NewStore(dbClient)
 	autoreplyService := autoreply.NewService(autoreplyStore, bots, mmClient, p)
 	if loadCacheErr := autoreplyService.LoadCache(); loadCacheErr != nil {

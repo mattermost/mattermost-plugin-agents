@@ -9,12 +9,16 @@ import type {ConversationResponse, Turn} from '@/types/conversation';
 import manifest from './manifest';
 
 import {
+    doChannelAnalysis,
     doLoopInAgent,
+    doRunSearch,
     doThreadAnalysis,
     getChannelAutoReply,
+    getChannelInterval,
     getConversation,
     getConversationContext,
     normalizeConversationResponse,
+    renderCustomPrompt,
     searchAllChannels,
     setSiteURL,
     updateChannelAutoReply,
@@ -86,6 +90,7 @@ function okResponse(): Response {
 
 // Mattermost IDs are 26 characters of lowercase letters and digits.
 const WELL_FORMED_ID = 'c7f2m9xq4v1b8n3k6t5w0hzjd2';
+const BOT_ID = 'b7m2xq9d4wn1c6zr3t8kv5jhya';
 
 // These ids reach the client straight off free-form post props, so a caller can hand them anything.
 const NOT_WELL_FORMED_IDS: Array<{name: string; id: string}> = [
@@ -220,25 +225,63 @@ describe('updateRead', () => {
 
 describe('doLoopInAgent', () => {
     test('posts to the loop-in route for a well-formed post id', async () => {
-        await expect(doLoopInAgent(WELL_FORMED_ID, 'matty')).resolves.toBeUndefined();
+        await expect(doLoopInAgent(WELL_FORMED_ID, BOT_ID)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=matty`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botId=${BOT_ID}`);
         expect(options).toEqual(expect.objectContaining({method: 'POST'}));
     });
 
-    test('percent-encodes the bot username in the query string', async () => {
+    test('percent-encodes the bot id in the query string', async () => {
         await doLoopInAgent(WELL_FORMED_ID, 'agent bot&x=1');
 
         const [url] = mockFetch.mock.calls[0];
-        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botUsername=agent%20bot%26x%3D1`);
+        expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/loop_in_agent?botId=agent%20bot%26x%3D1`);
     });
 
     test.each(NOT_WELL_FORMED_IDS)('does not issue a request when the post id is not well-formed: $name', async ({id}) => {
-        await expect(doLoopInAgent(id, 'matty')).rejects.toThrow();
+        await expect(doLoopInAgent(id, BOT_ID)).rejects.toThrow();
 
         expect(mockFetch).not.toHaveBeenCalled();
+    });
+});
+
+describe('agent selection by bot id', () => {
+    const base = `${siteURL}/plugins/${manifest.id}`;
+    const call = async (fn: () => Promise<unknown>) => {
+        mockFetch.mockReset();
+        mockFetch.mockResolvedValue(okResponse());
+        await fn();
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        return mockFetch.mock.calls[0];
+    };
+
+    test.each([
+        {name: 'doThreadAnalysis', run: () => doThreadAnalysis(WELL_FORMED_ID, 'summarize_thread', BOT_ID), path: `/post/${WELL_FORMED_ID}/analyze`},
+        {name: 'doChannelAnalysis', run: () => doChannelAnalysis(WELL_FORMED_ID, 'summarize_channel', BOT_ID), path: `/channel/${WELL_FORMED_ID}/analyze`},
+        {name: 'doRunSearch', run: () => doRunSearch('q', 'team', 'channel', BOT_ID), path: '/search/run'},
+        {name: 'getChannelInterval', run: () => getChannelInterval(WELL_FORMED_ID, 1, 2, 'summarize_range', '', BOT_ID), path: `/channel/${WELL_FORMED_ID}/interval`},
+    ])('$name sends botId and never botUsername', async ({run, path}) => {
+        const [url] = await call(run);
+        expect(url).toBe(`${base}${path}?botId=${BOT_ID}`);
+        expect(url).not.toContain('botUsername');
+    });
+
+    test.each([
+        {name: 'doThreadAnalysis', run: () => doThreadAnalysis(WELL_FORMED_ID, 'summarize_thread', ''), path: `/post/${WELL_FORMED_ID}/analyze`},
+        {name: 'doChannelAnalysis', run: () => doChannelAnalysis(WELL_FORMED_ID, 'summarize_channel', ''), path: `/channel/${WELL_FORMED_ID}/analyze`},
+        {name: 'doRunSearch', run: () => doRunSearch('q', 'team', 'channel'), path: '/search/run'},
+        {name: 'getChannelInterval', run: () => getChannelInterval(WELL_FORMED_ID, 1, 2, 'summarize_range'), path: `/channel/${WELL_FORMED_ID}/interval`},
+    ])('$name omits the agent query when no bot id is given', async ({run, path}) => {
+        const [url] = await call(run);
+        expect(url).toBe(`${base}${path}`);
+    });
+
+    test('renderCustomPrompt sends bot_id and never bot_username', async () => {
+        const [url, options] = await call(() => renderCustomPrompt('prompt1', WELL_FORMED_ID, BOT_ID));
+        expect(url).toBe(`${base}/custom-prompts/prompt1/render`);
+        expect(JSON.parse(options.body as string)).toEqual({channel_id: WELL_FORMED_ID, bot_id: BOT_ID});
     });
 });
 

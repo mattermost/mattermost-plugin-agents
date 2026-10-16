@@ -94,15 +94,17 @@ func (n *testClusterNotifier) PublishConfigUpdate() error {
 }
 
 func setupTestRouter(store ConfigStore, updater ConfigUpdater, notifier ClusterNotifier) *gin.Engine {
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-
-	a := &API{
+	return setupConfigTestRouter(&API{
 		configStore:     store,
 		configUpdater:   updater,
 		clusterNotifier: notifier,
 		licenseChecker:  enterprisetest.CheckerAt(enterprise.LevelEnterpriseAdvanced),
-	}
+	})
+}
+
+func setupConfigTestRouter(a *API) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
 
 	adminRouter := router.Group("/admin")
 	adminRouter.GET("/config", a.handleGetConfig)

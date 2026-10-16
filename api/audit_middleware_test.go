@@ -194,6 +194,8 @@ func TestAuditMiddlewareSaveConfig(t *testing.T) {
 			defer e.Cleanup(t)
 			store.getErr = tt.getErr
 			store.saveErr = tt.saveErr
+			e.mockAPI.On("GetUserByUsername", "ai").
+				Return(nil, model.NewAppError("GetUserByUsername", "app.user.missing_account.const", nil, "", http.StatusNotFound)).Maybe()
 
 			if tt.userID != "" {
 				e.mockAPI.On("HasPermissionTo", tt.userID, model.PermissionManageSystem).Return(tt.isAdmin)

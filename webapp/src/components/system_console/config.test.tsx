@@ -2,12 +2,13 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getAIBots, getPluginConfig, savePluginConfig} from '@/client';
 
-import Config, {effectiveDefaultBotName} from './config';
+import Config, {effectiveDefaultBotID, normalizeAgentReferences} from './config';
+import {PluginConfig} from './plugin_config_types';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -236,18 +237,117 @@ describe('Config license gating', () => {
     });
 });
 
-describe('effectiveDefaultBotName', () => {
-    const bots = [
-        {username: 'first', displayName: 'First'},
-        {username: 'second', displayName: 'Second'},
-    ];
+const BOT_FIRST = 'f1rstbotidaaaaaaaaaaaaaaa';
+const BOT_SECOND = 's3condbotidbbbbbbbbbbbbbb';
+const BOT_TRANSCRIPT = 't4anscriptbotidcccccccccc';
+
+const runtimeBots = [
+    {id: BOT_FIRST, username: 'first', displayName: 'First'},
+    {id: BOT_SECOND, username: 'second', displayName: 'Second'},
+    {id: BOT_TRANSCRIPT, username: 'scribe', displayName: 'Scribe'},
+];
+
+describe('effectiveDefaultBotID', () => {
+    it.each([
+        {name: 'a configured ID', id: BOT_SECOND, legacy: '', expected: BOT_SECOND},
+        {name: 'a configured ID that wins over a stale legacy name', id: BOT_SECOND, legacy: 'first', expected: BOT_SECOND},
+        {name: 'a legacy name only', id: '', legacy: 'second', expected: BOT_SECOND},
+        {name: 'a renamed agent still matched by ID', id: BOT_FIRST, legacy: 'old-name', expected: BOT_FIRST},
+        {name: 'an empty default', id: '', legacy: '', expected: BOT_FIRST},
+        {name: 'a removed agent ID', id: 'gone0000000000000000000000', legacy: '', expected: BOT_FIRST},
+        {name: 'an unknown legacy name', id: '', legacy: 'gone', expected: BOT_FIRST},
+    ])('resolves $name the way the server does', ({id, legacy, expected}) => {
+        expect(effectiveDefaultBotID(id, legacy, runtimeBots)).toBe(expected);
+    });
+
+    it('returns an empty value when there are no agents', () => {
+        expect(effectiveDefaultBotID('', '', [])).toBe('');
+    });
+});
+
+describe('normalizeAgentReferences', () => {
+    const cfg = (refs: Partial<PluginConfig>) => ({
+        defaultBotUserID: '',
+        transcriptBotUserID: '',
+        defaultBotName: '',
+        transcriptBackend: '',
+        ...refs,
+    } as PluginConfig);
 
     it.each([
-        {name: 'a configured bot', configured: 'second', bots, expected: 'second'},
-        {name: 'an empty default', configured: '', bots, expected: 'first'},
-        {name: 'a removed bot', configured: 'gone', bots, expected: 'first'},
-        {name: 'no bots', configured: '', bots: [], expected: ''},
-    ])('resolves $name the way the server does', ({configured, bots: available, expected}) => {
-        expect(effectiveDefaultBotName(configured, available)).toBe(expected);
+        {
+            name: 'converts resolvable legacy names to IDs and clears the legacy fields',
+            input: {defaultBotName: 'second', transcriptBackend: 'scribe'},
+            expected: {defaultBotUserID: BOT_SECOND, defaultBotName: '', transcriptBotUserID: BOT_TRANSCRIPT, transcriptBackend: ''},
+        },
+        {
+            name: 'clears a stale legacy name when an ID is set',
+            input: {defaultBotUserID: BOT_FIRST, defaultBotName: 'second', transcriptBotUserID: BOT_TRANSCRIPT, transcriptBackend: 'first'},
+            expected: {defaultBotUserID: BOT_FIRST, defaultBotName: '', transcriptBotUserID: BOT_TRANSCRIPT, transcriptBackend: ''},
+        },
+        {
+            name: 'keeps both fields cleared when cleared',
+            input: {},
+            expected: {defaultBotUserID: '', defaultBotName: '', transcriptBotUserID: '', transcriptBackend: ''},
+        },
+        {
+            name: 'keeps an unresolvable legacy name so the server can still convert it',
+            input: {defaultBotName: 'gone', transcriptBackend: 'gone-too'},
+            expected: {defaultBotUserID: '', defaultBotName: 'gone', transcriptBotUserID: '', transcriptBackend: 'gone-too'},
+        },
+    ])('$name', ({input, expected}) => {
+        expect(normalizeAgentReferences(cfg(input), runtimeBots)).toMatchObject(expected);
+    });
+});
+
+describe('Config default agent selector', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        (getAIBots as jest.Mock).mockResolvedValue({bots: runtimeBots});
+        (savePluginConfig as jest.Mock).mockImplementation((cfg) => Promise.resolve(cfg));
+    });
+
+    async function saveLastRegistered(registerSaveAction: jest.Mock) {
+        const save = registerSaveAction.mock.calls.at(-1)?.[0] as SaveAction;
+        await act(async () => {
+            await save();
+        });
+        return (savePluginConfig as jest.Mock).mock.calls.at(-1)?.[0] as PluginConfig;
+    }
+
+    it('shows the agent matching a legacy default name and saves its ID with the legacy field cleared', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotName: 'second', defaultBotUserID: ''});
+        const {registerSaveAction} = renderConfig();
+
+        await screen.findByText('Second');
+        expect(screen.queryByText('First')).toBeNull();
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved.defaultBotUserID).toBe(BOT_SECOND);
+        expect(saved.defaultBotName).toBe('');
+    });
+
+    it('saves a selection by ID and clears the legacy fields', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue({...loadedConfig, defaultBotName: 'second', transcriptBackend: 'scribe'});
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('Second');
+
+        fireEvent.click(screen.getByRole('combobox', {name: 'Default bot'}));
+        fireEvent.pointerUp(await screen.findByRole('option', {name: 'First'}));
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved.defaultBotUserID).toBe(BOT_FIRST);
+        expect(saved.defaultBotName).toBe('');
+        expect(saved.transcriptBotUserID).toBe(BOT_TRANSCRIPT);
+        expect(saved.transcriptBackend).toBe('');
+    });
+
+    it('sends empty ID and legacy fields when nothing is configured', async () => {
+        (getPluginConfig as jest.Mock).mockResolvedValue(loadedConfig);
+        const {registerSaveAction} = renderConfig();
+        await screen.findByText('First');
+
+        const saved = await saveLastRegistered(registerSaveAction);
+        expect(saved).toMatchObject({defaultBotUserID: '', defaultBotName: '', transcriptBotUserID: '', transcriptBackend: ''});
     });
 });

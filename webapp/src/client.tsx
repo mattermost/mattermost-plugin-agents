@@ -130,8 +130,11 @@ export async function doReaction(postid: string) {
     });
 }
 
-export async function doThreadAnalysis(postid: string, analysisType: string, botUsername: string) {
-    const url = `${postRoute(postid)}/analyze?botUsername=${botUsername}`;
+// Agents are selected by immutable bot user ID; omitted means the server default.
+const botIdQuery = (botId?: string) => (botId ? `?botId=${encodeURIComponent(botId)}` : '');
+
+export async function doThreadAnalysis(postid: string, analysisType: string, botId: string) {
+    const url = `${postRoute(postid)}/analyze${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -150,8 +153,8 @@ export async function doThreadAnalysis(postid: string, analysisType: string, bot
     });
 }
 
-export async function doChannelAnalysis(channelId: string, analysisType: string, botUsername: string, options?: any) {
-    const url = `${channelRoute(channelId)}/analyze?botUsername=${botUsername}`;
+export async function doChannelAnalysis(channelId: string, analysisType: string, botId: string, options?: any) {
+    const url = `${channelRoute(channelId)}/analyze${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -297,7 +300,7 @@ export async function doPostbackSummary(postid: string) {
     });
 }
 
-export async function doLoopInAgent(postid: string, botUsername: string) {
+export async function doLoopInAgent(postid: string, botId: string) {
     if (!isValidId(postid)) {
         throw new ClientError(Client4.url, {
             message: 'Invalid post id',
@@ -306,7 +309,7 @@ export async function doLoopInAgent(postid: string, botUsername: string) {
         });
     }
 
-    const url = `${postRoute(postid)}/loop_in_agent?botUsername=${encodeURIComponent(botUsername)}`;
+    const url = `${postRoute(postid)}/loop_in_agent${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
     }));
@@ -458,8 +461,8 @@ export async function getBotProfilePictureUrl(username: string) {
 // doRunSearch starts a search conversation with the agent. teamId is the
 // user's current team (used for citation links); channelId, when set, is the
 // channel the agent searches first.
-export async function doRunSearch(query: string, teamId: string, channelId: string, botUsername?: string): Promise<{postid: string; channelid: string}> {
-    const url = `${baseRoute()}/search/run${botUsername ? `?botUsername=${botUsername}` : ''}`;
+export async function doRunSearch(query: string, teamId: string, channelId: string, botId?: string): Promise<{postid: string; channelid: string}> {
+    const url = `${baseRoute()}/search/run${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -915,9 +918,9 @@ export async function getChannelInterval(
     endTime: number,
     presetPrompt: string,
     prompt?: string,
-    botUsername?: string,
+    botId?: string,
 ): Promise<{postid: string; channelid: string}> {
-    const url = `${channelRoute(channelID)}/interval${botUsername ? `?botUsername=${botUsername}` : ''}`;
+    const url = `${channelRoute(channelID)}/interval${botIdQuery(botId)}`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
         body: JSON.stringify({
@@ -1231,11 +1234,11 @@ export async function setCustomPromptPin(promptId: string, pinned: boolean): Pro
     }
 }
 
-export async function renderCustomPrompt(id: string, channelId?: string, botUsername?: string): Promise<{rendered: string}> {
+export async function renderCustomPrompt(id: string, channelId?: string, botId?: string): Promise<{rendered: string}> {
     const url = `${baseRoute()}/custom-prompts/${id}/render`;
     const response = await fetch(url, Client4.getOptions({
         method: 'POST',
-        body: JSON.stringify({channel_id: channelId, bot_username: botUsername}),
+        body: JSON.stringify({channel_id: channelId, bot_id: botId}),
     }));
 
     if (response.ok) {

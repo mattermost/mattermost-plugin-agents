@@ -590,7 +590,7 @@ Restoring only plugin configuration isn't sufficient to restore agents managed f
 
 The plugin uses a service-based architecture:
 
-- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotName`
+- `PluginSettings.Plugins["mattermost-ai"]["config"]` stores plugin-wide settings and AI service configurations, including `defaultBotUserID`
 - Agents are stored separately in the `Agents_UserAgents` table
 
 This separation allows multiple agents to share the same LLM service configuration while keeping agent lifecycle and access data out of `config.bots`.
@@ -609,10 +609,12 @@ This separation allows multiple agents to share the same LLM service configurati
         "fallbackServiceID": "z9d4meq7jtrx5nch1u8kwsoa3e"
       }
     ],
-    "defaultBotName": "ai"
+    "defaultBotUserID": "q8n4w7bpstfxjcmk3yr9zhde1a"
   }
 }
 ```
+
+`defaultBotUserID` and `transcriptBotUserID` select the default and transcript agents by bot user ID, so renaming an agent doesn't change which agent they select. The legacy `defaultBotName` and `transcriptBackend` username fields are still read when the matching ID field is empty: they select only the agent whose account currently holds that username. On startup, and whenever the configuration is saved, the plugin replaces each legacy username with the bot user ID of the agent holding it; a username that no agent holds is left in place and logged as a warning. Automation should write the ID fields and set the legacy fields to `""`.
 
 Service IDs are Mattermost-style 26-character IDs. Configurations created before this format was adopted used UUIDs; those are rewritten once on upgrade, so external automation that hard-coded UUID service IDs must re-read `GET /plugins/mattermost-ai/admin/config` to pick up the new IDs.
 

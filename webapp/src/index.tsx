@@ -342,7 +342,7 @@ export default class Plugin {
                         searchTerms,
                         state.entities.teams.currentTeamId,
                         '',
-                        activeBot?.username,
+                        activeBot?.id,
                     );
                     doSelectPost(result.postid, result.channelid, store.dispatch);
                     if (rhs) {

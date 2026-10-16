@@ -250,27 +250,23 @@ func TestUpdateAgentPolicyDeleteFailsAndRollbackFails(t *testing.T) {
 
 func TestUpdateAgentRenameRollbackOnPolicyDeleteFailure(t *testing.T) {
 	tests := []struct {
-		name               string
-		rollbackErr        error
-		expectedName       string
-		expectedBotName    string
-		expectedDefaultBot string
-		expectedPublished  []string
+		name              string
+		rollbackErr       error
+		expectedName      string
+		expectedBotName   string
+		expectedPublished []string
 	}{
 		{
-			name:               "rename is reverted along with the agent",
-			expectedName:       "old-name",
-			expectedBotName:    "old-name",
-			expectedDefaultBot: "old-name",
-			expectedPublished:  []string{"agent-abac-rename"},
+			name:            "rename is reverted along with the agent",
+			expectedName:    "old-name",
+			expectedBotName: "old-name",
 		},
 		{
-			name:               "rename is kept when the agent cannot be restored",
-			rollbackErr:        errors.New("rollback database failure"),
-			expectedName:       "new-name",
-			expectedBotName:    "new-name",
-			expectedDefaultBot: "new-name",
-			expectedPublished:  []string{"agent-abac-rename"},
+			name:              "rename is kept when the agent cannot be restored",
+			rollbackErr:       errors.New("rollback database failure"),
+			expectedName:      "new-name",
+			expectedBotName:   "new-name",
+			expectedPublished: []string{"agent-abac-rename"},
 		},
 	}
 
@@ -281,8 +277,6 @@ func TestUpdateAgentRenameRollbackOnPolicyDeleteFailure(t *testing.T) {
 
 			e.OverrideLicense(enterprisetest.LicenseFor(enterprise.LevelEnterpriseAdvanced))
 			e.api.accessChecker = accesscontrol.New(accesscontrol.PassthroughClient{}, e.mockAPI, accesscontrol.NoMCPServerIDs, nil)
-			configStore := e.api.configStore.(*mockConfigStore)
-			configStore.cfg.DefaultBotName = "old-name"
 			e.agentStore.updateErrs = []error{nil, tc.rollbackErr}
 
 			botName := "old-name"
@@ -323,8 +317,7 @@ func TestUpdateAgentRenameRollbackOnPolicyDeleteFailure(t *testing.T) {
 
 			assert.Equal(t, tc.expectedName, e.agentStore.agents[agentID].Name)
 			assert.Equal(t, tc.expectedBotName, botName)
-			assert.Equal(t, tc.expectedDefaultBot, configStore.cfg.DefaultBotName)
-			assert.Equal(t, tc.expectedPublished, notifier.published, "peers must refresh the agent once settings were renamed")
+			assert.Equal(t, tc.expectedPublished, notifier.published, "peers must refresh the agent unless the rename was fully reverted")
 			if botName == "old-name" {
 				assert.Nil(t, e.bots.GetBotMentioned("@new-name hi"), "the reverted username must not keep routing to the agent")
 			} else {

@@ -31,8 +31,8 @@ var validUsernameRe = regexp.MustCompile(`^[a-z][a-z0-9._-]*$`)
 
 var errInvalidAgentUsername = errors.New("invalid username: must start with a lowercase letter and contain only lowercase letters, numbers, dots, hyphens, or underscores")
 
-// errAgentConfigReferencesUnaffected aborts the config update when no setting references the renamed agent.
-var errAgentConfigReferencesUnaffected = errors.New("no setting references the renamed agent")
+// errNoAgentConfigReferences aborts the config update when no setting references the deleted agent.
+var errNoAgentConfigReferences = errors.New("no setting references the agent")
 
 // errServiceAccountAuthRequiresAdmin is returned when a caller without
 // PermissionManageSystem tries to save an agent with the service account flag on.
@@ -361,43 +361,37 @@ func (a *API) renameAgentBot(c *gin.Context, botUserID, username string) (rename
 	return true, true
 }
 
-// renameAgentConfigReferences points DefaultBotName and TranscriptGenerator at
-// newName when they referenced oldName, or clears them when newName is empty.
-// It reports whether the config changed and whether DefaultBotName was among
-// the changes.
-func (a *API) renameAgentConfigReferences(oldName, newName string) (updated, defaultRenamed bool, err error) {
+// clearAgentConfigReferences clears the default agent and transcript agent
+// settings that select the given agent, by bot user ID or legacy username.
+func (a *API) clearAgentConfigReferences(botUserID, username string) error {
 	if a.configStore == nil {
-		return false, false, nil
+		return nil
 	}
 	saved, err := a.configStore.UpdateConfig(func(prev *config.Config) (config.Config, error) {
-		if prev == nil || (prev.DefaultBotName != oldName && prev.TranscriptGenerator != oldName) {
-			return config.Config{}, errAgentConfigReferencesUnaffected
+		if prev == nil {
+			return config.Config{}, errNoAgentConfigReferences
 		}
-		next := prev.Clone()
-		defaultRenamed = prev.DefaultBotName == oldName
-		if defaultRenamed {
-			next.DefaultBotName = newName
+		next, cleared := prev.ClearAgentReferences(botUserID, username)
+		if !cleared {
+			return config.Config{}, errNoAgentConfigReferences
 		}
-		if prev.TranscriptGenerator == oldName {
-			next.TranscriptGenerator = newName
-		}
-		return *next, nil
+		return next, nil
 	})
-	if errors.Is(err, errAgentConfigReferencesUnaffected) {
-		return false, false, nil
+	if errors.Is(err, errNoAgentConfigReferences) {
+		return nil
 	}
 	if err != nil {
-		return false, false, err
+		return err
 	}
 	if a.configUpdater != nil {
 		a.configUpdater.Update(&saved)
 	}
 	if a.clusterNotifier != nil {
 		if notifyErr := a.clusterNotifier.PublishConfigUpdate(); notifyErr != nil {
-			a.pluginAPI.Log.Warn("Failed to notify cluster of agent rename config update", "error", notifyErr.Error())
+			a.pluginAPI.Log.Warn("Failed to notify cluster of deleted agent config update", "error", notifyErr.Error())
 		}
 	}
-	return true, defaultRenamed, nil
+	return nil
 }
 
 // refreshBotsAndNotify reloads bots on this node, notifies the cluster, and broadcasts so clients refresh bot lists.
@@ -750,36 +744,6 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 		return
 	}
 
-	// A stale DefaultBotName or TranscriptGenerator would silently misroute
-	// requests, so failing to update them fails the rename. The rename is only
-	// reverted once the stored agent is restored, so the agent and its bot
-	// account never disagree on the name.
-	defaultAgentRenamed := false
-	if usernameChanged {
-		updated, defaultRenamed, err := a.renameAgentConfigReferences(prev.Name, cfg.Name)
-		if err != nil {
-			if rollbackErr := a.agentStore.UpdateAgent(&prev); rollbackErr != nil {
-				a.pluginAPI.Log.Error("Failed to rollback agent after default agent rename failure", "agent_id", cfg.ID, "rollback_error", rollbackErr.Error(), "rename_error", err.Error())
-			} else {
-				revertRename()
-			}
-			abortAgentRequest(c, http.StatusInternalServerError, fmt.Errorf("failed to point settings at the renamed agent: %w", err))
-			return
-		}
-		defaultAgentRenamed = defaultRenamed
-		if updated {
-			revertBotRename := revertRename
-			revertRename = func() {
-				if _, _, err := a.renameAgentConfigReferences(cfg.Name, prev.Name); err != nil {
-					a.pluginAPI.Log.Error("Failed to revert default agent name after agent update failure", "agent_id", cfg.ID, "error", err.Error())
-				}
-				revertBotRename()
-				// The config update already rebuilt the registries under the new name.
-				renameReverted = false
-			}
-		}
-	}
-
 	// Switching away from attribute-based access: delete the agent policy.
 	// If policy deletion fails with an unexpected error, rollback the agent
 	// store to prev so the agent is not left in an inconsistent state where
@@ -798,10 +762,6 @@ func (a *API) handleUpdateAgent(c *gin.Context) {
 			abortPolicyRequest(c, fmt.Errorf("failed to delete access policy: %w", err))
 			return
 		}
-	}
-
-	if defaultAgentRenamed {
-		audit.AddParam(auditRec(c), "default_agent_renamed", true)
 	}
 
 	var ensureErr error
@@ -843,9 +803,9 @@ func (a *API) handleDeleteAgent(c *gin.Context) {
 		return
 	}
 
-	// A default naming a missing agent fails requests instead of falling back
-	// to the first agent, so the deleted agent must not stay the default.
-	if _, _, err := a.renameAgentConfigReferences(cfg.Name, ""); err != nil {
+	// A default that selects a missing agent fails requests instead of falling
+	// back to the first agent, so the deleted agent must not stay the default.
+	if err := a.clearAgentConfigReferences(cfg.BotUserID, cfg.Name); err != nil {
 		a.pluginAPI.Log.Error("Failed to clear settings that referenced the deleted agent", "agent_id", cfg.ID, "error", err.Error())
 	}
 
