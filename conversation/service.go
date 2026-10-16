@@ -498,32 +498,35 @@ func (s *Service) attachmentConfigForBot(botID string) (bool, int64) {
 	return enableVision, maxFileSize
 }
 
-// turnsToLLMPosts converts a contiguous slice of turns into llm.Posts,
-// merging each tool_result turn into the preceding assistant turn so that
-// BlocksToPost can pair tool_result blocks with their tool_use entries in a
-// single llm.Post. Without this merge, tool_use entries go out with empty
-// Result fields and bifrost emits empty-content tool messages, which
-// Anthropic rejects with "text content blocks must be non-empty".
+// MissingToolResultContent is replayed as the result of a tool_use that has no
+// stored tool_result (e.g. still awaiting approval). Providers reject a
+// tool_use that is not answered by a non-empty tool_result.
+const MissingToolResultContent = "No result: this tool call was not executed."
+
+// turnsToLLMPosts converts a slice of turns into llm.Posts. tool_result turns
+// produce no post of their own: each result is folded into the assistant turn
+// holding its tool_use (see pairToolResults), so every tool_use replays with
+// its own non-empty result.
 func turnsToLLMPosts(
 	turns []store.Turn,
 	conversionOpts PostConversionOptions,
 ) ([]llm.Post, error) {
-	posts := make([]llm.Post, 0, len(turns))
-	for i := 0; i < len(turns); i++ {
-		turn := turns[i]
+	blocksByTurn := make([][]ContentBlock, len(turns))
+	for i, turn := range turns {
 		blocks, err := UnmarshalBlocks(turn.Content)
 		if err != nil {
 			return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turn.ID, err)
 		}
-		if turn.Role == "assistant" && i+1 < len(turns) && turns[i+1].Role == "tool_result" {
-			nextBlocks, err := UnmarshalBlocks(turns[i+1].Content)
-			if err != nil {
-				return nil, fmt.Errorf("failed to unmarshal turn %s content: %w", turns[i+1].ID, err)
-			}
-			blocks = append(blocks, nextBlocks...)
-			i++
+		blocksByTurn[i] = blocks
+	}
+	pairToolResults(turns, blocksByTurn)
+
+	posts := make([]llm.Post, 0, len(turns))
+	for i, turn := range turns {
+		if turn.Role == "tool_result" {
+			continue
 		}
-		post := BlocksToPost(blocks, turn.Role, conversionOpts)
+		post := BlocksToPost(blocksByTurn[i], turn.Role, conversionOpts)
 		if turn.Role == "assistant" {
 			// Anthropic signed thinking must be replayed byte-for-byte. Our stored
 			// content blocks intentionally normalize assistant output (merge text
@@ -536,6 +539,88 @@ func turnsToLLMPosts(
 		posts = append(posts, post)
 	}
 	return posts, nil
+}
+
+// pairToolResults appends each tool_result block to the blocks of the nearest
+// preceding assistant turn holding its tool_use. A result need not follow its
+// tool_use directly: channel approvals append results at the end of the
+// conversation, after any newer bot posts. Results without a matching tool_use
+// are dropped, and tool_use blocks left without a result are answered with
+// MissingToolResultContent.
+func pairToolResults(turns []store.Turn, blocksByTurn [][]ContentBlock) {
+	type toolUseKey struct {
+		turn int
+		id   string
+	}
+	ownerByID := make(map[string]int)
+	answered := make(map[toolUseKey]bool)
+	for i, turn := range turns {
+		switch turn.Role {
+		case "assistant":
+			for _, b := range blocksByTurn[i] {
+				if b.Type == BlockTypeToolUse && b.ID != "" {
+					ownerByID[b.ID] = i
+				}
+			}
+		case "tool_result":
+			for _, b := range blocksByTurn[i] {
+				owner, ok := ownerByID[b.ToolUseID]
+				if b.Type != BlockTypeToolResult || !ok {
+					continue
+				}
+				blocksByTurn[owner] = append(blocksByTurn[owner], b)
+				answered[toolUseKey{owner, b.ToolUseID}] = true
+			}
+			blocksByTurn[i] = nil
+		}
+	}
+
+	for i, turn := range turns {
+		if turn.Role != "assistant" {
+			continue
+		}
+		for _, b := range blocksByTurn[i] {
+			if b.Type != BlockTypeToolUse || b.ID == "" || answered[toolUseKey{i, b.ID}] {
+				continue
+			}
+			blocksByTurn[i] = append(blocksByTurn[i], ContentBlock{
+				Type:      BlockTypeToolResult,
+				ToolUseID: b.ID,
+				Content:   MissingToolResultContent,
+				Status:    StatusError,
+				Shared:    new(true),
+			})
+		}
+	}
+}
+
+func toolUseIDs(content json.RawMessage) []string {
+	blocks, err := UnmarshalBlocks(content)
+	if err != nil {
+		return nil
+	}
+	var ids []string
+	for _, b := range blocks {
+		if b.Type == BlockTypeToolUse && b.ID != "" {
+			ids = append(ids, b.ID)
+		}
+	}
+	return ids
+}
+
+// toolResultOwnerRunSeq returns the run of the first tool_use answered by a
+// tool_result turn's content.
+func toolResultOwnerRunSeq(content json.RawMessage, runSeqByToolUseID map[string]int) (int, bool) {
+	blocks, err := UnmarshalBlocks(content)
+	if err != nil {
+		return 0, false
+	}
+	for _, b := range blocks {
+		if runSeq, ok := runSeqByToolUseID[b.ToolUseID]; ok && b.Type == BlockTypeToolResult {
+			return runSeq, true
+		}
+	}
+	return 0, false
 }
 
 // CreatePlaceholderAssistantTurn creates an empty assistant turn linked to the response post.
@@ -760,28 +845,42 @@ func (s *Service) BuildChannelMentionRequest(
 	// For each post, either render it from the turn (if it belongs to the bot)
 	// or as plain text.
 	//
-	// Turns without post IDs (tool rounds) are attached right after the
-	// last turn-with-post that precedes them in sequence order.
+	// Turns without post IDs (tool rounds, demoted anchors) are attached right
+	// after the last turn-with-post that precedes them in sequence order.
+	// tool_result turns instead join the run of the turn holding their
+	// tool_use: approvals append results at the end of the conversation, so an
+	// older post approved after a newer bot post would otherwise lend its
+	// results to the newer post.
 	//
 	// Build a map from post-linked turn sequence to following non-post turns.
 	turnsByPrecedingPost := make(map[int][]store.Turn)
 	if len(turnsWithoutPosts) > 0 {
-		// Find the preceding post-linked turn for each non-post turn.
-		postLinkedSeqs := make([]int, 0)
+		precedingSeqByTurn := make(map[string]int, len(turns))
+		precedingSeq := 0
 		for _, turn := range turns {
-			if turn.PostID != nil {
-				postLinkedSeqs = append(postLinkedSeqs, turn.Sequence)
+			if turn.PostID != nil && turn.Sequence > precedingSeq {
+				precedingSeq = turn.Sequence
 			}
+			precedingSeqByTurn[turn.ID] = precedingSeq
 		}
-		for _, turn := range turnsWithoutPosts {
-			// Find the largest post-linked sequence that is less than this turn's sequence.
-			precedingSeq := 0
-			for _, seq := range postLinkedSeqs {
-				if seq < turn.Sequence && seq > precedingSeq {
-					precedingSeq = seq
+
+		runSeqByToolUseID := make(map[string]int)
+		for _, turn := range turns {
+			if turn.Role == "assistant" {
+				for _, id := range toolUseIDs(turn.Content) {
+					runSeqByToolUseID[id] = precedingSeqByTurn[turn.ID]
 				}
 			}
-			turnsByPrecedingPost[precedingSeq] = append(turnsByPrecedingPost[precedingSeq], turn)
+			if turn.PostID != nil {
+				continue
+			}
+			runSeq := precedingSeqByTurn[turn.ID]
+			if turn.Role == "tool_result" {
+				if ownerRunSeq, ok := toolResultOwnerRunSeq(turn.Content, runSeqByToolUseID); ok {
+					runSeq = ownerRunSeq
+				}
+			}
+			turnsByPrecedingPost[runSeq] = append(turnsByPrecedingPost[runSeq], turn)
 		}
 	}
 

@@ -526,7 +526,7 @@ func functionToolsForCount(tools []schemas.ResponsesTool) []schemas.ResponsesToo
 func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) T, imageBlock func(dataURL string) T) []T {
 	parts := make([]T, 0, len(post.Files)+1)
 
-	if post.Message != "" {
+	if !isBlank(post.Message) {
 		parts = append(parts, textBlock(post.Message))
 	}
 
@@ -560,6 +560,33 @@ func multimodalContent[T any](post llm.Post, maxDim int, textBlock func(string) 
 	}
 
 	return parts
+}
+
+// emptyToolResultPlaceholder stands in for a blank tool result. Anthropic
+// rejects blank text ("text content blocks must be non-empty"), so no message
+// or tool result may be replayed with blank content.
+const emptyToolResultPlaceholder = "(no output)"
+
+func isBlank(s string) bool {
+	return strings.TrimSpace(s) == ""
+}
+
+// replayableToolCalls returns the tool calls of a bot post that can be replayed
+// as tool_use/tool_result pairs, with blank results replaced. Calls without an
+// ID or name are results whose tool_use was never matched; they cannot form a
+// valid pair and are dropped.
+func replayableToolCalls(calls []llm.ToolCall) []llm.ToolCall {
+	replayable := make([]llm.ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		if tc.ID == "" || tc.Name == "" {
+			continue
+		}
+		if isBlank(tc.Result) {
+			tc.Result = emptyToolResultPlaceholder
+		}
+		replayable = append(replayable, tc)
+	}
+	return replayable
 }
 
 func hasToolUseHistory(posts []llm.Post) bool {

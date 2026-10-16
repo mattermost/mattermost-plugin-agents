@@ -241,6 +241,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 
 		switch post.Role {
 		case llm.PostRoleSystem:
+			if isBlank(post.Message) {
+				continue
+			}
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleSystem,
 				Content: &schemas.ChatMessageContent{
@@ -252,6 +255,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			if len(post.Files) > 0 {
 				// Multimodal message with images
 				parts := b.createMultimodalContent(post, maxDim)
+				if len(parts) == 0 {
+					continue
+				}
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
@@ -259,6 +265,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 					},
 				}
 			} else {
+				if isBlank(post.Message) {
+					continue
+				}
 				msg = schemas.ChatMessage{
 					Role: schemas.ChatMessageRoleUser,
 					Content: &schemas.ChatMessageContent{
@@ -270,9 +279,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 		case llm.PostRoleBot:
 			msg = schemas.ChatMessage{
 				Role: schemas.ChatMessageRoleAssistant,
-				Content: &schemas.ChatMessageContent{
+			}
+			if !isBlank(post.Message) {
+				msg.Content = &schemas.ChatMessageContent{
 					ContentStr: new(post.Message),
-				},
+				}
 			}
 
 			// Add reasoning details for thinking-enabled conversations.
@@ -294,12 +305,9 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 			}
 
 			// Handle tool calls in assistant messages
-			if len(post.ToolUse) > 0 {
-				if post.Message == "" {
-					msg.Content = nil
-				}
-				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(post.ToolUse))
-				for i, tc := range post.ToolUse {
+			if replayable := replayableToolCalls(post.ToolUse); len(replayable) > 0 {
+				toolCalls := make([]schemas.ChatAssistantMessageToolCall, 0, len(replayable))
+				for i, tc := range replayable {
 					toolCalls = append(toolCalls, schemas.ChatAssistantMessageToolCall{
 						Index: uint16(i % 65536), //nolint:gosec // index will never exceed uint16 max in practice
 						ID:    new(tc.ID),
@@ -318,19 +326,11 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 				// Add the assistant message with tool calls
 				messages = append(messages, msg)
 
-				// Add tool result messages. Anthropic rejects tool result
-				// messages with empty content ("text content blocks must be
-				// non-empty"), so substitute a placeholder if the tool
-				// returned an empty string.
-				for _, tc := range post.ToolUse {
-					result := tc.Result
-					if result == "" {
-						result = "(no output)"
-					}
+				for _, tc := range replayable {
 					toolResultMsg := schemas.ChatMessage{
 						Role: schemas.ChatMessageRoleTool,
 						Content: &schemas.ChatMessageContent{
-							ContentStr: new(result),
+							ContentStr: new(tc.Result),
 						},
 						ChatToolMessage: &schemas.ChatToolMessage{
 							ToolCallID: new(tc.ID),
@@ -339,6 +339,10 @@ func (b *LLM) convertMessages(posts []llm.Post) []schemas.ChatMessage {
 					messages = append(messages, toolResultMsg)
 				}
 				continue // Skip adding msg again
+			}
+
+			if msg.Content == nil && msg.ChatAssistantMessage == nil {
+				continue
 			}
 		}
 
