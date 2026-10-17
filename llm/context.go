@@ -93,6 +93,26 @@ type ToolCatalogContext struct {
 	// attached automatically. The model cannot see provider file ids, so the
 	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
 	SandboxFilesAttached bool
+
+	// UnconnectedMCPServers lists MCP servers this requester could use here
+	// but has not connected. Only populated for interactive, per-user
+	// catalogs; ConnectMCPServer is cataloged exactly when it is non-empty.
+	UnconnectedMCPServers []UnconnectedMCPServer
+
+	// UnconnectedMCPServerScope is set when this context may offer
+	// ConnectMCPServer at all (interactive requester, per-user catalog). It
+	// records the agent allowlist so a server whose authorization lapses
+	// mid-turn is held to the same eligibility as one found at catalog build.
+	UnconnectedMCPServerScope *UnconnectedMCPServerScope
+}
+
+// UnconnectedMCPServerScope is the agent-level MCP eligibility an unconnected
+// server must satisfy before it is advertised.
+type UnconnectedMCPServerScope struct {
+	// AllMCPTools is true when the agent picks up every MCP tool
+	// automatically; EnabledMCPTools is ignored then.
+	AllMCPTools     bool
+	EnabledMCPTools []EnabledMCPTool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for

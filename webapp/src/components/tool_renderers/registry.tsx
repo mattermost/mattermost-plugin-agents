@@ -10,9 +10,10 @@ import React from 'react';
 
 import {originKind, bareToolName} from '@/utils/tool_identity';
 
-import {ToolApprovalStage, ToolCall, UserInteractionSelect} from '../tool_types';
+import {ToolApprovalStage, ToolCall, UserInteractionConnect, UserInteractionSelect} from '../tool_types';
 import ToolCard from '../tool_card';
 import QuestionCard, {parseQuestionArgs} from '../question_card';
+import ConnectCard, {parseConnectArgs} from '../connect_card';
 
 import {RichCardProps} from './tool_card_shell';
 import ReadPostPreviewCard from './posts/read_post';
@@ -35,7 +36,8 @@ export interface ToolRenderContext {
     isAutoApproved: boolean;
     awaitingRequester?: boolean;
 
-    // User-interaction (question) wiring.
+    // User-interaction wiring. Connect cards accept through onApprove (an
+    // accepted decision with no answer payload) and skip through onSkip.
     canAnswer: boolean;
     onAnswer?: (selections: string[], custom: string) => void;
     onSkip?: () => void;
@@ -84,6 +86,30 @@ const registry: RendererEntry[] = [
                     localDecision={ctx.localDecision}
                     canAnswer={ctx.canAnswer}
                     onAnswer={ctx.onAnswer}
+                    onSkip={ctx.onSkip}
+                />
+            );
+        },
+    },
+
+    // ConnectCard: a connect-interaction tool (ConnectMCPServer). Onlookers
+    // get redacted arguments and still see the read-only waiting/resolved
+    // card; a requester with unparseable arguments gets the generic card.
+    {
+        match: (tool) => tool.user_interaction === UserInteractionConnect,
+        render: (ctx) => {
+            const args = parseConnectArgs(ctx.tool.arguments);
+            if (!args && ctx.canAnswer) {
+                return <ToolCard {...toRichProps(ctx)}/>;
+            }
+            return (
+                <ConnectCard
+                    tool={ctx.tool}
+                    server={args?.server ?? null}
+                    isProcessing={ctx.isProcessing}
+                    localDecision={ctx.localDecision}
+                    canAnswer={ctx.canAnswer}
+                    onAccept={ctx.onApprove}
                     onSkip={ctx.onSkip}
                 />
             );

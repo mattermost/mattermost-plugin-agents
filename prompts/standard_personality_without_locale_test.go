@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -47,11 +48,14 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 		name                  string
 		tools                 *llm.ToolStore
 		mcpDynamicToolLoading bool
+		unconnected           []llm.UnconnectedMCPServer
 	}{
 		{name: "tools_nil", tools: nil},
 		{name: "tools_without_websearch", tools: buildToolStore("ReadPost")},
 		{name: "tools_with_websearch", tools: buildToolStore("WebSearch")},
 		{name: "tools_with_dynamic_mcp_meta_tools", tools: buildToolStore("search_tools", "load_tool"), mcpDynamicToolLoading: true},
+		{name: "tools_with_unconnected_mcp_servers", tools: buildToolStore("ReadPost", llm.ConnectMCPServerToolName), unconnected: testUnconnectedMCPServers()},
+		{name: "tools_with_dynamic_unconnected_mcp_servers", tools: buildToolStore("search_tools", "load_tool", llm.ConnectMCPServerToolName), mcpDynamicToolLoading: true, unconnected: testUnconnectedMCPServers()},
 	}
 	channelModes := []struct {
 		name    string
@@ -103,7 +107,7 @@ func TestStandardPersonalityWithoutLocaleWhitespaceGating(t *testing.T) {
 						BotUsername:    "agent",
 						BotModel:       "model-x",
 						Tools:          toolMode.tools,
-						ToolCatalog:    llm.ToolCatalogContext{MCPDynamicToolLoading: toolMode.mcpDynamicToolLoading},
+						ToolCatalog:    llm.ToolCatalogContext{MCPDynamicToolLoading: toolMode.mcpDynamicToolLoading, UnconnectedMCPServers: toolMode.unconnected},
 						RequestingUser: requestingUserMode.buildRequestingUser(),
 						Channel:        channelMode.channel,
 					}
@@ -376,6 +380,80 @@ func TestStandardPersonalitySandboxFileGuidance(t *testing.T) {
 				assert.NotContains(t, output, guidance)
 			}
 		})
+	}
+}
+
+// The system prompt is fixed when a conversation starts, so it carries only
+// static guidance; the per-turn ConnectMCPServer tool schema is the one
+// place unconnected servers are listed.
+func TestStandardPersonalityUnconnectedMCPServers(t *testing.T) {
+	const guidance = "integration listed in the ConnectMCPServer tool"
+	connectTool := llm.Tool{
+		Name:            llm.ConnectMCPServerToolName,
+		Description:     "Connect",
+		UserInteraction: llm.UserInteractionConnect,
+		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
+			return "", nil
+		},
+	}
+	storeWith := func(base *llm.ToolStore, tools ...llm.Tool) *llm.ToolStore {
+		base.AddTools(tools)
+		return base
+	}
+
+	tests := []struct {
+		name         string
+		tools        *llm.ToolStore
+		dynamic      bool
+		disabled     []llm.ToolInfo
+		wantGuidance bool
+	}{
+		{name: "guidance when ConnectMCPServer is callable", tools: storeWith(llm.NewToolStore(), connectTool), wantGuidance: true},
+		{name: "guidance alongside the meta-tool workflow", tools: storeWith(dynamicMetaToolStore(), connectTool), dynamic: true, wantGuidance: true},
+		{name: "omitted when ConnectMCPServer is not cataloged", tools: llm.NewToolStore()},
+		{
+			name:     "omitted when ConnectMCPServer is disabled in this context",
+			tools:    storeWith(llm.NewToolStore(), connectTool),
+			disabled: []llm.ToolInfo{{Name: llm.ConnectMCPServerToolName, Description: "Connect"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := renderStandardPersonalityWithoutLocale(t, &llm.Context{
+				BotName:           "agent",
+				Tools:             tt.tools,
+				DisabledToolsInfo: tt.disabled,
+				ToolCatalog: llm.ToolCatalogContext{
+					MCPDynamicToolLoading: tt.dynamic,
+					UnconnectedMCPServers: testUnconnectedMCPServers(),
+				},
+			})
+			assert.Equal(t, tt.wantGuidance, strings.Contains(output, guidance))
+			assert.NotContains(t, output, "Atlassian Jira issues")
+			assert.NotContains(t, output, "create_issue")
+			assert.NotContains(t, output, "/mcp/oauth/")
+			if tt.dynamic {
+				assert.Contains(t, output, "You have access to a large set of MCP tools")
+			}
+		})
+	}
+}
+
+func testUnconnectedMCPServers() []llm.UnconnectedMCPServer {
+	return []llm.UnconnectedMCPServer{
+		{
+			Name:        "Jira",
+			Origin:      "jira",
+			Description: "Atlassian Jira issues",
+			AuthURL:     "https://mm.example.com/plugins/mattermost-ai/mcp/oauth/Jira/start",
+			ToolNames:   []string{"create_issue", "search_issues"},
+		},
+		{
+			Name:    "Notes",
+			Origin:  "notes",
+			AuthURL: "https://mm.example.com/plugins/mattermost-ai/mcp/oauth/Notes/start",
+		},
 	}
 }
 

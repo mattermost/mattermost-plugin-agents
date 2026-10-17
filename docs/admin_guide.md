@@ -735,6 +735,7 @@ You can't disable MCP entirely from the System Console. To limit access, disable
    - **Custom Headers**: Additional headers required by your MCP server (optional).
    - **Service Account Authentication**: Static headers used in place of per-user OAuth by agents with **Use service accounts for authentication** enabled (optional). See [Service account authentication](#service-account-authentication).
    - **Server Name**: Descriptive name for the server (auto-generated if not provided).
+   - **Description**: A short summary of what the server offers, such as "Jira issues and projects for the Engineering site" (optional, stored as `description` on the server entry). Agents show it to the model when a user hasn't connected this OAuth-backed server yet, so write it for the model and keep it to a sentence. Mattermost never uses descriptions or tool lists reported by the server itself for this purpose.
 
 3. Select **Save** to add the server.
 
@@ -815,9 +816,13 @@ Some MCP servers require OAuth per Mattermost user. For those servers, the plugi
 
 **System Console (admin tool configuration):** On **System Console > Plugins > Agents > MCP Servers**, expanding an OAuth-backed server shows that you must authenticate to fetch that server's tool list and configure per-tool approval policies. That sign-in only applies to your administrator account. Each end user must authenticate separately, even after an admin has connected in the System Console.
 
-**Conversations:** The plugin no longer posts ephemeral in-channel or in-thread messages to prompt MCP OAuth. Users should use the Agents webapp **Tools** menu to view connection state and run **Connect** or **Disconnect**.
+**Conversations:** When a user talks to an agent interactively (a DM, the Agents pane, or a channel mention where tools are available) and hasn't connected an OAuth-backed MCP server that the agent could otherwise use in that context, the agent is told the server exists and is not connected. Only admin-authored metadata is shared with the model: the server name, its optional **Description**, and up to 15 tool names from the server's admin tool configuration. Servers the agent can't use in that context are never mentioned: servers excluded by the agent's MCP tool allowlist, servers the user turned off, servers excluded by access policy or license, and in channels, servers with no configured tool that the channel would allow. If the user's request needs one of these servers, the agent calls the built-in `ConnectMCPServer` tool, which shows a **Connect** card in the conversation. When dynamic tool loading is enabled and `search_tools` finds no connected tools, its result points the agent to `ConnectMCPServer` without naming any server, because tool results can be shared with the channel. Agents using service account authentication, bridge integrations, and non-interactive flows never advertise unconnected servers.
 
-**Mobile and other clients:** MCP OAuth is not initiated from the mobile app or other clients that do not use the Agents webapp. Users need Mattermost web or desktop to connect OAuth-backed MCP servers.
+Only the user who made the request can act on the card, including in channels. After they connect, the agent continues with the server's tools available. If the connection didn't complete, or the server's tools still aren't available to the agent in that context, the card shows that it couldn't connect and the agent continues without the server. If they select **Skip**, the agent also continues without the server. If a user's authorization expires or is revoked during a conversation, the failing tool call tells the agent to ask the user to reconnect through the same card.
+
+Mattermost doesn't post ephemeral messages to prompt MCP OAuth.
+
+**Mobile and other clients:** The **Connect** card and **Tools** menu are part of the Agents webapp. MCP OAuth is not initiated from the mobile app or other clients that do not use the Agents webapp. Users need Mattermost web or desktop to connect OAuth-backed MCP servers.
 
 **Custom MCP OAuth setups:** If the OAuth start URL includes a `resource_metadata` query parameter, it is accepted only when its origin matches the origin of the configured MCP server **Server URL**. This prevents cross-origin metadata injection during discovery.
 

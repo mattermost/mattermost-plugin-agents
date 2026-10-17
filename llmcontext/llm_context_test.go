@@ -315,7 +315,7 @@ func TestWithLLMContextNoToolsSkipsMCPProvider(t *testing.T) {
 	require.Empty(t, context.Tools.GetTools())
 }
 
-func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) {
+func TestWithLLMContextToolsOffersUnconnectedServerForWildcardAllowlist(t *testing.T) {
 	mockAPI := &plugintest.API{}
 	siteName := "Mattermost"
 	siteURL := "https://example.com"
@@ -356,14 +356,14 @@ func TestWithLLMContextToolsRetainsAuthErrorsForWildcardAllowlist(t *testing.T) 
 		bot,
 		user,
 		channel,
+		builder.WithLLMContextInteractive(),
 		builder.WithLLMContextTools(stdcontext.Background(), bot),
 	)
 
-	require.Empty(t, context.Tools.GetTools())
-	authErrors := context.Tools.GetAuthErrors()
-	require.Len(t, authErrors, 1)
-	assert.Equal(t, "https://mcp.atlassian.com", authErrors[0].ServerOrigin)
-	assert.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
+	unconnected := context.ToolCatalog.UnconnectedMCPServers
+	require.Len(t, unconnected, 1)
+	assert.Equal(t, llm.NormalizeMCPServerOrigin("https://mcp.atlassian.com"), unconnected[0].Origin)
+	assert.Equal(t, "https://auth.example.com", unconnected[0].AuthURL)
 }
 
 // A service account agent's catalog is built for the bot (SA remotes) plus the requesting user (embedded/plugin).
@@ -581,23 +581,4 @@ func TestWithLLMContextResponseFiles(t *testing.T) {
 	assert.True(t, ctx.ToolCatalog.ResponseFilesSupported)
 
 	assert.False(t, llm.NewContext().ToolCatalog.ResponseFilesSupported)
-}
-
-func TestFilterToolAuthErrorsForAllowlist(t *testing.T) {
-	allowlist := []llm.EnabledMCPTool{
-		{ServerOrigin: "https://allowed.example/", ToolName: "t1"},
-	}
-	errs := []llm.ToolAuthError{
-		{ServerOrigin: "https://allowed.example", ServerName: "a"},
-		{ServerOrigin: "https://other.example", ServerName: "b"},
-	}
-	filtered := filterToolAuthErrorsForAllowlist(errs, allowlist)
-	require.Len(t, filtered, 1)
-	assert.Equal(t, "https://allowed.example", filtered[0].ServerOrigin)
-
-	emptyAllowlist := []llm.EnabledMCPTool{}
-	filtered = filterToolAuthErrorsForAllowlist(errs, emptyAllowlist)
-	assert.Empty(t, filtered)
-
-	assert.Empty(t, filterToolAuthErrorsForAllowlist(nil, allowlist))
 }

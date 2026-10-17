@@ -137,21 +137,6 @@ func (b *Builder) WithLLMContextRequestingUser(user *model.User) llm.ContextOpti
 	}
 }
 
-// toolAuthErrorMatchesAllowlist reports whether authErr refers to a server that still
-// appears in the per-agent MCP allowlist (by ServerOrigin).
-func toolAuthErrorMatchesAllowlist(authErr llm.ToolAuthError, allowlist []llm.EnabledMCPTool) bool {
-	errOrigin := llm.NormalizeMCPServerOrigin(authErr.ServerOrigin)
-	return slices.ContainsFunc(allowlist, func(enabled llm.EnabledMCPTool) bool {
-		return llm.NormalizeMCPServerOrigin(enabled.ServerOrigin) == errOrigin
-	})
-}
-
-func filterToolAuthErrorsForAllowlist(errors []llm.ToolAuthError, allowlist []llm.EnabledMCPTool) []llm.ToolAuthError {
-	return slices.DeleteFunc(slices.Clone(errors), func(e llm.ToolAuthError) bool {
-		return !toolAuthErrorMatchesAllowlist(e, allowlist)
-	})
-}
-
 // mcpToolSelection maps this request's per-agent, per-user, and license rules
 // onto the set of MCP servers that may be contacted, so a disallowed server is
 // never connected rather than connected and then filtered out. The license
@@ -327,13 +312,16 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
 
-		if mcpErrors != nil {
-			authErrors := mcpErrors.ToolAuthErrors
-			if !botCfg.AutoEnableNewMCPTools {
-				authErrors = filterToolAuthErrorsForAllowlist(mcpErrors.ToolAuthErrors, botCfg.EnabledMCPTools)
+		// Unconnected servers are only offered where the requester can act on
+		// a Connect card for their own account. Service accounts never need
+		// per-user OAuth, and bridge/concrete catalogs have no interactive user.
+		if c.ToolCatalog.InteractiveUserPresent && !useServiceAccount && !forceConcrete {
+			c.ToolCatalog.UnconnectedMCPServerScope = &llm.UnconnectedMCPServerScope{
+				AllMCPTools:     botCfg.AutoEnableNewMCPTools,
+				EnabledMCPTools: slices.Clone(botCfg.EnabledMCPTools),
 			}
-			for _, authError := range authErrors {
-				store.AddAuthError(authError)
+			if mcpErrors != nil {
+				publishUnconnectedMCPServers(store, c, unconnectedMCPServers(mcpErrors.ToolAuthErrors, c.ToolCatalog))
 			}
 		}
 	}

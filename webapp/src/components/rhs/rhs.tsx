@@ -10,7 +10,8 @@ import {GlobalState} from '@mattermost/types/store';
 
 import manifest from '@/manifest';
 
-import {getAIThreads, getUserMCPTools, getUserToolPreferences, updateRead} from '@/client';
+import {getAIThreads, getUserToolPreferences, updateRead} from '@/client';
+import {getUserMCPServers} from '@/utils/user_mcp_servers';
 
 import {useBotlist} from '@/bots';
 
@@ -95,7 +96,7 @@ export default function RHS() {
 
         const fetchServers = async () => {
             try {
-                const response = await getUserMCPTools();
+                const response = await getUserMCPServers();
                 setPreloadedServers(response.servers);
             } catch {
                 // Silently fail - servers will load when popover opens

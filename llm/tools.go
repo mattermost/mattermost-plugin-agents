@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -66,6 +67,10 @@ type Tool struct {
 // UserInteractionSelect identifies tools answered by the user picking from a
 // set of options presented in the Mattermost UI.
 const UserInteractionSelect = "select"
+
+// UserInteractionConnect identifies tools answered by the user connecting
+// (authenticating to) an MCP server from the Mattermost UI.
+const UserInteractionConnect = "connect"
 
 type ToolResolver func(ctx context.Context, llmCtx *Context, argsGetter ToolArgumentGetter) (string, error)
 
@@ -361,12 +366,17 @@ type ToolAuthError struct {
 	ServerOrigin string `json:"server_origin"`
 	AuthURL      string `json:"auth_url"`
 	Error        error  `json:"error"`
+
+	// ServerDescription and ToolNames come only from admin-authored server
+	// configuration (never from the server or a shared tools cache), so they
+	// are safe to show the LLM for a server this user has not connected.
+	ServerDescription string   `json:"server_description,omitempty"`
+	ToolNames         []string `json:"tool_names,omitempty"`
 }
 
 type ToolStore struct {
 	tools            map[string]Tool
 	unloadedMCPTools map[string]Tool
-	authErrors       []ToolAuthError
 }
 
 // ToolLookup describes how a tool call name resolved in a ToolStore.
@@ -390,8 +400,7 @@ func NewJSONSchemaFromStruct[T any]() *jsonschema.Schema {
 
 func NewToolStore() *ToolStore {
 	return &ToolStore{
-		tools:      make(map[string]Tool),
-		authErrors: []ToolAuthError{},
+		tools: make(map[string]Tool),
 	}
 }
 
@@ -556,6 +565,23 @@ func (s *ToolStore) GetTool(name string) *Tool {
 		return &tool
 	}
 	return nil
+}
+
+// HasMCPToolsFromOrigin reports whether any MCP tool from origin is available
+// in this store, either loaded or in the dynamic-loading catalog.
+func (s *ToolStore) HasMCPToolsFromOrigin(origin string) bool {
+	origin = NormalizeMCPServerOrigin(origin)
+	if s == nil || origin == "" {
+		return false
+	}
+	for _, tools := range []map[string]Tool{s.tools, s.unloadedMCPTools} {
+		for _, tool := range tools {
+			if tool.ServerOrigin != "" && NormalizeMCPServerOrigin(tool.ServerOrigin) == origin {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *ToolStore) SetUnloadedMCPTools(tools []Tool) {
@@ -833,6 +859,19 @@ func FilterMCPToolsByEnabledAllowlist(tools []Tool, allowlist []EnabledMCPTool) 
 	return FilterMCPToolsByAllowlist(tools, mcpToolAllowlist(tools, allowlist))
 }
 
+// EnabledMCPToolsAllow is the single-tool form of
+// FilterMCPToolsByEnabledAllowlist: it reports whether allowlist enables the
+// MCP tool toolName (runtime or bare name) served from origin.
+func EnabledMCPToolsAllow(allowlist []EnabledMCPTool, origin, toolName string) bool {
+	origin = NormalizeMCPServerOrigin(origin)
+	return slices.ContainsFunc(allowlist, func(enabled EnabledMCPTool) bool {
+		if NormalizeMCPServerOrigin(enabled.ServerOrigin) != origin {
+			return false
+		}
+		return enabled.ToolName == MCPServerToolWildcard || MCPToolNameMatches(toolName, enabled.ToolName)
+	})
+}
+
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
@@ -870,14 +909,4 @@ func (s *ToolStore) GetToolsInfo() []ToolInfo {
 		})
 	}
 	return result
-}
-
-// AddAuthError adds an authentication error to the tool store
-func (s *ToolStore) AddAuthError(authError ToolAuthError) {
-	s.authErrors = append(s.authErrors, authError)
-}
-
-// GetAuthErrors returns all authentication errors collected during tool creation
-func (s *ToolStore) GetAuthErrors() []ToolAuthError {
-	return s.authErrors
 }

@@ -4,13 +4,22 @@
 import React, {useMemo, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
-import {CheckIcon, CloseCircleOutlineIcon} from '@mattermost/compass-icons/components';
+import {CheckIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 import {TextInput} from '@mattermost/compass-ui/components/text-input';
 
 import {ToolCall, ToolCallStatus} from './tool_types';
+import {
+    InteractionCard,
+    InteractionFooter,
+    InteractionFooterButtons,
+    InteractionStatusLine,
+    InteractionTitle,
+    ResolvedIcon,
+    SkippedIcon,
+} from './interaction_card_shell';
 
 // Parsed shape of the AskUserQuestion tool arguments. Mirrors
 // mmtools.AskUserQuestionArgs on the server.
@@ -81,39 +90,6 @@ function parseAnswerFromResult(result?: string): {selected: string[]; custom: st
     }
     return {selected: [], custom: ''};
 }
-
-const Card = styled.div`
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    padding: 16px 16px 16px 12px;
-    margin: 8px 0 12px;
-    overflow: hidden;
-    background: var(--center-channel-bg);
-    border: 1px solid rgba(var(--center-channel-color-rgb), 0.12);
-    border-radius: 4px;
-    box-shadow: 0 2px 3px rgba(0, 0, 0, 0.08);
-
-    &::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        bottom: 0;
-        width: 3px;
-        background: var(--button-bg);
-    }
-`;
-
-const QuestionTitle = styled.div`
-    padding-left: 12px;
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
-    color: var(--center-channel-color);
-    word-break: break-word;
-`;
 
 const OptionList = styled.div`
     display: flex;
@@ -232,45 +208,11 @@ const FreeFormInput = styled(TextInput)`
     min-width: 0;
 `;
 
-const Footer = styled.div`
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-left: 12px;
-    padding-top: 4px;
-`;
-
 const SelectedCount = styled.div`
     font-size: 12px;
     font-weight: 400;
     line-height: 16px;
     color: rgba(var(--center-channel-color-rgb), 0.75);
-`;
-
-const FooterButtons = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-left: auto;
-`;
-
-const StatusLine = styled.div`
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-left: 12px;
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
-    color: rgba(var(--center-channel-color-rgb), 0.75);
-`;
-
-const AnsweredIcon = styled(CheckIcon)`
-    color: var(--online-indicator);
-`;
-
-const SkippedIcon = styled(CloseCircleOutlineIcon)`
-    color: var(--dnd-indicator);
 `;
 
 interface QuestionCardProps {
@@ -351,7 +293,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
     const renderStatus = () => {
         if (isProcessing || (hasLocalDecision && isPending)) {
             return (
-                <StatusLine>
+                <InteractionStatusLine>
                     <Spinner
                         size='12'
                         aria-hidden={true}
@@ -360,47 +302,47 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                         id='ai.question.submitting'
                         defaultMessage='Submitting…'
                     />
-                </StatusLine>
+                </InteractionStatusLine>
             );
         }
         if (isAnswered) {
             return (
-                <StatusLine>
-                    <AnsweredIcon size={16}/>
+                <InteractionStatusLine>
+                    <ResolvedIcon size={16}/>
                     <FormattedMessage
                         id='ai.question.answered'
                         defaultMessage='Answered'
                     />
-                </StatusLine>
+                </InteractionStatusLine>
             );
         }
         if (isSkipped) {
             return (
-                <StatusLine>
+                <InteractionStatusLine>
                     <SkippedIcon size={16}/>
                     <FormattedMessage
                         id='ai.question.skipped'
                         defaultMessage='Skipped'
                     />
-                </StatusLine>
+                </InteractionStatusLine>
             );
         }
         if (isPending && !canAnswer) {
             return (
-                <StatusLine>
+                <InteractionStatusLine>
                     <FormattedMessage
                         id='ai.question.waiting_for_requester'
                         defaultMessage='Waiting for an answer from the requester'
                     />
-                </StatusLine>
+                </InteractionStatusLine>
             );
         }
         return null;
     };
 
     return (
-        <Card>
-            <QuestionTitle>{question.question}</QuestionTitle>
+        <InteractionCard>
+            <InteractionTitle>{question.question}</InteractionTitle>
             <OptionList>
                 {question.options.map((opt, idx) => {
                     const selected = shownSelections.includes(opt.label);
@@ -481,7 +423,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                 )}
             </OptionList>
             {interactive && (
-                <Footer>
+                <InteractionFooter>
                     {question.multiSelect && (
                         <SelectedCount>
                             <FormattedMessage
@@ -491,7 +433,7 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                             />
                         </SelectedCount>
                     )}
-                    <FooterButtons>
+                    <InteractionFooterButtons>
                         <Button
                             emphasis='tertiary'
                             size='small'
@@ -513,11 +455,11 @@ const QuestionCard: React.FC<QuestionCardProps> = ({
                                 defaultMessage='Accept'
                             />
                         </Button>
-                    </FooterButtons>
-                </Footer>
+                    </InteractionFooterButtons>
+                </InteractionFooter>
             )}
             {renderStatus()}
-        </Card>
+        </InteractionCard>
     );
 };
 

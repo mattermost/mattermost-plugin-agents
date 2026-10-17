@@ -3,6 +3,8 @@
 
 import {useEffect} from 'react';
 
+import {invalidateUserMCPServers} from '@/utils/user_mcp_servers';
+
 // Payload for custom_mattermost-ai_mcp_connection_updated websocket events.
 export type MCPConnectionEvent = {
     status: 'connected' | 'disconnected';
@@ -13,6 +15,8 @@ export type MCPConnectionEvent = {
 const subscribers = new Set<(event: MCPConnectionEvent) => void>();
 
 export function notifyMCPConnectionUpdated(event: MCPConnectionEvent) {
+    // Before notifying, so subscribers that refetch see fresh status.
+    invalidateUserMCPServers();
     subscribers.forEach((cb) => {
         try {
             cb(event);

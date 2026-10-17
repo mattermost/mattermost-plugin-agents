@@ -212,6 +212,25 @@ export class OpenAIMockContainer {
 		}
 	}
 
+	/**
+	 * Parsed JSON bodies of the chat completion requests Smocker received in
+	 * the current session, oldest first. Registering mocks with reset=true
+	 * (addMock/addMocks) starts a new session and clears this history.
+	 */
+	getChatCompletionRequests = async (): Promise<any[]> => {
+		const response = await fetch(`http://localhost:${this.container.getMappedPort(8081)}/history`);
+		if (!response.ok) {
+			throw new Error(`Failed to fetch Smocker history: ${response.status} ${response.statusText}`);
+		}
+		const entries: any[] = await response.json();
+		return entries.
+			filter((entry) => /(\/v1)?\/chat\/completions$/.test(entry?.request?.path ?? '')).
+			map((entry) => {
+				const body = entry.request.body;
+				return typeof body === 'string' ? JSON.parse(body) : body;
+			});
+	}
+
 	addCompletionMock = async (response: string, botPrefix?: string) => {
 		const prefix = botPrefix ? ("/"+botPrefix) : ""
 		return this.addMock({

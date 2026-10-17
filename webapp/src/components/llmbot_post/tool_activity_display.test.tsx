@@ -74,6 +74,18 @@ describe('ToolActivityDisplay collapsed row', () => {
             inProgress: false,
             expected: 'Create Post',
         },
+        {
+            name: 'a pending connect call',
+            rounds: [makeRound('r1', '', [makeTool({id: 'tc_a', name: 'ConnectMCPServer', user_interaction: 'connect', arguments: {server: 'Jira'}, status: ToolCallStatus.Pending})])],
+            inProgress: true,
+            expected: 'Connect Jira',
+        },
+        {
+            name: 'a redacted pending connect call',
+            rounds: [makeRound('r1', '', [makeTool({id: 'tc_a', name: 'ConnectMCPServer', user_interaction: 'connect', status: ToolCallStatus.Pending})])],
+            inProgress: true,
+            expected: 'Connect integration',
+        },
     ])('shows the latest item for $name', ({rounds, inProgress, expected}) => {
         render(activityElement(rounds, {inProgress}));
 

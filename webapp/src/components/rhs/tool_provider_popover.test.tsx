@@ -6,6 +6,7 @@ import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {IntlProvider} from 'react-intl';
 
 import {getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences} from '@/client';
+import {invalidateUserMCPServers} from '@/utils/user_mcp_servers';
 
 import ToolProviderPopover, {UserMCPServerInfo} from './tool_provider_popover';
 
@@ -103,6 +104,7 @@ async function openToolsMenu() {
 
 describe('ToolProviderPopover', () => {
     beforeEach(() => {
+        invalidateUserMCPServers();
         mockGetUserMCPTools.mockResolvedValue({servers: [initialServer]});
         mockRefreshUserMCPTools.mockResolvedValue({servers: [refreshedServer]});
     });

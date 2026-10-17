@@ -4,6 +4,8 @@
 import React from 'react';
 import {act, render, screen, waitFor} from '@testing-library/react';
 
+import {invalidateUserMCPServers} from '@/utils/user_mcp_servers';
+
 import Rhs from './rhs';
 
 const mockGetAIThreads = jest.fn();
@@ -138,6 +140,7 @@ function renderRHS() {
 describe('RHS', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        invalidateUserMCPServers();
         mockGetUserMCPTools.mockResolvedValue({servers: []});
         mockGetUserToolPreferences.mockResolvedValue({disabled_servers: []});
         mockUpdateRead.mockImplementation(() => Promise.resolve());

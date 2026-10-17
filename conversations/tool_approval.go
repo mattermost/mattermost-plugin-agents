@@ -15,6 +15,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -243,7 +244,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// Validate answers for accepted interaction blocks before mutating any
 	// state, so a malformed or missing answer leaves the question pending and
 	// answerable instead of burning it as an error result.
-	interactionResults, err := resolveInteractionAnswers(pendingBlocks, acceptedToolIDs, toolAnswers)
+	interactionResults, err := c.resolveInteractionAnswers(pendingBlocks, acceptedToolIDs, toolAnswers, llmContext)
 	if err != nil {
 		return err
 	}
@@ -271,13 +272,19 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 		case slices.Contains(acceptedToolIDs, block.ID) && block.UserInteraction != "":
 			acceptedToolNames = append(acceptedToolNames, block.Name)
 			// Shared so the channel-visible follow-up may reference the answer.
+			// An accepted connect the user did not complete is an error so
+			// the card shows it as not connected.
+			result := interactionResults[block.ID]
 			block.Status = conversation.StatusSuccess
+			if result.IsError {
+				block.Status = conversation.StatusError
+			}
 			block.Shared = new(true)
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     interactionResults[block.ID],
-				IsError:    false,
+				Result:     result.Content,
+				IsError:    result.IsError,
 			})
 		case slices.Contains(acceptedToolIDs, block.ID):
 			acceptedToolNames = append(acceptedToolNames, block.Name)
@@ -287,7 +294,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				toolResults = append(toolResults, toolrunner.ToolResult{
 					ToolCallID: block.ID,
 					Name:       block.Name,
-					Result:     resolveErr.Error(),
+					Result:     llmcontext.MCPToolErrorResult(llmContext, resolveErr),
 					IsError:    true,
 				})
 			} else {
@@ -311,7 +318,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 			toolResults = append(toolResults, toolrunner.ToolResult{
 				ToolCallID: block.ID,
 				Name:       block.Name,
-				Result:     "User skipped the question",
+				Result:     mmtools.UserInteractionSkippedResult(block.UserInteraction, block.Input),
 				IsError:    true,
 			})
 		case block.WouldAutoExecute && autoExec(llm.ToolCall{Name: block.Name, ServerOrigin: block.ServerOrigin}):
@@ -329,7 +336,7 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 				toolResults = append(toolResults, toolrunner.ToolResult{
 					ToolCallID: block.ID,
 					Name:       block.Name,
-					Result:     resolveErr.Error(),
+					Result:     llmcontext.MCPToolErrorResult(llmContext, resolveErr),
 					IsError:    true,
 				})
 			} else {
@@ -454,12 +461,35 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	return c.streamToolFollowUp(ctx, bot, user, channel, post, conv, isDM, userRejected, llmContext)
 }
 
+// userInteractionEnv gathers what resolving an accepted interaction block
+// needs. The connect origin is resolved here rather than stamped onto the
+// block's ServerOrigin, which would subject the built-in tool to remote MCP
+// license and approval policy.
+func (c *Conversations) userInteractionEnv(block conversation.ContentBlock, llmContext *llm.Context) mmtools.UserInteractionEnv {
+	env := mmtools.UserInteractionEnv{Context: llmContext}
+	if block.UserInteraction != llm.UserInteractionConnect || c.configProvider == nil {
+		return env
+	}
+	serverName, ok := mmtools.ConnectMCPServerName(block.Input)
+	if !ok {
+		return env
+	}
+	for _, server := range c.configProvider.MCP().Servers {
+		if server.Name == serverName && server.Enabled && server.BaseURL != "" {
+			env.ConnectServerOrigin = server.BaseURL
+			break
+		}
+	}
+	return env
+}
+
 // resolveInteractionAnswers validates the user's answers for every accepted
 // pending user-interaction block and returns the tool result content keyed by
 // block ID. Any invalid or missing answer fails the whole request with
-// ErrInvalidToolAnswer before any state is mutated.
-func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer) (map[string]string, error) {
-	results := make(map[string]string)
+// ErrInvalidToolAnswer before any state is mutated. Connect blocks take no
+// answer; their result reflects llmContext, rebuilt after the click.
+func (c *Conversations) resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolIDs []string, toolAnswers map[string]mmtools.UserInteractionAnswer, llmContext *llm.Context) (map[string]mmtools.UserInteractionResult, error) {
+	results := make(map[string]mmtools.UserInteractionResult)
 	for _, b := range blocks {
 		if b.Type != conversation.BlockTypeToolUse || b.UserInteraction == "" {
 			continue
@@ -470,7 +500,7 @@ func resolveInteractionAnswers(blocks []conversation.ContentBlock, acceptedToolI
 		if !slices.Contains(acceptedToolIDs, b.ID) {
 			continue
 		}
-		result, err := mmtools.ResolveUserInteractionAnswer(b.UserInteraction, b.Input, toolAnswers[b.ID])
+		result, err := mmtools.ResolveUserInteractionAnswer(b.UserInteraction, b.Input, toolAnswers[b.ID], c.userInteractionEnv(b, llmContext))
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s", ErrInvalidToolAnswer, err.Error())
 		}

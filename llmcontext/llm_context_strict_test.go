@@ -707,15 +707,15 @@ func TestStrictModePreservesAuthErrors(t *testing.T) {
 		MCPDynamicToolLoading: true,
 	})
 
-	context := buildToolsContext(builder, bot)
+	context := buildToolsContext(builder, bot, builder.WithLLMContextInteractive())
 
 	// The catalog is empty (server needs auth), so meta-tools are omitted —
-	// but the auth errors must still surface so the user can reconnect.
-	require.Empty(t, toolNames(context.Tools))
-	authErrors := context.Tools.GetAuthErrors()
-	require.Len(t, authErrors, 1)
-	require.Equal(t, origin, authErrors[0].ServerOrigin)
-	require.Equal(t, "https://auth.example.com", authErrors[0].AuthURL)
+	// but the server must still be offered so the user can reconnect.
+	require.Equal(t, []string{llm.ConnectMCPServerToolName}, toolNames(context.Tools))
+	unconnected := context.ToolCatalog.UnconnectedMCPServers
+	require.Len(t, unconnected, 1)
+	require.Equal(t, origin, unconnected[0].Origin)
+	require.Equal(t, "https://auth.example.com", unconnected[0].AuthURL)
 }
 
 func TestLoadMCPToolsAddsDerivedNamesToVisibleStore(t *testing.T) {

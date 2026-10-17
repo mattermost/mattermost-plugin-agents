@@ -191,6 +191,7 @@ const MCPServer = ({
     const config = {
         id: serverConfig.id,
         name: serverConfig.name || '',
+        description: serverConfig.description || '',
         enabled: serverConfig.enabled ?? false,
         baseURL: serverConfig.baseURL || '',
         headers: serverConfig.headers || {},
@@ -331,6 +332,14 @@ const MCPServer = ({
                 onChange={(e) => updateServerURL(e.target.value)}
                 onBlur={handleURLBlur}
                 helptext={intl.formatMessage({defaultMessage: 'The base URL of the MCP server.'})}
+            />
+
+            <TextItem
+                label={intl.formatMessage({defaultMessage: 'Description'})}
+                placeholder={intl.formatMessage({defaultMessage: 'e.g. Jira issue tracking: search, create, and update tickets'})}
+                value={config.description}
+                onChange={(e) => onChange(serverIndex, {...config, description: e.target.value})}
+                helptext={intl.formatMessage({defaultMessage: 'Optional. Shown to agents so they can suggest connecting this server to users who have not connected it yet. Describe what the server is for.'})}
             />
 
             <FormRow>

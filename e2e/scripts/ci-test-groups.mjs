@@ -44,6 +44,7 @@ const groups = {
         'tests/tool-config/tools-tab-display.spec.ts',
         'tests/tool-config/user-toggle.spec.ts',
         'tests/tool-config/mcp-oauth-auth.spec.ts',
+        'tests/tool-config/mock-api/mcp_connect.spec.ts',
         'tests/llmbot-post-component/citations-annotations.spec.ts',
         'tests/llmbot-post-component/combined-features.spec.ts',
         'tests/llmbot-post-component/debug-test.spec.ts',

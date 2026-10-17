@@ -20,6 +20,7 @@ jest.mock('react-bootstrap', () => ({
 jest.mock('@/client', () => ({
     getPost: jest.fn(),
     getProfilesByIds: jest.fn(() => Promise.resolve([])),
+    getUserMCPTools: jest.fn(() => Promise.resolve({servers: []})),
 }));
 
 const postMessagePreviewMock = jest.fn<React.ReactElement, [unknown]>(() => <div>{'post-preview-box'}</div>);
@@ -106,6 +107,61 @@ describe('renderToolCall routing', () => {
 
         expect(screen.getByText('AskUserQuestion')).not.toBeNull();
         expect(screen.queryByText('Pick one')).toBeNull();
+    });
+
+    test('routes a valid connect call to ConnectCard, wiring accept to onApprove', async () => {
+        const onApprove = jest.fn();
+        const onSkip = jest.fn();
+        render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({
+                        ...makeCtx(makeTool({
+                            name: 'ConnectMCPServer',
+                            user_interaction: 'connect',
+                            arguments: {server: 'Jira'},
+                        })),
+                        onApprove,
+                        onSkip,
+                    })}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        expect(screen.getByTestId('connect-mcp-server-name').textContent).toBe('Jira');
+        fireEvent.click(screen.getByTestId('connect-mcp-skip-button'));
+        expect(onSkip).toHaveBeenCalledTimes(1);
+
+        // Jira is absent from the mocked user tool list, so Continue is offered.
+        fireEvent.click(await screen.findByTestId('connect-mcp-continue-button'));
+        expect(onApprove).toHaveBeenCalledTimes(1);
+    });
+
+    test('a redacted connect call renders the read-only ConnectCard for onlookers', () => {
+        render(
+            <Provider store={store}>
+                <IntlProvider locale='en'>
+                    {renderToolCall({
+                        ...makeCtx(makeTool({name: 'ConnectMCPServer', user_interaction: 'connect'})),
+                        canAnswer: false,
+                    })}
+                </IntlProvider>
+            </Provider>,
+        );
+
+        expect(screen.getByTestId('connect-mcp-waiting')).not.toBeNull();
+        expect(screen.queryByTestId('connect-mcp-skip-button')).toBeNull();
+    });
+
+    test('a requester connect call with malformed args falls back to the generic card', () => {
+        renderTool(makeTool({
+            name: 'ConnectMCPServer',
+            user_interaction: 'connect',
+            arguments: {server: ''},
+        }));
+
+        expect(screen.queryByTestId('connect-mcp-card')).toBeNull();
+        expect(screen.getByText('ConnectMCPServer')).not.toBeNull();
     });
 
     test('routes an embedded read_post to the post preview card', async () => {

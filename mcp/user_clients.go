@@ -126,7 +126,10 @@ type connectTask struct {
 	// identity is the connection identity recorded on the attempt so ReInit
 	// can tell a still-valid session from a stale one.
 	identity originIdentity
-	dial     func() (*Client, error)
+	// remote is the admin configuration of a remote server, described by an
+	// OAuth-needed failure so the server can be advertised to the user.
+	remote *ServerConfig
+	dial   func() (*Client, error)
 }
 
 // connectPlan is a connectTask bound to the attempt that will produce (or has
@@ -399,12 +402,11 @@ func (c *UserClients) recordConnectFailure(mcpErrors *Errors, plan connectPlan) 
 	}
 
 	if oauthErr, ok := errors.AsType[*OAuthNeededError](plan.err); ok {
-		mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, llm.ToolAuthError{
-			ServerName:   plan.task.serverName,
-			ServerOrigin: plan.task.origin,
-			AuthURL:      oauthErr.AuthURL(),
-			Error:        plan.err,
-		})
+		server := ServerConfig{Name: plan.task.serverName, BaseURL: plan.task.origin}
+		if plan.task.remote != nil {
+			server = *plan.task.remote
+		}
+		mcpErrors.ToolAuthErrors = append(mcpErrors.ToolAuthErrors, newToolAuthError(server, oauthErr.AuthURL(), plan.err))
 		return mcpErrors
 	}
 
@@ -440,6 +442,7 @@ func (c *UserClients) remoteConnectTask(ctx context.Context, serverConfig Server
 		serverID:   serverConfig.Name,
 		serverName: serverConfig.Name,
 		identity:   remoteOriginIdentityForMode(serverConfig, false, serviceAccount),
+		remote:     &serverConfig,
 		dial: func() (*Client, error) {
 			return c.dialAdmitted(dialCtx, func() (*Client, error) {
 				return newClientWithTimeout(dialCtx, budget, c.userID, serverConfig, clientParams{
@@ -772,37 +775,6 @@ func (c *UserClients) clearOAuthNeededForServer(client *Client) {
 	}
 }
 
-func (c *UserClients) rememberOAuthNeededForToolCall(client *Client, err error) {
-	if c.oauthManager == nil || client == nil || client.config.Name == "" || err == nil {
-		return
-	}
-
-	oauthErr := client.oauthNeededError(err)
-	if oauthErr == nil {
-		return
-	}
-
-	needed, ok := errors.AsType[*OAuthNeededError](oauthErr)
-	if !ok {
-		return
-	}
-
-	authURL := needed.AuthURL()
-	if authURL == "" {
-		authURL = c.oauthManager.StartURL(client.config.Name)
-	}
-	if authURL == "" {
-		return
-	}
-
-	if storeErr := c.oauthManager.StoreAuthNeededState(c.userID, client.config.Name, authURL); storeErr != nil {
-		c.log.Warn("Failed to persist MCP OAuth-needed state after tool call",
-			"userID", c.userID,
-			"serverID", client.config.Name,
-			"error", storeErr)
-	}
-}
-
 // createToolResolver creates a resolver function for the given tool
 func (c *UserClients) createToolResolver(client *Client, toolName string) llm.ToolResolver {
 	return func(ctx context.Context, llmContext *llm.Context, argsGetter llm.ToolArgumentGetter) (string, error) {
@@ -815,8 +787,7 @@ func (c *UserClients) createToolResolver(client *Client, toolName string) llm.To
 
 		result, err := client.CallToolWithMetadata(ctx, toolName, args, metadata)
 		if err != nil {
-			c.rememberOAuthNeededForToolCall(client, err)
-			return result, err
+			return result, c.toolCallError(client, err)
 		}
 
 		c.clearOAuthNeededForServer(client)

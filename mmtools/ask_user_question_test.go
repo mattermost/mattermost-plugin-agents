@@ -154,14 +154,15 @@ func TestResolveUserInteractionAnswer(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := ResolveUserInteractionAnswer(tc.kind, tc.input, tc.answer)
+			got, err := ResolveUserInteractionAnswer(tc.kind, tc.input, tc.answer, UserInteractionEnv{})
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tc.wantErr)
 				return
 			}
 			require.NoError(t, err)
-			assert.JSONEq(t, tc.want, got)
+			assert.False(t, got.IsError)
+			assert.JSONEq(t, tc.want, got.Content)
 		})
 	}
 }

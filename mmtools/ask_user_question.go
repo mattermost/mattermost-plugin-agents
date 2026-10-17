@@ -52,13 +52,6 @@ type AskUserQuestionResult struct {
 	Custom   string   `json:"custom,omitempty"`
 }
 
-// UserInteractionAnswer is a user's answer to a pending user-interaction tool
-// call: the predefined option labels picked, plus optional free-form text.
-type UserInteractionAnswer struct {
-	Selected []string `json:"selected"`
-	Custom   string   `json:"custom,omitempty"`
-}
-
 // NewAskUserQuestionTool returns the built-in question tool. The resolver is
 // an error backstop: the call is answered through the tool-approval flow
 // (Conversations.HandleToolCall), never executed server-side.
@@ -75,19 +68,6 @@ func NewAskUserQuestionTool() llm.Tool {
 		Resolver: func(_ context.Context, _ *llm.Context, _ llm.ToolArgumentGetter) (string, error) {
 			return "", errors.New("AskUserQuestion must be answered by the user and cannot be executed directly")
 		},
-	}
-}
-
-// ResolveUserInteractionAnswer turns a user's answer to a pending interaction
-// tool call into the tool result content. kind is the block's UserInteraction
-// value, input the tool_use block's original arguments, and answer the
-// structured selection (predefined labels plus optional free-form text).
-func ResolveUserInteractionAnswer(kind string, input json.RawMessage, answer UserInteractionAnswer) (string, error) {
-	switch kind {
-	case llm.UserInteractionSelect:
-		return resolveAskUserQuestionAnswer(input, answer)
-	default:
-		return "", fmt.Errorf("unknown user interaction kind %q", kind)
 	}
 }
 

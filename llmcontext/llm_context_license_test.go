@@ -257,17 +257,17 @@ func TestServiceAccountCatalogLicenseGate(t *testing.T) {
 	})
 }
 
-// TestUnlicensedBuilderDropsRemoteMCPAuthErrors pins that OAuth prompts for
-// remote servers are not surfaced when their tools cannot be used without a
+// TestUnlicensedBuilderDropsRemoteMCPAuthErrors pins that remote servers are
+// not offered for connection when their tools cannot be used without a
 // license.
 func TestUnlicensedBuilderDropsRemoteMCPAuthErrors(t *testing.T) {
 	tests := []struct {
-		name           string
-		licensed       bool
-		wantAuthErrors int
+		name            string
+		licensed        bool
+		wantUnconnected int
 	}{
-		{name: "unlicensed drops remote auth errors", licensed: false, wantAuthErrors: 0},
-		{name: "licensed keeps remote auth errors", licensed: true, wantAuthErrors: 1},
+		{name: "unlicensed drops remote auth errors", licensed: false, wantUnconnected: 0},
+		{name: "licensed keeps remote auth errors", licensed: true, wantUnconnected: 1},
 	}
 
 	for _, tc := range tests {
@@ -291,9 +291,9 @@ func TestUnlicensedBuilderDropsRemoteMCPAuthErrors(t *testing.T) {
 				AutoEnableNewMCPTools: true,
 			})
 
-			context := buildToolsContext(builder, bot)
+			context := buildToolsContext(builder, bot, builder.WithLLMContextInteractive())
 
-			require.Len(t, context.Tools.GetAuthErrors(), tc.wantAuthErrors)
+			require.Len(t, context.ToolCatalog.UnconnectedMCPServers, tc.wantUnconnected)
 		})
 	}
 }

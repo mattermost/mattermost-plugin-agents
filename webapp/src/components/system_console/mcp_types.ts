@@ -13,6 +13,7 @@ export type MCPToolConfig = {
 export type MCPServerConfig = {
     id?: string; // stable ABAC policy identity; may be absent until the server-side ID migration runs
     name: string;
+    description?: string;
     enabled: boolean;
     baseURL: string;
     headers: {[key: string]: string};

@@ -6,6 +6,7 @@ package toolrunner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -719,6 +720,51 @@ func TestToolRunner_ToolExecutionError(t *testing.T) {
 	botPost := secondReq.Posts[len(secondReq.Posts)-1]
 	assert.Equal(t, llm.ToolCallStatusError, botPost.ToolUse[0].Status)
 	assert.Contains(t, botPost.ToolUse[0].Result, "connection timeout")
+}
+
+func TestToolRunner_WithToolErrorResult(t *testing.T) {
+	inner := &testLLM{
+		responses: []testResponse{
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{
+					{ID: "tc1", Name: "failing_tool", Arguments: json.RawMessage(`{}`)},
+					{ID: "tc2", Name: "ok_tool", Arguments: json.RawMessage(`{}`)},
+				}},
+				{Type: llm.EventTypeEnd},
+			}},
+			{events: []llm.TextStreamEvent{
+				{Type: llm.EventTypeText, Value: "done"},
+				{Type: llm.EventTypeEnd},
+			}},
+		},
+	}
+
+	cause := errors.New("authorization lapsed")
+	llmContext := &llm.Context{Tools: newTestToolStore(
+		testToolDef{name: "failing_tool", err: cause},
+		testToolDef{name: "ok_tool", result: "fine"},
+	)}
+	var handled []error
+	runner := New(inner, WithToolErrorResult(func(c *llm.Context, err error) string {
+		assert.Same(t, llmContext, c)
+		handled = append(handled, err)
+		return "rewritten result"
+	}))
+
+	result, err := runner.Run(context.Background(), llm.CompletionRequest{
+		Posts:   []llm.Post{{Role: llm.PostRoleUser, Message: "go"}},
+		Context: llmContext,
+	}, alwaysExecute, nil)
+	require.NoError(t, err)
+	_, _ = result.Stream.ReadAll()
+
+	require.Len(t, handled, 1)
+	assert.ErrorIs(t, handled[0], cause)
+	require.Len(t, result.ToolTurns, 1)
+	results := result.ToolTurns[0].ToolResults
+	require.Len(t, results, 2)
+	assert.Equal(t, ToolResult{ToolCallID: "tc1", Name: "failing_tool", Result: "rewritten result", IsError: true}, results[0])
+	assert.Equal(t, ToolResult{ToolCallID: "tc2", Name: "ok_tool", Result: "fine"}, results[1])
 }
 
 func TestToolRunner_LLMError(t *testing.T) {

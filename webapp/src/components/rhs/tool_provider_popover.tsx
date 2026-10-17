@@ -12,7 +12,8 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {PopoverMenuTitle} from '@mattermost/compass-ui/components/popover-menu';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
-import {disconnectMCPOAuth, getUserMCPTools, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
+import {disconnectMCPOAuth, refreshUserMCPTools, updateUserToolPreferences, type UserMCPServerInfo} from '@/client';
+import {getUserMCPServers, invalidateUserMCPServers, setUserMCPServers} from '@/utils/user_mcp_servers';
 import {EnabledMCPTool} from '@/bots';
 import {useMCPConnectionEvents} from '@/hooks/use_mcp_connection_events';
 import {mcpServerStatus} from '@/utils/mcp_availability';
@@ -67,7 +68,13 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
             setLoading(true);
         }
         try {
-            const response = opts.forceRefresh ? await refreshUserMCPTools() : await getUserMCPTools();
+            let response;
+            if (opts.forceRefresh) {
+                response = await refreshUserMCPTools();
+                setUserMCPServers(response);
+            } else {
+                response = await getUserMCPServers();
+            }
             setAllServers(response.servers);
         } catch (error) {
             // eslint-disable-next-line no-console
@@ -107,6 +114,7 @@ const ToolProviderPopover = ({disabledServers, onDisabledServersChange, preloade
     const handleDisconnect = useCallback(async (serverName: string) => {
         try {
             await disconnectMCPOAuth(serverName);
+            invalidateUserMCPServers();
             await fetchServers();
         } catch (error) {
             // eslint-disable-next-line no-console

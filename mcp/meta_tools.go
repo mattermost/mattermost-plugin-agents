@@ -38,7 +38,13 @@ type LoadToolArgs struct {
 
 type SearchToolsResult struct {
 	Tools []SearchToolsResultItem `json:"tools"`
+	// Hint names no server: search results may be shared with the channel,
+	// while the unconnected servers are the requester's own.
+	Hint string `json:"hint,omitempty"`
 }
+
+const searchToolsConnectHint = "No connected tools matched. If the request needs an integration listed in the " +
+	llm.ConnectMCPServerToolName + " tool, call " + llm.ConnectMCPServerToolName + "."
 
 type SearchToolsResultItem struct {
 	Name    string `json:"name"`
@@ -114,7 +120,11 @@ func searchToolsResolver(registry *ToolRegistry) llm.ToolResolver {
 		}
 		trace.SpanFromContext(ctx).SetAttributes(telemetry.ToolReturnedNames.StringSlice(names))
 
-		return marshalMetaToolResult(SearchToolsResult{Tools: items})
+		result := SearchToolsResult{Tools: items}
+		if len(items) == 0 && llmContext != nil && llmContext.IsToolCallable(llm.ConnectMCPServerToolName) {
+			result.Hint = searchToolsConnectHint
+		}
+		return marshalMetaToolResult(result)
 	}
 }
 

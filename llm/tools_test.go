@@ -918,6 +918,31 @@ func TestFilterMCPToolsByEnabledAllowlist(t *testing.T) {
 	assert.Equal(t, input, tools)
 }
 
+func TestEnabledMCPToolsAllowMatchesFilter(t *testing.T) {
+	allowlist := []EnabledMCPTool{
+		{ServerOrigin: " https://mcp.atlassian.com ", ToolName: MCPServerToolWildcard},
+		{ServerOrigin: "https://api.githubcopilot.com/", ToolName: "search"},
+	}
+	tests := []struct {
+		origin string
+		name   string
+		want   bool
+	}{
+		{origin: "https://mcp.atlassian.com/", name: "jira__get_issue", want: true},
+		{origin: "https://api.githubcopilot.com", name: "github__search", want: true},
+		{origin: "https://api.githubcopilot.com", name: "search", want: true},
+		{origin: "https://api.githubcopilot.com", name: "create_pr"},
+		{origin: "https://mcp.slack.com", name: "slack_post"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.origin+" "+tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, EnabledMCPToolsAllow(allowlist, tt.origin, tt.name))
+			filtered := FilterMCPToolsByEnabledAllowlist([]Tool{{Name: tt.name, ServerOrigin: tt.origin}}, allowlist)
+			assert.Equal(t, tt.want, len(filtered) == 1)
+		})
+	}
+}
+
 func TestToolStoreUnloadedMCPTools(t *testing.T) {
 	var nilStore *ToolStore
 	nilStore.SetUnloadedMCPTools([]Tool{{Name: "jira__get_issue"}})

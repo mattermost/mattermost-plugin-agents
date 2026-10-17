@@ -174,6 +174,31 @@ describe('MCPServers stable ID handling', () => {
         expect(servers[0].id).toBe(STABLE_ID);
     });
 
+    it('edits the description and keeps it through other edits', () => {
+        const {onChange, rerender} = renderServers(makeMCPConfig([existingServer]));
+
+        const descriptionInput = screen.getByPlaceholderText('e.g. Jira issue tracking: search, create, and update tickets');
+        fireEvent.change(descriptionInput, {target: {value: 'Issue tracking'}});
+
+        let servers = lastChangedServers(onChange);
+        expect(servers[0].description).toBe('Issue tracking');
+        expect(servers[0].id).toBe(STABLE_ID);
+
+        rerender(
+            <IntlProvider locale='en'>
+                <MCPServers
+                    mcpConfig={makeMCPConfig(servers)}
+                    onChange={onChange}
+                />
+            </IntlProvider>,
+        );
+        fireEvent.change(screen.getByPlaceholderText('https://mcp.example.com'), {target: {value: 'https://jira2.example.com'}});
+
+        servers = lastChangedServers(onChange);
+        expect(servers[0].baseURL).toBe('https://jira2.example.com');
+        expect(servers[0].description).toBe('Issue tracking');
+    });
+
     it('adds a new server without an id so the backend mints the stable ID on save', () => {
         const {onChange} = renderServers(makeMCPConfig([existingServer]));
 

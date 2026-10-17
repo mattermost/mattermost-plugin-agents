@@ -25,6 +25,7 @@ type MockRenderContext = {
     tool: ToolCall;
     onApprove?: () => void;
     onReject?: () => void;
+    onSkip?: () => void;
     isAutoApproved?: boolean;
     awaitingRequester?: boolean;
     isCollapsed?: boolean;
@@ -235,6 +236,30 @@ describe('ToolApprovalSet', () => {
         const undecidedTool = getToolCardProps('tool_undecided');
         expect(undecidedTool.onApprove).toEqual(expect.any(Function));
         expect(undecidedTool.onReject).toEqual(expect.any(Function));
+    });
+
+    test('accepting a connect call submits it with no answer payload', async () => {
+        renderComponent([
+            makeTool({id: 'connect', name: 'ConnectMCPServer', user_interaction: 'connect', arguments: {server: 'Jira'}}),
+        ]);
+
+        getToolCardProps('connect').onApprove!();
+
+        await waitFor(() => {
+            expect(mockDoToolCall).toHaveBeenCalledWith('post_1', ['connect'], {});
+        });
+    });
+
+    test('skipping a connect call submits it as rejected', async () => {
+        renderComponent([
+            makeTool({id: 'connect', name: 'ConnectMCPServer', user_interaction: 'connect', arguments: {server: 'Jira'}}),
+        ]);
+
+        getToolCardProps('connect').onSkip!();
+
+        await waitFor(() => {
+            expect(mockDoToolCall).toHaveBeenCalledWith('post_1', [], {});
+        });
     });
 
     test('status bar counts only approval-type decisions, not questions', () => {

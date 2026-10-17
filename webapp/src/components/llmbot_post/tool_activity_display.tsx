@@ -11,6 +11,7 @@ import {Spinner} from '@mattermost/compass-ui/components/spinner';
 
 import {toolDisplayName} from '@/utils/tool_identity';
 
+import {connectToolLabel} from '../connect_tool_label';
 import ToolStatusIcon from '../tool_status_icon';
 import {ToolCallStatus} from '../tool_types';
 
@@ -136,7 +137,7 @@ const ToolActivityDisplay: React.FC<ToolActivityDisplayProps> = (props) => {
             );
             break;
         case 'tool':
-            label = toolDisplayName(current.toolCall);
+            label = connectToolLabel(current.toolCall, intl) ?? toolDisplayName(current.toolCall);
             break;
         case 'server_tool':
             label = serverToolTitle(current.serverTool, intl);
