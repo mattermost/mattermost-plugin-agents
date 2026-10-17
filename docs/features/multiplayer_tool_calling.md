@@ -177,6 +177,7 @@ The plugin distinguishes two kinds of automated posts:
 
 - **Bots without the `activate_ai` post prop** produce no tool processing at all. The mention handler returns immediately, and the Agent does not enter the tool-calling pipeline.
 - **Bots that opt in via the `activate_ai` post prop** (PR #611's intended use case) are filtered down to `auto_run_everywhere`-only tools before the runner starts. Any tool whose policy is `ask` or `auto_run_in_dm` is removed from the available toolset for that turn. Only `auto_run_everywhere` tools remain and execute.
+- **Incoming webhooks** follow the same opt-in. Mattermost always sets `from_webhook`. A webhook that also sends `props.activate_ai` is handled as an unattended invoker and limited to `auto_run_everywhere` tools. Webhooks that omit the prop are ignored, including for channel auto-reply.
 
 In practice this means:
 
