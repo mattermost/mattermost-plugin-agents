@@ -35,6 +35,8 @@ type FakeLLM struct {
 	LastConversation llm.CompletionRequest
 	// LastConfig holds the resolved config from the last call's options.
 	LastConfig llm.LanguageModelConfig
+	// LastContextErr is ctx.Err() as the last streaming call saw it.
+	LastContextErr error
 
 	// StreamEventSequence, when non-empty, supplies a different set of stream
 	// events for each successive call. The first call returns the first group,
@@ -54,12 +56,13 @@ type FakeLLM struct {
 }
 
 // ChatCompletion implements streaming completion
-func (f *FakeLLM) ChatCompletion(_ context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
+func (f *FakeLLM) ChatCompletion(ctx context.Context, conversation llm.CompletionRequest, opts ...llm.LanguageModelOption) (*llm.TextStreamResult, error) {
 	var cfg llm.LanguageModelConfig
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	f.mu.Lock()
+	f.LastContextErr = ctx.Err()
 	f.lastRequest = conversation
 	f.LastConversation = conversation
 	f.LastConfig = cfg
