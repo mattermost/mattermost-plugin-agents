@@ -21,6 +21,8 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
+var errServerRefused = errors.New("server refused to create scoped session")
+
 type fakeScopedMinter struct {
 	mu        sync.Mutex
 	createErr error
@@ -31,12 +33,12 @@ type fakeScopedMinter struct {
 
 type mintedScopedSession struct {
 	userID    string
-	scope     scopedsession.Scope
+	scope     model.SessionScope
 	expiresAt int64
 	session   *model.Session
 }
 
-func (f *fakeScopedMinter) CreateScopedSession(userID string, scope *scopedsession.Scope, expiresAt int64) (*model.Session, error) {
+func (f *fakeScopedMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.createErr != nil {
@@ -125,7 +127,7 @@ func TestScopedCatalog(t *testing.T) {
 	require.Len(t, minter.created, 1)
 	minted := minter.created[0]
 	assert.Equal(t, botUserID, minted.userID)
-	assert.Equal(t, scopedsession.ReadPermissions(), minted.scope.Permissions)
+	assert.Equal(t, model.ScopeReadPermissions, minted.scope.Permissions)
 	assert.Equal(t, []string{channelID, extraChannelID}, minted.scope.Resources.ChannelIDs)
 	assert.True(t, minted.scope.Resources.OpenTeamPublicChannels)
 	assert.Equal(t, requesterID, minted.scope.OnBehalfOfUserID)
@@ -164,7 +166,7 @@ func TestMintScopedSessionFailsClosed(t *testing.T) {
 	}{
 		{name: "no minter configured", req: valid, wantErr: ErrScopedSessionsUnavailable},
 		{name: "no registry configured", minter: &fakeScopedMinter{}, noRegistry: true, req: valid, wantErr: ErrScopedSessionsUnavailable},
-		{name: "server cannot mint", minter: &fakeScopedMinter{createErr: scopedsession.ErrUnsupported}, req: valid, wantErr: scopedsession.ErrUnsupported},
+		{name: "server cannot mint", minter: &fakeScopedMinter{createErr: errServerRefused}, req: valid, wantErr: errServerRefused},
 		{name: "session for another user is revoked", minter: &fakeScopedMinter{wrongUser: true}, req: valid, wantRevokes: 1},
 		{name: "invalid channel", minter: &fakeScopedMinter{}, req: ScopedSessionRequest{BotUserID: valid.BotUserID, RequesterID: valid.RequesterID}},
 	}

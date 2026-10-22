@@ -124,7 +124,7 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 	return Slice(fileInfo.Name, fileInfo.MimeType, text, offset, limit), nil
 }
 
-func (s *Service) scopeAllowsChannel(scope *scopedsession.Scope, channelID string) (bool, error) {
+func (s *Service) scopeAllowsChannel(scope *model.SessionScope, channelID string) (bool, error) {
 	channel, err := s.mm.GetChannel(channelID)
 	if err != nil {
 		return false, fmt.Errorf("failed to get file channel: %w", err)
@@ -136,7 +136,7 @@ func (s *Service) scopeAllowsChannel(scope *scopedsession.Scope, channelID strin
 			return false, fmt.Errorf("failed to get file team: %w", err)
 		}
 	}
-	return scope.AllowsChannelContent(channel, team, scopedsession.ComplianceEnabled(s.mm.GetConfig())), nil
+	return scopedsession.AllowsChannelContent(scope, channel, team, scopedsession.ComplianceEnabled(s.mm.GetConfig())), nil
 }
 
 // Slice returns the [offset, offset+limit) rune window of text as a Content,

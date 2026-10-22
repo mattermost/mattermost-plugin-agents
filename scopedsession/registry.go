@@ -33,7 +33,7 @@ type Registry struct {
 }
 
 type registered struct {
-	scope     *Scope
+	scope     *model.SessionScope
 	expiresAt int64
 	revoked   bool
 }
@@ -44,7 +44,7 @@ func NewRegistry(getSession SessionGetter) *Registry {
 }
 
 // Register records a session this node minted with scope.
-func (r *Registry) Register(session *model.Session, scope *Scope) {
+func (r *Registry) Register(session *model.Session, scope *model.SessionScope) {
 	if r == nil || session == nil || session.Id == "" {
 		return
 	}
@@ -80,7 +80,7 @@ func (r *Registry) sweepLocked(now int64) {
 // ScopeForSession returns the session's scope, or nil for an unscoped
 // session. An empty sessionID is unscoped: scoped sessions always reach
 // plugin services with their session ID.
-func (r *Registry) ScopeForSession(sessionID string) (*Scope, error) {
+func (r *Registry) ScopeForSession(sessionID string) (*model.SessionScope, error) {
 	if r == nil || sessionID == "" {
 		return nil, nil
 	}
@@ -105,7 +105,7 @@ func (r *Registry) ScopeForSession(sessionID string) (*Scope, error) {
 	if session == nil {
 		return nil, fmt.Errorf("failed to resolve session scope: session not found")
 	}
-	scope, scoped := FromSession(session)
+	scope, scoped := session.Scope()
 	if !scoped {
 		return nil, nil
 	}
@@ -113,6 +113,6 @@ func (r *Registry) ScopeForSession(sessionID string) (*Scope, error) {
 }
 
 // ScopeFromContext is ScopeForSession for the session carried by ctx.
-func (r *Registry) ScopeFromContext(ctx context.Context) (*Scope, error) {
+func (r *Registry) ScopeFromContext(ctx context.Context) (*model.SessionScope, error) {
 	return r.ScopeForSession(auth.SessionIDFromContext(ctx))
 }

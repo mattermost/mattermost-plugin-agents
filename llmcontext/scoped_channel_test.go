@@ -42,11 +42,11 @@ type recordingScopedMinter struct {
 	mu        sync.Mutex
 	createErr error
 	userIDs   []string
-	scopes    []scopedsession.Scope
+	scopes    []model.SessionScope
 	revoked   []string
 }
 
-func (m *recordingScopedMinter) CreateScopedSession(userID string, scope *scopedsession.Scope, expiresAt int64) (*model.Session, error) {
+func (m *recordingScopedMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.createErr != nil {

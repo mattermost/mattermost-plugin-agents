@@ -627,18 +627,18 @@ func TestExecuteSearchNotConfigured(t *testing.T) {
 }
 
 func TestSearchUnderScopedSession(t *testing.T) {
-	scope := &scopedsession.Scope{
-		Permissions: scopedsession.ReadPermissions(),
-		Resources:   scopedsession.Resources{ChannelIDs: []string{"trigger"}, OpenTeamPublicChannels: true},
+	scope := &model.SessionScope{
+		Permissions: model.ScopeReadPermissions,
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{"trigger"}, OpenTeamPublicChannels: true},
 	}
 
 	tests := []struct {
 		name       string
 		compliance bool
-		expected   scopedsession.Resources
+		expected   model.SessionScopeResources
 	}{
 		{name: "searches the scope instead of memberships", expected: scope.Resources},
-		{name: "compliance mode drops open-team channels", compliance: true, expected: scopedsession.Resources{ChannelIDs: []string{"trigger"}}},
+		{name: "compliance mode drops open-team channels", compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -37,7 +37,7 @@ type ScopedSessionRequest struct {
 // session and closes the connection.
 type ScopedRun struct {
 	session  *model.Session
-	scope    *scopedsession.Scope
+	scope    *model.SessionScope
 	clients  *UserClients
 	manager  *ClientManager
 	minter   scopedsession.Minter
@@ -55,7 +55,7 @@ func (r *ScopedRun) Session() *model.Session {
 }
 
 // Scope returns the scope the run's session was minted with.
-func (r *ScopedRun) Scope() *scopedsession.Scope {
+func (r *ScopedRun) Scope() *model.SessionScope {
 	if r == nil {
 		return nil
 	}
@@ -122,9 +122,9 @@ func (m *ClientManager) MintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 			channelIDs = append(channelIDs, id)
 		}
 	}
-	scope := &scopedsession.Scope{
-		Permissions: scopedsession.ReadPermissions(),
-		Resources: scopedsession.Resources{
+	scope := &model.SessionScope{
+		Permissions: slices.Clone(model.ScopeReadPermissions),
+		Resources: model.SessionScopeResources{
 			ChannelIDs:             channelIDs,
 			OpenTeamPublicChannels: true,
 		},
