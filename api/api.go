@@ -316,6 +316,10 @@ func (a *API) SetConversationService(svc *conversation.Service) {
 
 // ServeHTTP handles HTTP requests to the plugin
 func (a *API) ServeHTTP(c *plugin.Context, w http.ResponseWriter, r *http.Request) {
+	// Servers with context-aware plugin HTTP cancel the request context when
+	// the request ends, but handlers hand LLM streams and tool loops that
+	// outlive the request to goroutines on this context.
+	r = r.WithContext(context.WithoutCancel(r.Context()))
 	if c != nil {
 		r = r.WithContext(auth.WithSessionID(r.Context(), c.SessionId))
 	}
