@@ -420,6 +420,14 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 				return store
 			}
 			scopedRun = run
+			// The caller only learns about the run once the context is built,
+			// so a panic while building the catalog must end the run here.
+			defer func() {
+				if r := recover(); r != nil {
+					c.ReleaseScopedSession()
+					panic(r)
+				}
+			}()
 		}
 
 		// Build the catalog for the appropriate auth mode. GetTools validates

@@ -331,3 +331,27 @@ func TestScopedChannelTurnMintFailureHasNoMCPTools(t *testing.T) {
 	assert.Equal(t, model.AuditStatusFail, records[0].Status)
 	assert.Equal(t, requester.Id, records[0].Actor.UserId)
 }
+
+type panickingCatalogProvider struct {
+	*mcp.ClientManager
+}
+
+func (p *panickingCatalogProvider) GetToolsWithSelection(stdcontext.Context, mcp.CatalogRequest, mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
+	panic("catalog failed")
+}
+
+func TestScopedChannelTurnPanicRevokesSession(t *testing.T) {
+	minter := &recordingScopedMinter{}
+	provider := &panickingCatalogProvider{ClientManager: newScopedCatalogProvider(t, minter, nil).ClientManager}
+	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+	bot := newScopedTestBot(scopedTestBotConfig())
+
+	require.PanicsWithValue(t, "catalog failed", func() {
+		builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+			builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
+			builder.WithLLMContextTools(stdcontext.Background(), bot),
+		)
+	})
+	require.Len(t, minter.userIDs, 1)
+	assert.Len(t, minter.revoked, 1, "a panic while building the catalog still revokes the session")
+}
