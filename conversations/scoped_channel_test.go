@@ -48,7 +48,7 @@ type scopedTestMinter struct {
 	revoked []string
 }
 
-func (m *scopedTestMinter) CreateScopedSession(userID string, _ *scopedsession.Scope, expiresAt int64) (*model.Session, error) {
+func (m *scopedTestMinter) CreateScopedSession(userID string, _ *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := &model.Session{Id: model.NewId(), UserId: userID, Token: model.NewId(), ExpiresAt: expiresAt}
