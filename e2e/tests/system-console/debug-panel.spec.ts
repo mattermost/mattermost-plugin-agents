@@ -129,7 +129,7 @@ test.describe.serial('Debug Panel', () => {
         await expect(reloadedTokenLogging.false).toBeChecked();
 
         // Save the change
-        await saveButton.click();
+        await systemConsole.clickSave();
 
         // Reload and verify it's OFF
         await page.reload();
