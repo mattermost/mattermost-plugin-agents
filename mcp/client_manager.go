@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
@@ -96,6 +97,14 @@ type ClientManager struct {
 	remoteAllowed func() bool
 	// closed is set by Close and makes ReInit a no-op so shutdown stays permanent.
 	closed bool
+
+	// scopedMu guards the scoped-session fields below. Live runs are tracked
+	// so they can be revoked when their agent changes or the plugin stops.
+	scopedMu       sync.Mutex
+	scopedMinter   scopedsession.Minter
+	scopedRegistry *scopedsession.Registry
+	scopedRuns     map[*ScopedRun]struct{}
+	scopedClosed   bool
 }
 
 // RemoteMCPAlwaysAllowed is the remoteAllowed predicate for callers that have
@@ -270,6 +279,11 @@ func (m *ClientManager) Close() {
 	for _, client := range clients {
 		client.Close()
 	}
+
+	m.scopedMu.Lock()
+	m.scopedClosed = true
+	m.scopedMu.Unlock()
+	m.closeAllScopedRuns()
 }
 
 // getOrCreateUserClients returns the cached per-user client, creating and
@@ -470,19 +484,29 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	cfg := m.config
 	embeddedClient := m.embeddedClient
 	plugins := m.snapshotEnabledPluginServers()
+	if req.Scoped != nil {
+		plugins = nil
+	}
 	// Service-account remotes are pooled by the bot identity, but authorization
 	// and local MCP connections belong to the human invoking this request.
 	deniedOrigins := m.deniedMCPServerOrigins(ctx, req.InvokingUserID, cfg, embeddedClient, plugins)
 	servers := m.resolveEligibleServers(cfg, embeddedClient, plugins, selection, deniedOrigins, req.ServiceAccount)
 
 	var localClients *UserClients
-	if servers.embedded || len(servers.plugins) > 0 {
+	switch {
+	case req.Scoped != nil:
+		localClients = req.Scoped.clients
+	case servers.embedded || len(servers.plugins) > 0:
 		localClients = m.getOrCreateClient(clientKey{userID: req.InvokingUserID, kind: clientKindLocal})
 	}
 
 	var session *model.Session
 	var sessionErr error
-	if servers.embedded {
+	switch {
+	case !servers.embedded:
+	case req.Scoped != nil:
+		session = req.Scoped.session
+	default:
 		// Mattermost session lookup, not an MCP dial. Kept inside the
 		// lifecycle read lock so task construction stays atomic with plan.
 		session, _, sessionErr = m.ensureEmbeddedSession(req.InvokingUserID)
@@ -528,6 +552,9 @@ func (m *ClientManager) getCatalogAccess(ctx context.Context, req CatalogRequest
 	}
 	rawTools := collectToolsFromSnapshots(req.InvokingUserID, m.log, remoteClients.snapshotClients(), localSnapshot)
 	filtered := filterToolsByConfig(rawTools, cfg, embeddedClient, plugins)
+	if req.Scoped != nil {
+		filtered = slices.DeleteFunc(filtered, func(tool llm.Tool) bool { return !ScopedCatalogAllows(tool) })
+	}
 	return CatalogAccess{
 		Tools:         retainToolsFromOrigins(filtered, servers.origins),
 		Errors:        joinMCPErrors(remoteErrors, localErrors),

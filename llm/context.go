@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
@@ -60,6 +61,11 @@ type Context struct {
 	// ToolAuthMode records the identity mode the tool catalog was built with
 	// (ToolAuthModeUser or ToolAuthModeServiceAccount); consumed by token usage attribution.
 	ToolAuthMode string
+
+	// ToolsScoped is set only by the scoped catalog: every tool in Tools reads
+	// through this turn's scoped session or service-account credentials, never
+	// the requester's. It is what lets the turn run tools without approval.
+	ToolsScoped bool
 
 	Tools *ToolStore
 	// DisabledTools lists tools that run only in a DM or the Agents tab and so
@@ -124,6 +130,19 @@ type ToolCatalogContext struct {
 	// attached automatically. The model cannot see provider file ids, so the
 	// prompt must tell it to copy shareable files into $OUTPUT_DIR.
 	SandboxFilesAttached bool
+
+	// ScopedTurn, when set, asks for this turn's tools to run on a scoped
+	// session for the agent's bot. It only takes effect when the agent's
+	// scoped channel mode is active in the Context's channel.
+	ScopedTurn *ScopedTurn
+}
+
+// ScopedTurn identifies the channel-triggered run a scoped session is minted
+// for. The channel and requester come from the Context itself.
+type ScopedTurn struct {
+	TriggerPostID  string
+	ThreadRootID   string
+	ConversationID string
 }
 
 // CreatedFile identifies a file created by a tool during this turn for
@@ -155,6 +174,33 @@ type ToolRuntimeContext struct {
 	// this turn. 0 means unset (full MaxPostAttachments budget); -1 means the
 	// response post has no room left. Set via SetResponseAttachmentBudget.
 	ResponseAttachmentBudget int
+
+	scopedSession *scopedSessionHandle
+}
+
+type scopedSessionHandle struct {
+	once    sync.Once
+	release func()
+}
+
+// SetScopedSessionRelease records how to end this turn's scoped session. It is
+// called while the context is built, before the turn runs.
+func (c *Context) SetScopedSessionRelease(release func()) {
+	if c == nil || release == nil {
+		return
+	}
+	c.ToolRuntime.scopedSession = &scopedSessionHandle{release: release}
+}
+
+// ReleaseScopedSession ends this turn's scoped session, if it has one. Every
+// entry point that builds a scoped turn calls it when the run ends, on success
+// and on error. It is safe to call more than once and from any goroutine.
+func (c *Context) ReleaseScopedSession() {
+	if c == nil || c.ToolRuntime.scopedSession == nil {
+		return
+	}
+	handle := c.ToolRuntime.scopedSession
+	handle.once.Do(handle.release)
 }
 
 type MCPDynamicToolTelemetry interface {

@@ -740,6 +740,7 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 				Schema:       tool.InputSchema,
 				Resolver:     resolver,
 				ServerOrigin: client.config.BaseURL,
+				ReadOnly:     client.config.BaseURL == EmbeddedClientKey && tool.Annotations != nil && tool.Annotations.ReadOnlyHint,
 			})
 		}
 	}

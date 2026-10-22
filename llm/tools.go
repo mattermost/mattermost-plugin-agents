@@ -44,6 +44,11 @@ type Tool struct {
 	// Empty for built-in (non-MCP) tools. Used for auto-approval decisions.
 	ServerOrigin string
 
+	// ReadOnly marks an embedded Mattermost MCP tool that only retrieves data.
+	// It is only set for the embedded server, whose annotations the plugin
+	// controls; other servers' read-only hints are not trusted.
+	ReadOnly bool
+
 	// UserInteraction marks a tool whose pending call is answered by the
 	// requesting user in the Mattermost UI instead of executed by the server;
 	// the Resolver is only an error backstop. Empty for normal tools.

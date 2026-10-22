@@ -19,6 +19,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -55,12 +56,19 @@ type Content struct {
 // Service is the shared plugin-side file reader behind both the embedded
 // read_file tool and the /files/content HTTP endpoint.
 type Service struct {
-	mm mmapi.Client
+	mm     mmapi.Client
+	scopes *scopedsession.Registry
 }
 
 // New creates a file content service backed by the given Mattermost client.
 func New(mm mmapi.Client) *Service {
 	return &Service{mm: mm}
+}
+
+// SetScopeRegistry makes reads under a scoped session check the file's
+// channel against that session's scope instead of the user's membership.
+func (s *Service) SetScopeRegistry(scopes *scopedsession.Registry) {
+	s.scopes = scopes
 }
 
 // GetContent returns the [offset, offset+limit) rune window of a file's text for
@@ -70,6 +78,11 @@ func New(mm mmapi.Client) *Service {
 func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset, limit int) (Content, error) {
 	if !model.IsValidId(fileID) {
 		return Content{}, fmt.Errorf("invalid file id")
+	}
+
+	scope, err := s.scopes.ScopeFromContext(ctx)
+	if err != nil {
+		return Content{}, err
 	}
 
 	mm := mmapi.WithFilePolicy(s.mm, auth.SessionIDFromContext(ctx))
@@ -82,7 +95,18 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 	}
 
 	// The plugin API is admin-level, so permission must be checked explicitly.
-	if fileInfo.ChannelId == "" || !s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) {
+	if fileInfo.ChannelId == "" {
+		return Content{}, ErrForbidden
+	}
+	if scope != nil {
+		allowed, scopeErr := s.scopeAllowsChannel(scope, fileInfo.ChannelId)
+		if scopeErr != nil {
+			return Content{}, scopeErr
+		}
+		if !allowed {
+			return Content{}, ErrForbidden
+		}
+	} else if !s.mm.HasPermissionToChannel(userID, fileInfo.ChannelId, model.PermissionReadChannel) {
 		return Content{}, ErrForbidden
 	}
 
@@ -98,6 +122,21 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 	}
 
 	return Slice(fileInfo.Name, fileInfo.MimeType, text, offset, limit), nil
+}
+
+func (s *Service) scopeAllowsChannel(scope *scopedsession.Scope, channelID string) (bool, error) {
+	channel, err := s.mm.GetChannel(channelID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get file channel: %w", err)
+	}
+	var team *model.Team
+	if channel.TeamId != "" {
+		team, err = s.mm.GetTeam(channel.TeamId)
+		if err != nil {
+			return false, fmt.Errorf("failed to get file team: %w", err)
+		}
+	}
+	return scope.AllowsChannelContent(channel, team, scopedsession.ComplianceEnabled(s.mm.GetConfig())), nil
 }
 
 // Slice returns the [offset, offset+limit) rune window of text as a Content,

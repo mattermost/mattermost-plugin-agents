@@ -13,6 +13,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/indexer"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -45,6 +46,13 @@ type Search struct {
 	getSearch      func() embeddings.EmbeddingSearch
 	mmclient       mmapi.Client
 	licenseChecker *enterprise.LicenseChecker
+	scopes         *scopedsession.Registry
+}
+
+// SetScopeRegistry makes searches under a scoped session read exactly that
+// session's scope instead of the user's channel memberships.
+func (s *Search) SetScopeRegistry(scopes *scopedsession.Registry) {
+	s.scopes = scopes
 }
 
 func New(
@@ -180,6 +188,19 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		TeamID:    opts.TeamID,
 		ChannelID: opts.ChannelID,
 		UserID:    opts.UserID,
+	}
+
+	scope, err := s.scopes.ScopeFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope != nil {
+		var cfg *model.Config
+		if s.mmclient != nil {
+			cfg = s.mmclient.GetConfig()
+		}
+		readable := scope.ContentChannels(scopedsession.ComplianceEnabled(cfg))
+		searchOpts.Scope = &readable
 	}
 
 	searchResults, err := search.Search(ctx, query, searchOpts)
