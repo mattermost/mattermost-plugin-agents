@@ -1,6 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import MattermostContainer from 'helpers/mmcontainer';
-import { MattermostPage } from 'helpers/mm';
 import {
     OpenAIMockContainer,
     RunOpenAIMocks,
@@ -9,27 +8,31 @@ import {
     buildToolCallResponse,
     titleGenerationMockRule,
 } from 'helpers/openai-mock';
-import { RunToolConfigContainerWithScopedAgent, setupRegularTestUser } from 'helpers/tool-config-container';
+import { RunToolConfigContainerForScopedAgents, setupRegularTestUser } from 'helpers/tool-config-container';
+import { AgentAPIHelper } from 'helpers/agent-api';
 import { adminUsername, adminPassword } from 'helpers/system-console-container';
 
 /**
  * Scoped channel mode with a mocked LLM. The agent's channel turns read through
  * a server-scoped session for its bot: the triggering channel, public channels
- * on open teams, and nothing else, with no approval step.
+ * on open teams, and nothing else, with no approval step. The mock answers the
+ * follow-up only once the tool result reaches it, so a reply proves the tool
+ * ran without anyone approving it; mock history shows what the tool could read.
  *
  * Scoped sessions need a Mattermost server that can mint them (12.2+); on an
  * older server every test is skipped.
  */
 
 const botUsername = 'scopedagent';
-const botDisplayName = 'Scoped Agent';
 const readChannelTool = 'mattermost__read_channel';
+const searchPostsTool = 'mattermost__search_posts';
 const minServerVersion = [12, 2, 0];
 
 let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 let serverSupported = false;
 let teamID: string;
+let townSquareID: string;
 
 function versionAtLeast(version: string, minimum: number[]): boolean {
     const parts = version.split('.').map((part) => parseInt(part, 10));
@@ -51,58 +54,57 @@ async function createChannelWithPost(name: string, type: 'O' | 'P', message: str
     return channel;
 }
 
-// mockReadChannelTurn makes the agent read channelID once, then answer with
+// mockToolTurn makes the agent call tool once with args, then answer with
 // done. The follow-up rule is registered last so it wins for the request that
 // carries the tool result.
-async function mockReadChannelTurn(userMessage: string, callID: string, channelID: string, done: string) {
+async function mockToolTurn(userMessage: string, callID: string, tool: string, args: object, done: string) {
     await openAIMock.addMocks([
         titleGenerationMockRule(),
         buildChatCompletionMockRule(
-            buildToolCallResponse(callID, readChannelTool, JSON.stringify({channel_id: channelID})),
+            buildToolCallResponse(callID, tool, JSON.stringify(args)),
             {bodyContains: userMessage},
         ),
         buildChatCompletionMockRule(buildTextResponse(done), {bodyContains: callID}),
     ]);
 }
 
-async function mentionAgentAndOpenThread(page: Page, message: string) {
-    const mmPage = new MattermostPage(page);
-    await mmPage.login(mattermost.url(), adminUsername, adminPassword);
-    await mmPage.goto('test', 'channels/town-square');
-    await mmPage.mentionBot(botUsername, message);
-
-    const sentPost = page.locator('.post').filter({
-        has: page.locator('.post-message__text').getByText(`@${botUsername} ${message}`, {exact: true}),
-    }).last();
-    await expect(sentPost).toBeVisible({timeout: 30000});
-    const replyIndicator = sentPost.getByText(/\d+ repl/i);
-    await expect(replyIndicator).toBeVisible({timeout: 30000});
-    await replyIndicator.click();
-
-    const rhs = page.locator('#rhsContainer');
-    await expect(rhs.locator('[data-testid="llm-bot-post"]').first()).toBeVisible({timeout: 10000});
-    return rhs;
+function mockReadChannelTurn(userMessage: string, callID: string, channelID: string, done: string) {
+    return mockToolTurn(userMessage, callID, readChannelTool, {channel_id: channelID}, done);
 }
 
-async function botPostsOutsideTownSquare(channelIDs: string[]) {
+// mentionAgentAndAwaitReply @mentions the agent in Town Square as the admin
+// and waits for its reply in that thread to contain done.
+async function mentionAgentAndAwaitReply(message: string, done: string) {
     const adminClient = await mattermost.getAdminClient();
     const bot = await adminClient.getUserByUsername(botUsername);
-    let count = 0;
-    for (const channelID of channelIDs) {
-        const posts = await adminClient.getPosts(channelID);
-        count += Object.values(posts.posts).filter((post) => post.user_id === bot.id).length;
-    }
-    return count;
+    const root = await adminClient.createPost({channel_id: townSquareID, message: `@${botUsername} ${message}`} as any);
+    await expect.poll(async () => {
+        const thread = await adminClient.getPostThread(root.id);
+        return Object.values(thread.posts).some((post) => post.user_id === bot.id && post.message.includes(done));
+    }, {
+        message: `expected ${botUsername} to reply with ${done}`,
+        timeout: 45000,
+        intervals: [500, 1000, 2000],
+    }).toBe(true);
+}
+
+// botPostsIn counts the agent's posts in channelID outside the thread rooted
+// at exceptRootID.
+async function botPostsIn(channelID: string, exceptRootID = '') {
+    const adminClient = await mattermost.getAdminClient();
+    const bot = await adminClient.getUserByUsername(botUsername);
+    const posts = await adminClient.getPosts(channelID);
+    return Object.values(posts.posts).filter((post) => post.user_id === bot.id && (!exceptRootID || post.root_id !== exceptRootID)).length;
 }
 
 test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
     test.beforeAll(async () => {
         test.setTimeout(180000);
-        mattermost = await RunToolConfigContainerWithScopedAgent();
+        mattermost = await RunToolConfigContainerForScopedAgents();
         openAIMock = await RunOpenAIMocks(mattermost.network);
 
         const adminClient = await mattermost.getAdminClient();
-        const config = await adminClient.getClientConfigOld();
+        const config = await adminClient.getClientConfig();
         serverSupported = versionAtLeast(config.Version ?? '', minServerVersion);
         if (!serverSupported) {
             return;
@@ -112,6 +114,23 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         const team = await adminClient.getTeamByName('test');
         await adminClient.patchTeam({id: team.id, allow_open_invite: true} as any);
         teamID = team.id;
+        townSquareID = (await adminClient.getChannelByName(team.id, 'town-square')).id;
+
+        await new AgentAPIHelper(mattermost.url()).createAgent(adminClient.getToken(), {
+            displayName: 'Scoped Agent',
+            username: botUsername,
+            serviceID: 'mock-service',
+            customInstructions: '',
+            mcpDynamicToolLoading: false,
+            enabledNativeTools: [],
+            useServiceAccountAuth: true,
+            scopedChannelMode: true,
+            autoEnableNewMCPTools: false,
+            enabledMCPTools: [
+                {server_origin: 'embedded://mattermost', tool_name: 'read_channel'},
+                {server_origin: 'embedded://mattermost', tool_name: 'search_posts'},
+            ],
+        });
     });
 
     test.beforeEach(() => {
@@ -123,7 +142,7 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         await mattermost?.stop();
     });
 
-    test('the agent, on no team, reads a public channel on an open team without asking', async ({ page }) => {
+    test('the agent, on no team, reads a public channel on an open team without asking', async () => {
         test.setTimeout(120000);
         const runID = Date.now();
         const evidence = `SCOPED_EVIDENCE_${runID}`;
@@ -132,16 +151,13 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         const evidenceChannel = await createChannelWithPost(`scoped-evidence-${runID}`, 'O', evidence);
         await mockReadChannelTurn(userMessage, `call_evidence_${runID}`, evidenceChannel.id, done);
 
-        const rhs = await mentionAgentAndOpenThread(page, userMessage);
+        await mentionAgentAndAwaitReply(userMessage, done);
 
-        await expect(rhs.getByText(done)).toBeVisible({timeout: 45000});
-        await expect(rhs.getByText('Auto-approved')).toBeVisible();
-        await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
-        await expect.poll(() => openAIMock.countRequestsContaining(evidence)).toBeGreaterThan(0);
-        expect(await botPostsOutsideTownSquare([evidenceChannel.id])).toBe(0);
+        expect(await openAIMock.countRequestsContaining(evidence)).toBeGreaterThan(0);
+        expect(await botPostsIn(evidenceChannel.id)).toBe(0);
     });
 
-    test("the bot's DM and a private channel it was added to stay unreachable", async ({ page }) => {
+    test("the bot's DM and a private channel it was added to stay unreachable", async () => {
         test.setTimeout(150000);
         const runID = Date.now();
         const adminClient = await mattermost.getAdminClient();
@@ -157,7 +173,14 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         const userClient = await mattermost.getClient('regularuser', 'regularuser');
         const regularUser = await userClient.getMe();
         const dm = await userClient.createDirectChannel([regularUser.id, bot.id]);
-        await userClient.createPost({channel_id: dm.id, message: dmSecret} as any);
+        const dmPost = await userClient.createPost({channel_id: dm.id, message: dmSecret} as any);
+
+        // The agent answers DMs as usual. Let that reply finish before the
+        // scoped turns, whose mocks reset the request history.
+        await expect.poll(async () => {
+            const thread = await adminClient.getPostThread(dmPost.id);
+            return Object.values(thread.posts).some((post) => post.user_id === bot.id);
+        }, {timeout: 45000}).toBe(true);
 
         for (const target of [
             {name: 'private', channelID: privateChannel.id, secret: privateSecret},
@@ -167,12 +190,43 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
             const userMessage = `read the ${target.name} channel ${runID}`;
             await mockReadChannelTurn(userMessage, `call_${target.name}_${runID}`, target.channelID, done);
 
-            const rhs = await mentionAgentAndOpenThread(page, userMessage);
+            await mentionAgentAndAwaitReply(userMessage, done);
 
-            await expect(rhs.getByText(done)).toBeVisible({timeout: 45000});
-            await expect(rhs.getByRole('button', {name: /^accept$/i})).not.toBeVisible();
+            expect(await openAIMock.countRequestsContaining(`call_${target.name}_${runID}`)).toBeGreaterThan(0);
             expect(await openAIMock.countRequestsContaining(target.secret)).toBe(0);
         }
-        expect(await botPostsOutsideTownSquare([privateChannel.id, dm.id])).toBe(0);
+        expect(await botPostsIn(privateChannel.id)).toBe(0);
+        expect(await botPostsIn(dm.id, dmPost.id)).toBe(0);
+    });
+
+    test('keyword search only returns posts in scope', async () => {
+        test.setTimeout(120000);
+        const runID = Date.now();
+        const adminClient = await mattermost.getAdminClient();
+        const bot = await adminClient.getUserByUsername(botUsername);
+        const term = `scopedterm${runID}`;
+
+        const evidenceChannel = await createChannelWithPost(`scoped-search-${runID}`, 'O', `${term} SEARCH_EVIDENCE_${runID}`);
+        const privateChannel = await createChannelWithPost(`search-private-${runID}`, 'P', `${term} SEARCH_PRIVATE_${runID}`);
+        await adminClient.addToChannel(bot.id, privateChannel.id);
+
+        const done = `SCOPED_SEARCHED_${runID}`;
+        const userMessage = `search for ${term}`;
+        await mockToolTurn(userMessage, `call_search_${runID}`, searchPostsTool, {query: term, team_id: teamID}, done);
+
+        await mentionAgentAndAwaitReply(userMessage, done);
+
+        expect(await openAIMock.countRequestsContaining(`SEARCH_EVIDENCE_${runID}`)).toBeGreaterThan(0);
+        expect(await openAIMock.countRequestsContaining(`SEARCH_PRIVATE_${runID}`)).toBe(0);
+        expect(await botPostsIn(evidenceChannel.id)).toBe(0);
+    });
+
+    test('every run revoked its scoped session', async () => {
+        const adminClient = await mattermost.getAdminClient();
+        const bot = await adminClient.getUserByUsername(botUsername);
+        await expect.poll(async () => {
+            const sessions = await adminClient.getSessions(bot.id);
+            return sessions.filter((session) => session.props?.scope).length;
+        }, {timeout: 15000}).toBe(0);
     });
 });

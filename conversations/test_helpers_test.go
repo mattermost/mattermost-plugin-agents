@@ -332,6 +332,8 @@ func (c *fakeMMClient) SendEphemeralPost(userID string, post *model.Post) {
 
 type fakeStreamingService struct {
 	streamedPosts []*model.Post
+	// contextErr, when set, fails GetStreamingContext.
+	contextErr error
 	// finished, when set, receives the ID of each post whose stream ends.
 	finished chan string
 }
@@ -360,6 +362,9 @@ func (s *fakeStreamingService) StreamContinuationToPost(_ context.Context, strea
 func (s *fakeStreamingService) StopStreaming(string) {}
 
 func (s *fakeStreamingService) GetStreamingContext(inCtx context.Context, _ string) (context.Context, error) {
+	if s.contextErr != nil {
+		return nil, s.contextErr
+	}
 	return inCtx, nil
 }
 
