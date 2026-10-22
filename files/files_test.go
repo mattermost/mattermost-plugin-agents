@@ -13,6 +13,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -372,4 +373,78 @@ func TestGetContentDeniedOnContentRead(t *testing.T) {
 
 	require.ErrorIs(t, err, ErrForbidden)
 	require.False(t, adminContentRead, "admin GetFile must not run after the content-read policy check denies access")
+}
+
+// TestGetContentUnderScopedSession proves a scoped session reads exactly its
+// scope: channel membership is never consulted, so the bot's DMs and other
+// channels it was added to stay unreachable while listed and open-team
+// public channels are readable without membership.
+func TestGetContentUnderScopedSession(t *testing.T) {
+	botID := model.NewId()
+	fileID := model.NewId()
+	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
+	closedTeam := &model.Team{Id: model.NewId()}
+	trigger := &model.Channel{Id: model.NewId(), TeamId: closedTeam.Id, Type: model.ChannelTypePrivate}
+	openPublic := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen}
+	closedPublic := &model.Channel{Id: model.NewId(), TeamId: closedTeam.Id, Type: model.ChannelTypeOpen}
+	memberPrivate := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypePrivate}
+	botDM := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}
+
+	scope := &scopedsession.Scope{
+		Permissions: scopedsession.ReadPermissions(),
+		Resources:   scopedsession.Resources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true},
+	}
+
+	tests := []struct {
+		name       string
+		channel    *model.Channel
+		team       *model.Team
+		compliance bool
+		allowed    bool
+	}{
+		{name: "triggering private channel the bot is not in", channel: trigger, team: closedTeam, allowed: true},
+		{name: "public channel on an open team", channel: openPublic, team: openTeam, allowed: true},
+		{name: "public channel on an invite-only team", channel: closedPublic, team: closedTeam},
+		{name: "private channel the bot was added to", channel: memberPrivate, team: openTeam},
+		{name: "the bot's DM with a user", channel: botDM},
+		{name: "open-team public channel with compliance mode on", channel: openPublic, team: openTeam, compliance: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &model.Session{Id: model.NewId(), UserId: botID, ExpiresAt: model.GetMillis() + 60_000}
+			registry := scopedsession.NewRegistry(nil)
+			registry.Register(session, scope)
+
+			m := mocks.NewMockClient(t)
+			m.EXPECT().HasPermissionToFileAction(session.Id, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true).Maybe()
+			m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: tt.channel.Id, Name: "notes.pdf", Content: "evidence"}, nil)
+			m.EXPECT().GetChannel(tt.channel.Id).Return(tt.channel, nil)
+			if tt.team != nil {
+				m.EXPECT().GetTeam(tt.team.Id).Return(tt.team, nil)
+			}
+			m.EXPECT().GetConfig().Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+
+			svc := New(m)
+			svc.SetScopeRegistry(registry)
+			content, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
+			if !tt.allowed {
+				require.ErrorIs(t, err, ErrForbidden)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "evidence", content.Text)
+		})
+	}
+
+	t.Run("revoked session is denied before any read", func(t *testing.T) {
+		session := &model.Session{Id: model.NewId(), UserId: botID, ExpiresAt: model.GetMillis() + 60_000}
+		registry := scopedsession.NewRegistry(nil)
+		registry.Register(session, scope)
+		registry.Revoke(session.Id)
+
+		svc := New(mocks.NewMockClient(t))
+		svc.SetScopeRegistry(registry)
+		_, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
+		require.ErrorIs(t, err, scopedsession.ErrRevoked)
+	})
 }
