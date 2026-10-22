@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -91,12 +90,12 @@ func TestSearchWithScope(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		scope    scopedsession.Resources
+		scope    model.SessionScopeResources
 		expected []string
 	}{
 		{
 			name: "listed channels and open-team public channels, regardless of membership",
-			scope: scopedsession.Resources{
+			scope: model.SessionScopeResources{
 				ChannelIDs:             []string{"trigger_private", "extra_private", "bot_dm", "bot_gm"},
 				OpenTeamPublicChannels: true,
 			},
@@ -104,17 +103,17 @@ func TestSearchWithScope(t *testing.T) {
 		},
 		{
 			name:     "listed channels only",
-			scope:    scopedsession.Resources{ChannelIDs: []string{"trigger_private"}},
+			scope:    model.SessionScopeResources{ChannelIDs: []string{"trigger_private"}},
 			expected: []string{"trigger_private"},
 		},
 		{
 			name:     "listed channel under an access policy",
-			scope:    scopedsession.Resources{ChannelIDs: []string{"open_public_policy"}},
+			scope:    model.SessionScopeResources{ChannelIDs: []string{"open_public_policy"}},
 			expected: nil,
 		},
 		{
 			name:     "empty scope reads nothing",
-			scope:    scopedsession.Resources{},
+			scope:    model.SessionScopeResources{},
 			expected: nil,
 		},
 	}

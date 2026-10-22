@@ -20,7 +20,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	"github.com/mattermost/mattermost-plugin-agents/v2/embeddings"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/pgvector/pgvector-go"
 )
 
@@ -390,19 +390,19 @@ func (pv *PGVector) Search(ctx context.Context, embedding []float32, opts embedd
 }
 
 // openTeamSQL selects teams any user on the server can join. It must match
-// scopedsession.IsOpenTeam.
+// model.Team.IsOpenToAllUsers.
 const openTeamSQL = `SELECT t.Id FROM Teams t
 	WHERE t.AllowOpenInvite = true
 	AND t.DeleteAt = 0
 	AND COALESCE(t.GroupConstrained, false) = false
-	AND COALESCE(TRIM(t.AllowedDomains), '') = ''
+	AND COALESCE(t.AllowedDomains, '') = ''
 	AND NOT EXISTS (SELECT 1 FROM AccessControlPolicies tp WHERE tp.ID = t.Id AND tp.Type = 'team')`
 
 // scopedChannelsCondition limits a search to the channels a scoped session
 // can read: the listed channels plus, when enabled, public channels on open
 // teams. Membership is not consulted. DMs, group messages, and channels under
 // an access policy are never in scope.
-func scopedChannelsCondition(scope scopedsession.Resources) sq.Sqlizer {
+func scopedChannelsCondition(scope model.SessionScopeResources) sq.Sqlizer {
 	inScope := sq.Or{
 		sq.Expr("(c.Id = ANY(?::text[]) AND c.Type IN ('O', 'P'))", pq.Array(scope.ChannelIDs)),
 	}

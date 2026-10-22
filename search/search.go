@@ -199,7 +199,7 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		if s.mmclient != nil {
 			cfg = s.mmclient.GetConfig()
 		}
-		readable := scope.ContentChannels(scopedsession.ComplianceEnabled(cfg))
+		readable := scopedsession.ContentChannels(scope, scopedsession.ComplianceEnabled(cfg))
 		searchOpts.Scope = &readable
 	}
 

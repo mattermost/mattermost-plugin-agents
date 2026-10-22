@@ -9,7 +9,7 @@ import (
 	"math"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/chunking"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost/server/public/model"
 )
 
 // Provider types
@@ -63,7 +63,7 @@ type SearchOptions struct {
 
 	// Scope, when set, replaces UserID's channel memberships as the set of
 	// readable channels: the search runs under a scoped session.
-	Scope *scopedsession.Resources
+	Scope *model.SessionScopeResources
 }
 
 // EmbeddingSearch defines the high-level interface for storing and searching using embeddings

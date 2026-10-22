@@ -18,14 +18,14 @@ import (
 func TestAllowsChannelContent(t *testing.T) {
 	triggerID := model.NewId()
 	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
-	scope := &Scope{
-		Permissions: ReadPermissions(),
-		Resources:   Resources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true},
+	scope := &model.SessionScope{
+		Permissions: model.ScopeReadPermissions,
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true},
 	}
 
 	tests := []struct {
 		name       string
-		scope      *Scope
+		scope      *model.SessionScope
 		channel    *model.Channel
 		team       *model.Team
 		compliance bool
@@ -96,12 +96,12 @@ func TestAllowsChannelContent(t *testing.T) {
 		},
 		{
 			name:    "listed DM",
-			scope:   &Scope{Permissions: ReadPermissions(), Resources: Resources{ChannelIDs: []string{triggerID}}},
+			scope:   &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{triggerID}}},
 			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypeDirect},
 		},
 		{
 			name:    "listed group message",
-			scope:   &Scope{Permissions: ReadPermissions(), Resources: Resources{ChannelIDs: []string{triggerID}}},
+			scope:   &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{triggerID}}},
 			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypeGroup},
 		},
 		{
@@ -122,71 +122,37 @@ func TestAllowsChannelContent(t *testing.T) {
 		},
 		{
 			name:    "scope without the content permission",
-			scope:   &Scope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources},
+			scope:   &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources},
 			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
 		},
 		{
 			name:    "empty scope from a malformed prop",
-			scope:   &Scope{},
+			scope:   &model.SessionScope{},
 			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.allowed, tt.scope.AllowsChannelContent(tt.channel, tt.team, tt.compliance))
+			assert.Equal(t, tt.allowed, AllowsChannelContent(tt.scope, tt.channel, tt.team, tt.compliance))
 		})
 	}
 }
 
 func TestContentChannels(t *testing.T) {
-	resources := Resources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true}
+	resources := model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true}
 	tests := []struct {
 		name       string
-		scope      *Scope
+		scope      *model.SessionScope
 		compliance bool
-		expected   Resources
+		expected   model.SessionScopeResources
 	}{
-		{name: "full scope", scope: &Scope{Permissions: ReadPermissions(), Resources: resources}, expected: resources},
-		{name: "compliance drops open teams", scope: &Scope{Permissions: ReadPermissions(), Resources: resources}, compliance: true, expected: Resources{ChannelIDs: []string{"a", "b"}}},
-		{name: "no content permission reads nothing", scope: &Scope{Resources: resources}, expected: Resources{}},
+		{name: "full scope", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, expected: resources},
+		{name: "compliance drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
+		{name: "no content permission reads nothing", scope: &model.SessionScope{Resources: resources}, expected: model.SessionScopeResources{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tt.scope.ContentChannels(tt.compliance))
-		})
-	}
-}
-
-func TestFromSession(t *testing.T) {
-	encoded, err := json.Marshal(Scope{Permissions: ReadPermissions(), Resources: Resources{ChannelIDs: []string{"c"}}})
-	require.NoError(t, err)
-
-	tests := []struct {
-		name     string
-		session  *model.Session
-		scoped   bool
-		expected *Scope
-	}{
-		{name: "no session", session: nil},
-		{name: "unscoped session", session: &model.Session{Props: map[string]string{"isMCP": "true"}}},
-		{
-			name:     "scoped session",
-			session:  &model.Session{Props: map[string]string{PropKey: string(encoded)}},
-			scoped:   true,
-			expected: &Scope{Permissions: ReadPermissions(), Resources: Resources{ChannelIDs: []string{"c"}}},
-		},
-		{
-			name:     "malformed scope allows nothing",
-			session:  &model.Session{Props: map[string]string{PropKey: "{not json"}},
-			scoped:   true,
-			expected: &Scope{},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scope, scoped := FromSession(tt.session)
-			assert.Equal(t, tt.scoped, scoped)
-			assert.Equal(t, tt.expected, scope)
+			assert.Equal(t, tt.expected, ContentChannels(tt.scope, tt.compliance))
 		})
 	}
 }
@@ -213,10 +179,10 @@ func TestServerSupports(t *testing.T) {
 
 func TestRegistryScopeForSession(t *testing.T) {
 	minted := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
-	mintedScope := &Scope{Permissions: ReadPermissions(), Resources: Resources{ChannelIDs: []string{"c"}}}
+	mintedScope := &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{"c"}}}
 	encoded, err := json.Marshal(mintedScope)
 	require.NoError(t, err)
-	elsewhere := &model.Session{Id: model.NewId(), Props: map[string]string{PropKey: string(encoded)}}
+	elsewhere := &model.Session{Id: model.NewId(), Props: map[string]string{model.SessionPropScope: string(encoded)}}
 	normal := &model.Session{Id: model.NewId()}
 	lookupErr := errors.New("db down")
 
@@ -238,7 +204,7 @@ func TestRegistryScopeForSession(t *testing.T) {
 	tests := []struct {
 		name      string
 		sessionID string
-		expected  *Scope
+		expected  *model.SessionScope
 		wantErr   error
 	}{
 		{name: "minted on this node", sessionID: minted.Id, expected: mintedScope},
@@ -258,6 +224,46 @@ func TestRegistryScopeForSession(t *testing.T) {
 			}
 			require.NoError(t, scopeErr)
 			assert.Equal(t, tt.expected, scope)
+		})
+	}
+}
+
+type fakeSessionAPI struct {
+	createErr *model.AppError
+	session   *model.Session
+	revoked   []string
+}
+
+func (f *fakeSessionAPI) CreateScopedSession(string, *model.SessionScope, int64) (*model.Session, *model.AppError) {
+	return f.session, f.createErr
+}
+
+func (f *fakeSessionAPI) RevokeSession(sessionID string) *model.AppError {
+	f.revoked = append(f.revoked, sessionID)
+	return nil
+}
+
+func TestPluginAPIMinter(t *testing.T) {
+	minted := &model.Session{Id: model.NewId()}
+	tests := []struct {
+		name    string
+		api     *fakeSessionAPI
+		wantErr bool
+	}{
+		{name: "server mints", api: &fakeSessionAPI{session: minted}},
+		{name: "server refuses", api: &fakeSessionAPI{createErr: model.NewAppError("CreateScopedSession", "id", nil, "", 400)}, wantErr: true},
+		{name: "server returns nothing", api: &fakeSessionAPI{}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session, err := NewPluginAPIMinter(tt.api).CreateScopedSession(model.NewId(), &model.SessionScope{}, model.GetMillis())
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, session)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, minted, session)
 		})
 	}
 }

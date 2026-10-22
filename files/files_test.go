@@ -390,9 +390,9 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 	memberPrivate := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypePrivate}
 	botDM := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}
 
-	scope := &scopedsession.Scope{
-		Permissions: scopedsession.ReadPermissions(),
-		Resources:   scopedsession.Resources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true},
+	scope := &model.SessionScope{
+		Permissions: model.ScopeReadPermissions,
+		Resources:   model.SessionScopeResources{ChannelIDs: []string{trigger.Id}, OpenTeamPublicChannels: true},
 	}
 
 	tests := []struct {
