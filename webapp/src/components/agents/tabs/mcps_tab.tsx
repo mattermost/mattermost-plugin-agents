@@ -25,6 +25,7 @@ import {useIsLicensedFor} from '@/license';
 import {LicenseChip} from '@/components/system_console/enterprise_chip';
 
 import {filterMcpsServersBySearchQuery} from './mcp_servers_filter';
+import ScopedChannelModeSection from './scoped_channel_mode_section';
 
 // Same sentinel as llm.MCPServerToolWildcard ('*' = all tools from that origin).
 const MCPServerToolWildcard = '*';
@@ -34,6 +35,8 @@ type Props = {
     enabledTools: EnabledTool[];
     autoEnableNewMCPTools: boolean;
     useServiceAccountAuth: boolean;
+    scopedChannelMode: boolean;
+    scopedExtraChannelIds: string[];
 
     /** Soft-lock auto-enable + tool grants while SA is on for non-admins; SA checkbox stays reachable. */
     serviceAccountFieldsLocked: boolean;
@@ -44,6 +47,8 @@ type Props = {
         enabledTools?: EnabledTool[];
         autoEnableNewMCPTools?: boolean;
         useServiceAccountAuth?: boolean;
+        scopedChannelMode?: boolean;
+        scopedExtraChannelIds?: string[];
     }) => void;
 
     // Optional server-state reconciliation callback. Used when removing entries
@@ -134,6 +139,8 @@ const McpsTab = (props: Props) => {
         enabledTools,
         autoEnableNewMCPTools,
         useServiceAccountAuth,
+        scopedChannelMode,
+        scopedExtraChannelIds,
         serviceAccountFieldsLocked,
         canEditServiceAccountAuth,
         onChange,
@@ -318,7 +325,14 @@ const McpsTab = (props: Props) => {
                         if (e.target.checked && !serviceAccountLicensed) {
                             return;
                         }
-                        onChange({useServiceAccountAuth: e.target.checked});
+
+                        // Scoped channel mode builds on service accounts; the
+                        // server clears it too when they are turned off.
+                        onChange(e.target.checked ? {useServiceAccountAuth: true} : {
+                            useServiceAccountAuth: false,
+                            scopedChannelMode: false,
+                            scopedExtraChannelIds: [],
+                        });
                     }}
                 >
                     <CheckboxText>
@@ -341,6 +355,15 @@ const McpsTab = (props: Props) => {
                         title={<FormattedMessage defaultMessage="Anyone who can use this agent acts with its shared service account access on external MCP servers. Mattermost (embedded) and plugin tools run with each requesting user's own permissions. Restrict who can use this agent on the Access tab. External MCP servers without service account credentials configured are excluded from this agent."/>}
                     />
                 </div>
+            )}
+            {useServiceAccountAuth && (
+                <ScopedChannelModeSection
+                    scopedChannelMode={scopedChannelMode}
+                    scopedExtraChannelIds={scopedExtraChannelIds}
+                    autoEnableNewMCPTools={autoEnableNewMCPTools}
+                    editable={canEditServiceAccountAuth}
+                    onChange={onChange}
+                />
             )}
         </ServiceAccountSection>
     );
@@ -391,7 +414,12 @@ const McpsTab = (props: Props) => {
                     id='mcp-auto-enable'
                     checked={autoEnableNewMCPTools}
                     disabled={serviceAccountFieldsLocked}
-                    onChange={(e) => onChange({autoEnableNewMCPTools: e.target.checked})}
+                    onChange={(e) => onChange(e.target.checked ? {
+                        autoEnableNewMCPTools: true,
+
+                        // Scoped channel mode needs an explicit allowlist.
+                        scopedChannelMode: false,
+                    } : {autoEnableNewMCPTools: false})}
                 >
                     <CheckboxText>
                         <CheckboxTitle>
