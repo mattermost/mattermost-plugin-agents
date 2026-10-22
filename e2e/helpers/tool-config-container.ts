@@ -84,6 +84,51 @@ export async function RunToolConfigContainer(): Promise<MattermostContainer> {
 }
 
 /**
+ * Container with one agent in scoped channel mode on the Smocker LLM:
+ * service accounts on, an explicit allowlist of the embedded read_channel
+ * tool, and channel tool calling enabled.
+ */
+export async function RunToolConfigContainerWithScopedAgent(): Promise<MattermostContainer> {
+    return RunSystemConsoleContainer({
+        enableChannelMentionToolCalling: true,
+        services: [
+            {
+                id: 'mock-service',
+                name: 'Mock Service',
+                type: 'openaicompatible',
+                apiKey: 'mock',
+                apiURL: 'http://openai:8080',
+                defaultModel: 'gpt-mock',
+                useResponsesAPI: false,
+            },
+        ],
+        bots: [
+            {
+                id: 'scoped-agent',
+                name: 'scopedagent',
+                displayName: 'Scoped Agent',
+                serviceID: 'mock-service',
+                customInstructions: '',
+                disableTools: false,
+                mcpDynamicToolLoading: false,
+                enabledNativeTools: [],
+                useServiceAccountAuth: true,
+                scopedChannelMode: true,
+                autoEnableNewMCPTools: false,
+                enabledMCPTools: [{server_origin: 'embedded://mattermost', tool_name: 'read_channel'}],
+            },
+        ],
+        mcp: {
+            enabled: true,
+            enablePluginServer: true,
+            embeddedServer: {enabled: true},
+            idleTimeoutMinutes: 30,
+            servers: [],
+        },
+    });
+}
+
+/**
  * Container with MCP embedded server and explicit tool_configs
  * preset for testing policy changes. Uses same base config.
  */

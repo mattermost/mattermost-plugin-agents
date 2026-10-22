@@ -1,0 +1,120 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React from 'react';
+import styled from 'styled-components';
+import {FormattedMessage} from 'react-intl';
+
+import {Checkbox} from '@mattermost/compass-ui/components/checkbox';
+import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+
+import {SelectChannel} from '@/components/select';
+import {useServerSupportsScopedSessions} from '@/hooks/use_server_supports_scoped_sessions';
+
+type Props = {
+    scopedChannelMode: boolean;
+    scopedExtraChannelIds: string[];
+    autoEnableNewMCPTools: boolean;
+
+    /** Only system admins may change these settings. */
+    editable: boolean;
+    onChange: (updates: {scopedChannelMode?: boolean; scopedExtraChannelIds?: string[]}) => void;
+};
+
+const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, editable, onChange}: Props) => {
+    const serverSupported = useServerSupportsScopedSessions();
+    const canTurnOn = editable && serverSupported && !autoEnableNewMCPTools;
+
+    return (
+        <Section data-testid='scoped-channel-mode-section'>
+            <Checkbox
+                id='mcp-scoped-channel-mode'
+                checked={scopedChannelMode}
+                disabled={scopedChannelMode ? !editable : !canTurnOn}
+                onChange={(e) => onChange({scopedChannelMode: e.target.checked})}
+            >
+                <CheckboxText>
+                    <CheckboxTitle>
+                        <FormattedMessage defaultMessage='Run tools in channels without asking'/>
+                    </CheckboxTitle>
+                    <CheckboxHint>
+                        <FormattedMessage defaultMessage="In channels, this agent's tools run on a short-lived session for the agent's own account that can only read, and results are shared in the thread without a Share step. Tools that change data in Mattermost and tools from other plugins are not used in channels. Direct messages are not affected."/>
+                    </CheckboxHint>
+                </CheckboxText>
+            </Checkbox>
+            {!serverSupported && (
+                <SectionNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage='This setting needs Mattermost Server 12.2 or later.'/>}
+                />
+            )}
+            {serverSupported && autoEnableNewMCPTools && !scopedChannelMode && (
+                <SectionNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage='To use this setting, turn off "Automatically enable all MCP tools" and pick the tools this agent may use.'/>}
+                />
+            )}
+            {scopedChannelMode && (
+                <>
+                    <SectionNotice
+                        type='info'
+                        title={<FormattedMessage defaultMessage="Without asking, this agent can read the channel it's used in, all public channels on teams anyone can join, and the channels below. Channel tool calling must also be turned on in the plugin settings."/>}
+                    />
+                    <ExtraChannels>
+                        <ExtraChannelsLabel>
+                            <FormattedMessage defaultMessage='Additional channels this agent can read'/>
+                        </ExtraChannelsLabel>
+                        <SelectChannel
+                            channelIDs={scopedExtraChannelIds}
+                            onChangeChannelIDs={(ids) => onChange({scopedExtraChannelIds: ids})}
+                            disabled={!editable}
+                        />
+                    </ExtraChannels>
+                    {scopedExtraChannelIds.length > 0 && (
+                        <div role='status'>
+                            <SectionNotice
+                                type='warning'
+                                title={<FormattedMessage defaultMessage='Content from these channels may appear in any channel where this agent is used, including to people who are not members of them.'/>}
+                            />
+                        </div>
+                    )}
+                </>
+            )}
+        </Section>
+    );
+};
+
+const Section = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
+`;
+
+const CheckboxText = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+`;
+
+const CheckboxTitle = styled.span`
+    font-weight: 600;
+`;
+
+const CheckboxHint = styled.span`
+    color: rgba(var(--center-channel-color-rgb), 0.72);
+    font-size: 12px;
+`;
+
+const ExtraChannels = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+`;
+
+const ExtraChannelsLabel = styled.span`
+    font-weight: 600;
+`;
+
+export default ScopedChannelModeSection;

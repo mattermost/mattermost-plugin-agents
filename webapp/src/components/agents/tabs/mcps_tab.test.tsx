@@ -37,6 +37,10 @@ jest.mock('@/hooks/use_mcp_connection_events', () => ({
     useMCPConnectionEvents: jest.fn(),
 }));
 
+jest.mock('@/hooks/use_server_supports_scoped_sessions', () => ({
+    useServerSupportsScopedSessions: jest.fn(() => true),
+}));
+
 // WithTooltip renders its title alongside children so tests can assert the tooltip text.
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children, title}: {children: React.ReactNode; title?: React.ReactNode}) => (
@@ -96,6 +100,8 @@ function renderTab({
                     enabledTools={enabledTools}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                     canEditServiceAccountAuth={canEditServiceAccountAuth}
                     onChange={onChange}
@@ -122,6 +128,8 @@ function renderWithOrphanedTool(useServiceAccountAuth: boolean) {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={useServiceAccountAuth}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -161,6 +169,8 @@ describe('McpsTab', () => {
                     ]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={false}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={false}
                     canEditServiceAccountAuth={true}
                     onChange={onChange}
@@ -240,7 +250,7 @@ describe('McpsTab', () => {
         expect(screen.getByText(serviceAccountWarning)).not.toBeNull();
 
         fireEvent.click(toggle);
-        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false});
+        expect(on.onChange).toHaveBeenCalledWith({useServiceAccountAuth: false, scopedChannelMode: false, scopedExtraChannelIds: []});
     });
 
     // Soft-lock mirrors the server sensitive-field ACL: auto-enable and tool
@@ -255,6 +265,8 @@ describe('McpsTab', () => {
                     enabledTools={[]}
                     autoEnableNewMCPTools={false}
                     useServiceAccountAuth={true}
+                    scopedChannelMode={false}
+                    scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={true}
                     canEditServiceAccountAuth={false}
                     onChange={onChange}
