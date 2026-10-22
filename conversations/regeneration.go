@@ -104,6 +104,14 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 	referenceRecordingFileIDProp := post.GetProp(ReferencedRecordingFileID)
 	referencedTranscriptPostProp := post.GetProp(ReferencedTranscriptPostID)
 	var result *llm.TextStreamResult
+	// Streaming below is synchronous, so the regenerated run ends when this
+	// returns.
+	var releaseRun func()
+	defer func() {
+		if releaseRun != nil {
+			releaseRun()
+		}
+	}()
 	switch {
 	case threadID != "":
 		analysisType, _ := post.GetProp(AnalysisTypeProp).(string)
@@ -215,11 +223,12 @@ func (c *Conversations) HandleRegenerate(ctx stdcontext.Context, userID string, 
 			return errors.New("post missing responding to prop")
 		}
 
-		regenResult, regenErr := c.regenerateViaConversation(ctx, policy, post)
+		regenResult, release, regenErr := c.regenerateViaConversation(ctx, policy, post)
 		if regenErr != nil {
 			return fmt.Errorf("could not regenerate via conversation: %w", regenErr)
 		}
 		result = regenResult
+		releaseRun = release
 	}
 
 	if mmapi.IsDMWith(bot.GetMMBot().UserId, channel) {
@@ -250,11 +259,12 @@ func (c *Conversations) checkRegenerateLicense(post *model.Post) error {
 }
 
 // regenerateViaConversation rebuilds the completion request from the conversation entity
-// and runs the ToolRunner to produce a new response stream.
-func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (*llm.TextStreamResult, error) {
+// and runs the ToolRunner to produce a new response stream. On success the
+// caller must call release once the stream has been consumed.
+func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy *turnPolicy, post *model.Post) (_ *llm.TextStreamResult, release func(), err error) {
 	conv := policy.conv
 	if conv == nil {
-		return nil, errors.New("post missing conversation_id for regeneration")
+		return nil, nil, errors.New("post missing conversation_id for regeneration")
 	}
 
 	// Regen truncates the request at the originating user message, so a
@@ -263,6 +273,11 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
 	llmContext.ResponsePostID = post.Id
+	defer func() {
+		if err != nil {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)
@@ -273,7 +288,7 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		SessionID:                auth.SessionIDFromContext(ctx),
 	})
 	if buildErr != nil {
-		return nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
+		return nil, nil, fmt.Errorf("failed to build completion request for regen: %w", buildErr)
 	}
 
 	// Scrub the prior generation so the stream runs identically to a first.
@@ -291,8 +306,8 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 
 	runResult, runErr := policy.runToolLoop(ctx, llmContext, conv.ID, *completionReq, "Failed to write tool turns on regen")
 	if runErr != nil {
-		return nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
+		return nil, nil, fmt.Errorf("tool runner failed on regen: %w", runErr)
 	}
 
-	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), nil
+	return c.decorateStreamWithCreatedFiles(ctx, policy.bot, runResult.Stream, post, nil, llmContext, llmContext), llmContext.ReleaseScopedSession, nil
 }

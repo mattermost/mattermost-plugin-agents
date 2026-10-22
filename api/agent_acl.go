@@ -90,6 +90,7 @@ func clearManagerEditableFields(cfg *llm.BotConfig) {
 	cfg.TeamIDs = sortedOrNil(cfg.TeamIDs)
 	cfg.AdminUserIDs = sortedOrNil(cfg.AdminUserIDs)
 	cfg.EnabledMCPTools = sortedToolsOrNil(cfg.EnabledMCPTools)
+	cfg.ScopedExtraChannelIDs = sortedOrNil(cfg.ScopedExtraChannelIDs)
 }
 
 func sortedOrNil(s []string) []string {

@@ -217,6 +217,9 @@ func (c *Conversations) HandleToolCall(ctx context.Context, userID string, post 
 	// click cannot reach tools the run itself could not have been offered.
 	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for tool approval")
 	llmContext.ResponsePostID = post.Id
+	// Approved tools run below, before this returns; the follow-up builds its
+	// own context and session.
+	defer llmContext.ReleaseScopedSession()
 	// The clicked post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -712,6 +715,12 @@ func (c *Conversations) streamToolFollowUp(
 	}
 	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for tool follow-up")
 	llmContext.ResponsePostID = post.Id
+	scopedHandedOff := false
+	defer func() {
+		if !scopedHandedOff {
+			llmContext.ReleaseScopedSession()
+		}
+	}()
 	// The continuation post may already carry attachments from an earlier round.
 	llmContext.SetResponseAttachmentBudget(maxResponseAttachments - len(post.FileIds))
 
@@ -748,9 +757,10 @@ func (c *Conversations) streamToolFollowUp(
 
 	// Stream onto the same post; finalize demotes the prior anchor so
 	// resolved tool cards remain visible alongside the new round.
-	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, nil); err != nil {
+	if err := c.streamToExistingPost(ctx, stream, post, policy.user, policy.channel, true, llmContext.ReleaseScopedSession); err != nil {
 		return fmt.Errorf("failed to stream tool follow-up: %w", err)
 	}
+	scopedHandedOff = true
 
 	return nil
 }

@@ -223,6 +223,7 @@ func agentGates(prev, next llm.BotConfig) []gate {
 		{next.UserAccessLevel == llm.UserAccessLevelAttributeBased && prev.UserAccessLevel != llm.UserAccessLevelAttributeBased, enterprise.CapAttributeBasedAccess},
 		{AccessControlsNewlyRestricted(prev, next), enterprise.CapAgentAccessControls},
 		{next.UseServiceAccountAuth && !prev.UseServiceAccountAuth, enterprise.CapMCPServiceAccount},
+		{next.ScopedChannelMode && !prev.ScopedChannelMode, enterprise.CapMCPServiceAccount},
 		{BotHasProviderWebSearch(next) && !BotHasProviderWebSearch(prev), enterprise.CapProviderWebSearch},
 	}
 }
