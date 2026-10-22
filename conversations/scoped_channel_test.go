@@ -6,6 +6,7 @@ package conversations_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -136,9 +137,15 @@ func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
 	return out
 }
 
-func setupScopedTestEnv(t *testing.T, channel *model.Channel, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
+// scopedEnvOpts adjusts setupScopedTestEnv. streamingErr fails the run after
+// its session is minted and before streaming starts.
+type scopedEnvOpts struct {
+	streamingErr error
+}
+
+func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
 	t.Helper()
-	env := &scopedTestEnv{minter: &scopedTestMinter{}, streaming: &fakeStreamingService{finished: make(chan string, 4)}}
+	env := &scopedTestEnv{minter: &scopedTestMinter{}, streaming: &fakeStreamingService{finished: make(chan string, 4), contextErr: opts.streamingErr}}
 
 	mockAPI := &plugintest.API{}
 	defaultLocale := "en"
@@ -226,6 +233,9 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, llmResponses ...*l
 	mmClient.posts = map[string]*model.Post{post.Id: post}
 	env.channel, env.trigger = channel, post
 	env.conversations.MessageHasBeenPosted(nil, post)
+	if opts.streamingErr != nil {
+		return env
+	}
 
 	select {
 	case <-env.streaming.finished:
@@ -261,7 +271,7 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 
 	t.Run("channel mention runs on a scoped session without approval", func(t *testing.T) {
 		channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypePrivate, Name: "evidence"}
-		env := setupScopedTestEnv(t, channel, dmMakeToolCallStream(toolCall), dmMakeTextStream("JIRA-1 has it"))
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{}, dmMakeToolCallStream(toolCall), dmMakeTextStream("JIRA-1 has it"))
 
 		assert.Equal(t, 1, env.runs(), "the ask tool runs without approval")
 		assert.Equal(t, 0, env.catalog.unscoped, "a scoped turn never builds the requester's catalog")
@@ -302,7 +312,7 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 
 	t.Run("DM still waits for approval", func(t *testing.T) {
 		channel := &model.Channel{Id: scopedChannelID, Type: model.ChannelTypeDirect, Name: scopedBotUserID + "__" + scopedUserID}
-		env := setupScopedTestEnv(t, channel, dmMakeToolCallStream(toolCall))
+		env := setupScopedTestEnv(t, channel, scopedEnvOpts{}, dmMakeToolCallStream(toolCall))
 
 		assert.Equal(t, 0, env.runs())
 		minted, _ := env.minter.snapshot()
@@ -318,7 +328,7 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 func TestScopedChannelTurnResumes(t *testing.T) {
 	toolCall := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
 	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
-	env := setupScopedTestEnv(t, channel,
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{},
 		dmMakeToolCallStream(toolCall), dmMakeTextStream("first"),
 		dmMakeToolCallStream(toolCall), dmMakeTextStream("regenerated"),
 		dmMakeTextStream("resumed"),
@@ -378,4 +388,15 @@ func TestScopedChannelTurnResumes(t *testing.T) {
 		assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 3)
 		assert.Equal(t, 0, env.catalog.unscoped)
 	})
+}
+
+// A run that fails after its session was minted still revokes it.
+func TestScopedChannelTurnErrorRevokesSession(t *testing.T) {
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{streamingErr: errors.New("streaming unavailable")})
+
+	minted, revoked := env.minter.snapshot()
+	require.Len(t, minted, 1)
+	assert.Equal(t, []string{minted[0].Id}, revoked)
+	assert.Equal(t, 0, env.runs())
 }
