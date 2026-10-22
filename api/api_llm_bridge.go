@@ -21,6 +21,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/public/bridgeclient"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -160,7 +162,11 @@ func (a *API) buildServiceBridgeContext(req bridgeclient.CompletionRequest) *llm
 	return context
 }
 
-func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, operation, operationSubType string) (llm.CompletionRequest, error) {
+// convertAgentBridgeRequestToInternal builds the agent completion request.
+// scopedChannel, when set, is the request's channel for an agent whose scoped
+// channel mode is active there: its tools then run on a scoped session for the
+// agent's bot, which the caller must release when the response is complete.
+func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *bots.Bot, req bridgeclient.CompletionRequest, includeTools bool, scopedChannel *model.Channel, operation, operationSubType string) (llm.CompletionRequest, error) {
 	posts, err := a.convertBridgePostsToInternal(req)
 	if err != nil {
 		return llm.CompletionRequest{}, err
@@ -173,6 +179,10 @@ func (a *API) convertAgentBridgeRequestToInternal(ctx stdcontext.Context, bot *b
 	}
 	bridgeContext.RequestingUser = &model.User{Id: req.UserID}
 	if includeTools && a.contextBuilder != nil {
+		if scopedChannel != nil {
+			bridgeContext.Channel = scopedChannel
+			a.contextBuilder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{})(bridgeContext)
+		}
 		a.contextBuilder.WithLLMContextConcreteTools(ctx, bot)(bridgeContext)
 	}
 
@@ -308,10 +318,20 @@ func (a *API) prepareAgentBridgeCompletion(
 	}
 
 	toolsRequested := allowedToolNames != nil
-	llmRequest, err := a.convertAgentBridgeRequestToInternal(ctx, bot, req, toolsRequested, operation, operationSubType)
+	scopedChannel, statusCode, err := a.bridgeScopedChannel(bot, req.ChannelID, toolsRequested)
+	if err != nil {
+		return nil, statusCode, err
+	}
+	llmRequest, err := a.convertAgentBridgeRequestToInternal(ctx, bot, req, toolsRequested, scopedChannel, operation, operationSubType)
 	if err != nil {
 		return nil, http.StatusBadRequest, fmt.Errorf("invalid request: %v", err)
 	}
+	planned := false
+	defer func() {
+		if !planned {
+			llmRequest.Context.ReleaseScopedSession()
+		}
+	}()
 
 	autoRunNames := make(map[string]struct{})
 	if toolsRequested {
@@ -381,12 +401,42 @@ func (a *API) prepareAgentBridgeCompletion(
 		}
 	}
 
+	planned = true
 	return &bridgeCompletionPlan{
 		bot:           bot,
 		request:       llmRequest,
 		opts:          opts,
 		shouldExecute: shouldExecute,
 	}, 0, nil
+}
+
+// bridgeScopedChannel resolves how an agent in scoped channel mode may serve a
+// bridge request. Such agents read through a scoped session bound to the
+// request's channel, so channel_id is required. DMs and group messages run
+// unscoped, as they do in conversations. When the mode is configured but
+// cannot take effect, tool requests are refused rather than run with the
+// requester's credentials.
+func (a *API) bridgeScopedChannel(bot *bots.Bot, channelID string, toolsRequested bool) (*model.Channel, int, error) {
+	if !llmcontext.ScopedChannelModeConfigured(bot) {
+		return nil, 0, nil
+	}
+	if channelID == "" {
+		return nil, http.StatusBadRequest, errors.New("channel_id is required for agents in scoped channel mode")
+	}
+	if !toolsRequested {
+		return nil, 0, nil
+	}
+	channel, err := a.pluginAPI.Channel.Get(channelID)
+	if err != nil {
+		return nil, http.StatusBadRequest, fmt.Errorf("failed to get channel: %w", err)
+	}
+	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
+		return nil, 0, nil
+	}
+	if a.contextBuilder == nil || !a.contextBuilder.ScopedChannelModeActive(bot, channel) {
+		return nil, http.StatusForbidden, errors.New("this agent's scoped channel mode is not available, so it cannot run tools")
+	}
+	return channel, 0, nil
 }
 
 // convertRequestToLLMOptions converts the API request options to llm.LanguageModelOption
@@ -784,9 +834,15 @@ func (a *API) handleGetAgentTools(c *gin.Context) {
 		a.contextBuilder.WithLLMContextConcreteTools(c.Request.Context(), bot)(toolContext)
 	}
 
+	// Scoped agents serve channel requests from the scoped catalog only.
+	scoped := llmcontext.ScopedChannelModeConfigured(bot)
 	var tools []bridgeclient.BridgeToolInfo
 	if toolContext.Tools != nil {
-		for _, info := range toolContext.Tools.GetToolsInfo() {
+		for _, tool := range toolContext.Tools.GetTools() {
+			if scoped && !mcp.ScopedCatalogAllows(tool) {
+				continue
+			}
+			info := llm.ToolInfo{Name: tool.Name, Description: tool.Description, ServerOrigin: tool.ServerOrigin}
 			if !bridgeAllowlistToolEligible(info.ServerOrigin) {
 				continue
 			}
@@ -883,6 +939,8 @@ func (a *API) handleAgentCompletion(c *gin.Context, operationSubType string, res
 		return
 	}
 
+	// Both responders finish the whole completion before returning.
+	defer plan.request.Context.ReleaseScopedSession()
 	respond(c, plan.bot.LLM(), plan.bot.GetConfig().EffectiveMaxToolTurns(), plan.request, plan.shouldExecute, plan.opts...)
 }
 

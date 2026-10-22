@@ -24,6 +24,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/config"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
@@ -124,6 +125,8 @@ type AgentRequestFields struct {
 	AutoEnableNewMCPTools bool                 `json:"autoEnableNewMCPTools"`
 	MCPDynamicToolLoading bool                 `json:"mcpDynamicToolLoading"`
 	UseServiceAccountAuth bool                 `json:"useServiceAccountAuth"`
+	ScopedChannelMode     bool                 `json:"scopedChannelMode"`
+	ScopedExtraChannelIDs []string             `json:"scopedExtraChannelIDs"`
 	Model                 string               `json:"model"`
 	EnableVision          bool                 `json:"enableVision"`
 	DisableTools          bool                 `json:"disableTools"`
@@ -153,6 +156,14 @@ func (r AgentRequestFields) applyTo(cfg *llm.BotConfig) {
 	cfg.AutoEnableNewMCPTools = r.AutoEnableNewMCPTools
 	cfg.MCPDynamicToolLoading = r.MCPDynamicToolLoading
 	cfg.UseServiceAccountAuth = r.UseServiceAccountAuth
+	cfg.ScopedChannelMode = r.ScopedChannelMode
+	cfg.ScopedExtraChannelIDs = r.ScopedExtraChannelIDs
+	// Scoped channel mode builds on service account auth. Clearing it with
+	// the mode means it cannot be staged while off and activate later.
+	if !cfg.UseServiceAccountAuth {
+		cfg.ScopedChannelMode = false
+		cfg.ScopedExtraChannelIDs = nil
+	}
 	cfg.Model = r.Model
 	cfg.EnableVision = r.EnableVision
 	cfg.DisableTools = r.DisableTools
@@ -350,6 +361,39 @@ func buildAgentConfigForCreate(req CreateAgentRequest, userID, botUserID string)
 	return cfg
 }
 
+// checkScopedChannelMode enforces the scoped channel mode prerequisites a
+// config cannot check on its own: turning the mode on needs a server that can
+// mint scoped sessions, and every newly added extra channel must be an
+// existing public or private channel. Channels already stored are not
+// re-checked, so a later-archived channel does not block unrelated saves; it
+// is simply unreadable. It writes the abort response and returns false when a
+// check fails.
+func (a *API) checkScopedChannelMode(c *gin.Context, proposed llm.BotConfig, prev *llm.BotConfig) bool {
+	var stored llm.BotConfig
+	if prev != nil {
+		stored = *prev
+	}
+	if proposed.ScopedChannelMode && !stored.ScopedChannelMode && !scopedsession.ServerSupports(a.pluginAPI.System.GetServerVersion()) {
+		abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("scoped channel mode requires Mattermost server %s or later", scopedsession.MinServerVersion))
+		return false
+	}
+	for _, channelID := range proposed.ScopedExtraChannelIDs {
+		if slices.Contains(stored.ScopedExtraChannelIDs, channelID) {
+			continue
+		}
+		channel, err := a.pluginAPI.Channel.Get(channelID)
+		if err != nil {
+			abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("scoped extra channel %s could not be found", channelID))
+			return false
+		}
+		if channel.DeleteAt != 0 || (channel.Type != model.ChannelTypeOpen && channel.Type != model.ChannelTypePrivate) {
+			abortAgentRequest(c, http.StatusBadRequest, fmt.Errorf("scoped extra channel %s must be an active public or private channel", channelID))
+			return false
+		}
+	}
+	return true
+}
+
 // applyAgentUpdateRequest overwrites mutable fields on cfg from req; returns whether DisplayName changed.
 func applyAgentUpdateRequest(cfg *llm.BotConfig, req UpdateAgentRequest) (displayNameChanged bool) {
 	displayNameChanged = cfg.DisplayName != req.DisplayName
@@ -502,6 +546,8 @@ func requestFieldsFromConfig(cfg *llm.BotConfig) AgentRequestFields {
 		AutoEnableNewMCPTools:   cfg.AutoEnableNewMCPTools,
 		MCPDynamicToolLoading:   cfg.MCPDynamicToolLoading,
 		UseServiceAccountAuth:   cfg.UseServiceAccountAuth,
+		ScopedChannelMode:       cfg.ScopedChannelMode,
+		ScopedExtraChannelIDs:   cfg.ScopedExtraChannelIDs,
 		Model:                   cfg.Model,
 		EnableVision:            cfg.EnableVision,
 		DisableTools:            cfg.DisableTools,
@@ -569,6 +615,9 @@ func (a *API) handleCreateAgent(c *gin.Context) {
 
 	proposed := buildAgentConfigForCreate(req, userID, "")
 	if !a.checkAgentLicenseGates(c, *proposed, nil) {
+		return
+	}
+	if !a.checkScopedChannelMode(c, *proposed, nil) {
 		return
 	}
 
@@ -803,6 +852,9 @@ func (a *API) updateAgent(c *gin.Context, userID string, cfg *llm.BotConfig, req
 	}
 
 	if !a.checkAgentLicenseGates(c, proposed, cfg) {
+		return nil, false
+	}
+	if !a.checkScopedChannelMode(c, proposed, cfg) {
 		return nil, false
 	}
 

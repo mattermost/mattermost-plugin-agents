@@ -4,6 +4,7 @@
 package conversations
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
+	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/toolrunner"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -59,6 +61,9 @@ type turnPolicy struct {
 	// in a channel (auto_run_everywhere), for runs nobody is present to
 	// approve.
 	autoEverywhereOnly bool
+	// scoped runs the turn's tools on a scoped session limited to the channel
+	// content the requester can read, so every tool may run without approval.
+	scoped bool
 }
 
 // resolveTurnPolicy checks that req may run and derives how it runs. Gates
@@ -112,6 +117,7 @@ func (c *Conversations) resolveTurnPolicy(ctx context.Context, req turnRequest) 
 		p.interactive = initiator != nil && initiatingUser != nil && !isAutomatedInvoker(initiator, initiatingUser)
 	} else {
 		p.setChannelRunTools(initiator, initiatingUser)
+		p.scoped = p.toolsEnabled && c.contextBuilder != nil && c.contextBuilder.ScopedChannelModeActive(req.bot, req.channel)
 	}
 	return p, nil
 }
@@ -285,7 +291,10 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	if p.interactive {
 		opts = append(opts, builder.WithLLMContextInteractive())
 	}
-	if p.autoEverywhereOnly {
+	if p.scoped {
+		opts = append(opts, builder.WithLLMContextScopedChannelTurn(p.scopedTurn()))
+	}
+	if p.autoEverywhereOnly && !p.scoped {
 		opts = append(opts, builder.WithLLMContextMCPToolFilter(func(tool llm.Tool) bool {
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
@@ -302,10 +311,33 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 	case !p.toolsEnabled:
 		// Disabled tools stay listed so the model can point the user to a DM.
 		llmContext.DisableTools(llmContext.Tools.GetToolsInfo()...)
-	case p.autoEverywhereOnly:
+	case p.autoEverywhereOnly && !llmContext.ToolsScoped:
 		p.c.applyBotChannelAutoEverywhereToolFilter(llmContext)
 	}
 	return llmContext
+}
+
+// scopedTurn identifies the turn in the scoped session's audit records.
+func (p *turnPolicy) scopedTurn() llm.ScopedTurn {
+	turn := llm.ScopedTurn{}
+	switch {
+	case p.trigger != nil:
+		turn.TriggerPostID = p.trigger.Id
+		turn.ThreadRootID = cmp.Or(p.trigger.RootId, p.trigger.Id)
+	case p.post != nil:
+		respondingTo, _ := p.post.GetProp(streaming.RespondingToProp).(string)
+		turn.TriggerPostID = cmp.Or(respondingTo, p.post.Id)
+		turn.ThreadRootID = cmp.Or(p.post.RootId, p.post.Id)
+	}
+	if p.conv != nil {
+		turn.ConversationID = p.conv.ID
+		if p.conv.RootPostID != nil {
+			turn.ThreadRootID = *p.conv.RootPostID
+		}
+	} else {
+		turn.ConversationID = p.c.existingThreadConversationID(p.bot, p.user, turn.ThreadRootID)
+	}
+	return turn
 }
 
 // autoExecute decides, per tool call, whether the call runs without the
@@ -328,6 +360,11 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 		}
 		if p.c.remoteMCPDecisionAllowed(lookup.ServerOrigin) != nil {
 			return false
+		}
+		if llmCtx.ToolsScoped {
+			// Everything a scoped catalog reads is within the scope, but an
+			// interaction tool needs the user's answer.
+			return lookup.Tool.UserInteraction == ""
 		}
 		// Only honored for built-ins: an MCP tool carrying the flag must
 		// still go through policy.

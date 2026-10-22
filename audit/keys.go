@@ -46,6 +46,9 @@ const (
 	KeyScopeExtraChannelCount      = "agents.scope.extra_channel_count"
 	KeyScopeOpenTeamPublicChannels = "agents.scope.open_team_public_channels"
 
+	// KeyMCPServerKind is where a tool ran: builtin, embedded, plugin, or remote.
+	KeyMCPServerKind = "agents.mcp.server_kind"
+
 	// MetaTraceID is the meta key carrying the OpenTelemetry trace ID of the
 	// request, letting an auditor pivot from an audit record to the full
 	// trace of what happened.
