@@ -38,7 +38,7 @@ type scopedBridgeMinter struct {
 	revoked []string
 }
 
-func (m *scopedBridgeMinter) CreateScopedSession(userID string, scope *scopedsession.Scope, expiresAt int64) (*model.Session, error) {
+func (m *scopedBridgeMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	session := &model.Session{Id: model.NewId(), UserId: userID, ExpiresAt: expiresAt}
