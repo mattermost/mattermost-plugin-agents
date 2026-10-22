@@ -72,12 +72,13 @@ function mockReadChannelTurn(userMessage: string, callID: string, channelID: str
     return mockToolTurn(userMessage, callID, readChannelTool, {channel_id: channelID}, done);
 }
 
-// mentionAgentAndAwaitReply @mentions the agent in Town Square as the admin
-// and waits for its reply in that thread to contain done.
-async function mentionAgentAndAwaitReply(message: string, done: string) {
+// mentionAgentAndAwaitReply @mentions the agent as the admin, in Town Square
+// unless channelID is given, and waits for its reply in that thread to
+// contain done.
+async function mentionAgentAndAwaitReply(message: string, done: string, channelID = townSquareID) {
     const adminClient = await mattermost.getAdminClient();
     const bot = await adminClient.getUserByUsername(botUsername);
-    const root = await adminClient.createPost({channel_id: townSquareID, message: `@${botUsername} ${message}`} as any);
+    const root = await adminClient.createPost({channel_id: channelID, message: `@${botUsername} ${message}`} as any);
     await expect.poll(async () => {
         const thread = await adminClient.getPostThread(root.id);
         return Object.values(thread.posts).some((post) => post.user_id === bot.id && post.message.includes(done));
@@ -219,6 +220,24 @@ test.describe.serial('Scoped channel mode (Mocked LLM)', () => {
         expect(await openAIMock.countRequestsContaining(`SEARCH_EVIDENCE_${runID}`)).toBeGreaterThan(0);
         expect(await openAIMock.countRequestsContaining(`SEARCH_PRIVATE_${runID}`)).toBe(0);
         expect(await botPostsIn(evidenceChannel.id)).toBe(0);
+    });
+
+    test('a run triggered in a private channel on an invite-only team reads that channel', async () => {
+        test.setTimeout(120000);
+        const runID = Date.now();
+        const adminClient = await mattermost.getAdminClient();
+        const closedTeam = await adminClient.createTeam({name: `closed-${runID}`, display_name: `Closed ${runID}`, type: 'I', allow_open_invite: false} as any);
+        const trigger = await adminClient.createChannel({team_id: closedTeam.id, name: `closed-private-${runID}`, display_name: `closed-private-${runID}`, type: 'P'} as any);
+        const context = `CLOSED_TRIGGER_CONTEXT_${runID}`;
+        await adminClient.createPost({channel_id: trigger.id, message: context} as any);
+
+        const done = `SCOPED_TRIGGER_READ_${runID}`;
+        const userMessage = `summarize this channel ${runID}`;
+        await mockReadChannelTurn(userMessage, `call_trigger_${runID}`, trigger.id, done);
+
+        await mentionAgentAndAwaitReply(userMessage, done, trigger.id);
+
+        expect(await openAIMock.countRequestsContaining(context)).toBeGreaterThan(0);
     });
 
     test('every run revoked its scoped session', async () => {
