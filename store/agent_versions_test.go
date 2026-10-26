@@ -552,13 +552,11 @@ func TestAgentVersionConcurrentUpdates(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, writers)
 	for i := range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			cfg := *agent
 			cfg.CustomInstructions = fmt.Sprintf("writer %d", i)
 			errCh <- s.UpdateAgent(&cfg, AgentVersionMeta{Source: AgentVersionSourceUpdate})
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -622,13 +620,11 @@ func TestAgentVersionUnversionedAgents(t *testing.T) {
 		counts := make(chan int, nodes)
 		errCh := make(chan error, nodes)
 		for range nodes {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				n, err := s.BackfillAgentVersions()
 				counts <- n
 				errCh <- err
-			}()
+			})
 		}
 		wg.Wait()
 		close(counts)
