@@ -245,9 +245,9 @@ func (a *API) handleRenderCustomPrompt(c *gin.Context) {
 	}
 
 	// Add requesting user context
-	user, appErr := a.pluginAPI.User.Get(userID)
-	if appErr != nil {
-		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", appErr))
+	user, userErr := a.pluginAPI.User.Get(userID)
+	if userErr != nil {
+		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to get user: %w", userErr))
 		return
 	}
 	if a.contextBuilder != nil {

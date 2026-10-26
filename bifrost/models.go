@@ -45,16 +45,14 @@ type FetchModelsConfig struct {
 // FetchModels retrieves the list of available models from a provider using Bifrost.
 func FetchModels(ctx context.Context, cfg FetchModelsConfig) ([]llm.ModelInfo, error) {
 	account := &providerAccount{
-		ProviderSettings: ProviderSettings{
-			Provider:              cfg.Provider,
-			APIKey:                cfg.APIKey,
-			APIURL:                cfg.APIURL,
-			OrgID:                 cfg.OrgID,
-			Region:                cfg.Region,
-			VertexProjectID:       cfg.VertexProjectID,
-			VertexProjectNumber:   cfg.VertexProjectNumber,
-			VertexAuthCredentials: cfg.VertexAuthCredentials,
-		},
+		Provider:              cfg.Provider,
+		APIKey:                cfg.APIKey,
+		APIURL:                cfg.APIURL,
+		OrgID:                 cfg.OrgID,
+		Region:                cfg.Region,
+		VertexProjectID:       cfg.VertexProjectID,
+		VertexProjectNumber:   cfg.VertexProjectNumber,
+		VertexAuthCredentials: cfg.VertexAuthCredentials,
 	}
 
 	client, err := newBifrostClient(account, cfg.APIKey)
@@ -161,7 +159,7 @@ func fetchNorthModels(ctx context.Context, apiURL, apiKey string) ([]llm.ModelIn
 
 	var models []llm.ModelInfo
 	nextToken := ""
-	for page := 0; page < northModelsMaxPages; page++ {
+	for range northModelsMaxPages {
 		endpoint := strings.TrimRight(base, "/") + "/v2/models"
 		u, err := url.Parse(endpoint)
 		if err != nil {

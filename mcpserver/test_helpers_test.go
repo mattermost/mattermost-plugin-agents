@@ -184,10 +184,8 @@ func (suite *TestSuite) createMCPServerWithConfig(devMode bool, fileContentServi
 	require.NotEmpty(suite.t, suite.adminToken, "Admin token must be set")
 
 	stdioConfig := mcpserver.StdioConfig{
-		BaseConfig: mcpserver.BaseConfig{
-			MMServerURL: suite.serverURL,
-			DevMode:     devMode,
-		},
+		MMServerURL:         suite.serverURL,
+		DevMode:             devMode,
 		PersonalAccessToken: suite.adminToken,
 	}
 	mcpServer, err := mcpserver.NewStdioServer(stdioConfig, suite.logger, nil, fileContentService)

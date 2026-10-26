@@ -657,7 +657,7 @@ func TestCatchUpIgnoresMidJobRetentionWiden(t *testing.T) {
 	select {
 	case <-reachedPersist:
 	case <-time.After(5 * time.Second):
-		t.Fatal("worker did not reach model-info persist")
+		require.FailNow(t, "worker did not reach model-info persist")
 	}
 	days.Store(0)
 	close(releasePersist)

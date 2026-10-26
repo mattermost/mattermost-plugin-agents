@@ -60,8 +60,8 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result Config) {
-				assert.Len(t, result.Services, 0)
-				assert.Len(t, result.Bots, 0)
+				assert.Empty(t, result.Services)
+				assert.Empty(t, result.Bots)
 			},
 		},
 		{
@@ -78,7 +78,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result Config) {
-				assert.Len(t, result.Services, 0)
+				assert.Empty(t, result.Services)
 				assert.Len(t, result.Bots, 1)
 				assert.Equal(t, "service1", result.Bots[0].ServiceID)
 			},
@@ -97,7 +97,7 @@ func TestMigrateSeparateServicesFromBots(t *testing.T) {
 			expectMigrated: false,
 			expectError:    false,
 			validateResult: func(t *testing.T, result Config) {
-				assert.Len(t, result.Services, 0)
+				assert.Empty(t, result.Services)
 				assert.Len(t, result.Bots, 1)
 			},
 		},

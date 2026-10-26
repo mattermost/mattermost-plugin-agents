@@ -129,7 +129,7 @@ func TestHTTPFileContentService_GetContent(t *testing.T) {
 				ctx = context.WithValue(ctx, auth.AuthTokenContextKey, "direct-token")
 				ctx = auth.WithSessionID(ctx, "sess-1")
 				ctx = context.WithValue(ctx, auth.TokenResolverContextKey, auth.TokenResolver(func(string) (string, error) {
-					t.Fatal("resolver must not run when a direct auth token is present")
+					require.FailNow(t, "resolver must not run when a direct auth token is present")
 					return "", nil
 				}))
 				return ctx

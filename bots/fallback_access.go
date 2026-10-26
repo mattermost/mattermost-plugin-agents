@@ -22,14 +22,14 @@ const fallbackModelsNote = "If the primary model is unavailable, this response m
 // chain the user may use. Walks hops in order and stops at the first deny or
 // evaluation error (later hops are not skipped). The primary is not included.
 // A resolve error fails closed: callers must not attach the configured chain.
-func (m *MMBots) allowedFallbackServiceIDs(ctx context.Context, userID, primaryServiceID string) ([]string, error) {
-	chain, err := llm.ResolveFallbackChain(primaryServiceID, m.config.GetServiceByID)
+func (b *MMBots) allowedFallbackServiceIDs(ctx context.Context, userID, primaryServiceID string) ([]string, error) {
+	chain, err := llm.ResolveFallbackChain(primaryServiceID, b.config.GetServiceByID)
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	for _, svc := range chain {
-		if err := m.accessChecker.CanUseService(ctx, userID, svc.ID); err != nil {
+		if err := b.accessChecker.CanUseService(ctx, userID, svc.ID); err != nil {
 			break
 		}
 		ids = append(ids, svc.ID)

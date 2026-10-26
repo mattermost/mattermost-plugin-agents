@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEnableTokenUsageSinks(t *testing.T) {
@@ -147,9 +148,7 @@ func TestContainerConfigNeverNil(t *testing.T) {
 			container := &Container{}
 			tt.setup(t, container)
 
-			if container.Config() == nil {
-				t.Fatal("Config() returned nil")
-			}
+			require.NotNil(t, container.Config(), "Config() returned nil")
 			if got := container.GetDefaultBotName(); got != "" {
 				t.Fatalf("GetDefaultBotName() = %q, want empty", got)
 			}

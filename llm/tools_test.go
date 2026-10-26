@@ -6,7 +6,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -466,7 +466,7 @@ func TestToolCallServerOriginJSON(t *testing.T) {
 				var deserialized ToolCall
 				err := json.Unmarshal([]byte(oldJSON), &deserialized)
 				require.NoError(t, err)
-				assert.Equal(t, "", deserialized.ServerOrigin)
+				assert.Empty(t, deserialized.ServerOrigin)
 				return
 			}
 
@@ -608,7 +608,7 @@ func TestRemoveToolsByServerOrigin(t *testing.T) {
 func TestMCPToolNameHelpers(t *testing.T) {
 	assert.Equal(t, "jira__get_issue", NamespaceMCPToolName("jira", "get_issue"))
 	assert.Equal(t, "get_issue", NamespaceMCPToolName("", "get_issue"))
-	assert.Equal(t, "", NamespaceMCPToolName("jira", ""))
+	assert.Empty(t, NamespaceMCPToolName("jira", ""))
 
 	assert.Equal(t, "get_issue", BareMCPToolName("jira__get_issue"))
 	assert.Equal(t, "search", BareMCPToolName("search"))
@@ -801,8 +801,8 @@ func TestRetainOnlyMCPTools(t *testing.T) {
 				gotNames = append(gotNames, tool.Name)
 			}
 			// Sort for deterministic comparison (map iteration order)
-			sort.Strings(gotNames)
-			sort.Strings(tt.wantToolNames)
+			slices.Sort(gotNames)
+			slices.Sort(tt.wantToolNames)
 			assert.Equal(t, tt.wantToolNames, gotNames)
 		})
 	}

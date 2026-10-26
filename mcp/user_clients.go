@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -659,7 +660,7 @@ func (c *UserClients) snapshotClients() []userClientSnapshot {
 	for serverID := range c.clients {
 		serverIDs = append(serverIDs, serverID)
 	}
-	sort.Strings(serverIDs)
+	slices.Sort(serverIDs)
 
 	snapshot := make([]userClientSnapshot, 0, len(serverIDs))
 	for _, serverID := range serverIDs {
@@ -690,11 +691,11 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 	}
 	// Secondary key keeps unsuffixed-slug assignment deterministic when bags
 	// contain equal server IDs.
-	sort.Slice(merged, func(i, j int) bool {
-		if merged[i].serverID != merged[j].serverID {
-			return merged[i].serverID < merged[j].serverID
-		}
-		return merged[i].client.config.BaseURL < merged[j].client.config.BaseURL
+	slices.SortFunc(merged, func(a, b userClientSnapshot) int {
+		return cmp.Or(
+			cmp.Compare(a.serverID, b.serverID),
+			cmp.Compare(a.client.config.BaseURL, b.client.config.BaseURL),
+		)
 	})
 
 	var tools []llm.Tool
@@ -710,7 +711,7 @@ func collectToolsFromSnapshots(userID string, log pluginapi.LogService, snapshot
 		for toolName := range clientTools {
 			toolNames = append(toolNames, toolName)
 		}
-		sort.Strings(toolNames)
+		slices.Sort(toolNames)
 		for _, toolName := range toolNames {
 			tool := clientTools[toolName]
 			runtimeToolName := llm.NamespaceMCPToolName(serverSlug, toolName)

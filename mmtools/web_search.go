@@ -903,7 +903,7 @@ func buildWebSearchAnnotationsAndCleanText(message string, results []WebSearchRe
 }
 
 func buildWebSearchAnnotationsAndCleanTextRanges(message string, results []WebSearchResult) ([]llm.Annotation, string, []llm.TextRange) {
-	if len(message) == 0 || len(results) == 0 {
+	if message == "" || len(results) == 0 {
 		return nil, message, nil
 	}
 
