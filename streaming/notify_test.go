@@ -357,6 +357,10 @@ func TestStreamToNewPostMarksDeferred(t *testing.T) {
 				assert.Equal(t, tc.wantDeferred, calls[0].end.PostDeferred)
 				assert.Equal(t, userID, calls[0].end.RequesterID)
 			}
+
+			// The run's span ends after Notify; a run left in flight would leak
+			// its span into the next test's tracer provider.
+			require.True(t, service.Shutdown(5*time.Second), "the run finished")
 		})
 	}
 }
