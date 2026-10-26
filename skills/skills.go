@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -26,8 +27,8 @@ const (
 )
 
 // builtinSkill is a skill shipped with the plugin. Its ID is namespaced so no
-// user skill ID can match it, and it is listed only when the tool it needs is
-// in the request's catalog, loaded or not.
+// user skill ID can match it, and it is listed only when the embedded
+// Mattermost tool it needs is in the request's catalog, loaded or not.
 type builtinSkill struct {
 	id           string
 	name         string
@@ -64,8 +65,11 @@ func NewProvider(store PromptStore, prompts *llm.Prompts, sharedAllowed func() b
 }
 
 type skill struct {
-	info   llm.SkillInfo
-	render func(*llm.Context) (string, error)
+	info llm.SkillInfo
+	// publicDescription is the skill's own description. info may carry an
+	// agent manager's override, which only the system prompt may show.
+	publicDescription string
+	render            func(*llm.Context) (string, error)
 }
 
 // Tools returns the skill tools and the catalog they serve for a request to
@@ -88,11 +92,12 @@ func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error)
 
 	var out []skill
 	for _, b := range builtinSkills {
-		if !hasTool(c.Tools, b.requiresTool) {
+		if !hasEmbeddedTool(c.Tools, b.requiresTool) {
 			continue
 		}
 		out = append(out, skill{
-			info: llm.SkillInfo{ID: b.id, Name: b.name, Description: b.description},
+			info:              llm.SkillInfo{ID: b.id, Name: b.name, Description: b.description},
+			publicDescription: b.description,
 			render: func(c *llm.Context) (string, error) {
 				return p.prompts.Format(b.template, c)
 			},
@@ -116,11 +121,11 @@ func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error)
 		if !isPersonal && !isShared {
 			continue
 		}
-		description := prompt.Description
+		publicDescription := promptSafeText(prompt.Description, llm.MaxSkillDescriptionRunes)
+		description := publicDescription
 		if override := strings.TrimSpace(bot.Skills.DescriptionOverrides[prompt.ID]); override != "" {
-			description = override
+			description = promptSafeText(override, llm.MaxSkillDescriptionRunes)
 		}
-		description = promptSafeText(description, llm.MaxSkillDescriptionRunes)
 		if description == "" {
 			continue
 		}
@@ -131,6 +136,7 @@ func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error)
 				Name:        promptSafeText(prompt.Name, customprompts.MaxPromptNameLength),
 				Description: description,
 			},
+			publicDescription: publicDescription,
 			render: func(c *llm.Context) (string, error) {
 				return p.prompts.FormatString(template, c.CustomPromptVars())
 			},
@@ -194,7 +200,11 @@ func describeCatalog(available []skill) string {
 	if len(available) == 0 {
 		return "No skills are currently available."
 	}
-	return "The skills currently available are:\n" + llm.FormatSkillCatalog(catalog(available))
+	infos := make([]llm.SkillInfo, len(available))
+	for i, s := range available {
+		infos[i] = llm.SkillInfo{ID: s.info.ID, Name: s.info.Name, Description: s.publicDescription}
+	}
+	return "The skills currently available are:\n" + llm.FormatSkillCatalog(infos)
 }
 
 func catalog(available []skill) []llm.SkillInfo {
@@ -205,8 +215,10 @@ func catalog(available []skill) []llm.SkillInfo {
 	return infos
 }
 
-func hasTool(store *llm.ToolStore, name string) bool {
-	return store != nil && (store.GetTool(name) != nil || store.IsUnloadedMCPTool(name))
+func hasEmbeddedTool(store *llm.ToolStore, name string) bool {
+	return store.HasMCPToolFromOrigin(mcp.EmbeddedClientKey, func(tool llm.Tool) bool {
+		return llm.BareMCPToolName(tool.Name) == name
+	})
 }
 
 // promptSafeText flattens user-authored text onto one line and caps it, so it

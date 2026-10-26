@@ -47,6 +47,8 @@ type evalScenario struct {
 	fileInfos map[string]*model.FileInfo
 	files     map[string][]byte
 	tools     []llm.Tool
+	// mcpTools are offered as MCP tools that run without approval in DMs.
+	mcpTools []llm.Tool
 	// skillStore supplies user-created skills; nil leaves only built-in skills.
 	skillStore skills.PromptStore
 }
@@ -142,7 +144,11 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
 
-	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{tools: scenario.tools}, &testMCPClientManager{}, &mockConfigProvider{})
+	policyChecker := newDMPolicyChecker()
+	for _, tool := range scenario.mcpTools {
+		policyChecker.setAutoRun(tool.ServerOrigin, llm.BareMCPToolName(tool.Name))
+	}
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{tools: scenario.tools}, &testMCPClientManager{tools: scenario.mcpTools}, &mockConfigProvider{})
 	contextBuilder.SetSkillProvider(skills.NewProvider(scenario.skillStore, promptsManager, func() bool { return true }))
 	streamService := &evalStreamingService{replies: make(chan evalReply, 1)}
 
@@ -157,7 +163,7 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 		i18n.Init(),
 		nil, // meetings
 		&testToolCallingConfig{},
-		newDMPolicyChecker(),
+		policyChecker,
 	)
 	convs.SetConversationService(conversation.NewService(newFakeConvStore(), promptsManager, mmClient, botService))
 

@@ -11,6 +11,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/evals"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 )
@@ -52,7 +53,7 @@ func (s *evalSkillStore) ListForUser(string, bool) ([]customprompts.CustomPrompt
 	return s.listed, nil
 }
 
-func dmSkillScenario(store *evalSkillStore, tools []llm.Tool, message string) (evalScenario, *model.Post) {
+func dmSkillScenario(store *evalSkillStore, mcpTools []llm.Tool, message string) (evalScenario, *model.Post) {
 	botUser := &model.User{Id: dmEvalBotUserID, Username: "matty", FirstName: "Matty", IsBot: true}
 	user := &model.User{Id: dmEvalUserID, Username: "corey", Locale: "en"}
 	channel := &model.Channel{
@@ -74,13 +75,15 @@ func dmSkillScenario(store *evalSkillStore, tools []llm.Tool, message string) (e
 			ChannelAccessLevel: llm.ChannelAccessLevelAll,
 			UserAccessLevel:    llm.UserAccessLevelAll,
 			Skills:             llm.SkillsConfig{AllowPersonal: true},
+			// The eval's MCP tools stand in for the embedded Mattermost server.
+			AutoEnableNewMCPTools: true,
 		},
 		botUser:    botUser,
 		team:       &model.Team{Id: dmEvalTeamID, Name: "fastfutures", DisplayName: "Fast Futures"},
 		channel:    channel,
 		users:      map[string]*model.User{user.Id: user},
 		thread:     thread,
-		tools:      tools,
+		mcpTools:   mcpTools,
 		skillStore: store,
 	}, post
 }
@@ -140,13 +143,13 @@ func TestSkillsEval(t *testing.T) {
 
 func TestBuiltinSummarizeSkillEval(t *testing.T) {
 	readChannel := llm.Tool{
-		Name:        "read_channel",
-		Description: "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20).",
+		Name:         "read_channel",
+		ServerOrigin: mcp.EmbeddedClientKey,
+		Description:  "Read recent posts from a Mattermost channel. Parameters: channel_id (required), limit (1-100, default 20).",
 		Schema: llm.NewJSONSchemaFromStruct[struct {
 			ChannelID string `json:"channel_id"`
 			Limit     int    `json:"limit,omitempty"`
 		}](),
-		AutoExecute: true,
 		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
 			return `Channel: Town Square (ID: ` + skillEvalChannelID + `)
 Post ID: launchpost1234567890abcde | @dana: We're moving the launch to Thursday because QA found a blocker in checkout.
