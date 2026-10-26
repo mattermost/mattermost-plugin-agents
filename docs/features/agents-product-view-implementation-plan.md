@@ -527,6 +527,22 @@ Interim behavior until the host change ships: stock DM view (Option C), optional
 
 ---
 
+## Phase 0 outcome (static spike; live checks still pending)
+
+Decisions taken after the spike:
+- **Keep the non-team-scoped product URL** `/plug/mattermost-ai/agents`. The product is registered without `isTeamScoped` today (`webapp/src/index.tsx:325`); changing it would break existing links (`bot_selector.tsx`, `post_text.tsx`), and agents, the default agent and Custom Prompts are workspace-level. Handle the missing team in the plugin: `currentTeamId`, else the user's first team, else skip `updateRead`; fetch the agent's DM channel and the user's membership into Redux before mounting the chat (ThreadViewer renders an empty span without the channel; AdvancedTextEditor is disabled without channel + membership).
+- **Routing:** the host mounts product routes as prefix matches but passes no router props. Read `browserHistory.location` and subscribe with `listen`; push via `browserHistory`.
+- **ThreadViewer / AdvancedTextEditor** work in a full-width pane (host GlobalThreads already does it): pass `rootPostId` + `isThreadView`; give the parent a definite height with `min-height: 0` and no own scrolling; the new-chat composer gets its own `storageKey` so its draft does not collide with the Channels DM composer.
+- **Refresh signals:** a `posted` event for a root post in an agent DM = new thread; `custom_mattermost-ai_postupdate` with `control: "end"` = reply finished; refetch once more a few seconds later for the title (no event exists; add a server `conversation_updated` publish after `UpdateConversationTitle` only if that proves flaky). Note the host keeps one plugin handler per websocket event and a later registration overwrites the earlier one.
+- **60-thread cap:** accept for now; no Go `limit`/`offset` unless a live check shows truncation (Wave 1 task D skipped).
+- **Agent avatar:** start with compass `UserAvatar` (agent profile image); port the prototype's animated avatar only if design asks.
+- **Custom Prompts page:** the prototype has no source for it; build from the compass pieces the landing page uses (Button, SearchInput, Tabs, TextInput, Modal).
+- **Compass parity:** all prototype components/tokens/icons exist in the installed `alpha.14`. No compass equivalent for the composer pill or chat header (compose from tokens, `--radius-pill` not `--radius-full`). `ChannelSidebarItem` has no trailing slot: copy the prototype's sibling-`IconButton` overlay.
+- **Host center-pane (Phase 5b):** no existing hook; add `registerChannelViewOverride(matcher, component)` modeled on `registerChannelIntro`. Details in the spike notes. The host checkout has uncommitted work on another branch: use a separate worktree from the latest `origin/master`.
+- **Live checks still needed** (need a running v12 server): ThreadViewer layout/scroll/hover/emoji/file-drop in the product pane; cold-load of the product URL (DM channel in Redux? composer enabled? currentTeamId?); sub-path navigation and `listen`; draft collision; title-vs-`postupdate end` timing; `posted` handler sees bot-DM roots while in the product view.
+
+---
+
 ## Appendix — provenance
 
 Verified by reading `mattermost-plugin-agents` at commit `865f5b1`:
