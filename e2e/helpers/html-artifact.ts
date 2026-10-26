@@ -16,7 +16,8 @@ import {MATTERMOST_AI_PLUGIN_ID, pluginAdminConfigApiFromClient} from './plugin-
 export async function setHTMLArtifactsEnabled(mattermost: MattermostContainer, enabled: boolean): Promise<void> {
     const adminClient = await mattermost.getAdminClient();
     const api = pluginAdminConfigApiFromClient(adminClient, mattermost.url(), MATTERMOST_AI_PLUGIN_ID);
-    await api.patch({enableHTMLArtifacts: enabled}, {settleMs: 2000});
+    const current = await api.get();
+    await api.put({...current, enableHTMLArtifacts: enabled}, {settleMs: 2000});
 }
 
 // Mattermost's built-in "Onyx" dark theme.

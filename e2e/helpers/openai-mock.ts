@@ -1,24 +1,6 @@
 import {StartedTestContainer, GenericContainer, StartedNetwork, Network, Wait} from "testcontainers";
+
 import { test } from "@playwright/test";
-
-export type SmockerMatcher = {
-	matcher: string;
-	value: string;
-};
-
-export type SmockerMockRule = {
-	request: {
-		method: string;
-		path: string | SmockerMatcher;
-		body?: SmockerMatcher;
-	};
-	context?: { times?: number };
-	response: {
-		status: number;
-		headers: Record<string, string>;
-		body: string;
-	};
-};
 
 /** A registered rule as returned by GET /mocks, including how often it matched. */
 export type SmockerMockState = {
@@ -31,9 +13,9 @@ export type SmockerMockState = {
  * Use a single path regex so we do not register two mocks with the same body matchers (which would
  * cause the second request to match the duplicate rule instead of the next logical mock).
  */
-export function normalizeChatCompletionMockPath(body: SmockerMockRule): SmockerMockRule {
-	const req = body.request;
-	if (typeof req.path !== 'string') {
+export function normalizeChatCompletionMockPath(body: any): any {
+	const req = body?.request;
+	if (!req || typeof req.path !== 'string') {
 		return body;
 	}
 	const p = req.path;
@@ -141,7 +123,7 @@ export class OpenAIMockContainer {
 		}
 	}
 
-	addMock = async (body: SmockerMockRule, attempt = 0): Promise<Response> => {
+	addMock = async (body: any, attempt = 0): Promise<Response> => {
 		const maxAttempts = 5;
 
 		try {
@@ -174,7 +156,7 @@ export class OpenAIMockContainer {
 	 * Register multiple Smocker mocks in one request (replaces all mocks, same as addMock).
 	 * Use this when sequential completions need different responses (e.g. tool call then text).
 	 */
-	addMocks = async (bodies: SmockerMockRule[], attempt = 0): Promise<Response> => {
+	addMocks = async (bodies: any[], attempt = 0): Promise<Response> => {
 		const maxAttempts = 5;
 
 		try {
@@ -356,20 +338,20 @@ export function buildToolCallResponse(toolCallId: string, toolName: string, args
 export function buildChatCompletionMockRule(
     sseBody: string,
     opts?: { bodyContains?: string; botPrefix?: string; times?: number },
-): SmockerMockRule {
+): any {
     const prefix = opts?.botPrefix ? `/${opts.botPrefix}` : '';
-    const request: SmockerMockRule['request'] = {
+    const req: Record<string, unknown> = {
         method: 'POST',
         path: `${prefix}/v1/chat/completions`,
     };
     if (opts?.bodyContains) {
-        request.body = {
+        req.body = {
             matcher: 'ShouldContainSubstring',
             value: opts.bodyContains,
         };
     }
     return normalizeChatCompletionMockPath({
-        request,
+        request: req,
         context: {
             times: opts?.times ?? 100,
         },
@@ -384,53 +366,21 @@ export function buildChatCompletionMockRule(
 }
 
 /**
- * Streaming SSE whose concatenated content is exact JSON (quotes escaped).
- * Prefer this over {@link buildTextResponse} when the completion must parse as JSON.
- */
-export function buildJSONObjectResponse(payload: object): string {
-	const content = JSON.stringify(payload);
-	const chunks = [
-		{
-			id: 'chatcmpl-json1',
-			object: 'chat.completion.chunk',
-			created: 1708124577,
-			model: 'gpt-mock',
-			choices: [{index: 0, delta: {role: 'assistant', content: ''}, finish_reason: null}],
-		},
-		{
-			id: 'chatcmpl-json1',
-			object: 'chat.completion.chunk',
-			created: 1708124577,
-			model: 'gpt-mock',
-			choices: [{index: 0, delta: {content}, finish_reason: null}],
-		},
-		{
-			id: 'chatcmpl-json1',
-			object: 'chat.completion.chunk',
-			created: 1708124577,
-			model: 'gpt-mock',
-			choices: [{index: 0, delta: {}, finish_reason: 'stop'}],
-		},
-	];
-	return `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`).join('\n\n')}\n\ndata: [DONE]\n\n`;
-}
-
-/**
  * Create a streaming SSE text response (for after tool execution).
  */
 export function buildTextResponse(text: string): string {
-	const words = text.split(' ');
-	const chunks = [
-		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`,
-	];
-	for (const word of words) {
-		chunks.push(
-			`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{"content":"${word} "},"finish_reason":null}]}`,
-		);
+	const chunk = (delta: Record<string, string>, finishReason: string | null) => `data: ${JSON.stringify({
+		id: 'chatcmpl-tr1',
+		object: 'chat.completion.chunk',
+		created: 1708124577,
+		model: 'gpt-mock',
+		choices: [{index: 0, delta, finish_reason: finishReason}],
+	})}`;
+	const chunks = [chunk({role: 'assistant', content: ''}, null)];
+	for (const word of text.split(' ')) {
+		chunks.push(chunk({content: `${word} `}, null));
 	}
-	chunks.push(
-		`data: {"id":"chatcmpl-tr1","object":"chat.completion.chunk","created":1708124577,"model":"gpt-mock","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
-	);
+	chunks.push(chunk({}, 'stop'));
 	chunks.push('data: [DONE]');
 	return chunks.join('\n\n') + '\n\n';
 }

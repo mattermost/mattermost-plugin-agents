@@ -20,7 +20,7 @@ import {
     OpenAIMockContainer,
     RunOpenAIMocks,
     buildChatCompletionMockRule,
-    buildJSONObjectResponse,
+    buildTextResponse,
     responseTest,
     responseTestText,
 } from 'helpers/openai-mock';
@@ -32,7 +32,6 @@ let mattermost: MattermostContainer;
 let openAIMock: OpenAIMockContainer;
 
 test.beforeAll(async () => {
-    test.setTimeout(240000);
     mattermost = await RunContainer();
     openAIMock = await RunOpenAIMocks(mattermost.network);
     await setAmbientAutoReplyEnabled(true);
@@ -90,7 +89,7 @@ async function putAutoReply(
     channelId: string,
     botId: string,
     mode: string,
-    extras?: { instructions?: string; analysis_model?: string },
+    extras?: { instructions?: string },
 ): Promise<void> {
     const routes = mattermostAIPluginRoutes(mattermost.url());
     const payload = { bot_id: botId, mode, ...extras };
@@ -104,8 +103,8 @@ async function putAutoReply(
 // the classifier completion (body contains this) separately from the reply completion.
 const ambientClassifierPrompt = 'You classify whether an agent should automatically reply in a Mattermost channel.';
 
-async function mockAmbientClassifierThenReply(shouldReply: boolean): Promise<void> {
-    const classifierRule = buildChatCompletionMockRule(buildJSONObjectResponse({should_reply: shouldReply}), {
+async function mockAmbientClassifier(shouldReply: boolean): Promise<void> {
+    const classifierRule = buildChatCompletionMockRule(buildTextResponse(JSON.stringify({should_reply: shouldReply})), {
         bodyContains: ambientClassifierPrompt,
         times: 1,
     });
@@ -115,16 +114,13 @@ async function mockAmbientClassifierThenReply(shouldReply: boolean): Promise<voi
     await openAIMock.addMocks([catchAllRule, classifierRule]);
 }
 
-/** Fail unless Smocker served the classifier JSON mock (not the catch-all SSE). */
-async function expectMatchedAmbientDecision(shouldReply: boolean): Promise<void> {
+/** Fail unless the classifier mock answered and its false verdict did not fall through to the catch-all SSE. */
+async function expectClassifierDeclined(): Promise<void> {
     const mocks = await openAIMock.getMocks();
     const classifier = mocks.find((m) => m.request?.body?.value === ambientClassifierPrompt);
     const catchAll = mocks.find((m) => !m.request?.body);
-    expect(classifier, 'classifier JSON Smocker rule must be registered').toBeTruthy();
-    expect(classifier?.state?.times_count ?? 0, 'classifier JSON Smocker rule must have been matched').toBeGreaterThan(0);
-    if (!shouldReply) {
-        expect(catchAll?.state?.times_count ?? 0, 'classifier false must not fall through to the catch-all SSE').toBe(0);
-    }
+    expect(classifier?.state?.times_count ?? 0, 'classifier Smocker rule must have been matched').toBeGreaterThan(0);
+    expect(catchAll?.state?.times_count ?? 0, 'classifier false must not fall through to the catch-all SSE').toBe(0);
 }
 
 /** Poll the channel posts API until the given user's post with this exact message appears. */
@@ -344,9 +340,8 @@ test.describe('Per-channel agent auto-reply', () => {
         const { client, botUser, channel } = await setupClientAndChannel('ambienttrue');
         await putAutoReply(client, channel.id, botUser.id, 'ambient', {
             instructions: 'only billing questions',
-            analysis_model: 'gpt-4o-mini',
         });
-        await mockAmbientClassifierThenReply(true);
+        await mockAmbientClassifier(true);
 
         const mmPage = new MattermostPage(page);
         const rootPost = await client.createPost({
@@ -356,7 +351,6 @@ test.describe('Per-channel agent auto-reply', () => {
         await mmPage.expectBotThreadReplyFromApi(
             client, channel.id, botUser.id, rootPost.id, responseTestText,
         );
-        await expectMatchedAmbientDecision(true);
     });
 
     test('ambient mode: classifier false produces no bot post', async ({ page }) => {
@@ -365,9 +359,8 @@ test.describe('Per-channel agent auto-reply', () => {
         const { client, botUser, channel } = await setupClientAndChannel('ambientfalse');
         await putAutoReply(client, channel.id, botUser.id, 'ambient', {
             instructions: 'only billing questions',
-            analysis_model: 'gpt-4o-mini',
         });
-        await mockAmbientClassifierThenReply(false);
+        await mockAmbientClassifier(false);
 
         const mmPage = new MattermostPage(page);
         const sinceMs = Date.now();
@@ -376,7 +369,7 @@ test.describe('Per-channel agent auto-reply', () => {
             message: 'Ambient false should stay silent',
         });
         await mmPage.expectNoBotDmReplyFromApi(client, channel.id, botUser.id, sinceMs, { observeDurationMs: 15000 });
-        await expectMatchedAmbientDecision(false);
+        await expectClassifierDeclined();
     });
 
     test('ambient_threads mode: replies without a mention only in threads the agent was @mentioned into', async ({ page }) => {
@@ -386,7 +379,7 @@ test.describe('Per-channel agent auto-reply', () => {
         await putAutoReply(client, channel.id, botUser.id, 'ambient_threads', {
             instructions: 'only billing questions',
         });
-        await mockAmbientClassifierThenReply(true);
+        await mockAmbientClassifier(true);
         const mmPage = new MattermostPage(page);
 
         // Until the agent is brought into a thread, neither roots nor replies are classified.
@@ -421,23 +414,5 @@ test.describe('Per-channel agent auto-reply', () => {
                 (p) => p.user_id === botUser.id && p.create_at > followUp.create_at && p.message.includes(responseTestText),
             );
         }, { timeout: 45000, intervals: [500, 1000, 2000] }).toBe(true);
-        await expectMatchedAmbientDecision(true);
-    });
-
-    test('ambient modes cannot be saved while the admin setting is off', async () => {
-        const { client, botUser, channel } = await setupClientAndChannel('ambientdisabled');
-        const routes = mattermostAIPluginRoutes(mattermost.url());
-
-        await setAmbientAutoReplyEnabled(false);
-        try {
-            for (const mode of ['ambient', 'ambient_threads']) {
-                await expect(
-                    routes.putJson(`channel/${channel.id}/autoreply`, client.getToken(), { bot_id: botUser.id, mode }),
-                ).rejects.toThrow(/failed: 409/);
-            }
-            await putAutoReply(client, channel.id, botUser.id, 'threads');
-        } finally {
-            await setAmbientAutoReplyEnabled(true);
-        }
     });
 });

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import { type OpenAIMockContainer, type SmockerMockRule } from './openai-mock';
+import { type OpenAIMockContainer } from './openai-mock';
 
 /**
  * Registers Smocker mocks that simulate an MCP server requiring OAuth authentication.
@@ -21,8 +21,22 @@ const MOCK_MCP_PATH = '/mock-mcp';
 export const MOCK_OAUTH_SERVER_NAME = 'Mock OAuth Server';
 export const MOCK_OAUTH_SERVER_URL = `${MOCK_MCP_BASE}${MOCK_MCP_PATH}`;
 
-export function buildMCPOAuthMocks(completionResponse?: string): SmockerMockRule[] {
-    const mocks: SmockerMockRule[] = [];
+/** Smocker mock rule shape used by OpenAIMockContainer.addMocks */
+export type SmockerMock = {
+    request: {
+        method: string;
+        path: string | { matcher: string; value: string };
+    };
+    context?: { times?: number };
+    response: {
+        status: number;
+        headers: Record<string, string>;
+        body: string;
+    };
+};
+
+export function buildMCPOAuthMocks(completionResponse?: string): SmockerMock[] {
+    const mocks: SmockerMock[] = [];
 
     if (completionResponse) {
         mocks.push({
@@ -155,7 +169,7 @@ function jsonRPCResponse(payload: string): SmockerDynamicMock['dynamic_response'
  * not mocked: it lives on the Docker network, so tests intercept
  * MOCK_OAUTH_AUTHORIZE_URL in the browser instead.
  */
-export function buildMCPOAuthConnectedMocks(): Array<SmockerMockRule | SmockerDynamicMock> {
+export function buildMCPOAuthConnectedMocks(): Array<SmockerMock | SmockerDynamicMock> {
     return [
         {
             request: { method: 'POST', path: '/token' },
