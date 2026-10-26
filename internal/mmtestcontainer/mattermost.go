@@ -426,30 +426,26 @@ func runPostgresContainer(ctx context.Context, nw *testcontainers.DockerNetwork)
 // RunContainer creates an instance of the mattermost container type
 func RunContainer(ctx context.Context, opts ...MattermostCustomizeRequestOption) (*MattermostContainer, error) {
 	req := MattermostContainerRequest{
-		GenericContainerRequest: testcontainers.GenericContainerRequest{
-			ContainerRequest: testcontainers.ContainerRequest{
-				Image: defaultMattermostImage,
-				Env: map[string]string{
-					"MM_SQLSETTINGS_DATASOURCE":                     dbconn,
-					"MM_SQLSETTINGS_DRIVERNAME":                     "postgres",
-					"MM_SERVICESETTINGS_ENABLELOCALMODE":            "true",
-					"MM_PASSWORDSETTINGS_MINIMUMLENGTH":             "5",
-					"MM_PLUGINSETTINGS_ENABLEUPLOADS":               "true",
-					"MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS": "false",
-					"MM_FILESETTINGS_MAXFILESIZE":                   "256000000",
-					"MM_LOGSETTINGS_CONSOLELEVEL":                   "DEBUG",
-					"MM_LOGSETTINGS_ENABLEFILE":                     "true",
-					"MM_EXPERIMENTALSETTINGS_ENABLESHAREDCHANNELS":  "true",
-					"MM_SERVICEENVIRONMENT":                         model.ServiceEnvironmentTest,
-				},
-				ExposedPorts: []string{"8065/tcp"},
-				Cmd:          []string{"mattermost", "server"},
-				WaitingFor: wait.ForAll(
-					wait.ForLog("Server is listening on"),
-				).WithDeadline(30 * time.Second),
-			},
-			Started: true,
+		Image: defaultMattermostImage,
+		Env: map[string]string{
+			"MM_SQLSETTINGS_DATASOURCE":                     dbconn,
+			"MM_SQLSETTINGS_DRIVERNAME":                     "postgres",
+			"MM_SERVICESETTINGS_ENABLELOCALMODE":            "true",
+			"MM_PASSWORDSETTINGS_MINIMUMLENGTH":             "5",
+			"MM_PLUGINSETTINGS_ENABLEUPLOADS":               "true",
+			"MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS": "false",
+			"MM_FILESETTINGS_MAXFILESIZE":                   "256000000",
+			"MM_LOGSETTINGS_CONSOLELEVEL":                   "DEBUG",
+			"MM_LOGSETTINGS_ENABLEFILE":                     "true",
+			"MM_EXPERIMENTALSETTINGS_ENABLESHAREDCHANNELS":  "true",
+			"MM_SERVICEENVIRONMENT":                         model.ServiceEnvironmentTest,
 		},
+		ExposedPorts: []string{"8065/tcp"},
+		Cmd:          []string{"mattermost", "server"},
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Server is listening on"),
+		).WithDeadline(30 * time.Second),
+		Started:         true,
 		email:           defaultEmail,
 		username:        defaultUsername,
 		password:        defaultPassword,
