@@ -77,7 +77,7 @@ const AgentNewChat = ({bot, channelId, onCreated, layout, children}: AgentNewCha
                     src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
                     alt={bot.displayName}
                     name={bot.displayName}
-                    size='56'
+                    size='64'
                 />
                 <Greeting>
                     <EmptyTitle>{intl.formatMessage(greeting.title)}</EmptyTitle>
