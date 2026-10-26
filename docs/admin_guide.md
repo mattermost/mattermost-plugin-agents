@@ -839,19 +839,21 @@ Service account authentication is available at Enterprise and above, the same as
 
 An agent using service account authentication can also run its tools in channels **without asking for approval**, by reading through a short-lived session that the Mattermost server limits to a fixed scope. Turn on **Run tools in channels without asking** in the service account section of the agent's **MCPs** tab. Only system administrators can change it.
 
-In a channel turn, the agent's tools run as the **agent's bot account** on a session that:
+In a channel turn, the agent's Mattermost tools run as the **agent's bot account** on a session that:
 
 - can read the channel the agent was used in, every public channel on a team anyone on the server can join, and any **additional channels** you pick for the agent;
 - can read nothing else. Channel and team membership neither add to nor is required for this. The bot's direct messages, group messages, private channels someone added the bot to, channels and teams under an access policy, and teams that only some users can join (invite-only, restricted to email domains, or group-synced) are all out of reach. With compliance mode on, the open-team part is turned off;
-- cannot change anything. The only post is the agent's normal reply in the thread;
+- cannot change anything in Mattermost. The only post is the agent's normal reply in the thread;
 - lasts for one run of the agent and is revoked when the run ends, or after 30 minutes at most.
 
-Every tool call in such a turn runs without the Accept/Reject step and its result is shared in the thread, except questions the agent asks the user, which still wait for an answer. The catalog for those turns contains only read-only Mattermost tools and tools from external MCP servers reached with service account credentials, limited to the agent's MCP tool allowlist. State-changing Mattermost tools and other plugins' MCP servers are not used. Semantic search and file reads are limited to the same channels. Web search and URL fetch keep their usual agent settings. Direct messages with the agent are not affected: they keep using the requesting user's permissions and the usual approval flow.
+Every tool call in such a turn runs without the Accept/Reject step and its result is shared in the thread, except questions the agent asks the user, which still wait for an answer. The catalog for those turns contains only read-only Mattermost tools and tools from external MCP servers reached with service account credentials, and of those only the tools named one by one in the agent's MCP tool allowlist. State-changing Mattermost tools and other plugins' MCP servers are not used. Semantic search and file reads are limited to the same channels. Web search and URL fetch, when turned on for the agent, also run without asking: turning them on for the agent is the consent. Direct messages with the agent are not affected: they keep using the requesting user's permissions and the usual approval flow.
+
+The session's limits apply only inside Mattermost. External MCP tools act on their own systems with the service account's access there, and can change data if the tool and the service account allow it. What bounds them is the set of tools you name for the agent and the permissions of the service account upstream: name only the tools the agent needs, and give the service account the least access that works, such as read-only credentials.
 
 Requirements, checked when the setting is saved and again on every turn:
 
 - **Use service accounts for authentication** is on. Turning it off also turns this setting off and clears the additional channels.
-- **Automatically enable all MCP tools** is off, so the agent uses an explicit tool allowlist.
+- **Automatically enable all MCP tools** is off, and every MCP tool is picked by name: a server cannot be granted with all of its tools. A legacy all-tools grant gives the agent none of that server's tools in channel turns.
 - **Enable Channel Mention Tool Calling** is on in the plugin settings.
 - Mattermost Server 12.2 or later, and an Enterprise license.
 
