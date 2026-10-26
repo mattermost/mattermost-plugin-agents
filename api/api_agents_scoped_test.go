@@ -4,6 +4,7 @@
 package api
 
 import (
+	"encoding/json"
 	"maps"
 	"net/http"
 	"slices"
@@ -178,6 +179,55 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 			saved := e.agentStore.agents["agent-1"]
 			assert.Equal(t, tt.wantScoped, saved.ScopedChannelMode)
 			assert.Equal(t, tt.wantExtras, saved.ScopedExtraChannelIDs)
+		})
+	}
+}
+
+func TestScopedExtraChannelsHiddenFromNonManagers(t *testing.T) {
+	extraID := model.NewId()
+
+	tests := []struct {
+		name       string
+		path       string
+		creatorID  string
+		wantExtras []string
+	}{
+		{name: "list, non-manager", path: "/agents", creatorID: "other-user", wantExtras: []string{}},
+		{name: "get, non-manager", path: "/agents/agent-1", creatorID: "other-user", wantExtras: []string{}},
+		{name: "list, creator", path: "/agents", creatorID: testUserID, wantExtras: []string{extraID}},
+		{name: "get, creator", path: "/agents/agent-1", creatorID: testUserID, wantExtras: []string{extraID}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := setupAgentTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			mockLicensed(e.mockAPI)
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageOthersAgent).Return(false).Maybe()
+			e.mockAPI.On("HasPermissionTo", testUserID, model.PermissionManageSystem).Return(false).Maybe()
+			e.mockAPI.On("LogError", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Maybe()
+
+			e.agentStore.agents["agent-1"] = &llm.BotConfig{
+				ID: "agent-1", CreatorID: tt.creatorID, DisplayName: "Scoped Agent",
+				ServiceID: "svc-1", UserAccessLevel: llm.UserAccessLevelAll,
+				UseServiceAccountAuth: true, ScopedChannelMode: true, ScopedExtraChannelIDs: []string{extraID},
+			}
+
+			recorder := doRequest(e.api, http.MethodGet, tt.path, nil, testUserID)
+			require.Equal(t, http.StatusOK, recorder.Result().StatusCode, recorder.Body.String())
+
+			var agent llm.BotConfig
+			if tt.path == "/agents" {
+				var agents []llm.BotConfig
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &agents))
+				require.Len(t, agents, 1)
+				agent = agents[0]
+			} else {
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &agent))
+			}
+			assert.Equal(t, tt.wantExtras, agent.ScopedExtraChannelIDs)
+			assert.True(t, agent.ScopedChannelMode)
 		})
 	}
 }
