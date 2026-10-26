@@ -102,15 +102,15 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
 const Section = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    padding-top: 12px;
+    gap: var(--spacing-m);
+    padding-top: var(--spacing-m);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 const CheckboxText = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
 `;
 
 const CheckboxTitle = styled.span`
@@ -125,7 +125,7 @@ const CheckboxHint = styled.span`
 const ExtraChannels = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--spacing-xs);
 `;
 
 const ExtraChannelsLabel = styled.span`
