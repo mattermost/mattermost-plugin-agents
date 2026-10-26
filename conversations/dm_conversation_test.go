@@ -91,6 +91,29 @@ func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID
 	return nil, store.ErrConversationNotFound
 }
 
+func (s *fakeConvStore) RestoreConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest *store.Conversation
+	for _, conv := range s.conversations {
+		if conv.RootPostID == nil || *conv.RootPostID != rootPostID || conv.BotID != botID || conv.UserID != userID {
+			continue
+		}
+		if conv.DeleteAt == 0 {
+			return nil, store.ErrConversationConflict
+		}
+		if latest == nil || conv.DeleteAt > latest.DeleteAt {
+			latest = conv
+		}
+	}
+	if latest == nil {
+		return nil, store.ErrConversationNotFound
+	}
+	latest.DeleteAt = 0
+	c := *latest
+	return &c, nil
+}
+
 func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -657,6 +680,47 @@ func TestDMContinueConversation_ReadsTurnsNotPosts(t *testing.T) {
 	env.fakeLLM.mu.Unlock()
 	assert.Equal(t, llm.PostRoleSystem, req.Posts[0].Role)
 	assert.GreaterOrEqual(t, len(req.Posts), 3) // system + 2 user turns
+}
+
+// --- Test: a reply in an archived DM thread restores its conversation ------
+
+func TestDMReplyInArchivedThread_RestoresConversationWithHistory(t *testing.T) {
+	env := setupDMTestEnv(t, dmMakeTextStream("Follow-up response"))
+
+	rootPostID := "root1"
+	channelID := env.channelID
+	createResult, err := env.convService.CreateConversation(conversation.CreateConversationParams{
+		UserID:       env.userID,
+		BotID:        env.botID,
+		ChannelID:    &channelID,
+		RootPostID:   &rootPostID,
+		Operation:    "conversation",
+		SystemPrompt: "You are helpful.",
+		UserMessage:  "First message",
+	})
+	require.NoError(t, err)
+
+	env.convStore.mu.Lock()
+	env.convStore.conversations[createResult.ConversationID].DeleteAt = model.GetMillis()
+	env.convStore.mu.Unlock()
+
+	post := &model.Post{
+		Id:        "post2",
+		UserId:    env.userID,
+		ChannelId: env.channelID,
+		RootId:    rootPostID,
+		Message:   "Follow up question",
+	}
+	convResult, err := env.conversations.CreateOrGetDMConversation(env.botID, env.user, env.channel, post, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, createResult.ConversationID, convResult.ConversationID, "reply must continue the archived conversation, not start a new one")
+	assert.False(t, convResult.IsNew)
+
+	restored, err := env.convService.GetConversation(convResult.ConversationID)
+	require.NoError(t, err, "the conversation must be active again")
+	assert.Zero(t, restored.DeleteAt)
+	assert.Len(t, env.convStore.turnsFor(convResult.ConversationID), 2, "history and the new user turn")
 }
 
 // --- Test: auto-run tools use ToolRunner and write turns with shared=true -

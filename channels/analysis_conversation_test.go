@@ -51,6 +51,10 @@ func (s *inMemoryStore) GetConversation(id string) (*store.Conversation, error) 
 	return conv, nil
 }
 
+func (*inMemoryStore) RestoreConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
+	return nil, store.ErrConversationNotFound
+}
+
 func (s *inMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }

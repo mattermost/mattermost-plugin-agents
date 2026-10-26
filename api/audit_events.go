@@ -10,7 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// Audit event names for every state-changing operation in the plugin: 31
+// Audit event names for every state-changing operation in the plugin: 33
 // routed events plus the non-gin MCP session grant. All are declared here,
 // including ones whose instrumentation lands in later changes, so call sites
 // never use inline string literals; new state-changing routes add their
@@ -47,6 +47,10 @@ const (
 
 	// Channel configuration.
 	AuditEventUpdateChannelAutoReply = "updateChannelAutoReply"
+
+	// Conversation management by its owner.
+	AuditEventRenameConversation  = "renameConversation"
+	AuditEventArchiveConversation = "archiveConversation"
 
 	// Credentials: third-party MCP OAuth grant/revocation and per-user tool
 	// provider preferences.
@@ -124,6 +128,10 @@ func buildAuditEventRegistry(a *API) map[string]string {
 
 		// Channel configuration.
 		handlerFuncName(a.handlePutChannelAutoReply): AuditEventUpdateChannelAutoReply,
+
+		// Conversation management.
+		handlerFuncName(a.handleRenameConversation):  AuditEventRenameConversation,
+		handlerFuncName(a.handleArchiveConversation): AuditEventArchiveConversation,
 
 		// Credentials.
 		handlerFuncName(a.handleOAuthStart):         AuditEventMCPOAuthStart,

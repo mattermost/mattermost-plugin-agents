@@ -63,6 +63,10 @@ func (s *loadedStateFlowStore) GetConversation(id string) (*store.Conversation, 
 	return &cp, nil
 }
 
+func (*loadedStateFlowStore) RestoreConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
+	return nil, store.ErrConversationNotFound
+}
+
 func (s *loadedStateFlowStore) GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

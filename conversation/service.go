@@ -24,6 +24,10 @@ type Store interface {
 	// GetConversation retrieves a conversation by ID. Returns an error if not found.
 	GetConversation(id string) (*store.Conversation, error)
 	GetConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
+	// RestoreConversationByThreadBotUser un-archives the tuple's most recently
+	// archived conversation. Returns store.ErrConversationNotFound when none is
+	// archived and store.ErrConversationConflict when an active one exists.
+	RestoreConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error)
 	// UpdateConversationTitle updates the title of a conversation.
 	UpdateConversationTitle(id, title string) error
 	// UpdateConversationRootPostID sets the RootPostID on a conversation.
@@ -158,11 +162,29 @@ func (s *Service) GetConversation(id string) (*store.Conversation, error) {
 // GetConversationByThread returns the conversation rooted at rootPostID for
 // the bot and user, or nil when the thread has none.
 func (s *Service) GetConversationByThread(rootPostID, botID, userID string) (*store.Conversation, error) {
-	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	conv, err := s.findThreadConversation(rootPostID, botID, userID)
 	if errors.Is(err, store.ErrConversationNotFound) {
 		return nil, nil
 	}
 	return conv, err
+}
+
+// findThreadConversation returns the active conversation for the thread, bot,
+// and user. A user-archived conversation is restored rather than replaced, so
+// a reply in an archived thread continues it with its history instead of
+// silently starting a new conversation. Returns store.ErrConversationNotFound
+// when the thread has no conversation at all.
+func (s *Service) findThreadConversation(rootPostID, botID, userID string) (*store.Conversation, error) {
+	conv, err := s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	if !errors.Is(err, store.ErrConversationNotFound) {
+		return conv, err
+	}
+	restored, err := s.store.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+	if errors.Is(err, store.ErrConversationConflict) {
+		// A concurrent restore or create made a conversation active first.
+		return s.store.GetConversationByThreadBotUser(rootPostID, botID, userID)
+	}
+	return restored, err
 }
 
 // GetTurns returns all turns for a conversation, ordered by sequence.
@@ -274,7 +296,7 @@ type GetOrCreateResult struct {
 // GetOrCreateConversation looks up an existing conversation by (RootPostID, BotID),
 // or creates a new one if none exists.
 func (s *Service) GetOrCreateConversation(params GetOrCreateParams) (*GetOrCreateResult, error) {
-	existing, err := s.store.GetConversationByThreadBotUser(params.RootPostID, params.BotID, params.UserID)
+	existing, err := s.findThreadConversation(params.RootPostID, params.BotID, params.UserID)
 	if err != nil && !errors.Is(err, store.ErrConversationNotFound) {
 		return nil, fmt.Errorf("failed to look up conversation: %w", err)
 	}

@@ -142,6 +142,10 @@ func (s *evalInMemoryStore) GetConversation(id string) (*store.Conversation, err
 	return &c.Conversation, nil
 }
 
+func (*evalInMemoryStore) RestoreConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
+	return nil, store.ErrConversationNotFound
+}
+
 func (s *evalInMemoryStore) GetConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }

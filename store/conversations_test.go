@@ -725,3 +725,149 @@ func TestCleanupDeletedConversations(t *testing.T) {
 		})
 	}
 }
+
+func TestArchiveRenameRestoreConversation(t *testing.T) {
+	inThread := func(rootPostID, botID, userID string) func(*Conversation) {
+		return func(c *Conversation) {
+			c.RootPostID = new(rootPostID)
+			c.BotID = botID
+			c.UserID = userID
+		}
+	}
+
+	tests := []struct {
+		name     string
+		validate func(t *testing.T, s *Store)
+	}{
+		{
+			name: "archive is conditional and keeps the row and turns",
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				require.NoError(t, s.CreateConversation(conv))
+				require.NoError(t, s.CreateTurn(makeTurn(conv.ID, 1)))
+
+				archived, err := s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
+				assert.True(t, archived)
+
+				again, err := s.ArchiveConversation(conv.ID, 2000)
+				require.NoError(t, err)
+				assert.False(t, again, "a second archive must not write")
+
+				got, err := s.GetConversationIncludingArchived(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1000), got.DeleteAt, "the first archive time is kept")
+
+				_, err = s.GetConversation(conv.ID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+
+				turns, err := s.GetTurnsForConversation(conv.ID)
+				require.NoError(t, err)
+				assert.Len(t, turns, 1)
+			},
+		},
+		{
+			name: "archive of a missing conversation changes nothing",
+			validate: func(t *testing.T, s *Store) {
+				archived, err := s.ArchiveConversation(model.NewId(), 1000)
+				require.NoError(t, err)
+				assert.False(t, archived)
+
+				_, err = s.GetConversationIncludingArchived(model.NewId())
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+			},
+		},
+		{
+			name: "rename applies only to active conversations",
+			validate: func(t *testing.T, s *Store) {
+				conv := makeConversation()
+				require.NoError(t, s.CreateConversation(conv))
+
+				renamed, err := s.RenameConversation(conv.ID, "Renamed")
+				require.NoError(t, err)
+				assert.True(t, renamed)
+
+				_, err = s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
+
+				renamed, err = s.RenameConversation(conv.ID, "After archive")
+				require.NoError(t, err)
+				assert.False(t, renamed)
+
+				got, err := s.GetConversationIncludingArchived(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, "Renamed", got.Title)
+				assert.Equal(t, int64(1000), got.DeleteAt, "a rename must never un-archive")
+			},
+		},
+		{
+			name: "restore brings back the archived thread conversation",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				conv := makeConversation(inThread(rootPostID, botID, userID), func(c *Conversation) { c.Title = "Kept" })
+				require.NoError(t, s.CreateConversation(conv))
+				_, err := s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
+
+				restored, err := s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, restored.ID)
+				assert.Equal(t, "Kept", restored.Title)
+				assert.Zero(t, restored.DeleteAt)
+
+				active, err := s.GetConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, conv.ID, active.ID)
+
+				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				assert.ErrorIs(t, err, ErrConversationNotFound, "nothing is left to restore")
+			},
+		},
+		{
+			name: "restore only matches the same thread, bot, and user",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				conv := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(conv))
+				_, err := s.ArchiveConversation(conv.ID, 1000)
+				require.NoError(t, err)
+
+				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, model.NewId())
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+				_, err = s.RestoreConversationByThreadBotUser(rootPostID, model.NewId(), userID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+
+				got, err := s.GetConversationIncludingArchived(conv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1000), got.DeleteAt)
+			},
+		},
+		{
+			name: "restore conflicts when the thread already has an active conversation",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				archivedConv := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(archivedConv))
+				_, err := s.ArchiveConversation(archivedConv.ID, 1000)
+				require.NoError(t, err)
+				activeConv := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(activeConv))
+
+				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				assert.ErrorIs(t, err, ErrConversationConflict)
+
+				got, err := s.GetConversationIncludingArchived(archivedConv.ID)
+				require.NoError(t, err)
+				assert.Equal(t, int64(1000), got.DeleteAt, "a failed restore leaves the archived row untouched")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+			tt.validate(t, s)
+		})
+	}
+}
