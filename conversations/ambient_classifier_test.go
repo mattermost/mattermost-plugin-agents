@@ -15,10 +15,13 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -142,9 +145,16 @@ func TestClassifyAmbientTimeout(t *testing.T) {
 		&model.Bot{UserId: "b1", Username: "bot"},
 		&blockingNoStreamLLM{},
 	)
-	c := &Conversations{prompts: promptsManager, mmClient: mmClient}
+	mockAPI := &plugintest.API{}
+	mockAPI.On("GetConfig").Return(&model.Config{}).Maybe()
+	mockAPI.On("GetLicense").Return(&model.License{}).Maybe()
+	mockAPI.On("GetTeam", "t1").Return(&model.Team{Id: "t1"}, nil).Maybe()
+	contextBuilder := llmcontext.NewLLMContextBuilder(pluginapi.NewClient(mockAPI, nil), nil, nil, nil)
+	c := &Conversations{prompts: promptsManager, mmClient: mmClient, contextBuilder: contextBuilder}
 
-	err = c.classifyAmbientReply(context.Background(), bot, &autoreply.Setting{Mode: autoreply.ModeAmbient}, post, "u1", []*model.Post{post})
+	user := &model.User{Id: "u1", Username: "alice"}
+	channel := &model.Channel{Id: "c1", TeamId: "t1", Type: model.ChannelTypeOpen}
+	err = c.classifyAmbientReply(context.Background(), bot, &autoreply.Setting{Mode: autoreply.ModeAmbient}, post, user, channel, []*model.Post{post})
 	require.ErrorIs(t, err, ErrNoResponse)
 }
 

@@ -4,6 +4,7 @@
 package conversations_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
 )
 
 func TestAmbientAutoReply(t *testing.T) {
@@ -322,8 +325,18 @@ func TestAmbientAutoReply(t *testing.T) {
 				require.True(t, env.llm.lastNoStreamCfg.ReasoningDisabled)
 				require.Equal(t, 128, env.llm.lastNoStreamCfg.MaxGeneratedTokens)
 				require.NotNil(t, env.llm.lastNoStreamCfg.JSONOutputFormat)
-				require.NotNil(t, env.llm.lastNoStreamReq.Context.RequestingUser, "the classifier must be attributed so fallbacks are restricted")
-				require.Equal(t, autoReplyUserID, env.llm.lastNoStreamReq.Context.RequestingUser.Id)
+				llmCtx := env.llm.lastNoStreamReq.Context
+				require.NotNil(t, llmCtx.RequestingUser, "the classifier must be attributed so fallbacks are restricted")
+				require.Equal(t, autoReplyUserID, llmCtx.RequestingUser.Id)
+				// Token-usage logging reads its bot, channel, and team dimensions
+				// from the request context.
+				require.Equal(t, autoReplyBotUserID, llmCtx.BotUserID)
+				require.Equal(t, autoReplyBotUsername, llmCtx.BotUsername)
+				require.NotNil(t, llmCtx.Channel)
+				require.Equal(t, autoReplyChannelID, llmCtx.Channel.Id)
+				require.NotNil(t, llmCtx.Team)
+				require.Equal(t, autoReplyTeamID, llmCtx.Team.Id)
+				require.Nil(t, llmCtx.Tools, "the classifier context must not carry tools")
 				combined := ""
 				for _, p := range env.llm.lastNoStreamReq.Posts {
 					combined += p.Message
@@ -493,6 +506,68 @@ func TestAmbientDeclineReminderScope(t *testing.T) {
 			reminder := env.mmClient.ephemeralPosts[0]
 			require.Equal(t, conversations.AgentMentionReminderPostType, reminder.GetProp("type"))
 			require.Equal(t, tc.prevAuthorID, reminder.GetProp(conversations.AgentMentionReminderBotUserIDProp))
+		})
+	}
+}
+
+func TestAmbientClassifierSpan(t *testing.T) {
+	const (
+		threadSentinel = "THREAD-CONTENT-SENTINEL"
+		leakedKey      = "sk-proj-LEAKEDSECRETKEY1234567890"
+	)
+
+	tests := []struct {
+		name           string
+		classifierJSON string
+		classifierErr  error
+		wantDecision   any // nil means the decision attribute is absent
+		wantStatus     codes.Code
+		wantStatusDesc string
+	}{
+		{name: "reply decision", classifierJSON: `{"should_reply":true}`, wantDecision: true, wantStatus: codes.Unset},
+		{name: "decline decision", classifierJSON: `{"should_reply":false}`, wantDecision: false, wantStatus: codes.Unset},
+		{name: "malformed output", classifierJSON: "not-json", wantStatus: codes.Error, wantStatusDesc: "malformed classifier output"},
+		{
+			name:           "provider error",
+			classifierErr:  fmt.Errorf("upstream rejected Authorization: Bearer %s", leakedKey),
+			wantStatus:     codes.Error,
+			wantStatusDesc: "provider error",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			exporter := installTurnTracer(t)
+			env := setupAutoReplyTestEnv(t, []llm.BotConfig{autoReplyBotConfig()}, dmMakeTextStream("canned reply"))
+			env.llm.noStreamResponseByOp = map[string]string{llm.OperationAmbientClassification: tc.classifierJSON}
+			if tc.classifierErr != nil {
+				env.llm.noStreamErrByOp = map[string]error{llm.OperationAmbientClassification: tc.classifierErr}
+			}
+			env.settings.set(autoreply.Setting{ChannelID: autoReplyChannelID, BotID: autoReplyBotUserID, Mode: autoreply.ModeAmbient})
+
+			post := env.rootPost(autoReplyUserID, threadSentinel)
+			env.conversations.MessageHasBeenPosted(nil, post)
+
+			span := spanNamed(t, exporter.GetSpans(), "ambient classifier")
+			attrs := attrMap(span.Attributes)
+			require.Equal(t, autoReplyBotUserID, attrs[telemetry.AgentID])
+			require.Equal(t, autoReplyChannelID, attrs[telemetry.ChannelID])
+			require.Equal(t, post.Id, attrs[telemetry.PostID])
+			if tc.wantDecision == nil {
+				require.NotContains(t, attrs, telemetry.AmbientShouldReply)
+			} else {
+				require.Equal(t, tc.wantDecision, attrs[telemetry.AmbientShouldReply])
+			}
+			require.Equal(t, tc.wantStatus, span.Status.Code)
+			require.Equal(t, tc.wantStatusDesc, span.Status.Description)
+			if tc.wantStatus == codes.Error {
+				require.NotEmpty(t, span.Events, "failures must be recorded on the span")
+			}
+
+			raw, err := json.Marshal(span)
+			require.NoError(t, err)
+			require.NotContains(t, string(raw), threadSentinel, "spans must never carry thread content")
+			require.NotContains(t, string(raw), leakedKey, "spans must never carry credentials")
 		})
 	}
 }

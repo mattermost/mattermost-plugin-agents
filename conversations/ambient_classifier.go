@@ -23,6 +23,8 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -80,9 +82,17 @@ func threadHasReplyFrom(thread []*model.Post, userID string) bool {
 // stay attached and rely on tool_choice "none". Structured-output capability
 // detection, dedupe, concurrency control, rate/cost
 // caps, and deleted-post recheck are deferred.
-func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot, setting *autoreply.Setting, trigger *model.Post, postingUserID string, thread []*model.Post) error {
-	ctx, span := telemetry.Tracer().Start(ctx, "ambient classifier")
+func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot, setting *autoreply.Setting, trigger *model.Post, postingUser *model.User, channel *model.Channel, thread []*model.Post) error {
+	ctx, span := telemetry.Tracer().Start(ctx, "ambient classifier", trace.WithAttributes(
+		telemetry.AgentID.String(bot.GetMMBot().UserId),
+		telemetry.ChannelID.String(channel.Id),
+		telemetry.PostID.String(trigger.Id),
+	))
 	defer span.End()
+	fail := func(status string, cause error) {
+		span.RecordError(cause)
+		span.SetStatus(codes.Error, status)
+	}
 
 	classifyCtx, cancel := context.WithTimeout(ctx, ambientClassifierTimeout)
 	defer cancel()
@@ -94,20 +104,22 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 	}
 	threadData, err := mmapi.GetMetadataForPosts(c.mmClient, recent)
 	if err != nil {
+		fail("failed to load thread authors", err)
 		return fmt.Errorf("ambient classifier failed to load thread authors: %w", ErrNoResponse)
 	}
 
-	llmCtx := llm.NewContext()
 	// The posting user attributes the request so provider fallbacks are limited
 	// to services that user may use; thread content must not reach others.
-	llmCtx.RequestingUser = &model.User{Id: postingUserID}
-	llmCtx.Parameters = map[string]any{
-		"Instructions": setting.Instructions,
-		"ThreadScoped": setting.Mode == autoreply.ModeAmbientThreads,
-	}
+	llmCtx := c.contextBuilder.BuildLLMContextUserRequest(bot, postingUser, channel,
+		c.contextBuilder.WithLLMContextParameters(map[string]any{
+			"Instructions": setting.Instructions,
+			"ThreadScoped": setting.Mode == autoreply.ModeAmbientThreads,
+		}),
+	)
 
 	prompt, err := c.prompts.Format(prompts.PromptAmbientClassifierSystem, llmCtx)
 	if err != nil {
+		fail("failed to format prompt", err)
 		return fmt.Errorf("ambient classifier failed to format prompt: %w", ErrNoResponse)
 	}
 
@@ -132,13 +144,16 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 
 	raw, err := bot.LLM().ChatCompletionNoStream(classifyCtx, req, opts...)
 	if err != nil {
+		fail("provider error", llm.SanitizeProviderError(err))
 		return fmt.Errorf("ambient classifier provider error: %w", ErrNoResponse)
 	}
 
 	shouldReply, parseErr := parseAmbientClassifierOutput(raw)
 	if parseErr != nil {
+		fail("malformed classifier output", parseErr)
 		return fmt.Errorf("ambient classifier output: %v: %w", parseErr, ErrNoResponse)
 	}
+	span.SetAttributes(telemetry.AmbientShouldReply.Bool(shouldReply))
 	if !shouldReply {
 		return errAmbientDeclined
 	}
