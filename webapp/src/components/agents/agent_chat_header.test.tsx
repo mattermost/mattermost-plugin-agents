@@ -80,7 +80,7 @@ const renderHeader = (props: Partial<React.ComponentProps<typeof AgentChatHeader
     return handlers;
 };
 
-const openMenu = () => fireEvent.click(screen.getByRole('button', {name: 'Matty options'}));
+const openMenu = () => fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
 const openActions = async () => {
     await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
     fireEvent.click(screen.getByRole('button', {name: 'Chat actions'}));
@@ -144,8 +144,10 @@ describe('AgentChatHeader', () => {
     });
 
     test.each([
-        {name: 'no edit access', props: {}, expected: ['View all agents']},
-        {name: 'can edit', props: {onOpenSettings: jest.fn()}, expected: ['Agent settings', 'View all agents']},
+        {name: 'new chat, no edit access', props: {}, expected: ['View all agents']},
+        {name: 'new chat, can edit', props: {onOpenSettings: jest.fn()}, expected: ['Agent settings', 'View all agents']},
+        {name: 'open chat, no edit access', props: {rootId: 'root1'}, expected: ['New chat', 'Rename chat', 'Archive chat', 'View all agents']},
+        {name: 'open chat, can edit', props: {rootId: 'root1', onOpenSettings: jest.fn()}, expected: ['New chat', 'Rename chat', 'Archive chat', 'Agent settings', 'View all agents']},
     ])('name menu items: $name', ({props, expected}) => {
         renderHeader(props);
         openMenu();
@@ -161,6 +163,35 @@ describe('AgentChatHeader', () => {
         await clickItem(name);
         expect({onOpenSettings}[handler as 'onOpenSettings']).toHaveBeenCalledTimes(1);
         expect(screen.getByTestId('agent-chat-menu-button').getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test.each([
+        {name: 'confirmed thread', reply: true, disabled: false},
+        {name: 'thread without a known conversation id', reply: false, disabled: true},
+    ])('name menu Rename and Archive enabled state: $name', ({reply, disabled}) => {
+        renderHeader({rootId: 'root1'}, reply);
+        openMenu();
+        for (const name of ['Rename chat', 'Archive chat']) {
+            expect((screen.getByRole('menuitem', {name}) as HTMLButtonElement).disabled).toBe(disabled);
+        }
+    });
+
+    test('name menu New chat calls onNewChat; Rename and Archive open their dialogs', async () => {
+        const {onNewChat} = renderHeader({rootId: 'root1'});
+        openMenu();
+        await clickItem('New chat');
+        expect(onNewChat).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
+        await clickItem('Rename chat');
+        expect(await screen.findByLabelText('Chat name')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+        await waitFor(() => expect(screen.queryByLabelText('Chat name')).toBeNull());
+
+        fireEvent.click(screen.getByTestId('agent-chat-menu-button'));
+        await clickItem('Archive chat');
+        expect(await screen.findByRole('button', {name: 'Archive'})).toBeTruthy();
+        expect(mockArchive).not.toHaveBeenCalled();
     });
 
     test('name menu View all agents navigates to the all-agents view', async () => {

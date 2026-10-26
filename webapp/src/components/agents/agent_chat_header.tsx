@@ -200,6 +200,34 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                             aria-label={nameMenuLabel}
                             onClick={closeOnItemClick(() => setNameMenuOpen(false))}
                         >
+                            {rootId && (
+                                <>
+                                    <PopoverMenuGroup>
+                                        <ChatMenuItem
+                                            icon={<MessagePlusOutlineIcon/>}
+                                            label={intl.formatMessage({defaultMessage: 'New chat'})}
+                                            onClick={onNewChat}
+                                        />
+                                        <ChatMenuItem
+                                            icon={<PencilOutlineIcon/>}
+                                            label={intl.formatMessage({defaultMessage: 'Rename chat'})}
+                                            disabled={!hasChat}
+                                            onClick={() => setRenameOpen(true)}
+                                        />
+                                        <ChatMenuItem
+                                            icon={<ArchiveOutlineIcon/>}
+                                            label={intl.formatMessage({defaultMessage: 'Archive chat'})}
+                                            destructive={true}
+                                            disabled={!hasChat}
+                                            onClick={() => {
+                                                setArchiveFailed(false);
+                                                setArchiveOpen(true);
+                                            }}
+                                        />
+                                    </PopoverMenuGroup>
+                                    <PopoverMenuDivider/>
+                                </>
+                            )}
                             <PopoverMenuGroup>
                                 {onOpenSettings && (
                                     <ChatMenuItem
