@@ -131,9 +131,10 @@ func scopedTestBotConfig() llm.BotConfig {
 		UseServiceAccountAuth: true,
 		ScopedExtraChannelIDs: []string{model.NewId()},
 		EnabledMCPTools: []llm.EnabledMCPTool{
-			{ServerOrigin: mcp.EmbeddedClientKey, ToolName: llm.MCPServerToolWildcard},
-			{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard},
-			{ServerOrigin: "plugin://com.example.mcp", ToolName: llm.MCPServerToolWildcard},
+			{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "read_channel"},
+			{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "create_post"},
+			{ServerOrigin: "https://jira.example.com", ToolName: "get_issue"},
+			{ServerOrigin: "plugin://com.example.mcp", ToolName: "plugin_tool"},
 		},
 	}
 }
@@ -270,6 +271,54 @@ func TestScopedChannelTurnCatalog(t *testing.T) {
 	llmContext.ReleaseScopedSession()
 	assert.Equal(t, []string{sessionID}, minter.revoked, "releasing the turn revokes its session once")
 	assert.True(t, llmContext.ScopedSessionReleased())
+}
+
+func TestScopedChannelTurnCatalogNeedsNamedTools(t *testing.T) {
+	tests := []struct {
+		name     string
+		enabled  []llm.EnabledMCPTool
+		expected []string
+	}{
+		{
+			name:     "named tools",
+			enabled:  scopedTestBotConfig().EnabledMCPTools,
+			expected: []string{"mattermost__read_channel", "jira__get_issue"},
+		},
+		{
+			name: "wildcard entries admit nothing",
+			enabled: []llm.EnabledMCPTool{
+				{ServerOrigin: mcp.EmbeddedClientKey, ToolName: llm.MCPServerToolWildcard},
+				{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard},
+			},
+		},
+		{
+			name: "a wildcard next to a named tool admits only the named tool",
+			enabled: []llm.EnabledMCPTool{
+				{ServerOrigin: mcp.EmbeddedClientKey, ToolName: llm.MCPServerToolWildcard},
+				{ServerOrigin: "https://jira.example.com", ToolName: "get_issue"},
+			},
+			expected: []string{"jira__get_issue"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := newScopedCatalogProvider(t, &recordingScopedMinter{}, scopedTestMCPCatalog())
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+			cfg := scopedTestBotConfig()
+			cfg.EnabledMCPTools = tt.enabled
+			bot := newScopedTestBot(cfg)
+			channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationID: model.NewId()}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+			t.Cleanup(llmContext.ReleaseScopedSession)
+
+			require.True(t, llmContext.ToolsScoped)
+			assert.ElementsMatch(t, tt.expected, toolNames(llmContext.Tools))
+		})
+	}
 }
 
 func TestScopedChannelTurnSeesRevocation(t *testing.T) {
