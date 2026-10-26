@@ -151,7 +151,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			minter := &scopedBridgeMinter{}
 			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 			t.Cleanup(manager.Close)
-			manager.SetScopedSessions(minter, scopedsession.NewRegistry(nil))
+			manager.SetScopedSessions(minter)
 			catalog := &scopedBridgeCatalog{ClientManager: manager}
 			e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, catalog, scopedBridgeConfig{channelToolCalling: true})
 
@@ -162,7 +162,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 				ChannelAccessLevel:    llm.ChannelAccessLevelAll,
 				UseServiceAccountAuth: true,
 				ScopedChannelMode:     true,
-				EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedBridgeOrigin, ToolName: llm.MCPServerToolWildcard}},
+				EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedBridgeOrigin, ToolName: "get_issue"}},
 			})
 
 			req := bridgeclient.CompletionRequest{

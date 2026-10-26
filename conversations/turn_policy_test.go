@@ -886,8 +886,9 @@ func scopedPolicyBotConfig() llm.BotConfig {
 	cfg.UseServiceAccountAuth = true
 	cfg.ScopedChannelMode = true
 	cfg.EnabledMCPTools = []llm.EnabledMCPTool{
-		{ServerOrigin: policyToolOrigin, ToolName: llm.MCPServerToolWildcard},
-		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: llm.MCPServerToolWildcard},
+		{ServerOrigin: policyToolOrigin, ToolName: policyToolName},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: policyTimeToolName},
+		{ServerOrigin: mcp.EmbeddedClientKey, ToolName: "search_posts"},
 	}
 	return cfg
 }
@@ -931,7 +932,7 @@ func (env *policyEnv) enableScopedSessions(t *testing.T) *scopedPolicyRecorder {
 	client := pluginapi.NewClient(env.mockAPI, nil)
 	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 	t.Cleanup(manager.Close)
-	manager.SetScopedSessions(rec.minter, scopedsession.NewRegistry(nil))
+	manager.SetScopedSessions(rec.minter)
 	env.mcpMgr.scoped = manager
 
 	for i := range env.mcpMgr.tools {

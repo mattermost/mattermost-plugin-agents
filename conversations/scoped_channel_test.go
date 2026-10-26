@@ -193,7 +193,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 	}
 	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 	t.Cleanup(manager.Close)
-	manager.SetScopedSessions(env.minter, scopedsession.NewRegistry(nil))
+	manager.SetScopedSessions(env.minter)
 	env.catalog = &scopedCatalogManager{ClientManager: manager, tool: tool}
 
 	botService := bots.New(mockAPI, client, licenseChecker, nil, nil, newPassthroughAccessChecker(), &http.Client{}, nil)
@@ -206,7 +206,7 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 			UserAccessLevel:       llm.UserAccessLevelAll,
 			UseServiceAccountAuth: true,
 			ScopedChannelMode:     true,
-			EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: llm.MCPServerToolWildcard}},
+			EnabledMCPTools:       []llm.EnabledMCPTool{{ServerOrigin: scopedRemote, ToolName: "get_issue"}},
 		},
 		llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI},
 		&model.Bot{UserId: scopedBotUserID, Username: scopedBotUsername, DisplayName: "Scoped Bot"},
