@@ -90,7 +90,7 @@ func TestCallRecordingPostsNotifications(t *testing.T) {
 			select {
 			case end = <-notifier.ends:
 			case <-time.After(5 * time.Second):
-				t.Fatal("the failed summary never notified")
+				require.FailNow(t, "the failed summary never notified")
 			}
 
 			mu.Lock()
