@@ -8,14 +8,13 @@ import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
-import {Modal} from '@mattermost/compass-ui/components/modal';
+import {Modal, ModalOverlay} from '@mattermost/compass-ui/components/modal';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl} from '@/client';
-import {AnimatedModalShell, MODAL_SHEET_CLASS} from '@/components/animated_modal_shell';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
 
 import {recentAgents, searchAgents, type ChatResult} from './find_agents_search';
@@ -39,36 +38,35 @@ interface Props {
     onClose: () => void;
 }
 
-// The shell unmounts its children after the exit animation, so every open
-// mounts a fresh Content: empty query, first row selected, threads refetched.
+// ModalOverlay and Modal share `open`, so the scrim and the dialog enter and exit together. Modal
+// unmounts its children after the exit, so every open mounts a fresh Content: empty query, first
+// row selected, threads refetched.
 const FindAgentsModal = ({show, onClose}: Props) => {
     const intl = useIntl();
     return (
-        <AnimatedModalShell
-            show={show}
-            onBackdropClick={onClose}
+        <ModalOverlay
+            open={show}
+            onClose={onClose}
             zIndex={2000}
         >
-            <Sheet className={MODAL_SHEET_CLASS}>
-                <FindModal
-                    closeOnEscape={false}
-                    size='small'
-                    title={intl.formatMessage({defaultMessage: 'Find agents'})}
-                    subtitle={intl.formatMessage(
-                        {defaultMessage: 'Type to find an agent or chat. Use <b>UP/DOWN</b> to browse, <b>ENTER</b> to select, <b>ESC</b> to dismiss.'},
-                        {b: (chunks) => <b>{chunks}</b>},
-                    )}
-                    onClose={onClose}
-                    closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
-                    closeButtonProps={{title: intl.formatMessage({defaultMessage: 'Close'})}}
-                    headerDivider={false}
-                    bodyPadding='menu'
-                    scrollable={false}
-                >
-                    <Content onClose={onClose}/>
-                </FindModal>
-            </Sheet>
-        </AnimatedModalShell>
+            <FindModal
+                open={show}
+                size='small'
+                title={intl.formatMessage({defaultMessage: 'Find agents'})}
+                subtitle={intl.formatMessage(
+                    {defaultMessage: 'Type to find an agent or chat. Use <b>UP/DOWN</b> to browse, <b>ENTER</b> to select, <b>ESC</b> to dismiss.'},
+                    {b: (chunks) => <b>{chunks}</b>},
+                )}
+                onClose={onClose}
+                closeLabel={intl.formatMessage({defaultMessage: 'Close'})}
+                closeButtonProps={{title: intl.formatMessage({defaultMessage: 'Close'})}}
+                headerDivider={false}
+                bodyPadding='menu'
+                scrollable={false}
+            >
+                <Content onClose={onClose}/>
+            </FindModal>
+        </ModalOverlay>
     );
 };
 
@@ -306,16 +304,11 @@ const Content = ({onClose}: {onClose: () => void}) => {
     );
 };
 
-const Sheet = styled.div`
-    display: flex;
-    max-width: calc(100vw - var(--spacing-xxxl));
-`;
-
 // Fixed height so filtering never resizes the dialog, as in the host switcher.
 const FindModal = styled(Modal)`
     && {
         height: 60vh;
-        max-width: 100%;
+        max-width: calc(100vw - var(--spacing-xxxl));
     }
 `;
 
