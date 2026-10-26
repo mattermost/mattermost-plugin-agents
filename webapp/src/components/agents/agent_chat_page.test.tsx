@@ -9,7 +9,7 @@ import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {BotsHandler} from '@/redux';
 import manifest from '@/manifest';
 
-import AgentChatPage, {emptyChatTitles, newChatStorageKey} from './agent_chat_page';
+import AgentChatPage, {emptyChatTitles} from './agent_chat_page';
 
 const mockGetBotDirectChannel = jest.fn();
 const mockGetPost = jest.fn();
@@ -17,12 +17,21 @@ const mockUpdateRead = jest.fn();
 const mockGetChannel = jest.fn();
 const mockGetChannelMember = jest.fn();
 const mockGetRolesByNames = jest.fn();
+const mockCreatePost = jest.fn();
+const mockGetAgents = jest.fn();
+const mockGetServices = jest.fn();
 
 jest.mock('@/client', () => ({
     getBotDirectChannel: (...args: unknown[]) => mockGetBotDirectChannel(...args),
     getPost: (...args: unknown[]) => mockGetPost(...args),
     updateRead: (...args: unknown[]) => mockUpdateRead(...args),
     getProfilePictureUrl: (id: string) => `/users/${id}/image`,
+    createPost: (...args: unknown[]) => mockCreatePost(...args),
+    getAgents: (...args: unknown[]) => mockGetAgents(...args),
+    getServices: (...args: unknown[]) => mockGetServices(...args),
+    getConversation: jest.fn(() => new Promise(() => null)),
+    renameConversation: jest.fn(),
+    archiveConversation: jest.fn(),
     getAIBots: jest.fn(),
     savePreferences: jest.fn(),
     Client4: {
@@ -37,24 +46,36 @@ jest.mock('@/websocket', () => ({
     requestAgentThreadsRefresh: () => mockRequestRefresh(),
 }));
 
-const mockEditorProps = jest.fn();
 const mockThreadViewerProps = jest.fn();
 jest.mock('@/mm_webapp', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
     return {
-        AdvancedTextEditor: (props: {afterSubmit: (r: unknown) => void}) => {
-            mockEditorProps(props);
-            return ReactActual.createElement('div', null,
-                ReactActual.createElement('textarea', {'aria-label': 'composer'}),
-                ReactActual.createElement('button', {onClick: () => props.afterSubmit({created: {id: 'new-root'}})}, 'send'),
-            );
-        },
         ThreadViewer: (props: Record<string, unknown>) => {
             mockThreadViewerProps(props);
             return ReactActual.createElement('div', {'data-testid': 'thread-viewer'});
         },
     };
 });
+
+// The editor itself is covered by agent_config_view.test.tsx; here only how the chat opens and closes it.
+const mockConfigViewProps = jest.fn();
+jest.mock('./agent_config_view', () => {
+    const ReactActual = jest.requireActual<typeof import('react')>('react');
+    return {
+        __esModule: true,
+        default: (props: {agent: {id: string}; onBack: () => void}) => {
+            mockConfigViewProps(props);
+            return ReactActual.createElement('div', null,
+                `config for ${props.agent.id}`,
+                ReactActual.createElement('button', {onClick: props.onBack}, 'Back'),
+            );
+        },
+    };
+});
+
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children}: {children: React.ReactNode}) => children,
+}));
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -88,6 +109,7 @@ const makeBot = (id: string, dmChannelID: string) => ({
 
 interface StateOptions {
     bots: ReturnType<typeof makeBot>[];
+    systemPermissions?: string[];
     loadedChannels?: string[];
     currentTeamId?: string;
     teamMembers?: string[];
@@ -95,18 +117,18 @@ interface StateOptions {
 }
 
 // Minimal reducer covering only the slices and host action types the page touches.
-const makeStore = ({bots, loadedChannels = [], currentTeamId = 'team1', teamMembers = [], posts = {}}: StateOptions) => {
+const makeStore = ({bots, systemPermissions = [], loadedChannels = [], currentTeamId = 'team1', teamMembers = [], posts = {}}: StateOptions) => {
     const initial = {
         [pluginKey]: {bots},
         entities: {
-            users: {currentUserId: 'me'},
+            users: {currentUserId: 'me', profiles: {me: {id: 'me', roles: 'system_user'}}},
             teams: {currentTeamId, myMembers: Object.fromEntries(teamMembers.map((t) => [t, {team_id: t}]))},
             channels: {
                 channels: Object.fromEntries(loadedChannels.map((c) => [c, {id: c}])),
                 myMembers: Object.fromEntries(loadedChannels.map((c) => [c, {channel_id: c, roles: 'channel_user'}])),
             },
-            roles: {roles: {channel_user: {name: 'channel_user'}}},
-            posts: {posts},
+            roles: {roles: {channel_user: {name: 'channel_user'}, system_user: {name: 'system_user', permissions: systemPermissions}}},
+            posts: {posts, postsInThread: {}},
             preferences: {myPreferences: {}},
         },
     };
@@ -166,6 +188,8 @@ const titles = Object.values(emptyChatTitles).map((d) => d.defaultMessage as str
 describe('AgentChatPage', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        mockGetAgents.mockResolvedValue({agents: []});
+        mockGetServices.mockResolvedValue([]);
         mockUpdateRead.mockResolvedValue({});
         mockGetRolesByNames.mockResolvedValue([]);
     });
@@ -173,7 +197,8 @@ describe('AgentChatPage', () => {
     test('fails closed for an agent the user cannot access', () => {
         const {toAll} = renderPage(makeStore({bots: [makeBot('other', 'dm-other')]}));
         expect(screen.getByText('This agent isn\'t available')).toBeTruthy();
-        expect(mockEditorProps).not.toHaveBeenCalled();
+        expect(screen.queryByRole('textbox')).toBeNull();
+        expect(mockGetAgents).not.toHaveBeenCalled();
         fireEvent.click(screen.getByRole('button', {name: 'View all agents'}));
         expect(toAll).toHaveBeenCalled();
     });
@@ -186,9 +211,9 @@ describe('AgentChatPage', () => {
         mockGetRolesByNames.mockResolvedValue([{name: 'channel_admin'}]);
 
         const {toChat} = renderPage(store);
-        expect(mockEditorProps).not.toHaveBeenCalled();
+        expect(screen.queryByRole('textbox')).toBeNull();
 
-        await screen.findByRole('textbox', {name: 'composer'});
+        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
         expect(mockGetBotDirectChannel).toHaveBeenCalledWith('me', 'bot1');
         const state = store.getState() as any;
         expect(state[pluginKey].bots[0].dmChannelID).toBe('dm1');
@@ -197,16 +222,13 @@ describe('AgentChatPage', () => {
         expect(mockGetRolesByNames).toHaveBeenCalledWith(['channel_admin']);
         expect(state.entities.roles.roles.channel_admin).toBeTruthy();
 
-        expect(mockEditorProps).toHaveBeenLastCalledWith(expect.objectContaining({
-            channelId: 'dm1',
-            rootId: '',
-            location: 'RHS_COMMENT',
-            isThreadView: true,
-            storageKey: newChatStorageKey('dm1'),
-        }));
-        expect(newChatStorageKey('dm1')).not.toMatch(/^(draft_|comment_draft_)/);
-
-        fireEvent.click(screen.getByRole('button', {name: 'send'}));
+        // A root post (root_id '') in the agent's DM, which is what makes the agent answer.
+        mockCreatePost.mockResolvedValue({id: 'new-root'});
+        fireEvent.change(composer, {target: {value: 'hello'}});
+        await act(async () => {
+            fireEvent.keyDown(composer, {key: 'Enter'});
+        });
+        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: 'hello'}));
         expect(toChat).toHaveBeenCalledWith('bot1', 'new-root');
         expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
     });
@@ -215,7 +237,7 @@ describe('AgentChatPage', () => {
         mockGetBotDirectChannel.mockRejectedValue(new Error('nope'));
         renderPage(makeStore({bots: [makeBot('bot1', '')]}));
         expect(await screen.findByText('Couldn\'t open this chat')).toBeTruthy();
-        expect(mockEditorProps).not.toHaveBeenCalled();
+        expect(screen.queryByRole('textbox')).toBeNull();
     });
 
     test('ignores a superseded DM channel response after switching agents', async () => {
@@ -225,13 +247,19 @@ describe('AgentChatPage', () => {
 
         const {rerender} = renderPage(store);
         rerender({botId: 'bot2'});
-        await screen.findByRole('textbox', {name: 'composer'});
+        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot2'});
 
         await act(async () => {
             pending.resolve('dm1');
         });
         expect((store.getState() as any)[pluginKey].bots[0].dmChannelID).toBe('');
-        expect(mockEditorProps).toHaveBeenLastCalledWith(expect.objectContaining({channelId: 'dm2'}));
+
+        mockCreatePost.mockResolvedValue({id: 'r2'});
+        fireEvent.change(composer, {target: {value: 'hi'}});
+        await act(async () => {
+            fireEvent.keyDown(composer, {key: 'Enter'});
+        });
+        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm2'}));
     });
 
     test('auto-focuses the composer and keeps the greeting stable across re-renders', async () => {
@@ -239,7 +267,7 @@ describe('AgentChatPage', () => {
         const store = makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1']});
         const {rerender} = renderPage(store);
 
-        const composer = await screen.findByRole('textbox', {name: 'composer'});
+        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
         expect(document.activeElement).toBe(composer);
         expect(screen.getByRole('heading', {level: 2}).textContent).toBe(titles[titles.length - 1]);
 
@@ -363,5 +391,73 @@ describe('AgentChatPage', () => {
         expect((warns ? error : warn)).not.toHaveBeenCalled();
         warn.mockRestore();
         error.mockRestore();
+    });
+
+    test('a chat that cannot be opened offers a new chat and All agents', async () => {
+        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'elsewhere', root_id: ''});
+        const {toChat, toAll} = renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1']}), {rootId: 'r1'});
+        await screen.findByText('Couldn\'t open this chat');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Start a new chat'}));
+        expect(toChat).toHaveBeenCalledWith('bot1');
+        fireEvent.click(screen.getByRole('button', {name: 'View all agents'}));
+        expect(toAll).toHaveBeenCalled();
+    });
+
+    const agent = (overrides: Record<string, unknown>) => ({id: 'agent1', botUserID: 'bot1', creatorID: 'someone', adminUserIDs: [], ...overrides});
+    test.each([
+        {name: 'creator', agents: [agent({creatorID: 'me'})], permissions: [], allowed: true},
+        {name: 'listed agent admin', agents: [agent({adminUserIDs: ['me']})], permissions: [], allowed: true},
+        {name: 'manage_others_agent', agents: [agent({})], permissions: ['manage_others_agent'], allowed: true},
+        {name: 'system admin on a legacy bot without creator', agents: [agent({creatorID: ''})], permissions: ['manage_system'], allowed: true},
+        {name: 'system admin on a created agent they do not own', agents: [agent({})], permissions: ['manage_system'], allowed: false},
+        {name: 'regular user', agents: [agent({})], permissions: [], allowed: false},
+        {name: 'agent not in the list (fail closed)', agents: [agent({botUserID: 'other-bot', creatorID: 'me'})], permissions: ['manage_others_agent'], allowed: false},
+        {name: 'agents lookup fails (fail closed)', agents: null, permissions: ['manage_others_agent'], allowed: false},
+    ])('Agent settings menu item: $name', async ({agents, permissions, allowed}) => {
+        const error = jest.spyOn(console, 'error').mockImplementation(() => null);
+        if (agents) {
+            mockGetAgents.mockResolvedValue({agents});
+        } else {
+            mockGetAgents.mockRejectedValue(new Error('403'));
+        }
+        renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: permissions}));
+        await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        await waitFor(() => expect(mockGetAgents).toHaveBeenCalled());
+
+        // Let the lookup settle before reading the menu.
+        await act(async () => {
+            await Promise.resolve();
+        });
+        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1'}));
+        const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
+        expect(items.includes('Agent settings')).toBe(allowed);
+        expect(items).toContain('New chat');
+        error.mockRestore();
+    });
+
+    test('Agent settings opens the existing agent editor in place and Back returns to the chat', async () => {
+        mockGetAgents.mockResolvedValue({agents: [agent({creatorID: 'me'})]});
+        mockGetServices.mockResolvedValue([{id: 'svc1'}]);
+        renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], systemPermissions: ['manage_own_agent']}));
+        await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+        await act(async () => {
+            await Promise.resolve();
+        });
+
+        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1'}));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Agent settings'}));
+        expect(await screen.findByText('config for agent1')).toBeTruthy();
+        expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', services: [{id: 'svc1'}]}));
+
+        fireEvent.click(screen.getByRole('button', {name: 'Back'}));
+        expect(await screen.findByRole('textbox', {name: 'Message Agent bot1'})).toBeTruthy();
+    });
+
+    test('the thread renders inside the chat wrapper that carries the bubble and width styles', async () => {
+        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'dm1', root_id: ''});
+        renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1']}), {rootId: 'r1'});
+        const viewer = await screen.findByTestId('thread-viewer');
+        expect(screen.getByTestId('agent-chat-thread').contains(viewer)).toBe(true);
     });
 });
