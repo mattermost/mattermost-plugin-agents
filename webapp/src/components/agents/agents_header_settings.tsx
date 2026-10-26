@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {useDispatch} from 'react-redux';
 import {useIntl} from 'react-intl';
 import SettingsOutlineIcon from '@mattermost/compass-icons/components/settings-outline';
 import {Icon} from '@mattermost/compass-ui/components/icon';
@@ -10,9 +11,12 @@ import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 // The host's global header renders its own Settings button only for the Channels product
 // and gives other products just their `headerRightComponent`, so the Agents product
 // supplies one that opens the same user settings modal through the published plugin API.
-// Hosts without `openUserSettings` simply don't get the button.
+// `openUserSettings` returns a Redux action (the host's `openModal(...)`), it does not open
+// anything by itself, so the result has to be dispatched. Hosts without it simply don't get
+// the button.
 const AgentsHeaderSettings = () => {
     const intl = useIntl();
+    const dispatch = useDispatch();
     const openUserSettings = window.WebappUtils?.openUserSettings;
 
     if (!openUserSettings) {
@@ -27,7 +31,7 @@ const AgentsHeaderSettings = () => {
             icon={<Icon glyph={<SettingsOutlineIcon/>}/>}
             aria-label={intl.formatMessage({defaultMessage: 'Settings'})}
             aria-haspopup='dialog'
-            onClick={() => openUserSettings({isContentProductSettings: true})}
+            onClick={() => dispatch(openUserSettings({isContentProductSettings: true}))}
         />
     );
 };

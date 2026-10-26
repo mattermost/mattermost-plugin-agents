@@ -1,6 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
+import type {UnknownAction} from 'redux';
+
 export interface PluginRegistry {
     registerPostTypeComponent(typeName: string, component: React.ElementType)
 
@@ -23,8 +25,9 @@ declare global {
                 push: (path: string) => void;
             };
 
-            // Published host API; absent on older hosts.
-            openUserSettings?: (dialogProps: {isContentProductSettings: boolean}) => void;
+            // Published host API; absent on older hosts. Returns the Redux action that opens the
+            // modal: the caller must dispatch it.
+            openUserSettings?: (dialogProps: {isContentProductSettings: boolean}) => UnknownAction;
         };
     }
 }
