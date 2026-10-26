@@ -507,6 +507,9 @@ test.describe('Agents product view', () => {
         const menu = page.getByRole('menu', {name: `${botDisplayName} options`});
         await expect.poll(async () => {
             await trigger.click();
+
+            // count() does not auto-wait: let the menu render before counting.
+            await expect(menu.getByRole('menuitem', {name: 'View all agents'})).toBeVisible();
             const count = await menu.getByRole('menuitem', {name: 'Agent settings'}).count();
             await page.keyboard.press('Escape');
             await expect(menu).toHaveCount(0);
@@ -685,6 +688,7 @@ test.describe('Agents product view', () => {
         const menu = page.getByRole('menu', {name: 'Chat actions'});
         await expect.poll(async () => {
             await trigger.click();
+            await expect(menu.getByRole('menuitem', {name: 'Archive chat'})).toBeVisible();
             const count = await menu.getByRole('menuitem', {name: 'Archive chat', disabled: false}).count();
             if (count === 0) {
                 await page.keyboard.press('Escape');

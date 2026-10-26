@@ -396,6 +396,9 @@ const ChatMenuItem = ({icon, ...props}: Omit<React.ComponentProps<typeof MenuIte
 
 // The prototype's agent-chat header: 56px bar (spacing-m padding around a 32px row).
 const Root = styled.header`
+    /* Above the new-chat body, whose lift (translateY) can overlap this bar and block its clicks. */
+    position: relative;
+    z-index: 1;
     display: flex;
     box-sizing: border-box;
     flex: 0 0 auto;
