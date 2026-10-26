@@ -51,7 +51,9 @@ export function formatReport(
         const pushCount = user.push.filter((p) => p.type === 'message').length;
         const otherPush = user.push.length - pushCount;
         const thread = user.thread ?
-            (user.thread.isFollowing ? `${user.thread.unreadReplies}/${user.thread.unreadMentions}` : 'not following') :
+            (user.thread.isFollowing ?
+                `${user.thread.unreadReplies}/${user.thread.unreadMentions}${user.thread.unread ? ' unread' : ' read'}` :
+                'not following') :
             '-';
         const ui = user.ui ? `${user.ui.unread ? 'unread' : 'read'}${user.ui.mentionBadge ? ` @${user.ui.mentionBadge}` : ''}` : '-';
         lines.push([
@@ -86,16 +88,21 @@ export function formatReport(
         if (user.channelUnread) {
             const c = user.channelUnread;
             lines.push(
-                `    channel: unread=${c.unreadMsgs} (root ${c.unreadMsgsRoot}) mentions=${c.mentionCount} (root ${c.mentionCountRoot}) urgent=${c.urgentMentionCount}`,
+                `    channel: unread=${c.unreadMsgs} (root ${c.unreadMsgsRoot}) mentions=${c.mentionCount} (root ${c.mentionCountRoot}) urgent=${c.urgentMentionCount} notify(desktop=${c.notifyProps.desktop} push=${c.notifyProps.push})`,
             );
         }
         if (user.thread) {
             const t = user.thread;
             lines.push(
                 t.isFollowing ?
-                    `    thread: following replies=${t.replyCount} unreadReplies=${t.unreadReplies} unreadMentions=${t.unreadMentions}` :
+                    `    thread: following replies=${t.replyCount} unreadReplies=${t.unreadReplies} unreadMentions=${t.unreadMentions} ` +
+                        `${t.unread ? 'unread' : 'read'} (lastReplyAt ${t.lastReplyAt} ${t.unread ? '>' : '<='} lastViewedAt ${t.lastViewedAt})` :
                     '    thread: not following',
             );
+        }
+        if (user.viewing.length > 0) {
+            const reports = user.viewing.map((v) => `${v.viewing ? 'on' : 'off'}:${alias(v.postId)}`);
+            lines.push(`    viewing reports: ${reports.join(' ')}`);
         }
     }
 

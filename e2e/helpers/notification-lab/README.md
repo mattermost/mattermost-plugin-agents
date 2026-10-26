@@ -25,7 +25,43 @@ MM_IMAGE=mm-notification-lab:local TESTCONTAINERS_HOST_OVERRIDE=localhost \
 ```
 
 The plugin tarball must exist in `dist/` (`make dist-ci`). Each scenario prints its report table
-and attaches it to the Playwright report as `received-report-<label>.txt`.
+and attaches it to the Playwright report as `received-report-<label>.txt`. Set
+`NOTIFICATION_LAB_REPORT_FILE=/path/report.txt` to also append every table (with the test title and
+server image) to one file.
+
+## Agent notification matrix
+
+`tests/notifications/agent-*.spec.ts` cover who is notified about an agent response, scenario by
+scenario (S1–S12), with the requester, a thread follower (`member`), a `bystander`, a `mentioned`
+user and an `observer` who only watches the stream. Shared setup and assertions live in
+`matrix.ts`.
+
+| Spec | Scenarios | Server |
+| --- | --- | --- |
+| `agent-dm.spec.ts` | S1 watch to the end (agents RHS, core RHS, blurred), S2 leave mid-stream, S7 ask-user question | deferred notifications |
+| `agent-channel.spec.ts` | S3 watch then leave, S4 watch to the end (core RHS, Threads view), S5 answer @mentions, S8 LLM failure, S9 stop, S10 regenerate | deferred notifications |
+| `agent-tools.spec.ts` | S6 tool approval then share, S11 auto-run tool round | deferred notifications |
+| `agent-legacy-server.spec.ts` | S12 fallback push to the requester | without deferred notifications |
+
+`startMatrixLab(browser, {users, browsers, requires})` skips the whole file when the server does not
+match `requires` (`deferred`: the plugin reports `deferredNotifications` from `GET /ai_bots`, i.e. the
+server has `DeliverPostNotifications`; `legacy`: it does not). The deferred specs therefore skip on
+the default image; run them with `MM_IMAGE` set to a server build that has the API:
+
+```bash
+MM_IMAGE=mm-notification-lab:local NOTIFICATION_LAB_REPORT_FILE=/tmp/matrix.txt TESTCONTAINERS_HOST_OVERRIDE=localhost \
+  npx playwright test tests/notifications/agent-dm.spec.ts tests/notifications/agent-channel.spec.ts \
+  tests/notifications/agent-tools.spec.ts --project=chromium --reporter=list
+TESTCONTAINERS_HOST_OVERRIDE=localhost npx playwright test tests/notifications/agent-legacy-server.spec.ts \
+  --project=chromium --reporter=list
+```
+
+Helpers in `matrix.ts`: `slowAnswer` / `toolCallFor` / `slowAnswerAfterTool` / `withTitle` (fixtures,
+`SLOW_STREAM` ≈ 10 s per answer), `placeElsewhere` (other channel, blurred, away), `startDiscussion`
+(channel + thread started by `member`, read by everyone), `receivedAbout` / `expectNotifiedOnce` /
+`expectNotNotified` / `expectNothingAtAll` (per-post assertions; emails are attributed by excluding
+other posts' texts), `waitForPostState` and `settlePost` (the latter never fails, so a test can
+publish its table before asserting a state the product may not reach).
 
 ## API
 
@@ -36,6 +72,7 @@ const lab = await NotificationLab.start({
     fixtures: slowReply({prompt: 'hello agent', content: 'A long answer ...'}),
     // users: [{key: 'requester'}, {key: 'member', notifyProps: {push: 'all'}}],  // default: requester, member, follower, bystander
     // collapsedThreads: 'always_on', pushContents: 'full', emailContents: 'full',
+    // mcp: {...}, enableChannelMentionToolCalling: true, bot: {mcpDynamicToolLoading: false},  // tool scenarios
 });
 await lab.openBrowsers(browser, ['requester', 'member']);      // logged-in windows with desktop recording
 
@@ -60,23 +97,26 @@ report.users.requester.push;           // PushRecord[]: type message|clear|updat
 report.users.requester.email;          // EmailRecord[]: to, subject, text
 report.users.requester.desktop;        // DesktopRecord[]: title, body, tag
 report.users.requester.channelUnread;  // {unreadMsgs, unreadMsgsRoot, mentionCount, mentionCountRoot, urgentMentionCount} | null
-report.users.requester.thread;         // {isFollowing, replyCount, unreadReplies, unreadMentions} | null
+report.users.requester.thread;         // {isFollowing, replyCount, unreadReplies, unreadMentions, lastReplyAt, lastViewedAt, unread} | null
 report.users.requester.ui;             // sidebar {unread, mentionBadge} | null
+report.users.requester.viewing;        // ViewingRecord[]: the webapp's "response on screen" reports (POST /post/:id/viewing)
 ```
 
 | Method | Purpose |
 | --- | --- |
 | `NotificationLab.start(options)` | Starts Mattermost + plugin, aimock, push proxy, SMTP capture; configures email/push/CRT; provisions users |
-| `lab.user(key)` | `LabUser`: `api` (REST), `deviceId`, `page`, `setStatus`, `focus/blur`, `navigate/openChannel/openDirectMessage/openThread`, `typeAndSend` |
+| `lab.user(key)` | `LabUser`: `api` (REST, `api.plugin(method, path)` for plugin routes), `deviceId`, `page`, `setStatus`, `focus/blur`, `navigate/openChannel/openDirectMessage/openThread`, `openThreadInRhs`, `openAgentRhs/askAgentInRhs`, `typeAndSend` |
 | `lab.openBrowsers(browser, keys)` | One browser context per user, real login, desktop recorder installed |
-| `lab.createChannel / directChannel / botDm` | Channels; `postAs`, `followThread`, `markChannelRead` act as a user |
+| `lab.createChannel / directChannel / botDm` | Channels; `postAs`, `followThread`, `markChannelRead`, `markThreadRead` act as a user |
+| `lab.stopResponse / regenerateResponse(key, postId)` | The requester's Stop and Regenerate buttons, over REST |
+| `lab.deferredNotificationsSupported()` | Whether the plugin detected `DeliverPostNotifications` on the server |
 | `lab.setStatus / setNotifyProps / setChannelNotifyProps` | Server-side knobs that decide who is notified |
 | `lab.script / addScript` | Replace/extend the mock LLM fixtures (see `script.ts`) |
 | `lab.mark()` | Waits for earlier async deliveries, then returns a cursor |
 | `lab.snapshot(mark, opts)` | Report right now |
 | `lab.collect(mark, opts)` | Polls until quiet (default 3 s without change) and `until`/`minWaitMs` hold |
 | `lab.waitForPost(channelId, match)` | Wait for a post by text/author/time (agent posts get their text saved only when streaming ends) |
-| `lab.publish(testInfo, report)` | Print and attach the text table |
+| `lab.publish(testInfo, report)` | Print and attach the text table (and append it to `NOTIFICATION_LAB_REPORT_FILE`) |
 
 ## How each channel is captured
 
@@ -89,7 +129,9 @@ report.users.requester.ui;             // sidebar {unread, mentionBadge} | null
   Core only emails users whose status is not online/dnd. Recipient address maps back to the user.
 - **Desktop**: `window.Notification` is replaced in each user's context by a recorder that also
   reports permission `granted`. `focus()`/`blur()` fire the window events the webapp uses
-  (`views.browser.focused`, `window.isActive`). `lab.openChannel()` etc. navigate without a page
+  (`views.browser.focused`, `window.isActive`) and set what `document.hasFocus()` returns, which
+  the agents webapp checks before reporting a response as on screen (headless Chromium always
+  reports focus otherwise). `lab.openChannel()` etc. navigate without a page
   reload so a running stream and websocket survive.
 - **State**: channel counters come from `GET /channels/{id}` and `/members/{uid}`; thread state from
   `GET /users/{uid}/teams/{tid}/threads/{id}`; the sidebar badge from the user's open window.
@@ -106,6 +148,10 @@ report.users.requester.ui;             // sidebar {unread, mentionBadge} | null
   "switch your status back to Online?" prompt (`auto_reset_manual_status=false`).
 - Agent posts stream over websocket events; the post's text is stored only when streaming ends,
   so REST shows an empty agent post mid-stream.
+- Core caches each channel's member notify props. Adding members right after creating a channel
+  can leave that cache without them (the join/add system posts' notifications re-cache it
+  concurrently); a thread follower missing from the cache gets the thread email but no desktop or
+  push notification. `lab.createChannel` waits and invalidates the cache, so add members through it.
 
 ## Scripting the mock LLM (`script.ts`)
 

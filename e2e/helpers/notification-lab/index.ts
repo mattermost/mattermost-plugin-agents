@@ -3,4 +3,4 @@ export type {CollectOptions, LabMark, NotificationLabOptions} from './notificati
 export {LabUser} from './lab_user';
 export type {LabUserSpec} from './lab_user';
 export {instantReply, slowReply, slowReplyDurationMs, failingReply, truncatedReply, droppedConnectionReply} from './script';
-export type {ReceivedReport, UserReport, PushRecord, EmailRecord, DesktopRecord} from './types';
+export type {ReceivedReport, UserReport, PushRecord, EmailRecord, DesktopRecord, ViewingRecord} from './types';

@@ -68,6 +68,15 @@ function installNotificationRecorder(binding: string) {
         configurable: true,
         writable: true,
     });
+
+    // Headless Chromium reports every page as focused, so `document.hasFocus()` is what
+    // focusWindow/blurWindow switch (the agents plugin reads it to decide whether a response is
+    // being watched).
+    const labWindow = window as unknown as {__notificationLabFocused?: boolean};
+    labWindow.__notificationLabFocused = true;
+    Document.prototype.hasFocus = function hasFocus() {
+        return labWindow.__notificationLabFocused !== false;
+    };
 }
 
 /** Records the desktop (browser) notifications one user's browser context would have shown. */
@@ -103,12 +112,18 @@ export class DesktopRecorder {
  */
 export async function focusWindow(page: Page): Promise<void> {
     await page.bringToFront();
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.evaluate(() => {
+        (window as unknown as {__notificationLabFocused?: boolean}).__notificationLabFocused = true;
+        window.dispatchEvent(new Event('focus'));
+    });
 }
 
 /** Makes the page behave as a window the user has switched away from. */
 export async function blurWindow(page: Page): Promise<void> {
-    await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+    await page.evaluate(() => {
+        (window as unknown as {__notificationLabFocused?: boolean}).__notificationLabFocused = false;
+        window.dispatchEvent(new Event('blur'));
+    });
 }
 
 /** The webapp's own view of whether the window is active (`window.isActive`). */

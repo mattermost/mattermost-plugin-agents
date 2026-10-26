@@ -1,11 +1,15 @@
-import type {Browser, BrowserContext, Page} from '@playwright/test';
+import {expect} from '@playwright/test';
+import type {Browser, BrowserContext, Page, Request} from '@playwright/test';
 
+import {AIPlugin} from '../ai-plugin';
 import {MattermostPage} from '../mm';
 
 import {blurWindow, DesktopRecorder, focusWindow, isWindowActive} from './desktop_recorder';
 import {MmRest} from './rest';
 import type {MmUserStatus} from './rest';
-import type {UserKey} from './types';
+import type {UserKey, ViewingRecord} from './types';
+
+const VIEWING_ROUTE = /\/plugins\/mattermost-ai\/post\/([a-z0-9]{26})\/viewing$/;
 
 export type LabUserSpec = {
     /** Key used in reports and `lab.user(key)`, e.g. `requester`. */
@@ -39,6 +43,9 @@ export class LabUser {
     page: Page | null = null;
     context: BrowserContext | null = null;
     desktop: DesktopRecorder | null = null;
+
+    /** Viewing reports (`POST /plugins/mattermost-ai/post/:id/viewing`) this user's browser sent. */
+    readonly viewing: ViewingRecord[] = [];
 
     constructor(
         readonly key: UserKey,
@@ -78,9 +85,24 @@ export class LabUser {
         }
         this.context = await browser.newContext();
         this.desktop = await DesktopRecorder.install(this.context);
+        this.context.on('request', (request) => this.recordViewing(request));
         this.page = await this.context.newPage();
         await new MattermostPage(this.page).login(this.mattermostUrl, this.username, this.password);
         return this.page;
+    }
+
+    private recordViewing(request: Request): void {
+        const match = request.method() === 'POST' ? VIEWING_ROUTE.exec(new URL(request.url()).pathname) : null;
+        if (!match) {
+            return;
+        }
+        let viewing = false;
+        try {
+            viewing = Boolean((JSON.parse(request.postData() ?? '{}') as {viewing?: boolean}).viewing);
+        } catch {
+            // A malformed body is recorded as "not viewing"; the server rejects it anyway.
+        }
+        this.viewing.push({at: Date.now(), postId: match[1], viewing});
     }
 
     async closeBrowser(): Promise<void> {
@@ -135,6 +157,33 @@ export class LabUser {
     /** Opens a thread in the Followed Threads view (collapsed reply threads). */
     openThread(rootPostId: string): Promise<void> {
         return this.navigate(`/${this.teamName}/threads/${rootPostId}`);
+    }
+
+    /**
+     * Opens the thread of `rootPostId` in the core right-hand sidebar of the channel that is open
+     * (the reply arrow on the root post), the way a user follows a conversation next to the channel.
+     */
+    async openThreadInRhs(rootPostId: string): Promise<void> {
+        const page = this.requirePage();
+        const rootPost = page.locator(`#post_${rootPostId}`);
+        await expect(rootPost).toBeVisible({timeout: 30000});
+        await rootPost.hover();
+        await page.locator(`#CENTER_commentIcon_${rootPostId}`).click();
+        await expect(page.locator(`#rhsContainer #rhsPostMessageText_${rootPostId}`)).toBeVisible({timeout: 15000});
+    }
+
+    /** Opens the agents plugin's right-hand sidebar on a fresh chat. */
+    async openAgentRhs(): Promise<AIPlugin> {
+        const plugin = new AIPlugin(this.requirePage());
+        await plugin.resetState();
+        return plugin;
+    }
+
+    /** Sends `message` to the agent from the agents plugin's right-hand sidebar (new chat). */
+    async askAgentInRhs(message: string): Promise<AIPlugin> {
+        const plugin = await this.openAgentRhs();
+        await plugin.sendMessage(message);
+        return plugin;
     }
 
     /** Posts through the UI composer of the channel that is currently open in this user's browser. */

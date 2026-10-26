@@ -88,8 +88,17 @@ export class MmRest {
         return (await response.json()) as MmUser;
     }
 
-    async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-        const response = await fetch(`${this.baseUrl}/api/v4${path}`, {
+    request<T>(method: string, path: string, body?: unknown): Promise<T> {
+        return this.send<T>(method, `/api/v4${path}`, body);
+    }
+
+    /** Calls a route of the agents plugin (`/plugins/mattermost-ai<path>`) as this session's user. */
+    plugin<T>(method: string, path: string, body?: unknown): Promise<T> {
+        return this.send<T>(method, `/plugins/mattermost-ai${path}`, body);
+    }
+
+    private async send<T>(method: string, path: string, body?: unknown): Promise<T> {
+        const response = await fetch(`${this.baseUrl}${path}`, {
             method,
             headers: {
                 'Content-Type': 'application/json',
@@ -101,7 +110,14 @@ export class MmRest {
         if (!response.ok) {
             throw new MmApiError(response.status, method, path, text);
         }
-        return (text ? JSON.parse(text) : {}) as T;
+        if (!text) {
+            return {} as T;
+        }
+        try {
+            return JSON.parse(text) as T;
+        } catch {
+            return text as T;
+        }
     }
 
     get<T>(path: string): Promise<T> {

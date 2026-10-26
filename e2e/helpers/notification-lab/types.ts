@@ -65,14 +65,28 @@ export type ChannelUnreadState = {
     mentionCount: number;
     mentionCountRoot: number;
     urgentMentionCount: number;
+    /** The member's per-channel `desktop` and `push` notify props (`default` follows the user's). */
+    notifyProps: {desktop: string; push: string};
 };
 
 export type ThreadUnreadState = {
     rootId: string;
     isFollowing: boolean;
     replyCount: number;
+    /** Replies created after the user last viewed the thread (the server counts by post create time). */
     unreadReplies: number;
     unreadMentions: number;
+    lastReplyAt: number;
+    lastViewedAt: number;
+    /** What CRT clients render as an unread thread: a reply arrived after the user last viewed it. */
+    unread: boolean;
+};
+
+/** A "this response is on my screen" report the user's webapp sent to the agents plugin. */
+export type ViewingRecord = {
+    at: number;
+    postId: string;
+    viewing: boolean;
 };
 
 /** What the sidebar of the user's open browser shows for the channel; null when no browser or no sidebar item. */
@@ -104,6 +118,8 @@ export type UserReport = {
     /** Null when no thread was requested via `CollectOptions.threadRootId`. */
     thread: ThreadUnreadState | null;
     ui: UiBadgeState | null;
+    /** Viewing reports the user's browser sent since the mark (empty without a browser). */
+    viewing: ViewingRecord[];
 };
 
 export type ReceivedReport = {

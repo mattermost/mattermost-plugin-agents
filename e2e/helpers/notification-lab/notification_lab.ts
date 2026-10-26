@@ -1,9 +1,12 @@
+import fs from 'fs';
+
 import type {Browser, TestInfo} from '@playwright/test';
 
 import type {AIMockContainer} from '../aimock-container';
 import {RunAIMockSidecar} from '../aimock-container';
 import type {AIMockFixtureFile} from '../aimock-fixtures';
 import {AIMOCK_BOT_NAME, RunAIMockContainer} from '../plugincontainer';
+import {mattermostImage} from '../mmcontainer';
 import type MattermostContainer from '../mmcontainer';
 
 import {LabUser} from './lab_user';
@@ -39,6 +42,10 @@ export type NotificationLabOptions = {
     /** Overrides for the plugin service/bot config (see `RunAIMockContainer`). */
     bot?: Partial<Record<string, unknown>>;
     service?: Partial<Record<string, unknown>>;
+    /** Plugin MCP config (embedded server, tool policies); default disabled. See `RunAIMockContainer`. */
+    mcp?: Record<string, unknown>;
+    /** Let the agent call tools when @mentioned in a channel. Default false. */
+    enableChannelMentionToolCalling?: boolean;
     /** `ServiceSettings.CollapsedThreads`. Default `always_on`. */
     collapsedThreads?: 'disabled' | 'default_on' | 'default_off' | 'always_on';
     /** `EmailSettings.PushNotificationContents`. Default `full`. */
@@ -53,6 +60,7 @@ export type LabMark = {
     push: number;
     email: Set<string>;
     desktop: Map<UserKey, number>;
+    viewing: Map<UserKey, number>;
 };
 
 export type CollectOptions = {
@@ -62,6 +70,8 @@ export type CollectOptions = {
     channelId?: string;
     /** Root post whose CRT thread state (unread replies/mentions) is included. */
     threadRootId?: string;
+    /** List posts created since this time (ms) instead of since the mark. */
+    postsSince?: number;
     /**
      * Report is final once nothing changed (captures, unread counts, streamed
      * post text) for this long. Default 3000 ms. Raise it to assert absence.
@@ -120,7 +130,12 @@ export class NotificationLab {
     ) {}
 
     static async start(options: NotificationLabOptions = {}): Promise<NotificationLab> {
-        const mattermost = await RunAIMockContainer({bot: options.bot, service: options.service});
+        const mattermost = await RunAIMockContainer({
+            bot: options.bot,
+            service: options.service,
+            mcp: options.mcp,
+            enableChannelMentionToolCalling: options.enableChannelMentionToolCalling,
+        });
         try {
             const aimock = await RunAIMockSidecar(mattermost.network, {fixtures: options.fixtures ?? {fixtures: []}});
             const push = new PushProxy();
@@ -273,6 +288,12 @@ export class NotificationLab {
         for (const key of options.members.slice(1)) {
             await creator.api.post(`/channels/${channel.id}/members`, {user_id: this.user(key).id});
         }
+        // Notifications for the join/add system posts run asynchronously and can re-cache the
+        // channel's member notify props without the members added right after. Followers missing
+        // from that cache get thread emails but no desktop or push notifications, so wait for those
+        // to finish and invalidate the cache with an unchanged channel notify prop.
+        await sleep(1500);
+        await this.setChannelNotifyProps(options.members[0], channel.id, {mark_unread: 'all'});
         return channel;
     }
 
@@ -301,6 +322,33 @@ export class NotificationLab {
     async markChannelRead(key: UserKey, channelId: string): Promise<void> {
         const user = this.user(key);
         await user.api.post(`/channels/members/${user.id}/view`, {channel_id: channelId});
+    }
+
+    /** Marks the CRT thread read for the user as of now (what opening the thread does). */
+    async markThreadRead(key: UserKey, rootPostId: string): Promise<void> {
+        const user = this.user(key);
+        await user.api.put(`/users/${user.id}/teams/${this.team.id}/threads/${rootPostId}/read/${Date.now()}`, {});
+    }
+
+    /**
+     * Whether the server holds agent post notifications until the response ends
+     * (`DeliverPostNotifications`), as the agents plugin detected on activation. Servers without it
+     * get the plugin's legacy suppression plus a push to the requester at the end.
+     */
+    async deferredNotificationsSupported(): Promise<boolean> {
+        const user = [...this.users.values()][0];
+        const response = await user.api.plugin<{deferredNotifications?: boolean}>('GET', '/ai_bots');
+        return response.deferredNotifications === true;
+    }
+
+    /** Stops a streaming agent response the way the requester's Stop button does. */
+    async stopResponse(key: UserKey, postId: string): Promise<void> {
+        await this.user(key).api.plugin('POST', `/post/${postId}/stop`);
+    }
+
+    /** Regenerates an agent response the way the requester's Regenerate button does. */
+    async regenerateResponse(key: UserKey, postId: string): Promise<void> {
+        await this.user(key).api.plugin('POST', `/post/${postId}/regenerate`);
     }
 
     /** Replaces all mock LLM fixtures. */
@@ -351,6 +399,10 @@ export class NotificationLab {
         return new Map([...this.users.values()].map((u) => [u.key, u.desktop?.count() ?? 0]));
     }
 
+    private viewingCounts(): Map<UserKey, number> {
+        return new Map([...this.users.values()].map((u) => [u.key, u.viewing.length]));
+    }
+
     /**
      * Marks "now". Waits first until previously triggered notifications have
      * arrived (quiet for `quietMs`, default 1500) so they are not attributed
@@ -374,6 +426,7 @@ export class NotificationLab {
                     push: captures.push.length,
                     email: new Set(captures.email.map((e) => e.id)),
                     desktop: this.desktopCounts(),
+                    viewing: this.viewingCounts(),
                 };
             }
             await sleep(POLL_INTERVAL_MS);
@@ -398,7 +451,7 @@ export class NotificationLab {
             authors.set(u.id, u.key);
         }
         const posts: PostSummary[] = allPosts
-            .filter((p) => p.create_at >= mark.at)
+            .filter((p) => p.create_at >= (options.postsSince ?? mark.at))
             .map((p) => ({
                 alias: aliases.get(p.id) ?? '?',
                 id: p.id,
@@ -421,6 +474,7 @@ export class NotificationLab {
                 mentionCount: 0,
                 thread: options.threadRootId ? await this.readThread(user, options.threadRootId) : null,
                 ui: channel ? await user.readSidebarBadge(channel.name) : null,
+                viewing: user.viewing.slice(mark.viewing.get(user.key) ?? 0),
             };
             users[user.key].mentionCount = users[user.key].channelUnread?.mentionCount ?? 0;
         }
@@ -454,17 +508,23 @@ export class NotificationLab {
             mentionCount: member.mention_count,
             mentionCountRoot: member.mention_count_root,
             urgentMentionCount: member.urgent_mention_count,
+            notifyProps: {desktop: member.notify_props?.desktop ?? '', push: member.notify_props?.push ?? ''},
         };
     }
 
     private async readThread(user: LabUser, rootId: string): Promise<ThreadUnreadState> {
         const thread = await user.api.getThread(user.id, this.team.id, rootId);
+        const lastReplyAt = thread?.last_reply_at ?? 0;
+        const lastViewedAt = thread?.last_viewed_at ?? 0;
         return {
             rootId,
             isFollowing: thread !== null,
             replyCount: thread?.reply_count ?? 0,
             unreadReplies: thread?.unread_replies ?? 0,
             unreadMentions: thread?.unread_mentions ?? 0,
+            lastReplyAt,
+            lastViewedAt,
+            unread: thread !== null && lastReplyAt > lastViewedAt,
         };
     }
 
@@ -509,7 +569,11 @@ export class NotificationLab {
         }
     }
 
-    /** Prints the report table to the test output and attaches it to the Playwright report. */
+    /**
+     * Prints the report table to the test output and attaches it to the Playwright report. With
+     * `NOTIFICATION_LAB_REPORT_FILE` set, the table is also appended to that file, so one run
+     * produces a single readable record of every scenario.
+     */
     async publish(testInfo: TestInfo, report: ReceivedReport): Promise<string> {
         const table = report.toTable();
         console.log(`\n${table}\n`);
@@ -517,6 +581,11 @@ export class NotificationLab {
             body: table,
             contentType: 'text/plain',
         });
+        const reportFile = process.env.NOTIFICATION_LAB_REPORT_FILE;
+        if (reportFile) {
+            const heading = `# ${testInfo.titlePath.slice(1).join(' > ')}  [image: ${mattermostImage()}]`;
+            fs.appendFileSync(reportFile, `${heading}\n${table}\n\n`);
+        }
         return table;
     }
 }
