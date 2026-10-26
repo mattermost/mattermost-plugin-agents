@@ -93,16 +93,21 @@ const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed}: Props) =>
         setSharingId(prompt.id);
         setShareFailed(false);
         try {
-            await updateCustomPrompt(prompt.id, {
-                name: prompt.name,
-                description: prompt.description,
-                template: prompt.template,
+            // Updates replace the whole skill, so share the stored copy rather than the one loaded with the tab.
+            const latest = (await getCustomPrompts()).find((p) => p.id === prompt.id);
+            if (!latest) {
+                throw new Error('skill not found');
+            }
+            await updateCustomPrompt(latest.id, {
+                name: latest.name,
+                description: latest.description,
+                template: latest.template,
                 is_shared: true,
             });
             if (!mountedRef.current) {
                 return;
             }
-            setPrompts((prev) => prev.map((p) => (p.id === prompt.id ? {...p, is_shared: true} : p)));
+            setPrompts((prev) => prev.map((p) => (p.id === latest.id ? {...latest, is_shared: true} : p)));
             const current = skillsRef.current.enabledSharedIDs ?? [];
             if (!current.includes(prompt.id)) {
                 onChange({enabledSharedIDs: [...current, prompt.id]});

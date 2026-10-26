@@ -161,6 +161,16 @@ describe('SkillsTab', () => {
         expect(within(row('My drafts')).getByRole('switch', {name: 'Disable skill My drafts'})).not.toBeNull();
     });
 
+    test('sharing sends the stored skill, not the copy loaded with the tab', async () => {
+        renderTab();
+        const button = await screen.findByRole('button', {name: 'Share skill My drafts'});
+        mockGetCustomPrompts.mockResolvedValue([sharedSkill, {...personalSkill, template: 'Edited elsewhere'}, othersPrivateSkill]);
+
+        fireEvent.click(button);
+
+        await waitFor(() => expect(mockUpdateCustomPrompt).toHaveBeenCalledWith(personalID, {name: 'My drafts', description: '', template: 'Edited elsewhere', is_shared: true}));
+    });
+
     test('a failed share leaves the skill personal and reports the error', async () => {
         mockUpdateCustomPrompt.mockRejectedValue(new Error('nope'));
         const {changes} = renderTab();
