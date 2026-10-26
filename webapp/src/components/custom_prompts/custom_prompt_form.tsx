@@ -35,8 +35,8 @@ const FormLayout = styled.div<{$stickyFooter?: boolean}>`
 const FormBody = styled.div<{$stickyFooter?: boolean}>`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px 0;
+    gap: var(--spacing-xxl);
+    padding: var(--spacing-xl) var(--spacing-xxxl) 0;
 
     ${({$stickyFooter}) =>
         $stickyFooter && `
@@ -50,9 +50,9 @@ const FormFooter = styled.div`
     display: flex;
     justify-content: flex-end;
     align-items: center;
-    gap: 8px;
+    gap: var(--spacing-xs);
     flex-shrink: 0;
-    padding: 16px 32px 24px;
+    padding: var(--spacing-l) var(--spacing-xxxl) var(--spacing-xxl);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -60,15 +60,15 @@ const FormFooter = styled.div`
 const FormContainer = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 24px;
-    padding: 20px 32px;
+    gap: var(--spacing-xxl);
+    padding: var(--spacing-xl) var(--spacing-xxxl);
     background-color: var(--center-channel-bg);
 `;
 
 const FieldGroup = styled.div`
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--spacing-xxxs);
     position: relative;
 `;
 
@@ -85,17 +85,17 @@ const InlineRadio = styled(Radio)`
 `;
 
 const PrivateNote = styled.span`
-    margin-left: 6px;
+    margin-left: var(--spacing-xxs);
     color: rgba(var(--center-channel-color-rgb), 0.56);
-    font-size: 12px;
+    font-size: var(--font-size-75);
 `;
 
 const VisibilityLabel = styled.div`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
-    margin-bottom: 4px;
+    margin-bottom: var(--spacing-xxxs);
 `;
 
 const SystemPromptHeader = styled.div`
@@ -105,9 +105,9 @@ const SystemPromptHeader = styled.div`
 `;
 
 const SystemPromptLabel = styled.label`
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.64);
 `;
 
@@ -116,10 +116,10 @@ const DeleteButton = styled(Button)`
 `;
 
 const ReadOnlyText = styled.div`
-    font-size: 14px;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
-    padding: 4px 0;
+    padding: var(--spacing-xxxs) 0;
     white-space: pre-wrap;
 `;
 

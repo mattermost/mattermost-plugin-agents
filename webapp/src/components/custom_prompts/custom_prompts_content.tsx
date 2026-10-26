@@ -46,8 +46,8 @@ const TabBar = styled(UnderlineTabs)`
 const ToolbarRow = styled.div`
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 16px 32px;
+    gap: var(--spacing-m);
+    padding: var(--spacing-l) var(--spacing-xxxl);
 `;
 
 const SearchContainer = styled.div`
@@ -64,7 +64,7 @@ const SearchContainer = styled.div`
 const PromptList = styled.div`
     display: flex;
     flex-direction: column;
-    margin: 0 32px 16px;
+    margin: 0 var(--spacing-xxxl) var(--spacing-l);
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -102,9 +102,9 @@ const PromptInfo = styled.div`
 `;
 
 const PromptName = styled.div`
-    font-size: 14px;
-    font-weight: 600;
-    line-height: 20px;
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
     color: var(--center-channel-color);
     white-space: nowrap;
     overflow: hidden;
@@ -112,8 +112,8 @@ const PromptName = styled.div`
 `;
 
 const PromptDescription = styled.div`
-    font-size: 12px;
-    line-height: 16px;
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
     color: rgba(var(--center-channel-color-rgb), 0.56);
     white-space: nowrap;
     overflow: hidden;
@@ -126,7 +126,7 @@ const PinButton = styled(IconButton)`
 
 const ErrorBanner = styled(SectionNotice)`
     flex-shrink: 0;
-    margin: 8px 32px 0;
+    margin: var(--spacing-xs) var(--spacing-xxxl) 0;
 `;
 
 export interface CustomPromptsContentRenderProps {
