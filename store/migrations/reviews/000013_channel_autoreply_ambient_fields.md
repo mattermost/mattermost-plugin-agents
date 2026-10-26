@@ -1,13 +1,12 @@
 # Schema Migration Review: 000013 — Add ambient fields to Agents_ChannelAutoReply
 
-> **Context:** Adds the per-channel ambient auto-reply instructions and optional analysis
-> model override. The table holds one row per channel with auto-reply enabled, so it is
-> small and bounded by channel-manager action.
+> **Context:** Adds the per-channel ambient auto-reply instructions. The table holds one
+> row per channel with auto-reply enabled, so it is small and bounded by channel-manager
+> action.
 
 ## Schema Changes
 - [ ] New table(s): —
-- [x] New column(s): `Instructions TEXT NOT NULL DEFAULT ''`,
-  `AnalysisModel VARCHAR(512) NOT NULL DEFAULT ''`
+- [x] New column(s): `Instructions TEXT NOT NULL DEFAULT ''`
 - [ ] New index(es): —
 - [ ] Modified column(s): —
 - [ ] Dropped object(s): —
@@ -22,13 +21,13 @@
 | No FOREIGN KEY via ALTER TABLE | ✅ | No FKs. |
 | No full-table DELETE/UPDATE | ✅ | No DML; constant defaults need no table rewrite on PostgreSQL 11+. |
 | morph:nontransactional where needed | N/A | Pure transactional DDL. |
-| Down migration exists | ✅ | Drops both columns with `IF EXISTS`. |
+| Down migration exists | ✅ | Drops the column with `IF EXISTS`. |
 | Transactional/nontransactional split correct | ✅ | Single transactional statement. |
 
 ## Backwards Compatibility
 - Compatible with previous ESR: Yes (plugin-owned table; no Mattermost core change).
 - Can previous plugin version run with new schema: Yes — additive; older code selects
-  explicit columns and ignores the new ones.
+  explicit columns and ignores the new one.
 - Impact if not compatible: N/A.
 
 ## Table Locks & Impact
@@ -54,6 +53,5 @@
 ## SQL Queries
 ```sql
 ALTER TABLE Agents_ChannelAutoReply
-    ADD COLUMN IF NOT EXISTS Instructions TEXT NOT NULL DEFAULT '',
-    ADD COLUMN IF NOT EXISTS AnalysisModel VARCHAR(512) NOT NULL DEFAULT '';
+    ADD COLUMN IF NOT EXISTS Instructions TEXT NOT NULL DEFAULT '';
 ```

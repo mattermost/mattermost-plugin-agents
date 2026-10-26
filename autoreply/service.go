@@ -130,9 +130,6 @@ func (s *Service) Set(setting Setting) (*Setting, error) {
 	if utf8.RuneCountInString(setting.Instructions) > MaxInstructionsRunes {
 		return nil, fmt.Errorf("instructions exceed %d runes: %w", MaxInstructionsRunes, ErrValidation)
 	}
-	if len(setting.AnalysisModel) > MaxAnalysisModelLen {
-		return nil, fmt.Errorf("analysis_model exceeds %d bytes: %w", MaxAnalysisModelLen, ErrValidation)
-	}
 
 	bot := s.bots.GetBotByID(setting.BotID)
 	if bot == nil {

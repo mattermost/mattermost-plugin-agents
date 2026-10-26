@@ -23,7 +23,6 @@ func TestAmbientAutoReply(t *testing.T) {
 		name           string
 		mode           autoreply.Mode
 		instructions   string
-		analysisModel  string
 		classifierJSON string
 		classifierErr  error
 		buildPost      func(env *autoReplyTestEnv) *model.Post
@@ -31,7 +30,6 @@ func TestAmbientAutoReply(t *testing.T) {
 		expectFired    bool
 		expectClassify bool
 		expectReminder bool
-		expectModel    string
 		promptContains []string
 		promptOmits    []string
 	}{
@@ -92,29 +90,6 @@ func TestAmbientAutoReply(t *testing.T) {
 			expectClassify: true,
 		},
 		{
-			name:           "analysis model is passed with WithModel",
-			mode:           autoreply.ModeAmbient,
-			analysisModel:  "override-model",
-			classifierJSON: trueJSON,
-			buildPost: func(env *autoReplyTestEnv) *model.Post {
-				return env.rootPost(autoReplyUserID, "hello")
-			},
-			expectFired:    true,
-			expectClassify: true,
-			expectModel:    "override-model",
-		},
-		{
-			name:           "empty analysis model does not override",
-			mode:           autoreply.ModeAmbient,
-			classifierJSON: trueJSON,
-			buildPost: func(env *autoReplyTestEnv) *model.Post {
-				return env.rootPost(autoReplyUserID, "hello")
-			},
-			expectFired:    true,
-			expectClassify: true,
-			expectModel:    "",
-		},
-		{
 			name:           "instructions are in the classifier prompt",
 			mode:           autoreply.ModeAmbient,
 			instructions:   "ONLY-BILLING-QUESTIONS",
@@ -139,14 +114,12 @@ func TestAmbientAutoReply(t *testing.T) {
 			name:           "ambient_threads replies once the agent has replied in the thread",
 			mode:           autoreply.ModeAmbientThreads,
 			instructions:   "ONLY-BILLING-QUESTIONS",
-			analysisModel:  "override-model",
 			classifierJSON: trueJSON,
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
 				return env.threadReply(autoReplyUserID, "and the invoice?", true)
 			},
 			expectFired:    true,
 			expectClassify: true,
-			expectModel:    "override-model",
 			promptContains: []string{"ONLY-BILLING-QUESTIONS", "@mentioned earlier in this thread"},
 		},
 		{
@@ -298,11 +271,10 @@ func TestAmbientAutoReply(t *testing.T) {
 				}
 			}
 			env.settings.set(autoreply.Setting{
-				ChannelID:     autoReplyChannelID,
-				BotID:         autoReplyBotUserID,
-				Mode:          tc.mode,
-				Instructions:  tc.instructions,
-				AnalysisModel: tc.analysisModel,
+				ChannelID:    autoReplyChannelID,
+				BotID:        autoReplyBotUserID,
+				Mode:         tc.mode,
+				Instructions: tc.instructions,
 			})
 			if tc.setup != nil {
 				tc.setup(env)
@@ -331,7 +303,6 @@ func TestAmbientAutoReply(t *testing.T) {
 				require.True(t, env.llm.lastNoStreamCfg.ReasoningDisabled)
 				require.Equal(t, 128, env.llm.lastNoStreamCfg.MaxGeneratedTokens)
 				require.NotNil(t, env.llm.lastNoStreamCfg.JSONOutputFormat)
-				require.Equal(t, tc.expectModel, env.llm.lastNoStreamCfg.Model)
 				require.NotNil(t, env.llm.lastNoStreamReq.Context.RequestingUser, "the classifier must be attributed so fallbacks are restricted")
 				require.Equal(t, autoReplyUserID, env.llm.lastNoStreamReq.Context.RequestingUser.Id)
 				combined := ""

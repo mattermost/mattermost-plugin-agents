@@ -26,16 +26,15 @@ const channelAutoReplyMaxRequestBodyBytes = 64 << 10 // 64 KiB
 // ChannelAutoReply is the request and response payload for
 // GET/PUT /channel/{channelid}/autoreply.
 type ChannelAutoReply struct {
-	BotID         string `json:"bot_id"`
-	Mode          string `json:"mode"`
-	Instructions  string `json:"instructions,omitempty"`
-	AnalysisModel string `json:"analysis_model,omitempty"`
+	BotID        string `json:"bot_id"`
+	Mode         string `json:"mode"`
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // handleGetChannelAutoReply returns the channel's auto-reply setting. Readable
 // by any channel member (PermissionReadChannel is enforced by the router
-// middleware), but the ambient instructions and analysis model are returned
-// only to users who can manage the setting. GET is not license-gated so the
+// middleware), but the ambient instructions are returned only to users who
+// can manage the setting. GET is not license-gated so the
 // current state is always readable; writing an enabled mode is available at
 // Enterprise Advanced and above.
 func (a *API) handleGetChannelAutoReply(c *gin.Context) {
@@ -52,11 +51,10 @@ func (a *API) handleGetChannelAutoReply(c *gin.Context) {
 		return
 	}
 	resp := channelAutoReplyFromSetting(setting)
-	if resp.Instructions != "" || resp.AnalysisModel != "" {
+	if resp.Instructions != "" {
 		perm := channelManagePermission(channel)
 		if perm == nil || !a.pluginAPI.User.HasPermissionToChannel(userID, channel.Id, perm) {
 			resp.Instructions = ""
-			resp.AnalysisModel = ""
 		}
 	}
 	c.JSON(http.StatusOK, resp)
@@ -112,7 +110,7 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 
 	// Body values are recorded before validation so fail records carry them
 	// too; TruncateID clamps them since they are unvalidated request input.
-	// Instructions and analysis_model are configuration content, never audited.
+	// Instructions are configuration content, never audited.
 	audit.AddParam(auditRec(c), "mode", audit.TruncateID(req.Mode))
 	if req.BotID != "" {
 		audit.AddParam(auditRec(c), "bot_user_id", audit.TruncateID(req.BotID))
@@ -140,12 +138,11 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 		// bot_id is validated by the auto-reply service (present, known, and
 		// allowed in this channel); its ErrValidation failures map to 400.
 		if _, err := a.autoReplyStore.Set(autoreply.Setting{
-			ChannelID:     channel.Id,
-			BotID:         req.BotID,
-			Mode:          mode,
-			UpdatedBy:     userID,
-			Instructions:  req.Instructions,
-			AnalysisModel: req.AnalysisModel,
+			ChannelID:    channel.Id,
+			BotID:        req.BotID,
+			Mode:         mode,
+			UpdatedBy:    userID,
+			Instructions: req.Instructions,
 		}); err != nil {
 			if errors.Is(err, autoreply.ErrValidation) {
 				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid auto-reply setting: %w", err))
@@ -155,10 +152,9 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 			return
 		}
 		saved = ChannelAutoReply{
-			BotID:         req.BotID,
-			Mode:          req.Mode,
-			Instructions:  req.Instructions,
-			AnalysisModel: req.AnalysisModel,
+			BotID:        req.BotID,
+			Mode:         req.Mode,
+			Instructions: req.Instructions,
 		}
 	default:
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid mode: %q", req.Mode))
@@ -172,17 +168,16 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 
 func channelAutoReplyFromSetting(setting *autoreply.Setting) ChannelAutoReply {
 	return ChannelAutoReply{
-		BotID:         setting.BotID,
-		Mode:          string(setting.Mode),
-		Instructions:  setting.Instructions,
-		AnalysisModel: setting.AnalysisModel,
+		BotID:        setting.BotID,
+		Mode:         string(setting.Mode),
+		Instructions: setting.Instructions,
 	}
 }
 
 // publishChannelAutoReplyUpdated notifies channel members that the auto-reply
 // setting changed so open channel-settings modals can re-sync. The broadcast
-// must be non-nil (the server dereferences it). Instructions and
-// analysis_model are deliberately omitted from the payload.
+// must be non-nil (the server dereferences it). Instructions are deliberately
+// omitted from the payload.
 func (a *API) publishChannelAutoReplyUpdated(channelID string, saved ChannelAutoReply) {
 	if a.mmClient == nil {
 		return

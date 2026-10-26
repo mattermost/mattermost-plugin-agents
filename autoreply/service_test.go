@@ -366,15 +366,13 @@ func TestServiceSetAmbientFields(t *testing.T) {
 	allowAll := llm.BotConfig{ChannelAccessLevel: llm.ChannelAccessLevelAll}
 
 	tests := []struct {
-		name          string
-		instructions  string
-		analysisModel string
-		wantErr       bool
+		name         string
+		instructions string
+		wantErr      bool
 	}{
 		{
-			name:          "persists instructions and analysis model",
-			instructions:  "reply only to questions about billing",
-			analysisModel: "gpt-4o-mini",
+			name:         "persists instructions",
+			instructions: "reply only to questions about billing",
 		},
 		{
 			name:         "accepts instructions at the rune cap",
@@ -384,20 +382,6 @@ func TestServiceSetAmbientFields(t *testing.T) {
 			name:         "rejects instructions over the rune cap",
 			instructions: strings.Repeat("界", MaxInstructionsRunes+1),
 			wantErr:      true,
-		},
-		{
-			name:          "accepts analysis model at the 512 cap",
-			analysisModel: strings.Repeat("a", MaxAnalysisModelLen),
-		},
-		{
-			name:          "rejects analysis model over 512 bytes",
-			analysisModel: strings.Repeat("a", MaxAnalysisModelLen+1),
-			wantErr:       true,
-		},
-		{
-			name:          "rejects a multi-byte analysis model over 512 bytes",
-			analysisModel: strings.Repeat("界", MaxAnalysisModelLen/3+1),
-			wantErr:       true,
 		},
 	}
 
@@ -412,7 +396,7 @@ func TestServiceSetAmbientFields(t *testing.T) {
 
 			svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, []*bots.Bot{newTestBot(botID, allowAll)})
 
-			setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeAmbient, UpdatedBy: updatedBy, Instructions: tc.instructions, AnalysisModel: tc.analysisModel})
+			setting, err := svc.Set(Setting{ChannelID: channelID, BotID: botID, Mode: ModeAmbient, UpdatedBy: updatedBy, Instructions: tc.instructions})
 			if tc.wantErr {
 				require.ErrorIs(t, err, ErrValidation)
 				require.Nil(t, setting)
@@ -425,7 +409,6 @@ func TestServiceSetAmbientFields(t *testing.T) {
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.instructions, setting.Instructions)
-			require.Equal(t, tc.analysisModel, setting.AnalysisModel)
 
 			stored, getErr := NewStore(dbClient).Get(channelID)
 			require.NoError(t, getErr)

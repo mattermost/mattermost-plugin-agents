@@ -78,7 +78,7 @@ func threadHasReplyFrom(thread []*model.Post, userID string) bool {
 //
 // TODO(ambient-poc): other native provider tools (web fetch, code interpreter)
 // stay attached and rely on tool_choice "none". Structured-output capability
-// detection, analysis_model validation, dedupe, concurrency control, rate/cost
+// detection, dedupe, concurrency control, rate/cost
 // caps, and deleted-post recheck are deferred.
 func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot, setting *autoreply.Setting, trigger *model.Post, postingUserID string, thread []*model.Post) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "ambient classifier")
@@ -128,9 +128,6 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 		llm.WithSkipNativeWebSearch(),
 		llm.WithReasoningDisabled(),
 		llm.WithMaxGeneratedTokens(ambientClassifierMaxTokens),
-	}
-	if setting.AnalysisModel != "" {
-		opts = append(opts, llm.WithModel(setting.AnalysisModel))
 	}
 
 	raw, err := bot.LLM().ChatCompletionNoStream(classifyCtx, req, opts...)

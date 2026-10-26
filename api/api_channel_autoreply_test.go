@@ -90,36 +90,34 @@ func TestGetChannelAutoReply(t *testing.T) {
 			expectedBody:   fmt.Sprintf(`{"bot_id":%q,"mode":"threads"}`, testBotUserID),
 		},
 		{
-			name: "ambient setting hides instructions and analysis model from members who cannot manage it",
+			name: "ambient setting hides instructions from members who cannot manage it",
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
 				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(false)
 				e.autoReplyStore.settings["channelid"] = &autoreply.Setting{
-					ChannelID:     "channelid",
-					BotID:         testBotUserID,
-					Mode:          autoreply.ModeAmbient,
-					Instructions:  "only billing questions",
-					AnalysisModel: "gpt-4o-mini",
+					ChannelID:    "channelid",
+					BotID:        testBotUserID,
+					Mode:         autoreply.ModeAmbient,
+					Instructions: "only billing questions",
 				}
 			},
 			expectedStatus: http.StatusOK,
 			expectedBody:   fmt.Sprintf(`{"bot_id":%q,"mode":"ambient"}`, testBotUserID),
 		},
 		{
-			name: "ambient setting echoes instructions and analysis model to channel managers",
+			name: "ambient setting echoes instructions to channel managers",
 			envSetup: func(e *TestEnvironment) {
 				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
 				e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
 				e.autoReplyStore.settings["channelid"] = &autoreply.Setting{
-					ChannelID:     "channelid",
-					BotID:         testBotUserID,
-					Mode:          autoreply.ModeAmbient,
-					Instructions:  "only billing questions",
-					AnalysisModel: "gpt-4o-mini",
+					ChannelID:    "channelid",
+					BotID:        testBotUserID,
+					Mode:         autoreply.ModeAmbient,
+					Instructions: "only billing questions",
 				}
 			},
 			expectedStatus: http.StatusOK,
-			expectedBody:   fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":"only billing questions","analysis_model":"gpt-4o-mini"}`, testBotUserID),
+			expectedBody:   fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":"only billing questions"}`, testBotUserID),
 		},
 		{
 			name: "store error returns 500",
@@ -687,26 +685,23 @@ func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 		require.Equal(t, "channelid", events[0].broadcast.ChannelId)
 	})
 
-	t.Run("enabling ambient persists instructions and analysis model", func(t *testing.T) {
-		body := fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":"keep it short","analysis_model":"gpt-4o-mini"}`, testBotUserID)
+	t.Run("enabling ambient persists instructions", func(t *testing.T) {
+		body := fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":"keep it short"}`, testBotUserID)
 		resp, echoed := doPut(t, body)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Equal(t, ChannelAutoReply{
-			BotID:         testBotUserID,
-			Mode:          "ambient",
-			Instructions:  "keep it short",
-			AnalysisModel: "gpt-4o-mini",
+			BotID:        testBotUserID,
+			Mode:         "ambient",
+			Instructions: "keep it short",
 		}, echoed)
 
 		require.Len(t, e.autoReplyStore.setCalls, 2)
 		require.Equal(t, autoreply.ModeAmbient, e.autoReplyStore.setCalls[1].Mode)
 		require.Equal(t, "keep it short", e.autoReplyStore.setCalls[1].Instructions)
-		require.Equal(t, "gpt-4o-mini", e.autoReplyStore.setCalls[1].AnalysisModel)
 
 		require.Len(t, events, 2)
 		require.Equal(t, "ambient", events[1].payload["mode"])
 		require.NotContains(t, events[1].payload, "instructions")
-		require.NotContains(t, events[1].payload, "analysis_model")
 	})
 
 	t.Run("switching to threads overwrites the stored mode", func(t *testing.T) {
@@ -839,10 +834,7 @@ func TestChannelAutoReplyAuditRecords(t *testing.T) {
 }
 
 func TestChannelAutoReplyAuditOmitsAmbientConfig(t *testing.T) {
-	const (
-		plantedInstructions = "PLANTED-AMBIENT-INSTRUCTIONS-SECRET"
-		plantedModel        = "PLANTED-ANALYSIS-MODEL"
-	)
+	const plantedInstructions = "PLANTED-AMBIENT-INSTRUCTIONS-SECRET"
 
 	e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
 	defer e.Cleanup(t)
@@ -851,7 +843,7 @@ func TestChannelAutoReplyAuditOmitsAmbientConfig(t *testing.T) {
 	e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
 	records := e.CaptureAuditRecords()
 
-	body := fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":%q,"analysis_model":%q}`, testBotUserID, plantedInstructions, plantedModel)
+	body := fmt.Sprintf(`{"bot_id":%q,"mode":"ambient","instructions":%q}`, testBotUserID, plantedInstructions)
 	resp := e.doChannelAutoReplyRequest(t, http.MethodPut, body)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Len(t, *records, 1)
@@ -859,11 +851,9 @@ func TestChannelAutoReplyAuditOmitsAmbientConfig(t *testing.T) {
 	rec := (*records)[0]
 	require.Equal(t, AuditEventUpdateChannelAutoReply, rec.EventName)
 	require.Equal(t, "ambient", rec.EventData.Parameters["mode"])
-	require.NotContains(t, rec.EventData.Parameters, "analysis_model")
 	require.NotContains(t, rec.EventData.Parameters, "instructions")
 
 	raw, err := json.Marshal(rec)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), plantedInstructions)
-	require.NotContains(t, string(raw), plantedModel)
 }
