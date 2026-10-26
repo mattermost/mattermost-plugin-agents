@@ -3,17 +3,22 @@
 
 import React from 'react';
 import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {IntlProvider} from 'react-intl';
 import {Provider} from 'react-redux';
 import {createStore} from 'redux';
 
-import {getAIThreads} from '@/client';
+import {archiveConversation, getAIThreads} from '@/client';
 import type {AIThread} from '@/types/ai_thread';
 import PostEventListener, {requestAgentThreadsRefresh} from '@/websocket';
 
 import ProductSidebar from './product_sidebar';
 import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
 
-jest.mock('@/client', () => ({getAIThreads: jest.fn()}));
+jest.mock('@/client', () => ({
+    getAIThreads: jest.fn(),
+    archiveConversation: jest.fn(),
+    getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
+}));
 jest.mock('@/bots', () => ({
     useBotlist: () => ({bots: mockBots}),
 }));
@@ -24,6 +29,7 @@ jest.mock('@mattermost/shared/components/tooltip', () => ({
 const mockBots = [{id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'}];
 
 const mockGetAIThreads = getAIThreads as jest.Mock;
+const mockArchive = archiveConversation as jest.Mock;
 
 const thread = (id: string, title: string): AIThread => ({
     id,
@@ -102,13 +108,18 @@ describe('ProductSidebar "Your agents" section', () => {
         const history = makeHistory(initialPath);
         window.WebappUtils = {browserHistory: history} as any;
         render(
-            <Provider store={createStore(() => ({}))}>
-                <ProductSidebar
-                    activeView='all'
-                    onSelectAll={jest.fn()}
-                    onSelectPrompts={jest.fn()}
-                />
-            </Provider>,
+            <IntlProvider
+                locale='en'
+                onError={() => null}
+            >
+                <Provider store={createStore(() => ({}))}>
+                    <ProductSidebar
+                        activeView='all'
+                        onSelectAll={jest.fn()}
+                        onSelectPrompts={jest.fn()}
+                    />
+                </Provider>
+            </IntlProvider>,
         );
         return history;
     };
@@ -116,6 +127,7 @@ describe('ProductSidebar "Your agents" section', () => {
     afterEach(() => {
         delete window.WebappUtils;
         mockGetAIThreads.mockReset();
+        mockArchive.mockReset();
     });
 
     test('lists fetched threads and navigates on click', async () => {
@@ -160,5 +172,43 @@ describe('ProductSidebar "Your agents" section', () => {
         });
         expect(mockGetAIThreads).toHaveBeenCalledTimes(3);
         jest.useRealTimers();
+    });
+
+    describe('archiving a chat', () => {
+        const archiveFirst = async (title: string) => {
+            fireEvent.click(await screen.findByRole('button', {name: `Actions for ${title}`}));
+            fireEvent.click(await screen.findByText('Archive chat'));
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+        };
+
+        const cases = [
+            {name: 'open chat is archived: navigates to a new chat', path: buildChatPath('a', 'root_2'), navigates: true},
+            {name: 'another chat is archived: stays put', path: buildChatPath('a', 'root_1'), navigates: false},
+        ];
+        test.each(cases)('$name, then refreshes', async ({path, navigates}) => {
+            mockGetAIThreads.mockResolvedValue([thread('2', 'Open one'), thread('1', 'Other')]);
+            mockArchive.mockResolvedValue(null);
+            const history = renderWithStore(path);
+            await screen.findByRole('button', {name: 'Open one'});
+            await archiveFirst('Open one');
+            await waitFor(() => expect(mockArchive).toHaveBeenCalledWith('2'));
+            await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
+            if (navigates) {
+                expect(history.push).toHaveBeenCalledWith(buildChatPath('a'));
+            } else {
+                expect(history.push).not.toHaveBeenCalled();
+            }
+        });
+
+        test('failure shows an error, does not navigate or refresh', async () => {
+            mockGetAIThreads.mockResolvedValue([thread('2', 'Open one')]);
+            mockArchive.mockRejectedValue(new Error('server said no'));
+            const history = renderWithStore(buildChatPath('a', 'root_2'));
+            await screen.findByRole('button', {name: 'Open one'});
+            await archiveFirst('Open one');
+            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
+            expect(history.push).not.toHaveBeenCalled();
+            expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+        });
     });
 });

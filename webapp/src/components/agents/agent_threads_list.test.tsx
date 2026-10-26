@@ -2,12 +2,14 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen, within} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, within} from '@testing-library/react';
+
+import {IntlProvider} from 'react-intl';
 
 import type {LLMBot} from '@/bots';
 import type {AIThread} from '@/types/ai_thread';
 
-import AgentThreadsList from './agent_threads_list';
+import AgentThreadsList, {THREADS_PAGE_SIZE} from './agent_threads_list';
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -18,6 +20,10 @@ jest.mock('react-intl', () => {
     };
     return {...actual, useIntl: () => intl};
 });
+
+jest.mock('@/client', () => ({
+    getProfilePictureUrl: (id: string) => `/api/v4/users/${id}/image`,
+}));
 
 jest.mock('@mattermost/shared/components/tooltip', () => ({
     WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
@@ -42,17 +48,32 @@ const threadsByBot = {
     a: [thread('1', 'a', 'First chat'), thread('2', 'a', '   ')],
 };
 
+const manyThreads = (n: number) => Array.from({length: n}, (_, i) => thread(String(i + 1), 'a', `Chat ${i + 1}`));
+
+const chatTitles = () => within(screen.getByRole('list', {name: 'Alpha chats'})).
+    getAllByRole('button', {name: /^Chat \d+$/}).map((b) => b.textContent);
+
 const renderList = (props: Partial<React.ComponentProps<typeof AgentThreadsList>> = {}) => {
-    const handlers = {onSelectThread: jest.fn(), onNewChat: jest.fn(), onRetry: jest.fn()};
+    const handlers = {
+        onSelectThread: jest.fn(),
+        onNewChat: jest.fn(),
+        onRetry: jest.fn(),
+        onArchiveThread: jest.fn(() => Promise.resolve()),
+    };
     render(
-        <AgentThreadsList
-            bots={bots}
-            threadsByBot={threadsByBot}
-            loading={false}
-            error={null}
-            {...handlers}
-            {...props}
-        />,
+        <IntlProvider
+            locale='en'
+            onError={() => null}
+        >
+            <AgentThreadsList
+                bots={bots}
+                threadsByBot={threadsByBot}
+                loading={false}
+                error={null}
+                {...handlers}
+                {...props}
+            />
+        </IntlProvider>,
     );
     return handlers;
 };
@@ -61,7 +82,7 @@ describe('AgentThreadsList', () => {
     test('groups threads under their agent and shows a placeholder for blank titles', () => {
         renderList();
         const list = screen.getByRole('list', {name: 'Alpha chats'});
-        const items = within(list).getAllByRole('button');
+        const items = within(list).getAllByRole('button', {name: /^(First chat|New chat)$/});
         expect(items.map((b) => b.textContent)).toEqual(['First chat', 'New chat']);
         expect(screen.queryByRole('list', {name: 'Beta chats'})).toBeNull();
     });
@@ -128,5 +149,89 @@ describe('AgentThreadsList', () => {
     test('shows a loading status', () => {
         renderList({loading: true, threadsByBot: {}});
         expect(screen.getByRole('status').textContent).toContain('Loading');
+    });
+
+    test('shows the agent avatar in the row', () => {
+        renderList();
+        const imgs = Array.from(document.querySelectorAll('img')).map((i) => i.getAttribute('src'));
+        expect(imgs).toEqual(expect.arrayContaining(['/api/v4/users/a/image', '/api/v4/users/b/image']));
+    });
+
+    describe('thread limit and More', () => {
+        const limitCases = [
+            {count: 3, shown: 3, more: false},
+            {count: THREADS_PAGE_SIZE, shown: THREADS_PAGE_SIZE, more: false},
+            {count: THREADS_PAGE_SIZE + 1, shown: THREADS_PAGE_SIZE, more: true},
+            {count: 25, shown: THREADS_PAGE_SIZE, more: true},
+        ];
+        test.each(limitCases)('$count threads shows $shown, More=$more', ({count, shown, more}) => {
+            renderList({threadsByBot: {a: manyThreads(count)}});
+            expect(chatTitles()).toHaveLength(shown);
+            expect(Boolean(screen.queryByRole('button', {name: 'Show more Alpha chats'}))).toBe(more);
+        });
+
+        test('More reveals the next batch, then disappears when all are shown', () => {
+            renderList({threadsByBot: {a: manyThreads(25)}});
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            expect(chatTitles()).toHaveLength(20);
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            expect(chatTitles()).toHaveLength(25);
+            expect(screen.queryByRole('button', {name: 'Show more Alpha chats'})).toBeNull();
+        });
+
+        test('the active thread beyond the limit stays visible, in order', () => {
+            renderList({threadsByBot: {a: manyThreads(25)}, activeBotId: 'a', activeRootId: 'root_18'});
+            const titles = chatTitles();
+            expect(titles).toHaveLength(THREADS_PAGE_SIZE + 1);
+            expect(titles[THREADS_PAGE_SIZE]).toBe('Chat 18');
+            expect(screen.getByRole('button', {name: 'Chat 18'}).getAttribute('aria-current')).toBe('page');
+        });
+
+        test('collapsing an agent resets its expansion', () => {
+            renderList({threadsByBot: {a: manyThreads(25)}});
+            fireEvent.click(screen.getByRole('button', {name: 'Show more Alpha chats'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Collapse Alpha chats'}));
+            fireEvent.click(screen.getByRole('button', {name: 'Expand Alpha chats'}));
+            expect(chatTitles()).toHaveLength(THREADS_PAGE_SIZE);
+        });
+    });
+
+    describe('archive', () => {
+        const openArchive = async (name: string) => {
+            fireEvent.click(screen.getByRole('button', {name: `Actions for ${name}`}));
+            fireEvent.click(await screen.findByText('Archive chat'));
+        };
+
+        test('cancel closes the dialog without archiving', async () => {
+            const h = renderList();
+            await openArchive('First chat');
+            fireEvent.click(await screen.findByRole('button', {name: 'Cancel'}));
+            await waitFor(() => expect(screen.queryByRole('button', {name: 'Archive'})).toBeNull());
+            expect(h.onArchiveThread).not.toHaveBeenCalled();
+        });
+
+        test('confirm archives that thread and closes the dialog', async () => {
+            const h = renderList();
+            await openArchive('First chat');
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+            await waitFor(() => expect(h.onArchiveThread).toHaveBeenCalledWith(threadsByBot.a[0]));
+            await waitFor(() => expect(screen.queryByRole('button', {name: 'Archive'})).toBeNull());
+        });
+
+        test('works on a placeholder "New chat" row', async () => {
+            const h = renderList();
+            await openArchive('New chat');
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+            await waitFor(() => expect(h.onArchiveThread).toHaveBeenCalledWith(threadsByBot.a[1]));
+        });
+
+        test('failure keeps the dialog open with a visible error', async () => {
+            const h = renderList();
+            h.onArchiveThread.mockRejectedValue(new Error('nope'));
+            await openArchive('First chat');
+            fireEvent.click(await screen.findByRole('button', {name: 'Archive'}));
+            expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t archive this chat');
+            expect(screen.getByRole('button', {name: 'Archive'})).toBeTruthy();
+        });
     });
 });

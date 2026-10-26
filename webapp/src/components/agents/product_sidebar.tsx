@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode, useContext, useEffect} from 'react';
+import React, {ReactNode, useCallback, useContext, useEffect} from 'react';
 import {ReactReduxContext} from 'react-redux';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
@@ -12,7 +12,9 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
 import {useBotlist} from '@/bots';
+import {archiveConversation} from '@/client';
 import {useAgentThreads} from '@/hooks/use_agent_threads';
+import type {AIThread} from '@/types/ai_thread';
 import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/websocket';
 
 import AgentThreadsList from './agent_threads_list';
@@ -68,6 +70,17 @@ const YourAgentsSection = () => {
 
     useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
 
+    const {rootId: openRootId, botId: openBotId, view, toChat} = route;
+    const archiveThread = useCallback(async (thread: AIThread) => {
+        await archiveConversation(thread.id);
+
+        // The open chat is gone: land on a fresh chat with the same agent.
+        if (view === 'chat' && openBotId === thread.bot_id && openRootId === thread.root_post_id) {
+            toChat(thread.bot_id);
+        }
+        await refresh();
+    }, [view, openBotId, openRootId, toChat, refresh]);
+
     return (
         <AgentThreadsList
             bots={bots ?? []}
@@ -79,6 +92,7 @@ const YourAgentsSection = () => {
             onSelectThread={route.toChat}
             onNewChat={route.toChat}
             onRetry={refresh}
+            onArchiveThread={archiveThread}
         />
     );
 };
