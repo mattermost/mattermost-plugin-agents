@@ -227,44 +227,48 @@ const AgentThreadsList = ({
                                 </WithTooltip>
                             </NewChatSlot>
                         </AgentRow>
-                        {!isCollapsed && threads.length > 0 && (
-                            <ThreadList
-                                id={listId}
-                                aria-label={intl.formatMessage({defaultMessage: '{agent} chats'}, {agent: bot.displayName})}
-                            >
-                                {shown.map((thread) => (
-                                    <ThreadItem
-                                        key={thread.id}
-                                        thread={thread}
-                                        active={isActiveAgent && activeRootId === thread.root_post_id}
-                                        placeholder={newChatPlaceholder}
-                                        onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
-                                        onArchive={() => {
-                                            setArchiveFailed(false);
-                                            setArchiveTarget(thread);
-                                        }}
-                                    />
-                                ))}
-                                {hiddenCount > 0 && (
-                                    <li>
-                                        <MoreRow>
-                                            <Button
-                                                emphasis='quaternary'
-                                                appearance='inverted'
-                                                size='x-small'
-                                                data-more-threads={true}
-                                                aria-label={intl.formatMessage({defaultMessage: 'Show more {agent} chats'}, {agent: bot.displayName})}
-                                                onClick={() => {
-                                                    pendingFocus.current = {botId: bot.id, index: shown.length};
-                                                    setLimits((prev) => ({...prev, [bot.id]: limit + THREADS_PAGE_SIZE}));
+                        {threads.length > 0 && (
+                            <ThreadCollapse $collapsed={isCollapsed}>
+                                <ThreadCollapseInner>
+                                    <ThreadList
+                                        id={listId}
+                                        aria-label={intl.formatMessage({defaultMessage: '{agent} chats'}, {agent: bot.displayName})}
+                                    >
+                                        {shown.map((thread) => (
+                                            <ThreadItem
+                                                key={thread.id}
+                                                thread={thread}
+                                                active={isActiveAgent && activeRootId === thread.root_post_id}
+                                                placeholder={newChatPlaceholder}
+                                                onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
+                                                onArchive={() => {
+                                                    setArchiveFailed(false);
+                                                    setArchiveTarget(thread);
                                                 }}
-                                            >
-                                                {intl.formatMessage({defaultMessage: 'More'})}
-                                            </Button>
-                                        </MoreRow>
-                                    </li>
-                                )}
-                            </ThreadList>
+                                            />
+                                        ))}
+                                        {hiddenCount > 0 && (
+                                            <li>
+                                                <MoreRow>
+                                                    <Button
+                                                        emphasis='quaternary'
+                                                        appearance='inverted'
+                                                        size='x-small'
+                                                        data-more-threads={true}
+                                                        aria-label={intl.formatMessage({defaultMessage: 'Show more {agent} chats'}, {agent: bot.displayName})}
+                                                        onClick={() => {
+                                                            pendingFocus.current = {botId: bot.id, index: shown.length};
+                                                            setLimits((prev) => ({...prev, [bot.id]: limit + THREADS_PAGE_SIZE}));
+                                                        }}
+                                                    >
+                                                        {intl.formatMessage({defaultMessage: 'More'})}
+                                                    </Button>
+                                                </MoreRow>
+                                            </li>
+                                        )}
+                                    </ThreadList>
+                                </ThreadCollapseInner>
+                            </ThreadCollapse>
                         )}
                     </AgentBlock>
                 );
@@ -500,6 +504,27 @@ const TooltipTrigger = styled.span`
     display: inline-flex;
 `;
 
+// Height animates by transitioning the grid row between 0fr and 1fr. The list stays mounted
+// (so aria-controls resolves and the open chat is not remounted) and is taken out of the
+// tab order and the accessibility tree with visibility once the collapse finishes.
+const ThreadCollapse = styled.div<{$collapsed: boolean}>`
+    display: grid;
+    grid-template-rows: ${(p) => (p.$collapsed ? '0fr' : '1fr')};
+    visibility: ${(p) => (p.$collapsed ? 'hidden' : 'visible')};
+    transition:
+        grid-template-rows var(--duration-moderate) var(--ease-transition),
+        visibility 0s linear ${(p) => (p.$collapsed ? 'var(--duration-moderate)' : '0s')};
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
+`;
+
+const ThreadCollapseInner = styled.div`
+    min-height: 0;
+    overflow: hidden;
+`;
+
 const ThreadList = styled.ul`
     display: flex;
     flex-direction: column;
@@ -531,6 +556,11 @@ const ThreadActionsSlot = styled.span`
 const ThreadListItem = styled.li`
     position: relative;
 
+    /* Nests each chat under its agent; both the resting and active states of the item. */
+    && [class*='__left'] {
+        padding-left: var(--spacing-xxxxl);
+    }
+
     &:hover ${ThreadActionsSlot},
     &:focus-within ${ThreadActionsSlot},
     &[data-menu-open] ${ThreadActionsSlot} {
@@ -540,7 +570,7 @@ const ThreadListItem = styled.li`
 
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-l);
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxxl);
 `;
 
 const ArchiveError = styled.p`
