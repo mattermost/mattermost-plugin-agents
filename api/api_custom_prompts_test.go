@@ -148,6 +148,42 @@ func TestCustomPromptOwnership(t *testing.T) {
 		require.Equal(t, http.StatusNoContent, recorder.Code)
 	})
 
+	t.Run("conditional update", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			stale      bool
+			wantStatus int
+			wantName   string
+		}{
+			{name: "unchanged since read", wantStatus: http.StatusNoContent, wantName: "Shared"},
+			{name: "changed since read", stale: true, wantStatus: http.StatusConflict, wantName: "Edited elsewhere"},
+		}
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				prompt := createTestPrompt(t, cpStore, testUserID, false)
+				read, err := cpStore.Get(prompt.ID)
+				require.NoError(t, err)
+				if tc.stale {
+					edited := read
+					edited.Name = "Edited elsewhere"
+					edited.UpdatedAt = 0
+					require.NoError(t, cpStore.Update(edited))
+				}
+
+				body := fmt.Sprintf(`{"name":"Shared","description":"test","template":"hello","is_shared":false,"updated_at":%d}`, read.UpdatedAt)
+				req := httptest.NewRequest(http.MethodPut, "/custom-prompts/"+prompt.ID, strings.NewReader(body))
+				req.Header.Set("Mattermost-User-Id", testUserID)
+				recorder := httptest.NewRecorder()
+				e.api.ServeHTTP(&plugin.Context{}, recorder, req)
+				require.Equal(t, tc.wantStatus, recorder.Code)
+
+				stored, err := cpStore.Get(prompt.ID)
+				require.NoError(t, err)
+				assert.Equal(t, tc.wantName, stored.Name)
+			})
+		}
+	})
+
 	t.Run("non-owner cannot update", func(t *testing.T) {
 		prompt := createTestPrompt(t, cpStore, testUserID, false)
 		req := httptest.NewRequest(http.MethodPut, "/custom-prompts/"+prompt.ID, strings.NewReader(`{"name":"Hacked","description":"hacked","template":"hacked"}`))

@@ -93,7 +93,7 @@ const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed}: Props) =>
         setSharingId(prompt.id);
         setShareFailed(false);
         try {
-            // Updates replace the whole skill, so share the stored copy rather than the one loaded with the tab.
+            // Updates replace the whole skill: share the stored copy, and only if it is still unchanged when the update lands.
             const latest = (await getCustomPrompts()).find((p) => p.id === prompt.id);
             if (!latest) {
                 throw new Error('skill not found');
@@ -103,6 +103,7 @@ const SkillsTab = ({skills, onChange, currentUserId, sharingLicensed}: Props) =>
                 description: latest.description,
                 template: latest.template,
                 is_shared: true,
+                updated_at: latest.updated_at,
             });
             if (!mountedRef.current) {
                 return;

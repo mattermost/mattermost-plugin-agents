@@ -156,19 +156,19 @@ describe('SkillsTab', () => {
         fireEvent.click(await screen.findByRole('button', {name: 'Share skill My drafts'}));
 
         await waitFor(() => expect(within(screen.getByRole('region', {name: 'Shared skills'})).queryByText('My drafts')).not.toBeNull());
-        expect(mockUpdateCustomPrompt).toHaveBeenCalledWith(personalID, {name: 'My drafts', description: '', template: 'Draft it', is_shared: true});
+        expect(mockUpdateCustomPrompt).toHaveBeenCalledWith(personalID, {name: 'My drafts', description: '', template: 'Draft it', is_shared: true, updated_at: 0});
         expect(latest().enabledSharedIDs).toEqual([hiddenID, personalID]);
         expect(within(row('My drafts')).getByRole('switch', {name: 'Disable skill My drafts'})).not.toBeNull();
     });
 
-    test('sharing sends the stored skill, not the copy loaded with the tab', async () => {
+    test('sharing sends the stored skill, conditional on its revision', async () => {
         renderTab();
         const button = await screen.findByRole('button', {name: 'Share skill My drafts'});
-        mockGetCustomPrompts.mockResolvedValue([sharedSkill, {...personalSkill, template: 'Edited elsewhere'}, othersPrivateSkill]);
+        mockGetCustomPrompts.mockResolvedValue([sharedSkill, {...personalSkill, template: 'Edited elsewhere', updated_at: 42}, othersPrivateSkill]);
 
         fireEvent.click(button);
 
-        await waitFor(() => expect(mockUpdateCustomPrompt).toHaveBeenCalledWith(personalID, {name: 'My drafts', description: '', template: 'Edited elsewhere', is_shared: true}));
+        await waitFor(() => expect(mockUpdateCustomPrompt).toHaveBeenCalledWith(personalID, {name: 'My drafts', description: '', template: 'Edited elsewhere', is_shared: true, updated_at: 42}));
     });
 
     test('a failed share leaves the skill personal and reports the error', async () => {

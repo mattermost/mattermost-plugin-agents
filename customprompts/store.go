@@ -4,6 +4,7 @@
 package customprompts
 
 import (
+	"errors"
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
@@ -92,20 +93,31 @@ func (s *Store) Get(id string) (CustomPrompt, error) {
 	return prompts[0], nil
 }
 
-// Update modifies an existing custom prompt. Only the creator can update their prompt.
-func (s *Store) Update(prompt CustomPrompt) error {
-	prompt.UpdatedAt = model.GetMillis()
+// ErrStaleUpdate is returned when a conditional update finds the prompt was
+// changed after the caller read it.
+var ErrStaleUpdate = errors.New("custom prompt was changed by another update")
 
-	result, err := s.db.ExecBuilder(s.db.Builder().
+// Update modifies an existing custom prompt. Only the creator can update their prompt.
+// A non-zero prompt.UpdatedAt makes the update conditional on the stored
+// UpdatedAt still matching it.
+func (s *Store) Update(prompt CustomPrompt) error {
+	expectedUpdatedAt := prompt.UpdatedAt
+
+	query := s.db.Builder().
 		Update("LLM_CustomPrompts").
 		Set("Name", prompt.Name).
 		Set("Description", prompt.Description).
 		Set("Template", prompt.Template).
 		Set("IsShared", prompt.IsShared).
-		Set("UpdatedAt", prompt.UpdatedAt).
+		// UpdatedAt doubles as the revision, so it must change on every write.
+		Set("UpdatedAt", sq.Expr("GREATEST(?, UpdatedAt + 1)", model.GetMillis())).
 		Where(sq.Eq{"ID": prompt.ID}).
 		Where(sq.Eq{"CreatorID": prompt.CreatorID}).
-		Where(sq.Eq{"DeletedAt": 0}))
+		Where(sq.Eq{"DeletedAt": 0})
+	if expectedUpdatedAt != 0 {
+		query = query.Where(sq.Eq{"UpdatedAt": expectedUpdatedAt})
+	}
+	result, err := s.db.ExecBuilder(query)
 	if err != nil {
 		return fmt.Errorf("failed to update custom prompt: %w", err)
 	}
@@ -116,6 +128,9 @@ func (s *Store) Update(prompt CustomPrompt) error {
 	}
 
 	if rowsAffected == 0 {
+		if expectedUpdatedAt != 0 {
+			return ErrStaleUpdate
+		}
 		return fmt.Errorf("custom prompt not found or not owned by user")
 	}
 
