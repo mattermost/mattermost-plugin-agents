@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useRef} from 'react';
+import {createPortal} from 'react-dom';
 import {CSSTransition} from 'react-transition-group';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
@@ -193,11 +194,13 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         </DialogWrapper>
     );
 
+    // Rendered into document.body so a dialog opened from inside a page, a scroll
+    // area or any other stacking context still sits above the host's chrome.
     if (typeof show === 'undefined') {
-        return dialogTree;
+        return createPortal(dialogTree, document.body);
     }
 
-    return (
+    return createPortal(
         <CSSTransition
             nodeRef={transitionRef}
             in={show}
@@ -208,7 +211,8 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
             appear={true}
         >
             {dialogTree}
-        </CSSTransition>
+        </CSSTransition>,
+        document.body,
     );
 };
 

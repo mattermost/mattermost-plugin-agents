@@ -2,6 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React, {useEffect, useRef} from 'react';
+import {createPortal} from 'react-dom';
 import {CSSTransition} from 'react-transition-group';
 import styled, {css} from 'styled-components';
 
@@ -188,7 +189,9 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, onEscape, z
         }
     };
 
-    return (
+    // Rendered into document.body so a modal opened from inside a page, a scroll
+    // area or any other stacking context still sits above the host's chrome.
+    const shell = (
         <CSSTransition
             nodeRef={nodeRef}
             in={show}
@@ -216,4 +219,6 @@ export const AnimatedModalShell = ({show, children, onBackdropClick, onEscape, z
             </ShellRoot>
         </CSSTransition>
     );
+
+    return createPortal(shell, document.body);
 };

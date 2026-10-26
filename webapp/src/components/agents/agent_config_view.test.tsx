@@ -1934,7 +1934,9 @@ describe('AgentConfigView history deletion', () => {
         await confirmDelete();
 
         expect(await screen.findByText('the current version of an agent cannot be deleted')).not.toBeNull();
-        expect(within(list).getAllByRole('listitem')).toHaveLength(3);
+
+        // The confirmation dialog is portaled to <body>, so the page behind it is aria-hidden.
+        expect(within(list).getAllByRole('listitem', {hidden: true})).toHaveLength(3);
         expect(mockGetAgentVersions).toHaveBeenCalledTimes(1);
     });
 });
