@@ -199,7 +199,7 @@ func formatAmbientThread(data *mmapi.ThreadData, triggerID string) string {
 	if triggerIdx >= 0 {
 		spend(triggerIdx)
 	}
-	for i := len(blocks) - 1; i >= 0; i-- {
+	for i := range slices.Backward(blocks) {
 		if i != triggerIdx {
 			spend(i)
 		}
