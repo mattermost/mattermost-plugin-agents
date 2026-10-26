@@ -49,6 +49,40 @@ From `/AGENTS.md` and `webapp/AGENTS.md`:
   `make check-locks`), so re-check the installed version before the audit and
   before each port; a styled stand-in only if a component is still missing
   after the bump.
+- **Where each style value comes from (no raw px, hex or rgba values):**
+
+  | Concern | Source |
+  |---|---|
+  | Color / theme (`--center-channel-color`, `--center-channel-bg`, `--button-bg`, `--sidebar-*`, etc.) | **Host** theme CSS variables, so the view follows the user's theme |
+  | Border (`--border-light`, etc.) | **Host** variables, used as whole shorthands |
+  | Spacing | compass `--spacing-*` |
+  | Radius | compass `--radius-*` (pills: `--radius-pill`, never `--radius-full`) |
+  | Font family, font size, font weight, line height | compass `--font-*`, `--line-height-*` |
+  | Elevation / shadow | compass `--elevation-*` |
+  | Animation (duration, easing) | compass motion tokens, e.g. `--duration-quick`; never hardcoded `ms` or custom curves |
+  | Icon sizes | compass `--icon-size-*` |
+  | Icons | `@mattermost/compass-icons` rendered through compass-ui `Icon` / `IconButton` |
+  | Illustrations (e.g. empty states) | `@mattermost/compass-ui/illustrations/<name>` via the `Illustration` component |
+
+  Do not invent token names. Confirm each exists in the installed
+  `webapp/node_modules/@mattermost/compass-ui` styles (and in the prototype's
+  usage) before using it; the installed version may predate newer tokens
+  (see the version caveat above). If a needed token, icon or illustration is
+  missing, work down this ladder and stop at the first step that yields it:
+  1. the installed compass-ui styles / `compass-icons` (check alternate names,
+     e.g. a neighboring size or a deprecated alias);
+  2. how the prototype gets the same result;
+  3. the newer compass checkout (`compass-design`, `compass-icons`,
+     `compass-tokens`), which tells you whether the gap is just the pinned
+     version;
+  4. a composition of existing tokens (e.g. `calc()` over `--spacing-*`) or the
+     closest existing token, if the design tolerates it.
+  Only when all of those fail, create a local value: define it once, named, in
+  one place (a constant or CSS variable next to the component that needs it),
+  never as a scattered literal, with a one-line comment saying which compass
+  lookup failed. For a missing icon, prefer a compass-ui `Icon` wrapping a
+  custom SVG over pulling in another icon set. List every such local value in
+  the subagent report so the gap can be raised with compass.
 - Host CSS variables like `--border-light` are whole shorthands:
   `border-bottom: var(--border-light)`, never `1px solid var(--border-light)`.
 - **File names are `snake_case.tsx`.** Components are PascalCase.
@@ -294,6 +328,7 @@ Principle: spend the expensive model where a wrong call is costly (unknown-host 
 
 Rules for every subagent brief:
 - Name the files it **owns**; it touches nothing else. No two concurrent writers share a file.
+- Style values follow the §0 token-source table: host for color/theme and border; compass for spacing, radius, font, line-height, elevation, animation, icons and illustrations. No raw px/hex/rgba/ms literals. If a compass token/icon is missing, follow the §0 lookup ladder and create a local value only as a last resort; report each one.
 - Port prototype compass-ui usage 1:1 (same components, props, variants); check the installed `alpha.14` `.d.ts` first and report anything missing rather than substituting.
 - Include the conventions block from the original plan §0 (compass-ui for interactive controls, styled-components for layout/restyling only, no inline styles, `--spacing-*`, snake_case files, i18n, same-file styled handlers, superseded-response guard).
 - "Do not commit, do not switch branches." The orchestrator commits.
@@ -346,7 +381,7 @@ Answer, with evidence from running the plugin where possible (`make deploy` agai
 5. Refresh strategy: confirm no event fires; try `postupdate`-driven refetch and refetch-after-submit + delayed title refetch; recommend one.
 6. Does the 60-row cap matter in practice? Recommend accept vs. `limit`/`offset`.
 7. `bot.dmChannelID` absence handling.
-8. **Compass-ui parity audit (Sonnet, read-only):** list every compass-ui component and prop the prototype's sidebar, chat header, composer, empty state and Custom Prompts page use, and mark each as present or missing in the installed `alpha.14`. Output a table (component, props, prototype file, installed? yes/no). Missing items go to the user before Phase 1.
+8. **Compass-ui parity audit (Sonnet, read-only):** list every compass-ui component and prop, plus every token (spacing, radius, font, line-height, elevation, animation), icon and illustration, the prototype's sidebar, chat header, composer, empty state and Custom Prompts page use, and mark each as present or missing in the installed `alpha.14`. Output a table (component, props, prototype file, installed? yes/no). Missing items go to the user before Phase 1.
 9. Can a plugin show the agent chat in the Channels center pane when an agent is clicked (override component, history redirect, or neither)? See Phase 5.
 
 Output: a findings note and decisions for routing, refresh, limit. **Pause for user approval before Wave 1.**
@@ -401,6 +436,7 @@ e2e: add Agents product view spec
 ### Verification
 
 - Per subagent: its own jest suites + eslint on its files.
+- Per subagent, token check on its changed files: no raw `px`/hex/`rgb(a)`/`ms` literals outside what the token-source table allows, plus the stylelint run on any style changes; then confirm in the browser (jest cannot observe styles).
 - Wave 3 I and Wave 4 L: `make check-style-fix`, `make check-i18n`, `make check-locks`, `make check-shards`, then `make check`.
 - Manual: `make deploy`, open the Agents product from the switcher; walk list → prompts page → new chat → thread select → refresh; confirm no unread left, the thread shows in RHS and DM, and the modal still opens from the composer.
 - Go (if D): `go test ./api/... ./store/...` scoped to the touched packages.
