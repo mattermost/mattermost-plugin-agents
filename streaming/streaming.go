@@ -480,9 +480,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
-	// A pending batch renders an approval card the user can click at once,
-	// and the click resolves against the stored turn, so the batch is only
-	// broadcast after finalizeTurn has persisted it.
+	// A pending batch awaiting a user decision renders an approval card the
+	// user can click at once, and the click resolves against the stored
+	// turn, so that batch is only broadcast after finalizeTurn has persisted
+	// it. A pending batch that will auto-execute is broadcast right away so
+	// the UI shows progress while the tools run.
 	var heldPendingToolCalls []llm.ToolCall
 	defer func() {
 		if acc != nil {
@@ -676,8 +678,10 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							post.Message = ""
 						} else {
 							acc.toolCalls = toolCalls
-							heldPendingToolCalls = toolCalls
-							break
+							if slices.ContainsFunc(toolCalls, func(tc llm.ToolCall) bool { return !tc.WouldAutoExecute }) {
+								heldPendingToolCalls = toolCalls
+								break
+							}
 						}
 					}
 					p.broadcastToolCalls(post, toolCalls, requesterUserID)
