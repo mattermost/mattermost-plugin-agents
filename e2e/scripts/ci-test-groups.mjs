@@ -64,6 +64,7 @@ const groups = {
         'tests/agents-tour/edge-cases.spec.ts',
         'tests/agents/access-control.spec.ts',
         'tests/agents/crud.spec.ts',
+        'tests/agents/agents-product-view.spec.ts',
         'tests/agents/mcp-tools.spec.ts',
         'tests/tool-config/tool-toggle.spec.ts',
         'tests/tool-config/vetted-seed.spec.ts',
