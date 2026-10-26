@@ -480,9 +480,16 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	// A pending batch renders an approval card the user can click at once,
+	// and the click resolves against the stored turn, so the batch is only
+	// broadcast after finalizeTurn has persisted it.
+	var heldPendingToolCalls []llm.ToolCall
 	defer func() {
 		if acc != nil {
 			p.finalizeTurn(acc)
+		}
+		if heldPendingToolCalls != nil {
+			p.broadcastToolCalls(post, heldPendingToolCalls, requesterUserID)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
 	}()
@@ -656,6 +663,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 						// retain the calls so a rejected-approval turn
 						// keeps them.
 						if llm.IsResolvedToolCallBatch(toolCalls) {
+							heldPendingToolCalls = nil
 							acc.sequence.Reset()
 							acc.annotations = nil
 							acc.toolCalls = nil
@@ -668,6 +676,8 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 							post.Message = ""
 						} else {
 							acc.toolCalls = toolCalls
+							heldPendingToolCalls = toolCalls
+							break
 						}
 					}
 					p.broadcastToolCalls(post, toolCalls, requesterUserID)
