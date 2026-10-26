@@ -89,9 +89,16 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 		telemetry.PostID.String(trigger.Id),
 	))
 	defer span.End()
-	fail := func(status string, cause error) {
+	fail := func(status string, cause error) error {
 		span.RecordError(cause)
 		span.SetStatus(codes.Error, status)
+		return fmt.Errorf("ambient classifier %s: %v: %w", status, cause, ErrNoResponse)
+	}
+	// Failures an admin must be able to diagnose are logged at warn; every
+	// failure still declines.
+	warnFail := func(status string, cause error) error {
+		c.mmClient.LogWarn("Ambient auto-reply classifier failed: "+status, "post_id", trigger.Id, "channel_id", channel.Id, "error", cause.Error())
+		return fail(status, cause)
 	}
 
 	classifyCtx, cancel := context.WithTimeout(ctx, ambientClassifierTimeout)
@@ -104,8 +111,7 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 	}
 	threadData, err := mmapi.GetMetadataForPosts(c.mmClient, recent)
 	if err != nil {
-		fail("failed to load thread authors", err)
-		return fmt.Errorf("ambient classifier failed to load thread authors: %w", ErrNoResponse)
+		return warnFail("failed to load thread authors", err)
 	}
 
 	// The posting user attributes the request so provider fallbacks are limited
@@ -119,8 +125,7 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 
 	prompt, err := c.prompts.Format(prompts.PromptAmbientClassifierSystem, llmCtx)
 	if err != nil {
-		fail("failed to format prompt", err)
-		return fmt.Errorf("ambient classifier failed to format prompt: %w", ErrNoResponse)
+		return warnFail("failed to format prompt", err)
 	}
 
 	req := llm.CompletionRequest{
@@ -144,14 +149,12 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 
 	raw, err := bot.LLM().ChatCompletionNoStream(classifyCtx, req, opts...)
 	if err != nil {
-		fail("provider error", llm.SanitizeProviderError(err))
-		return fmt.Errorf("ambient classifier provider error: %w", ErrNoResponse)
+		return warnFail("provider error", llm.SanitizeProviderError(err))
 	}
 
 	shouldReply, parseErr := parseAmbientClassifierOutput(raw)
 	if parseErr != nil {
-		fail("malformed classifier output", parseErr)
-		return fmt.Errorf("ambient classifier output: %v: %w", parseErr, ErrNoResponse)
+		return fail("malformed classifier output", parseErr)
 	}
 	span.SetAttributes(telemetry.AmbientShouldReply.Bool(shouldReply))
 	if !shouldReply {

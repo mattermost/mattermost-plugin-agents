@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -62,10 +63,11 @@ type fakeMMClient struct {
 	// unreadableChannels are channels HasPermissionToChannel denies.
 	unreadableChannels map[string]bool
 
-	// logMu guards logErrors: background goroutines (e.g. title generation)
+	// logMu guards logErrors and logWarns: background goroutines (e.g. title generation)
 	// may log while the test goroutine reads.
 	logMu     sync.Mutex
 	logErrors []string
+	logWarns  []string
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -247,7 +249,19 @@ func (c *fakeMMClient) loggedErrors() []string {
 	return append([]string(nil), c.logErrors...)
 }
 
-func (c *fakeMMClient) LogWarn(string, ...any) {}
+func (c *fakeMMClient) LogWarn(msg string, keyValuePairs ...any) {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	c.logWarns = append(c.logWarns, fmt.Sprintf("%s %v", msg, keyValuePairs))
+}
+
+// loggedWarnings returns a snapshot of the warn-level log lines, each the
+// message followed by its key/value pairs.
+func (c *fakeMMClient) loggedWarnings() []string {
+	c.logMu.Lock()
+	defer c.logMu.Unlock()
+	return append([]string(nil), c.logWarns...)
+}
 
 func (c *fakeMMClient) GetUserByUsername(string) (*model.User, error) {
 	return nil, errors.New("not implemented")

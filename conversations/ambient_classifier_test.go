@@ -22,6 +22,7 @@ import (
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
 	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -135,6 +136,7 @@ func TestClassifyAmbientTimeout(t *testing.T) {
 	post := &model.Post{Id: "p1", UserId: "u1", Message: "hi", CreateAt: 1}
 	mmClient := mmapimocks.NewMockClient(t)
 	mmClient.EXPECT().GetUser("u1").Return(&model.User{Id: "u1", Username: "alice"}, nil)
+	mmClient.EXPECT().LogWarn(mock.Anything, mock.Anything).Once()
 
 	promptsManager, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
@@ -156,6 +158,7 @@ func TestClassifyAmbientTimeout(t *testing.T) {
 	channel := &model.Channel{Id: "c1", TeamId: "t1", Type: model.ChannelTypeOpen}
 	err = c.classifyAmbientReply(context.Background(), bot, &autoreply.Setting{Mode: autoreply.ModeAmbient}, post, user, channel, []*model.Post{post})
 	require.ErrorIs(t, err, ErrNoResponse)
+	require.ErrorContains(t, err, context.DeadlineExceeded.Error())
 }
 
 type blockingNoStreamLLM struct{}

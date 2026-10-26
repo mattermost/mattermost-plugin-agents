@@ -90,6 +90,7 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		}
 		thread, threadErr := c.ambientThreadPosts(post)
 		if threadErr != nil {
+			c.mmClient.LogWarn("Ambient auto-reply failed to load thread", "post_id", post.Id, "channel_id", channel.Id, "error", threadErr.Error())
 			return fmt.Errorf("ambient auto-reply failed to load thread: %v: %w", threadErr, ErrNoResponse)
 		}
 		if setting.Mode == autoreply.ModeAmbientThreads && !threadHasReplyFrom(thread, bot.GetMMBot().UserId) {

@@ -34,6 +34,9 @@ func TestAmbientAutoReply(t *testing.T) {
 		expectFired    bool
 		expectClassify bool
 		expectReminder bool
+		// expectWarn, when set, must appear in a warn-level log line that also
+		// names the post; otherwise nothing is logged at warn.
+		expectWarn     string
 		promptContains []string
 		promptOmits    []string
 	}{
@@ -92,6 +95,19 @@ func TestAmbientAutoReply(t *testing.T) {
 				return env.rootPost(autoReplyUserID, "hello")
 			},
 			expectClassify: true,
+			expectWarn:     "provider down",
+		},
+		{
+			name:           "thread author lookup failure is fail-closed",
+			mode:           autoreply.ModeAmbient,
+			classifierJSON: trueJSON,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				root := &model.Post{Id: autoReplyRootID, ChannelId: autoReplyChannelID, UserId: "ghostuserid1234567890123ab", CreateAt: 100, Message: "kicking off"}
+				reply := &model.Post{Id: autoReplyReplyID, ChannelId: autoReplyChannelID, UserId: autoReplyUserID, RootId: autoReplyRootID, CreateAt: 200, Message: "hello"}
+				env.setThread(autoReplyRootID, root, reply)
+				return reply
+			},
+			expectWarn: "user not found",
 		},
 		{
 			name:           "instructions are in the classifier prompt",
@@ -209,6 +225,7 @@ func TestAmbientAutoReply(t *testing.T) {
 					Message:   "hello",
 				}
 			},
+			expectWarn: "failed to load thread",
 		},
 		{
 			name:           "ambient is a no-op when the admin has turned it off",
@@ -239,6 +256,7 @@ func TestAmbientAutoReply(t *testing.T) {
 			},
 			expectClassify: true,
 			expectReminder: true,
+			expectWarn:     "provider down",
 		},
 		{
 			name:           "bounded context keeps newest posts and drops the oldest",
@@ -311,6 +329,15 @@ func TestAmbientAutoReply(t *testing.T) {
 				require.Empty(t, env.llm.requests, "expected no reply LLM call")
 			}
 			require.Empty(t, env.mmClient.loggedErrors(), "classifier failures must be fail-closed")
+			warnings := env.mmClient.loggedWarnings()
+			if tc.expectWarn == "" {
+				require.Empty(t, warnings)
+			} else {
+				require.Len(t, warnings, 1)
+				require.Contains(t, warnings[0], tc.expectWarn)
+				require.Contains(t, warnings[0], post.Id)
+				require.Contains(t, warnings[0], autoReplyChannelID)
+			}
 			if tc.expectReminder {
 				require.Len(t, env.mmClient.ephemeralPosts, 1, "a skipped auto-reply after an agent post must show the @mention reminder")
 			} else {
