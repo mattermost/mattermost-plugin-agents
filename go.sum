@@ -337,8 +337,6 @@ github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261001132814-e4
 github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261001132814-e49664194608/go.mod h1:VfsF0TSRtbVl+1rJvo1lDny9K3WhEItKrelefz7aeFc=
 github.com/mattermost/morph v1.1.0 h1:Q9vrJbeM3s2jfweGheq12EFIzdNp9a/6IovcbvOQ6Cw=
 github.com/mattermost/morph v1.1.0/go.mod h1:gD+EaqX2UMyyuzmF4PFh4r33XneQ8Nzi+0E8nXjMa3A=
-github.com/mattermost/testcontainers-mattermost-go v0.1.0 h1:oWNqnU2mua2PYMSornWjjiFQUZqPNeODSQSsWjFcuMw=
-github.com/mattermost/testcontainers-mattermost-go v0.1.0/go.mod h1:XXKu9w+dsAavOjujftqSV5L0+GkybOSpWlmkNicUpEQ=
 github.com/mattermost/xml-roundtrip-validator v0.1.0 h1:RXbVD2UAl7A7nOTR4u7E3ILa4IbtvKBHw64LDsmu9hU=
 github.com/mattermost/xml-roundtrip-validator v0.1.0/go.mod h1:qccnGMcpgwcNaBnxqpJpWWUiPNr5H3O8eDgGV9gT5To=
 github.com/mattn/go-colorable v0.1.9/go.mod h1:u6P/XSegPjTcexA+o6vUJrdnUu04hMope9wVRipJSqc=
