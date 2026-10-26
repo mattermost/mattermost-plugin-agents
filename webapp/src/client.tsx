@@ -301,6 +301,29 @@ export async function doRegenerate(postid: string) {
     });
 }
 
+// Reports whether this user has the agent post on screen, so the server can
+// skip notifying them about it. keepalive lets the request outlive the page.
+export async function doSetPostViewing(postid: string, viewing: boolean, keepalive = false): Promise<void> {
+    const url = `${postRoute(postid)}/viewing`;
+    const response = await fetch(url, {
+        ...Client4.getOptions({
+            method: 'POST',
+            body: JSON.stringify({viewing}),
+        }),
+        keepalive,
+    });
+
+    if (response.ok) {
+        return;
+    }
+
+    throw new ClientError(Client4.url, {
+        message: await readClientErrorMessage(response),
+        status_code: response.status,
+        url,
+    });
+}
+
 export async function doToolCall(postid: string, toolIDs: string[], toolAnswers?: Record<string, ToolAnswer>) {
     const url = `${postRoute(postid)}/tool_call`;
     const response = await fetch(url, Client4.getOptions({

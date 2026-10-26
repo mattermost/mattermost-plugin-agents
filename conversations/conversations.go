@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -57,6 +58,7 @@ type Conversations struct {
 	mutexAPI          cluster.MutexPluginAPI
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
+	notifier          notifications.Notifier
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -104,6 +106,13 @@ func (c *Conversations) SetMeetingsService(meetingsService MeetingsService) {
 // The auto-reply feature is disabled when unset.
 func (c *Conversations) SetAutoReplySettings(s AutoReplySettings) {
 	c.autoReplySettings = s
+}
+
+// SetNotifier sets who marks new responses deferred and notifies about runs
+// that end without streaming. When nil (the default), responses notify at
+// creation as usual.
+func (c *Conversations) SetNotifier(n notifications.Notifier) {
+	c.notifier = n
 }
 
 // SetConversationService sets the conversation entity service.

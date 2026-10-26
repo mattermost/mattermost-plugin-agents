@@ -18,6 +18,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
@@ -269,7 +270,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 	progress.Advance(responseProgressCheckingMCP)
 	defer func() {
 		if err != nil {
-			c.failResponsePlaceholder(responsePost, postingUser.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, postingUser.Locale)
 		}
 	}()
 
@@ -410,13 +411,13 @@ func (c *Conversations) handleDMs(ctx context.Context, bot *bots.Bot, channel *m
 	defer progress.Flush()
 	progress.Advance(responseProgressCheckingMCP)
 	if errors.Is(policyErr, ErrAnalysisSourceUnavailable) {
-		c.setPlaceholderMessage(responsePost, postingUser.Locale, "agents.analysis_source_unavailable",
+		c.setPlaceholderMessage(ctx, responsePost, postingUser.Locale, "agents.analysis_source_unavailable",
 			"I can't continue this conversation because you no longer have access to what it is about.")
 		return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 	}
 	defer func() {
 		if err != nil {
-			c.failResponsePlaceholder(responsePost, postingUser.Locale)
+			c.failResponsePlaceholder(ctx, responsePost, postingUser.Locale)
 		}
 	}()
 	if policyErr != nil {
@@ -607,6 +608,9 @@ func cloneWithAgentMention(post *model.Post, botUsername string) *model.Post {
 
 func (c *Conversations) createResponsePlaceholder(botID, requesterUserID string, post *model.Post, respondingToPostID string) error {
 	streaming.ModifyPostForBot(botID, requesterUserID, post, respondingToPostID)
+	if c.notifier != nil {
+		c.notifier.MarkDeferred(post)
+	}
 	return c.mmClient.CreatePost(post)
 }
 
@@ -639,21 +643,45 @@ func (c *Conversations) streamToExistingPost(ctx context.Context, stream *llm.Te
 	return nil
 }
 
-func (c *Conversations) failResponsePlaceholder(post *model.Post, userLocale string) {
-	c.setPlaceholderMessage(post, userLocale, "agents.stream_to_post_access_llm_error",
+func (c *Conversations) failResponsePlaceholder(ctx context.Context, post *model.Post, userLocale string) {
+	c.setPlaceholderMessage(ctx, post, userLocale, "agents.stream_to_post_access_llm_error",
 		"Sorry! An error occurred while accessing the LLM. See server logs for details.")
 }
 
-func (c *Conversations) setPlaceholderMessage(post *model.Post, userLocale, messageID, fallback string) {
+// setPlaceholderMessage ends a run that never streamed by replacing the
+// placeholder with an explanation and notifying the requester about it.
+func (c *Conversations) setPlaceholderMessage(ctx context.Context, post *model.Post, userLocale, messageID, fallback string) {
 	message := fallback
 	if c.i18n != nil {
 		T := i18n.LocalizerFunc(c.i18n, c.fallbackLocale(userLocale))
 		message = T(messageID, fallback)
 	}
 	post.Message = message
-	if err := c.mmClient.UpdatePost(post); err != nil {
-		c.mmClient.LogError("Failed to update response placeholder", "error", err)
+	updateErr := c.mmClient.UpdatePost(post)
+	if updateErr != nil {
+		c.mmClient.LogError("Failed to update response placeholder", "error", updateErr)
 	}
+	c.notifyRunEnd(ctx, post, "", notifications.StreamEnd{
+		Outcome:      notifications.OutcomeErrored,
+		UpdateFailed: updateErr != nil,
+	})
+}
+
+// notifyRunEnd notifies about a run on post that ended without the streaming
+// service, which notifies for runs it streams. requesterID defaults to the
+// requester recorded on the post.
+func (c *Conversations) notifyRunEnd(ctx context.Context, post *model.Post, requesterID string, end notifications.StreamEnd) {
+	if c.notifier == nil {
+		return
+	}
+	if requesterID == "" {
+		requesterID, _ = post.GetProp(streaming.LLMRequesterUserIDProp).(string)
+	}
+	end.PostID = post.Id
+	end.ChannelID = post.ChannelId
+	end.RequesterID = requesterID
+	end.PostDeferred = post.HasDeferredNotification()
+	c.notifier.Notify(ctx, end)
 }
 
 func (c *Conversations) responseLocale(postingUser *model.User, channel *model.Channel) string {

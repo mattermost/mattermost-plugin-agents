@@ -46,5 +46,13 @@
   {
     "id": "agents.analysis_source_unavailable",
     "translation": "I can't continue this conversation because you no longer have access to what it is about."
+  },
+  {
+    "id": "agents.notifications.push_generic_dm",
+    "translation": "sent you a message."
+  },
+  {
+    "id": "agents.notifications.push_generic_channel",
+    "translation": "%s replied to you."
   }
 ]

@@ -66,6 +66,31 @@ type fakeMMClient struct {
 	// may log while the test goroutine reads.
 	logMu     sync.Mutex
 	logErrors []string
+
+	deliveryMu sync.Mutex
+	deliveries []fakeDelivery
+}
+
+type fakeDelivery struct {
+	postID  string
+	userIDs []string
+}
+
+func (c *fakeMMClient) DeliverPostNotifications(postID string, options *model.DeliverPostNotificationsOptions) error {
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	d := fakeDelivery{postID: postID}
+	if options != nil {
+		d.userIDs = options.UserIDs
+	}
+	c.deliveries = append(c.deliveries, d)
+	return nil
+}
+
+func (c *fakeMMClient) deliveredNotifications() []fakeDelivery {
+	c.deliveryMu.Lock()
+	defer c.deliveryMu.Unlock()
+	return append([]fakeDelivery(nil), c.deliveries...)
 }
 
 func (c *fakeMMClient) GetUser(userID string) (*model.User, error) {
@@ -87,6 +112,9 @@ func (c *fakeMMClient) GetPostThread(postID string) (*model.PostList, error) {
 func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	if !c.allowCreatePost {
 		return errors.New("not implemented")
+	}
+	if post.Id == "" {
+		post.Id = model.NewId()
 	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil

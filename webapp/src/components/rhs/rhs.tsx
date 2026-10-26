@@ -17,6 +17,9 @@ import {useBotlist} from '@/bots';
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
+import {subscribeToPosted} from '@/posted_events';
+import {getDeferredNotificationsSupported} from '@/selectors';
+import {getViewingTracker} from '@/viewing';
 
 import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
@@ -71,8 +74,14 @@ export default function RHS() {
     const [disabledServers, setDisabledServers] = useState<string[]>([]);
     const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
 
-    const markSelectedThreadRead = useCallback((postId: string) => {
-        updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
+    const deferredNotifications = useSelector(getDeferredNotificationsSupported);
+
+    // Without deferred notifications the thread is marked read a day ahead so
+    // agent replies streaming into it never show as unread. With them, a reply
+    // only counts once delivered, and it should stay unread if the user left.
+    const markSelectedThreadRead = useCallback((postId: string, readAt?: number) => {
+        const timestamp = deferredNotifications ? (readAt ?? Date.now()) : Date.now() + twentyFourHoursInMS;
+        updateRead(currentUserId, currentTeamId, postId, timestamp).catch((error) => {
             if (isMissingThreadMembershipError(error)) {
                 console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
                 return;
@@ -80,7 +89,23 @@ export default function RHS() {
 
             console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
         });
-    }, [currentTeamId, currentUserId]);
+    }, [currentTeamId, currentUserId, deferredNotifications]);
+
+    // A delivered agent reply arrives as a repeated `posted` event; if it is on
+    // screen here, the user has read it.
+    useEffect(() => {
+        if (!deferredNotifications || !selectedPostId) {
+            return undefined; // eslint-disable-line no-undefined
+        }
+        return subscribeToPosted((post) => {
+            if (post.root_id !== selectedPostId || !getViewingTracker().isViewed(post.id)) {
+                return;
+            }
+
+            // The server times the delivery by its own clock.
+            markSelectedThreadRead(selectedPostId, Math.max(Date.now(), post.update_at ?? 0));
+        });
+    }, [deferredNotifications, markSelectedThreadRead, selectedPostId]);
 
     useEffect(() => {
         const fetchPreferences = async () => {
@@ -111,7 +136,6 @@ export default function RHS() {
         if (currentTab === 'threads') {
             fetchThreads();
         } else if (currentTab === 'thread' && Boolean(selectedPostId)) {
-            // Update read for the thread to tomorrow. We don't really want the unreads thing to show up.
             markSelectedThreadRead(selectedPostId);
         }
         return () => {

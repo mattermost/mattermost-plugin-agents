@@ -6,7 +6,7 @@ import {LLM_BOT_REPLY_DEBOUNCE_TIMEOUT_MS, shouldSuppressBotNotification} from '
 describe('shouldSuppressBotNotification', () => {
     const fakeNow = 10_000;
 
-    it('suppresses any custom_llmbot post regardless of root_id (MM-66720)', () => {
+    it('on servers that do not defer notifications, suppresses any custom_llmbot post regardless of root_id (MM-66720)', () => {
         const rootlessAgentPost = {
             user_id: 'agent-bot',
             type: 'custom_llmbot',
@@ -21,6 +21,7 @@ describe('shouldSuppressBotNotification', () => {
         };
 
         expect(shouldSuppressBotNotification(threadedAgentPost, {now: fakeNow})).toBe(true);
+        expect(shouldSuppressBotNotification(threadedAgentPost, {now: fakeNow, deferredNotifications: false, isPostViewed: () => false})).toBe(true);
     });
 
     it('does not suppress notifications for posts authored by a human user', () => {
@@ -118,6 +119,33 @@ describe('shouldSuppressBotNotification', () => {
                 parentPost: {user_id: 'user-1', create_at: fakeNow - 100},
             }),
         ).toBe(false);
+    });
+
+    describe('when the server defers agent post notifications', () => {
+        const agentPost = {id: 'agent-post', user_id: 'agent-bot', root_id: 'parent', type: 'custom_llmbot'};
+
+        it.each([
+            {name: 'notifies about a response that is not on screen', post: agentPost, viewed: [], suppressed: false},
+            {name: 'suppresses a response on screen in this window', post: agentPost, viewed: ['agent-post'], suppressed: true},
+            {name: 'notifies when another response is on screen', post: agentPost, viewed: ['other-post'], suppressed: false},
+            {name: 'notifies about a post without an id', post: {user_id: 'agent-bot', root_id: 'parent', type: 'custom_llmbot'}, viewed: ['agent-post'], suppressed: false},
+        ])('$name', ({post, viewed, suppressed}) => {
+            expect(shouldSuppressBotNotification(post, {
+                now: fakeNow,
+                deferredNotifications: true,
+                isPostViewed: (postId) => viewed.includes(postId),
+            })).toBe(suppressed);
+        });
+
+        it('keeps the fast-reply debounce for other bot replies', () => {
+            expect(shouldSuppressBotNotification({user_id: 'some-bot', root_id: 'parent-1', props: {from_bot: 'true'}}, {
+                now: fakeNow,
+                currentUserId: 'user-1',
+                parentPost: {user_id: 'user-1', create_at: fakeNow - 100},
+                deferredNotifications: true,
+                isPostViewed: () => false,
+            })).toBe(true);
+        });
     });
 
     it('does not suppress when currentUserId is unknown (login/logout race)', () => {

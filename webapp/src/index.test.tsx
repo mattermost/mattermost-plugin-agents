@@ -77,27 +77,31 @@ type WebSocketHandlers = Map<string, (msg: unknown) => void>;
 // Only the registry members initialize() calls unconditionally, plus the
 // channel-settings tab (its presence is what makes the bots cache load-bearing
 // for a synchronous shouldRender).
-function makeRegistry(websocketHandlers: WebSocketHandlers) {
+type DesktopNotificationHook = (post: unknown, msgProps: unknown, channel: unknown, teamId: string, args: Record<string, unknown>) => Promise<{args?: Record<string, unknown>}>;
+
+function makeRegistry(websocketHandlers: WebSocketHandlers, options: {channelSettingsTab?: boolean; onDesktopHook?: (hook: DesktopNotificationHook) => void} = {}) {
     return {
         registerReducer: jest.fn(),
-        registerDesktopNotificationHook: jest.fn(),
+        registerDesktopNotificationHook: (hook: DesktopNotificationHook) => options.onDesktopHook?.(hook),
         registerTranslations: jest.fn(),
         registerPostTypeComponent: jest.fn(),
         registerPostActionComponent: jest.fn(),
         registerAdminConsoleCustomSetting: jest.fn(),
-        registerChannelSettingsTab: jest.fn(),
+        ...(options.channelSettingsTab === false ? {} : {registerChannelSettingsTab: jest.fn()}),
         registerWebSocketEventHandler: (event: string, handler: (msg: unknown) => void) => {
             websocketHandlers.set(event, handler);
         },
     };
 }
 
-function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
+function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065', pluginState: Record<string, unknown> = {}) {
     const state = {
+        'plugins-mattermost-ai': pluginState,
         entities: {
             general: {config: {SiteURL: siteURL}},
             users: {currentUserId: ''},
             i18n: {locale: 'en'},
+            posts: {posts: {}},
         },
     };
     return {
@@ -107,18 +111,25 @@ function makeStore(dispatch: jest.Mock, siteURL = 'http://localhost:8065') {
     };
 }
 
-async function initializePlugin(siteURL?: string) {
+async function initializePlugin(siteURL?: string, options: {channelSettingsTab?: boolean; pluginState?: Record<string, unknown>} = {}) {
     const websocketHandlers: WebSocketHandlers = new Map();
     const dispatch = jest.fn();
+    let desktopHook: DesktopNotificationHook | null = null;
 
     // The entrypoint self-registers on import, so the host hook must exist first.
     window.registerPlugin = jest.fn();
 
     // eslint-disable-next-line global-require
     const Plugin = require('./index').default;
-    await new Plugin().initialize(makeRegistry(websocketHandlers), makeStore(dispatch, siteURL));
+    const registry = makeRegistry(websocketHandlers, {
+        channelSettingsTab: options.channelSettingsTab,
+        onDesktopHook: (hook) => {
+            desktopHook = hook;
+        },
+    });
+    await new Plugin().initialize(registry, makeStore(dispatch, siteURL, options.pluginState));
 
-    return {websocketHandlers, dispatch};
+    return {websocketHandlers, dispatch, desktopHook: desktopHook as DesktopNotificationHook | null};
 }
 
 // Lets the floating fetch promises inside initialize()/the handlers settle.
@@ -191,5 +202,56 @@ describe('bots cache websocket handlers', () => {
         await flush();
 
         expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({type: BotsHandler}));
+    });
+});
+
+describe('deferred agent post notifications', () => {
+    beforeEach(() => {
+        jest.resetModules();
+        mockGetAIBots.mockReset();
+    });
+
+    test('the startup bots fetch records server support even without the channel-settings tab', async () => {
+        mockGetAIBots.mockResolvedValue({bots: [], deferredNotifications: true});
+
+        const {dispatch} = await initializePlugin('http://localhost:8065', {channelSettingsTab: false});
+        await flush();
+
+        expect(mockGetAIBots).toHaveBeenCalledTimes(1);
+        expect(dispatch).toHaveBeenCalledWith({type: 'SET_DEFERRED_NOTIFICATIONS', deferredNotifications: true});
+    });
+
+    test.each([
+        {name: 'a server that defers notifications lets an off-screen agent response notify', deferredNotifications: true, notify: true},
+        {name: 'an older server keeps agent responses from notifying', deferredNotifications: false, notify: false},
+    ])('$name', async ({deferredNotifications, notify}) => {
+        mockGetAIBots.mockResolvedValue({bots: []});
+
+        const {desktopHook} = await initializePlugin('http://localhost:8065', {pluginState: {deferredNotifications}});
+        expect(desktopHook).not.toBeNull();
+
+        const args = {title: 'Agents', body: 'answer', notify: true};
+        const result = await desktopHook!({id: 'agent-post', user_id: 'agent-bot', type: 'custom_llmbot'}, {}, {}, 'team', args);
+
+        expect(result.args?.notify).toBe(notify);
+    });
+
+    test.each([
+        {name: 'a delivered post', post: JSON.stringify({id: 'agent-post', root_id: 'root', update_at: 5}), received: [{id: 'agent-post', root_id: 'root', update_at: 5}]},
+        {name: 'a malformed post', post: '{', received: []},
+        {name: 'a post without an id', post: JSON.stringify({root_id: 'root'}), received: []},
+        {name: 'a missing post', post: null, received: []},
+    ])('core posted events reach subscribers: $name', async ({post, received}) => {
+        mockGetAIBots.mockResolvedValue({bots: []});
+        const {websocketHandlers} = await initializePlugin();
+
+        // eslint-disable-next-line global-require
+        const {subscribeToPosted} = require('./posted_events');
+        const seen: unknown[] = [];
+        const unsubscribe = subscribeToPosted((p: unknown) => seen.push(p));
+        websocketHandlers.get('posted')!({data: {post}});
+        unsubscribe();
+
+        expect(seen).toEqual(received);
     });
 });

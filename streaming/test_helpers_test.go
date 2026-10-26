@@ -19,6 +19,8 @@ type fakeStreamingClient struct {
 	channels     map[string]*model.Channel
 	kv           map[string]any
 	updatedPosts []*model.Post
+	createdPosts []*model.Post
+	updateErr    error
 	events       []publishedEvent
 	warnings     []string
 }
@@ -33,14 +35,16 @@ func (c *fakeStreamingClient) PublishWebSocketEvent(event string, payload map[st
 
 func (c *fakeStreamingClient) UpdatePost(post *model.Post) error {
 	c.updatedPosts = append(c.updatedPosts, post.Clone())
+	return c.updateErr
+}
+
+func (c *fakeStreamingClient) CreatePost(post *model.Post) error {
+	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
 }
 
-func (c *fakeStreamingClient) CreatePost(_ *model.Post) error {
-	return nil
-}
-
-func (c *fakeStreamingClient) DM(_, _ string, _ *model.Post) error {
+func (c *fakeStreamingClient) DM(_, _ string, post *model.Post) error {
+	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil
 }
 

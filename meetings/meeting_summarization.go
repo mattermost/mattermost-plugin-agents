@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
@@ -118,7 +119,7 @@ func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.Us
 		Message: T("agents.summarize_recording", "Sure, I will summarize this recording: %s/_redirect/pl/%s\n", *siteURL, recordingPost.Id),
 	}
 	surePost.AddProp(streaming.NoRegen, "true")
-	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, surePost); err != nil {
+	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, surePost, false); err != nil {
 		return nil, err
 	}
 
@@ -141,7 +142,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 	}
 	surePost.AddProp(streaming.NoRegen, "true")
 	surePost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, surePost); err != nil {
+	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, surePost, false); err != nil {
 		return nil, err
 	}
 
@@ -150,9 +151,11 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		defer func() {
 			if reterr != nil {
 				surePost.Message = T("agents.summairize_subscription_error", "Sorry! Something went wrong. Check the server logs for details.")
-				if err := s.pluginAPI.Post.UpdatePost(surePost); err != nil {
-					s.pluginAPI.Log.Error("Failed to update post in error handling newCallTranscriptionSummaryThread", "error", err)
+				updateErr := s.pluginAPI.Post.UpdatePost(surePost)
+				if updateErr != nil {
+					s.pluginAPI.Log.Error("Failed to update post in error handling newCallTranscriptionSummaryThread", "error", updateErr)
 				}
+				s.notifyFailure(surePost, requestingUser.Id, updateErr)
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
@@ -234,7 +237,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		Message: T("agents.summarize_call_recording_processing", "Processing audio into transcription. This will take some time..."),
 	}
 	transcriptPost.AddProp(ReferencedRecordingFileID, recordingFileID)
-	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, transcriptPost); err != nil {
+	if err := s.botDMNonResponse(bot.GetMMBot().UserId, requestingUser.Id, transcriptPost, true); err != nil {
 		return err
 	}
 
@@ -243,9 +246,11 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		defer func() {
 			if reterr != nil {
 				transcriptPost.Message = T("agents.summarize_call_recording_processing_error", "Sorry! Something went wrong. Check the server logs for details.")
-				if err := s.pluginAPI.Post.UpdatePost(transcriptPost); err != nil {
-					s.pluginAPI.Log.Error("Failed to update post in error handling handleCallRecordingPost", "error", err)
+				updateErr := s.pluginAPI.Post.UpdatePost(transcriptPost)
+				if updateErr != nil {
+					s.pluginAPI.Log.Error("Failed to update post in error handling handleCallRecordingPost", "error", updateErr)
 				}
+				s.notifyFailure(transcriptPost, requestingUser.Id, updateErr)
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
@@ -397,12 +402,37 @@ func (s *Service) updatePostWithFile(post *model.Post, fileinfo *model.FileInfo)
 	return nil
 }
 
-func (s *Service) botDMNonResponse(botid string, userID string, post *model.Post) error {
+// botDMNonResponse DMs an acknowledgement or progress post to userID. A post
+// that a summary is later streamed into is created deferred so it notifies
+// once the summary is in; any other post is silent, since the user just asked
+// for it.
+func (s *Service) botDMNonResponse(botid string, userID string, post *model.Post, streamedLater bool) error {
 	streaming.ModifyPostForBot(botid, userID, post, "")
+	if !streamedLater {
+		post.AddProp(model.PostPropsSilentNotification, true)
+	} else if s.notifier != nil {
+		s.notifier.MarkDeferred(post)
+	}
 
 	if err := s.pluginAPI.Post.DM(botid, userID, post); err != nil {
 		return fmt.Errorf("failed to post DM: %w", err)
 	}
 
 	return nil
+}
+
+// notifyFailure tells the requester that a meeting summary failed before
+// streaming, which would otherwise leave its post silent or deferred.
+func (s *Service) notifyFailure(post *model.Post, requesterID string, updateErr error) {
+	if s.notifier == nil {
+		return
+	}
+	s.notifier.Notify(stdcontext.Background(), notifications.StreamEnd{
+		PostID:       post.Id,
+		ChannelID:    post.ChannelId,
+		RequesterID:  requesterID,
+		Outcome:      notifications.OutcomeErrored,
+		UpdateFailed: updateErr != nil,
+		PostDeferred: post.HasDeferredNotification(),
+	})
 }

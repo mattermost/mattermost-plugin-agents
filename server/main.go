@@ -33,6 +33,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/metrics"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
@@ -61,6 +62,7 @@ type Plugin struct {
 	conversationsService *conversations.Conversations
 	mcpClientManager     *mcp.ClientManager
 	streamingService     streaming.Service
+	notifications        *notifications.Service
 	telemetryShutdown    telemetry.ShutdownFunc
 	telemetryMu          sync.Mutex
 	telemetryMode        telemetry.OutputMode
@@ -342,7 +344,16 @@ func (p *Plugin) OnActivate() error {
 		return promptManagerErr
 	}
 
+	deferredNotifications := notifications.ProbeSupport(p.API)
+	pluginAPI.Log.Info("Agent post notifications", "deferred_notifications_supported", deferredNotifications)
+	notificationsService := notifications.NewService(
+		notificationsClient{Client: mmClient, pluginAPI: pluginAPI, api: p.API},
+		i18nBundle,
+		deferredNotifications,
+	)
+
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
+	streamingService.SetNotifier(notificationsService)
 
 	// Availability is the single source of truth for the embedding search.
 	// Indexing stays available whenever search is initialized so a reindex can
@@ -543,6 +554,7 @@ func (p *Plugin) OnActivate() error {
 	convService := conversation.NewService(p.store, prompts, mmClient, bots)
 	conversationsService.SetConversationService(convService)
 	conversationsService.SetAutoReplySettings(autoreplyService)
+	conversationsService.SetNotifier(notificationsService)
 
 	meetingsService := meetings.NewService(
 		pluginAPI,
@@ -560,6 +572,7 @@ func (p *Plugin) OnActivate() error {
 	// Set the meetings service on conversations to break circular dependency
 	// TODO: Refactor to avoid circular dependency
 	conversationsService.SetMeetingsService(meetingsService)
+	meetingsService.SetNotifier(notificationsService)
 
 	streamingService.SetTurnStore(p.store)
 
@@ -635,6 +648,7 @@ func (p *Plugin) OnActivate() error {
 	)
 
 	apiService.SetConversationService(convService)
+	apiService.SetNotifications(notificationsService)
 
 	// Apply OpenTelemetry config now and re-apply on every config change so
 	// admins don't need to restart the plugin to switch modes.
@@ -648,6 +662,7 @@ func (p *Plugin) OnActivate() error {
 	p.conversationsService = conversationsService
 	p.mcpClientManager = mcpClientManager
 	p.streamingService = streamingService
+	p.notifications = notificationsService
 
 	return nil
 }
@@ -849,7 +864,13 @@ func (p *Plugin) ServeMetrics(c *plugin.Context, w http.ResponseWriter, r *http.
 
 // EmailNotificationWillBeSent blocks redundant AI agent email notifications.
 func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotification) (*model.EmailNotificationContent, string) {
-	if p.shouldBlockAgentNotification(emailNotification.SenderId, emailNotification.RootId, "", emailNotification.IsDirectMessage) {
+	if p.shouldBlockAgentNotification(agentNotification{
+		senderID:    emailNotification.SenderId,
+		recipientID: emailNotification.RecipientId,
+		postID:      emailNotification.PostId,
+		rootID:      emailNotification.RootId,
+		isDM:        emailNotification.IsDirectMessage,
+	}) {
 		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return &emailNotification.EmailNotificationContent, ""
@@ -860,34 +881,62 @@ func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotificati
 	if pushNotification.PostId == "" {
 		return pushNotification, ""
 	}
+	if p.notifications.ConsumeFallbackPush(pushNotification.PostId, userID) {
+		return pushNotification, ""
+	}
 
-	isDM := pushNotification.ChannelType == model.ChannelTypeDirect
-	if p.shouldBlockAgentNotification(pushNotification.SenderId, pushNotification.RootId, pushNotification.PostType, isDM) {
+	if p.shouldBlockAgentNotification(agentNotification{
+		senderID:    pushNotification.SenderId,
+		recipientID: userID,
+		postID:      pushNotification.PostId,
+		rootID:      pushNotification.RootId,
+		postType:    pushNotification.PostType,
+		isDM:        pushNotification.ChannelType == model.ChannelTypeDirect,
+	}) {
 		return nil, "notification blocked: AI agent response to user-initiated action"
 	}
 	return pushNotification, ""
 }
 
-// shouldBlockAgentNotification reports whether an AI agent notification is redundant.
-func (p *Plugin) shouldBlockAgentNotification(senderID, rootID, postType string, isDM bool) bool {
+// agentNotification is the part of a push or email the block decision reads.
+type agentNotification struct {
+	senderID    string
+	recipientID string
+	postID      string
+	rootID      string
+	postType    string
+	isDM        bool
+}
+
+// shouldBlockAgentNotification reports whether an AI agent notification is
+// redundant. On servers that defer agent post notifications until the
+// response ends, that is only when the recipient has the response on screen.
+// Older servers notify at creation, before there is anything to read, so
+// agent notifications that typically answer the recipient are blocked, and
+// the requester gets the fallback push at the end instead.
+func (p *Plugin) shouldBlockAgentNotification(n agentNotification) bool {
 	if p.bots == nil {
 		return false
 	}
 
-	bot := p.bots.GetBotByID(senderID)
+	bot := p.bots.GetBotByID(n.senderID)
 	if bot == nil {
 		return false
 	}
 
-	if rootID != "" {
+	if p.notifications.Supported() {
+		return p.notifications.RecipientIsViewing(n.postID, n.recipientID)
+	}
+
+	if n.rootID != "" {
 		return true
 	}
 
-	if postType == "custom_llmbot" {
+	if n.postType == "custom_llmbot" {
 		return true
 	}
 
-	if isDM {
+	if n.isDM {
 		return true
 	}
 
@@ -907,4 +956,23 @@ func (l licensedPluginServers) ListPluginServers() []mcp.PluginServerConfig {
 		return nil
 	}
 	return l.registry.ListPluginServers()
+}
+
+// notificationsClient adds the plugin API calls agent post notifications need
+// beyond mmapi.Client.
+type notificationsClient struct {
+	mmapi.Client
+	pluginAPI *pluginapi.Client
+	api       plugin.API
+}
+
+func (c notificationsClient) GetChannelMember(channelID, userID string) (*model.ChannelMember, error) {
+	return c.pluginAPI.Channel.GetMember(channelID, userID)
+}
+
+func (c notificationsClient) SendPushNotification(notification *model.PushNotification, userID string) error {
+	if appErr := c.api.SendPushNotification(notification, userID); appErr != nil {
+		return appErr
+	}
+	return nil
 }

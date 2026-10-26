@@ -17,6 +17,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
+	"github.com/mattermost/mattermost-plugin-agents/v2/notifications"
 	"github.com/mattermost/mattermost-plugin-agents/v2/store"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -163,6 +164,7 @@ type MMPostStreamService struct {
 	mmClient      Client
 	i18n          *i18n.Bundle
 	turnStore     TurnStore
+	notifier      notifications.Notifier
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
@@ -177,6 +179,12 @@ func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamSer
 // When nil (the default), turn persistence is silently skipped.
 func (p *MMPostStreamService) SetTurnStore(ts TurnStore) {
 	p.turnStore = ts
+}
+
+// SetNotifier sets who marks new posts deferred and notifies when a run on a
+// post ends. When nil (the default), posts notify at creation as usual.
+func (p *MMPostStreamService) SetNotifier(n notifications.Notifier) {
+	p.notifier = n
 }
 
 func (p *MMPostStreamService) StreamToNewPost(ctx context.Context, botID string, requesterUserID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string) error {
@@ -203,6 +211,9 @@ func (p *MMPostStreamService) StreamToNewDM(ctx context.Context, botID string, s
 func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID string, userID string, stream *llm.TextStreamResult, post *model.Post, respondingToPostID string, createPost func() error) error {
 	// We use ModifyPostForBot directly here to add the responding to post ID
 	ModifyPostForBot(botID, userID, post, respondingToPostID)
+	if p.notifier != nil {
+		p.notifier.MarkDeferred(post)
+	}
 
 	if err := createPost(); err != nil {
 		return err
@@ -390,6 +401,35 @@ func redactToolCalls(toolCalls []llm.ToolCall) []llm.ToolCall {
 	return redacted
 }
 
+// needsRequesterDecision reports whether a tool call batch leaves the run
+// waiting for the requester: an approval, or an interaction tool, neither of
+// which the server will auto-execute. Resolved batches and batches about to
+// auto-execute do not.
+func needsRequesterDecision(toolCalls []llm.ToolCall) bool {
+	for _, tc := range toolCalls {
+		if tc.Status == llm.ToolCallStatusPending && !tc.WouldAutoExecute {
+			return true
+		}
+	}
+	return false
+}
+
+func notificationOutcome(outcome string, stoppedByUser bool) notifications.Outcome {
+	switch outcome {
+	case telemetry.StreamOutcomeCompleted:
+		return notifications.OutcomeCompleted
+	case telemetry.StreamOutcomeEmpty:
+		return notifications.OutcomeEmpty
+	case telemetry.StreamOutcomeCancelled:
+		if stoppedByUser {
+			return notifications.OutcomeStoppedByUser
+		}
+		return notifications.OutcomeCancelled
+	default:
+		return notifications.OutcomeErrored
+	}
+}
+
 // StreamToPost streams a fresh response onto a post (first stream or regen,
 // where the caller has already scrubbed prior turns). For tool-approval resume
 // use StreamContinuationToPost.
@@ -425,7 +465,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	// apart from a canceled or failed one. Only the length of the final
 	// message is recorded, never its content.
 	outcome := ""
-	defer func() {
+	resolveOutcome := func() {
 		if outcome == "" {
 			// Channel closed without an end event.
 			outcome = telemetry.StreamOutcomeCompleted
@@ -433,6 +473,9 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				outcome = telemetry.StreamOutcomeEmpty
 			}
 		}
+	}
+	defer func() {
+		resolveOutcome()
 		span.SetAttributes(
 			telemetry.StreamOutcome.String(outcome),
 			telemetry.StreamMessageLength.Int(len(post.Message)),
@@ -480,11 +523,31 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 		}
 	}
 
+	// Tracked apart from acc, which is nil for posts without a conversation.
+	pausedForRequester := false
+	updateFailed := false
+	stoppedByUser := false
+
 	defer func() {
 		if acc != nil {
 			p.finalizeTurn(acc)
 		}
 		p.sendPostStreamingEvent(post, broadcast, map[string]any{"control": PostStreamingControlEnd})
+
+		if p.notifier != nil {
+			resolveOutcome()
+			// Runs before the caller's FinishStreaming, so no other run can
+			// change the post between its final update and this delivery.
+			p.notifier.Notify(telemetry.DetachContext(ctx), notifications.StreamEnd{
+				PostID:             post.Id,
+				ChannelID:          post.ChannelId,
+				RequesterID:        requesterUserID,
+				Outcome:            notificationOutcome(outcome, stoppedByUser),
+				PausedForRequester: pausedForRequester,
+				UpdateFailed:       updateFailed,
+				PostDeferred:       post.HasDeferredNotification(),
+			})
+		}
 	}()
 
 	var messageBuilder strings.Builder
@@ -495,9 +558,11 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 	handleCancel := func() {
 		outcome = telemetry.StreamOutcomeCancelled
 		if errors.Is(context.Cause(ctx), errStoppedByUser) {
+			stoppedByUser = true
 			post.AddProp(GenerationStoppedProp, true)
 		}
 		if err := p.mmClient.UpdatePost(post); err != nil {
+			updateFailed = true
 			p.mmClient.LogError("Error updating post on stop signaled", "error", err)
 			return
 		}
@@ -516,6 +581,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 			if !ok {
 				// Stream channel closed - persist final state
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Streaming failed to update post on channel close", "error", err)
 				}
 				return
@@ -577,6 +643,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					outcome = telemetry.StreamOutcomeCompleted
 				}
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Streaming failed to update post", "error", err)
 					return
 				}
@@ -614,6 +681,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 				}
 
 				if err := p.mmClient.UpdatePost(post); err != nil {
+					updateFailed = true
 					p.mmClient.LogError("Error recovering from streaming error", "error", err)
 					return
 				}
@@ -646,6 +714,7 @@ func (p *MMPostStreamService) streamToPostImpl(ctx context.Context, stream *llm.
 					for i := range toolCalls {
 						toolCalls[i].SanitizeArguments()
 					}
+					pausedForRequester = needsRequesterDecision(toolCalls)
 					if acc != nil {
 						// On resolved, reset the accumulator: toolrunner
 						// persists the just-completed round separately via

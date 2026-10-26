@@ -18,6 +18,7 @@ import {useIsLicensedFor} from '@/license';
 import {PluginWebSocketMessage} from '@/types';
 import {useSelectNotAIPost} from '@/hooks';
 import {useConversation, invalidateConversation} from '@/hooks/use_conversation';
+import {usePostViewing} from '@/hooks/use_post_viewing';
 import {PostMessagePreview} from '@/mm_webapp';
 
 import {isValidId} from '@/utils/ids';
@@ -578,6 +579,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }
 
     const isGenerationInProgress = generating || isReasoningLoading;
+    const viewingRef = usePostViewing<HTMLDivElement>(props.post.id, isGenerationInProgress || progressPhase !== null);
 
     let precontentMessage = intl.formatMessage({defaultMessage: 'Working...'});
     switch (progressPhase) {
@@ -760,6 +762,7 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
 
     return (
         <PostBody
+            ref={viewingRef}
             data-testid='llm-bot-post'
         >
             {error && <ErrorMessage message={error}/>}
