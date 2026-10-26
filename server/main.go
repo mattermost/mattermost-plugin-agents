@@ -785,9 +785,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 	// Index the new message in the vector database
 	if p.indexerService != nil {
 		// Get channel to retrieve team ID
-		channel, err := p.API.GetChannel(post.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(post.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), post, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index post in vector database", "error", err)
@@ -798,9 +798,9 @@ func (p *Plugin) MessageHasBeenPosted(c *plugin.Context, post *model.Post) {
 
 func (p *Plugin) MessageHasBeenUpdated(c *plugin.Context, newPost, oldPost *model.Post) {
 	if p.indexerService != nil {
-		channel, err := p.API.GetChannel(newPost.ChannelId)
-		if err != nil {
-			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", err)
+		channel, appErr := p.API.GetChannel(newPost.ChannelId)
+		if appErr != nil {
+			p.pluginAPI.Log.Error("Failed to get channel for post indexing", "error", appErr)
 		} else {
 			if err := p.indexerService.IndexPost(context.Background(), newPost, channel); err != nil {
 				p.pluginAPI.Log.Error("Failed to index updated post in vector database", "error", err)

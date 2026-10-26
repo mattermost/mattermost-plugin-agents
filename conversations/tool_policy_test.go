@@ -32,7 +32,7 @@ func testTurnPolicy(c *Conversations, isDM bool) *turnPolicy {
 func testDMTurnPolicy(c *Conversations, bot *bots.Bot) *turnPolicy {
 	return &turnPolicy{
 		c:            c,
-		turnRequest:  turnRequest{bot: bot},
+		bot:          bot,
 		isDM:         true,
 		toolsEnabled: true,
 		interactive:  true,

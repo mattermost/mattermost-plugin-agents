@@ -4,8 +4,9 @@
 package tools
 
 import (
+	"cmp"
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/format"
@@ -349,7 +350,7 @@ func (p *MattermostToolProvider) toolCreatePostAsUser(mcpContext *MCPToolContext
 	if args.Props != "" {
 		// For simplicity, we'll just add it as a string. In a real implementation,
 		// you might want to parse the JSON properly
-		post.SetProps(map[string]interface{}{"custom_props": args.Props})
+		post.SetProps(map[string]any{"custom_props": args.Props})
 	}
 
 	createdPost, _, err := userClient.CreatePost(ctx, post)
@@ -752,8 +753,8 @@ func (p *MattermostToolProvider) formatPostListChrono(mcpContext *MCPToolContext
 	for _, post := range postList.Posts {
 		posts = append(posts, post)
 	}
-	sort.Slice(posts, func(i, j int) bool {
-		return posts[i].CreateAt < posts[j].CreateAt
+	slices.SortFunc(posts, func(a, b *model.Post) int {
+		return cmp.Compare(a.CreateAt, b.CreateAt)
 	})
 
 	client := mcpContext.Client

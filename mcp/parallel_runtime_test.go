@@ -582,13 +582,11 @@ func TestGetToolsForUserConcurrentColdRequestsDialEachServerOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	results := make([][]llm.Tool, callers)
 	for caller := range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			tools, _ := manager.GetToolsForUser(context.Background(), "alice", ToolSelection{})
 			results[caller] = tools
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()
@@ -922,9 +920,8 @@ func TestEnsureConnectionsClosesSessionsCommittedAfterClose(t *testing.T) {
 
 	release := make(chan struct{})
 	var connected sync.WaitGroup
-	connected.Add(1)
 
-	go func() {
+	connected.Go(func() {
 		uc.ensureConnections(context.Background(), []connectTask{{
 			origin:     server.URL,
 			serverID:   "late",
@@ -935,8 +932,7 @@ func TestEnsureConnectionsClosesSessionsCommittedAfterClose(t *testing.T) {
 					newTestLogService(), nil, &http.Client{}, nil, false)
 			},
 		}})
-		connected.Done()
-	}()
+	})
 
 	uc.Close()
 	close(release)

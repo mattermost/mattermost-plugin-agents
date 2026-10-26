@@ -32,8 +32,8 @@ const (
 
 func baseProvider(provider schemas.ModelProvider) schemas.ModelProvider {
 	name := string(provider)
-	if i := strings.Index(name, "::"); i >= 0 {
-		return schemas.ModelProvider(name[:i])
+	if before, _, ok := strings.Cut(name, "::"); ok {
+		return schemas.ModelProvider(before)
 	}
 	return provider
 }

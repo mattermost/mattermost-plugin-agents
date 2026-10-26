@@ -4,10 +4,11 @@
 package tools
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/http"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
@@ -204,8 +205,8 @@ func (p *MattermostToolProvider) toolReadChannel(mcpContext *MCPToolContext, arg
 	}
 
 	// Sort chronologically (oldest first) for natural reading order
-	sort.Slice(filteredPosts, func(i, j int) bool {
-		return filteredPosts[i].CreateAt < filteredPosts[j].CreateAt
+	slices.SortFunc(filteredPosts, func(a, b *model.Post) int {
+		return cmp.Compare(a.CreateAt, b.CreateAt)
 	})
 
 	// Collect unique user IDs and fetch all at once

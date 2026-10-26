@@ -255,7 +255,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			docs := indexer.filterAndCreateDocsWithFloor(tt.posts, 0)
-			assert.Equal(t, tt.expectedCount, len(docs))
+			assert.Len(t, docs, tt.expectedCount)
 		})
 	}
 
@@ -273,7 +273,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 			},
 		}
 		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
-		require.Equal(t, 1, len(docs))
+		require.Len(t, docs, 1)
 		assert.Contains(t, docs[0].Content, "attachment content")
 	})
 
@@ -291,7 +291,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 			},
 		}
 		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
-		require.Equal(t, 1, len(docs))
+		require.Len(t, docs, 1)
 		assert.Contains(t, docs[0].Content, "Hello")
 		assert.Contains(t, docs[0].Content, "T")
 		assert.Contains(t, docs[0].Content, "Body")
@@ -311,7 +311,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 			},
 		}
 		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
-		require.Equal(t, 1, len(docs))
+		require.Len(t, docs, 1)
 		assert.Equal(t, "Hello", docs[0].Content)
 	})
 
@@ -329,7 +329,7 @@ func TestFilterAndCreateDocs(t *testing.T) {
 			},
 		}
 		docs := indexer.filterAndCreateDocsWithFloor(posts, 0)
-		require.Equal(t, 1, len(docs))
+		require.Len(t, docs, 1)
 		assert.Equal(t, "Hello", docs[0].Content)
 	})
 }
@@ -594,7 +594,7 @@ func TestCursorOperations(t *testing.T) {
 		loaded := indexer.loadCursor()
 
 		assert.Equal(t, int64(0), loaded.LastCreateAt)
-		assert.Equal(t, "", loaded.LastID)
+		assert.Empty(t, loaded.LastID)
 	})
 
 	t.Run("save cursor error is logged", func(t *testing.T) {
@@ -2957,7 +2957,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 
 		// Should only have indexed posts after the cursor (post06-post09)
 		// Not post00-post05 which were already processed
-		assert.Equal(t, 4, len(indexedPosts), "Should only index posts after cursor position")
+		assert.Len(t, indexedPosts, 4, "Should only index posts after cursor position")
 		for _, postID := range indexedPosts {
 			assert.True(t, postID >= "post06", "Should not re-index posts before cursor: %s", postID)
 		}
@@ -3018,7 +3018,7 @@ func TestResumeFromCheckpoint(t *testing.T) {
 		indexer.runReindexJob(jobStatus, false, nil)
 
 		assert.Equal(t, JobStatusCompleted, jobStatus.Status)
-		assert.Equal(t, 5, len(indexedPosts), "Should index all posts when no cursor exists")
+		assert.Len(t, indexedPosts, 5, "Should index all posts when no cursor exists")
 	})
 
 	t.Run("saves cursor on failure for later resume", func(t *testing.T) {
