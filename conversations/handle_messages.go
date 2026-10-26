@@ -331,9 +331,7 @@ func (c *Conversations) handleMentionViaConversation(
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
 	llmContext.ResponsePostID = responsePost.Id
-	if turn := llmContext.ToolCatalog.ScopedTurn; turn != nil {
-		turn.ConversationID = convResult.Conversation.ID
-	}
+	llmContext.SetScopedTurnConversation(convResult.Conversation.ID)
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -416,7 +414,11 @@ func (c *Conversations) existingThreadConversationID(bot *bots.Bot, user *model.
 		return ""
 	}
 	conv, err := c.convService.GetConversationByThread(rootID, bot.GetMMBot().UserId, user.Id)
-	if err != nil || conv == nil {
+	if err != nil {
+		c.mmClient.LogWarn("Failed to look up the thread's conversation for a scoped turn", "root_id", rootID, "error", err.Error())
+		return ""
+	}
+	if conv == nil {
 		return ""
 	}
 	return conv.ID

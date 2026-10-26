@@ -302,6 +302,8 @@ func TestScopedChannelTurnAutoRunsTools(t *testing.T) {
 		grants := env.auditRecords(audit.EventAgentScopedSessionGrant)
 		require.Len(t, grants, 1)
 		assert.Equal(t, scopedUserID, grants[0].Actor.UserId)
+		assert.Equal(t, allConversations(env.convStore)[0].ID, grants[0].EventData.Parameters[audit.KeyConversationID],
+			"the first turn's grant names the conversation created after the context")
 		calls := env.auditRecords(audit.EventAgentScopedToolCall)
 		require.Len(t, calls, 1)
 		assert.Equal(t, scopedUserID, calls[0].Actor.UserId, "the record names the human who triggered the run")

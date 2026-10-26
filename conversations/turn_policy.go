@@ -337,6 +337,7 @@ func (p *turnPolicy) scopedTurn() llm.ScopedTurn {
 	} else {
 		turn.ConversationID = p.c.existingThreadConversationID(p.bot, p.user, turn.ThreadRootID)
 	}
+	turn.ConversationPending = turn.ConversationID == ""
 	return turn
 }
 
