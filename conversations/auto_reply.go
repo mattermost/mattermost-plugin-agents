@@ -52,12 +52,20 @@ func (c *Conversations) autoReplySettingForChannel(channel *model.Channel) *auto
 // MessageHasBeenPosted logs them at debug, not error, level.
 func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.Setting, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	// Mode gate: root_posts fires only for top-level posts, ambient_threads
-	// only for thread replies; threads and ambient fire for both.
-	if setting.Mode == autoreply.ModeRootPosts && post.RootId != "" {
-		return fmt.Errorf("auto-reply mode root_posts ignores thread replies: %w", ErrNoResponse)
-	}
-	if setting.Mode == autoreply.ModeAmbientThreads && post.RootId == "" {
-		return fmt.Errorf("auto-reply mode ambient_threads ignores top-level posts: %w", ErrNoResponse)
+	// only for thread replies; threads and ambient fire for both. A mode this
+	// version does not know never replies.
+	switch setting.Mode {
+	case autoreply.ModeRootPosts:
+		if post.RootId != "" {
+			return fmt.Errorf("auto-reply mode root_posts ignores thread replies: %w", ErrNoResponse)
+		}
+	case autoreply.ModeAmbientThreads:
+		if post.RootId == "" {
+			return fmt.Errorf("auto-reply mode ambient_threads ignores top-level posts: %w", ErrNoResponse)
+		}
+	case autoreply.ModeThreads, autoreply.ModeAmbient:
+	default:
+		return fmt.Errorf("unknown auto-reply mode %q: %w", setting.Mode, ErrNoResponse)
 	}
 
 	// Re-check the license at trigger time; fail closed on a nil checker.

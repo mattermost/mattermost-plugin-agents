@@ -538,6 +538,54 @@ func TestServiceLoadCache(t *testing.T) {
 	require.False(t, ok)
 }
 
+// TestServiceUnknownModeIsNotServed covers rows written by a newer plugin
+// version: a mode this version cannot store must never reach the cache.
+func TestServiceUnknownModeIsNotServed(t *testing.T) {
+	dbClient := testDB(t)
+
+	tests := []struct {
+		name string
+		load func(t *testing.T, svc *Service, channelID string)
+	}{
+		{
+			name: "LoadCache skips the row",
+			load: func(t *testing.T, svc *Service, _ string) {
+				require.NoError(t, svc.LoadCache())
+			},
+		},
+		{
+			name: "RefreshChannel evicts a previously cached setting",
+			load: func(t *testing.T, svc *Service, channelID string) {
+				svc.cache[channelID] = Setting{ChannelID: channelID, BotID: model.NewId(), Mode: ModeThreads}
+				require.NoError(t, svc.RefreshChannel(channelID))
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewStore(dbClient)
+			unknown := Setting{ChannelID: model.NewId(), BotID: model.NewId(), Mode: Mode("ambient_v2"), UpdatedBy: model.NewId(), UpdateAt: 100}
+			known := Setting{ChannelID: model.NewId(), BotID: model.NewId(), Mode: ModeAmbient, UpdatedBy: model.NewId(), UpdateAt: 100}
+			require.NoError(t, store.Set(unknown))
+			require.NoError(t, store.Set(known))
+
+			mmClient := mocks.NewMockClient(t)
+			mmClient.EXPECT().LogWarn(mock.Anything, []any{"channel_id", unknown.ChannelID, "mode", "ambient_v2"}).Once()
+			svc := newTestService(t, dbClient, &recordingNotifier{}, mmClient, nil)
+
+			tc.load(t, svc, unknown.ChannelID)
+
+			_, ok := svc.GetCached(unknown.ChannelID)
+			require.False(t, ok, "a row with an unknown mode must not be served")
+			require.NoError(t, svc.RefreshChannel(known.ChannelID))
+			cached, ok := svc.GetCached(known.ChannelID)
+			require.True(t, ok)
+			require.Equal(t, known, cached)
+		})
+	}
+}
+
 // TestServiceGetCachedDoesNotHitDB pins the hot-path contract as behavior:
 // after LoadCache, cached reads must keep working even when the database is
 // gone.

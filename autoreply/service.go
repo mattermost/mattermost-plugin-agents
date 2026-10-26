@@ -84,7 +84,9 @@ func (s *Service) LoadCache() error {
 
 	cache := make(map[string]Setting, len(settings))
 	for _, setting := range settings {
-		cache[setting.ChannelID] = setting
+		if s.servable(setting) {
+			cache[setting.ChannelID] = setting
+		}
 	}
 
 	s.mu.Lock()
@@ -201,15 +203,28 @@ func (s *Service) RefreshChannel(channelID string) error {
 		return err
 	}
 
+	servable := setting != nil && s.servable(*setting)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if setting == nil {
+	if !servable {
 		delete(s.cache, channelID)
 		return nil
 	}
 	s.cache[channelID] = *setting
 
 	return nil
+}
+
+// servable reports whether a stored row may be served from the cache. Rows
+// with a mode this version cannot store (written by a newer plugin version)
+// are never served, so they cannot trigger replies.
+func (s *Service) servable(setting Setting) bool {
+	if setting.Mode.IsStorable() {
+		return true
+	}
+	s.mmClient.LogWarn("Ignoring channel auto-reply setting with an unknown mode", "channel_id", setting.ChannelID, "mode", string(setting.Mode))
+	return false
 }
 
 // notifyPeers broadcasts the invalidation and logs on failure. A failed

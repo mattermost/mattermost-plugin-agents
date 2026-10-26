@@ -160,6 +160,23 @@ func TestAmbientAutoReply(t *testing.T) {
 			expectReminder: true,
 		},
 		{
+			name:           "an unknown stored mode never replies or classifies",
+			mode:           autoreply.Mode("ambient_v2"),
+			classifierJSON: trueJSON,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.rootPost(autoReplyUserID, "need help with billing")
+			},
+		},
+		{
+			name:           "an unknown stored mode on a thread reply still shows the reminder",
+			mode:           autoreply.Mode("ambient_v2"),
+			classifierJSON: trueJSON,
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.threadReply(autoReplyUserID, "and the invoice?", true)
+			},
+			expectReminder: true,
+		},
+		{
 			name: "threads mode skips the classifier",
 			mode: autoreply.ModeThreads,
 			buildPost: func(env *autoReplyTestEnv) *model.Post {
@@ -287,6 +304,7 @@ func TestAmbientAutoReply(t *testing.T) {
 				require.Len(t, env.mmClient.createdPosts, 1, "expected the auto-reply to fire")
 			} else {
 				require.Empty(t, env.mmClient.createdPosts, "expected no auto-reply")
+				require.Empty(t, env.llm.requests, "expected no reply LLM call")
 			}
 			require.Empty(t, env.mmClient.loggedErrors(), "classifier failures must be fail-closed")
 			if tc.expectReminder {
