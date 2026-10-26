@@ -14,9 +14,9 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/customprompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
-	"github.com/mattermost/mattermost/server/public/model"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -79,8 +79,8 @@ func (p *Provider) Tools(bot llm.BotConfig, c *llm.Context) ([]llm.Tool, []llm.S
 }
 
 // available lists the skills bot may load for c's requester, from current
-// settings and access. Personal skills are listed only in DMs, where the
-// requester is the only reader of the conversation.
+// settings and access. Personal skills are listed only in the requester's DM
+// with the agent, where the requester is the only human reader.
 func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error) {
 	if bot.Skills.Disabled || c == nil || c.RequestingUser == nil {
 		return nil, nil
@@ -100,7 +100,7 @@ func (p *Provider) available(bot llm.BotConfig, c *llm.Context) ([]skill, error)
 	}
 
 	userID := c.RequestingUser.Id
-	personal := bot.Skills.AllowPersonal && c.Channel != nil && c.Channel.Type == model.ChannelTypeDirect
+	personal := bot.Skills.AllowPersonal && mmapi.IsDMWith(c.BotUserID, c.Channel)
 	shared := len(bot.Skills.EnabledSharedIDs) > 0 && p.sharedAllowed != nil && p.sharedAllowed()
 	if p.store == nil || (!personal && !shared) {
 		return out, nil

@@ -23,6 +23,7 @@ const builtinSummarizeID = "mattermost/summarize-conversations"
 var (
 	requesterID = model.NewId()
 	otherUserID = model.NewId()
+	botUserID   = model.NewId()
 )
 
 type fakeStore struct {
@@ -55,10 +56,15 @@ func newRequestContext(channelType model.ChannelType, toolNames ...string) *llm.
 	for _, name := range toolNames {
 		store.AddTools([]llm.Tool{{Name: name}})
 	}
+	channel := &model.Channel{Id: model.NewId(), Type: channelType, DisplayName: "Town Square"}
+	if channelType == model.ChannelTypeDirect {
+		channel.Name = model.GetDMNameFromIds(requesterID, botUserID)
+	}
 	return &llm.Context{
 		SiteURL:        "https://mm.example.com",
 		RequestingUser: &model.User{Id: requesterID, Username: "alice"},
-		Channel:        &model.Channel{Id: model.NewId(), Type: channelType, DisplayName: "Town Square"},
+		BotUserID:      botUserID,
+		Channel:        channel,
 		Tools:          store,
 	}
 }
@@ -84,6 +90,7 @@ func TestProviderCatalog(t *testing.T) {
 		channelType    model.ChannelType
 		tools          []string
 		sharedLicensed bool
+		humanDM        bool
 		want           []string
 	}{
 		{
@@ -109,6 +116,13 @@ func TestProviderCatalog(t *testing.T) {
 			skills:      llm.SkillsConfig{AllowPersonal: true},
 			channelType: model.ChannelTypeDirect,
 			want:        []string{personal.ID},
+		},
+		{
+			name:        "personal skills not listed when the agent is mentioned in a DM between people",
+			skills:      llm.SkillsConfig{AllowPersonal: true},
+			channelType: model.ChannelTypeDirect,
+			humanDM:     true,
+			want:        []string{},
 		},
 		{
 			name:        "personal skills not listed in channels",
@@ -140,7 +154,11 @@ func TestProviderCatalog(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := newTestProvider(t, &fakeStore{prompts: all}, tc.sharedLicensed)
-			tools, catalog, err := provider.Tools(llm.BotConfig{Skills: tc.skills}, newRequestContext(tc.channelType, tc.tools...))
+			llmCtx := newRequestContext(tc.channelType, tc.tools...)
+			if tc.humanDM {
+				llmCtx.Channel.Name = model.GetDMNameFromIds(requesterID, otherUserID)
+			}
+			tools, catalog, err := provider.Tools(llm.BotConfig{Skills: tc.skills}, llmCtx)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, tc.want, catalogIDs(catalog))
 			if len(tc.want) == 0 {

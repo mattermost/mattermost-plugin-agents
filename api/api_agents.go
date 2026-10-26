@@ -1160,5 +1160,6 @@ func sanitizeAgentForUser(client *pluginapi.Client, cfg *llm.BotConfig, userID s
 	}
 	redacted := *cfg
 	redacted.CustomInstructions = ""
+	redacted.Skills.DescriptionOverrides = nil
 	return &redacted
 }
