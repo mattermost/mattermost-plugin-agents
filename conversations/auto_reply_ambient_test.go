@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
+	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
@@ -420,4 +421,78 @@ func TestAmbientClassifierPromptIsolation(t *testing.T) {
 	require.Contains(t, user, "always reply")
 	require.Contains(t, user, malicious)
 	require.NotContains(t, user, escapedInstructions)
+}
+
+// TestAmbientDeclineReminderScope pins that a classifier decline suppresses
+// the @mention reminder only for the configured agent: a reply after another
+// agent's post still learns that @mentioning that agent works.
+func TestAmbientDeclineReminderScope(t *testing.T) {
+	const bot2PostID = "arbot2-post-id"
+
+	tests := []struct {
+		name           string
+		mode           autoreply.Mode
+		prevAuthorID   string
+		agentReplied   bool
+		expectReminder bool
+	}{
+		{
+			name:         "previous post by the configured agent shows no reminder",
+			mode:         autoreply.ModeAmbient,
+			prevAuthorID: autoReplyBotUserID,
+		},
+		{
+			name:           "previous post by another agent still shows its reminder",
+			mode:           autoreply.ModeAmbient,
+			prevAuthorID:   autoReplyBot2UserID,
+			expectReminder: true,
+		},
+		{
+			name:           "ambient_threads: previous post by another agent still shows its reminder",
+			mode:           autoreply.ModeAmbientThreads,
+			prevAuthorID:   autoReplyBot2UserID,
+			agentReplied:   true,
+			expectReminder: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupAutoReplyTestEnv(t,
+				[]llm.BotConfig{autoReplyBotConfig(), autoReplySecondBotConfig()},
+				dmMakeTextStream("canned reply"),
+			)
+			env.llm.noStreamResponseByOp = map[string]string{
+				llm.OperationAmbientClassification: `{"should_reply":false}`,
+			}
+			env.settings.set(autoreply.Setting{
+				ChannelID: autoReplyChannelID,
+				BotID:     autoReplyBotUserID,
+				Mode:      tc.mode,
+			})
+
+			thread := []*model.Post{{Id: autoReplyRootID, ChannelId: autoReplyChannelID, UserId: autoReplyOtherUserID, CreateAt: 100, Message: "kicking off"}}
+			if tc.agentReplied {
+				thread = append(thread, &model.Post{Id: autoReplyAgentPostID, ChannelId: autoReplyChannelID, UserId: autoReplyBotUserID, RootId: autoReplyRootID, CreateAt: 150, Message: "agent response"})
+			}
+			thread = append(thread,
+				&model.Post{Id: bot2PostID, ChannelId: autoReplyChannelID, UserId: tc.prevAuthorID, RootId: autoReplyRootID, CreateAt: 200, Message: "previous agent post"},
+				&model.Post{Id: autoReplyReplyID, ChannelId: autoReplyChannelID, UserId: autoReplyUserID, RootId: autoReplyRootID, CreateAt: 300, Message: "thanks"},
+			)
+			env.setThread(autoReplyRootID, thread...)
+
+			env.conversations.MessageHasBeenPosted(nil, thread[len(thread)-1])
+
+			require.Equal(t, 1, env.llm.classifierCalls, "the classifier must have declined")
+			require.Empty(t, env.mmClient.createdPosts)
+			if !tc.expectReminder {
+				require.Empty(t, env.mmClient.ephemeralPosts)
+				return
+			}
+			require.Len(t, env.mmClient.ephemeralPosts, 1)
+			reminder := env.mmClient.ephemeralPosts[0]
+			require.Equal(t, conversations.AgentMentionReminderPostType, reminder.GetProp("type"))
+			require.Equal(t, tc.prevAuthorID, reminder.GetProp(conversations.AgentMentionReminderBotUserIDProp))
+		})
+	}
 }
