@@ -356,6 +356,37 @@ func TestHandleSaveConfig(t *testing.T) {
 			},
 		},
 		{
+			name:           "saves the number of agent versions to keep",
+			requestBody:    config.Config{AgentVersionsToKeep: 25},
+			expectedStatus: http.StatusOK,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				require.NotNil(t, store.cfg)
+				assert.Equal(t, 25, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				require.NotNil(t, updater.lastUpdate)
+				assert.Equal(t, 25, updater.lastUpdate.AgentVersionsToKeep)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 1, notifier.callCount)
+			},
+		},
+		{
+			name:           "rejects a negative number of agent versions to keep",
+			storedCfg:      &config.Config{AgentVersionsToKeep: 10},
+			requestBody:    config.Config{AgentVersionsToKeep: -1},
+			expectedStatus: http.StatusBadRequest,
+			validateStore: func(t *testing.T, store *testConfigStore) {
+				assert.Equal(t, 10, store.cfg.AgentVersionsToKeep)
+			},
+			validateUpdater: func(t *testing.T, updater *testConfigUpdater) {
+				assert.Equal(t, 0, updater.callCount)
+			},
+			validateClusterNotify: func(t *testing.T, notifier *testClusterNotifier) {
+				assert.Equal(t, 0, notifier.callCount)
+			},
+		},
+		{
 			name:           "saves empty config",
 			requestBody:    config.Config{},
 			expectedStatus: http.StatusOK,

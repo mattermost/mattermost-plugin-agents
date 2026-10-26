@@ -23,6 +23,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
 	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi/cluster"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -52,6 +53,8 @@ type Conversations struct {
 	meetingsService   MeetingsService
 	configProvider    ConfigProvider
 	toolPolicyChecker mcp.ToolPolicyChecker
+	wakeScheduler     WakeScheduler
+	mutexAPI          cluster.MutexPluginAPI
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
 }
@@ -181,7 +184,7 @@ func (c *Conversations) createOrGetDMConversation(
 		return &DMConversationResult{ConversationID: result.ConversationID, IsNew: true, UserTurnID: result.UserTurnID}, nil
 	}
 
-	result, err := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	result, err := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    sessionID,
 		BotID:        botID,

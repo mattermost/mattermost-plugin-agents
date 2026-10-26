@@ -257,7 +257,12 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 		return nil, errors.New("post missing conversation_id for regeneration")
 	}
 
+	// Regen truncates the request at the originating user message, so a
+	// steering note would never reach the model: cancel without one.
+	c.cancelThreadWake(responsePostMarkerKey(post))
+
 	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	llmContext.ResponsePostID = post.Id
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.
 	// AllowUnsharedToolContent on DMs is a no-op (DM tool_results are shared)

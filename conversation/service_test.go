@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1551,6 +1552,295 @@ func TestBuildChannelMentionRequest_StopsAtCurrentUserTurn(t *testing.T) {
 	for _, post := range req.Posts {
 		assert.NotContains(t, post.Message, "Thinking...")
 		assert.NotContains(t, post.Message, "this happened after the mention")
+	}
+}
+
+func TestBuildChannelMentionRequest_PostLessUserTurnsFollowThreadChronology(t *testing.T) {
+	type turnSpec struct {
+		role      string
+		text      string
+		postID    string
+		createdAt int64
+	}
+	type postSpec struct {
+		id       string
+		bot      bool
+		createAt int64
+		message  string
+	}
+
+	// Every case shares a first exchange: the requester's mention and the
+	// agent's reply.
+	baseTurns := []turnSpec{
+		{role: "user", text: "MENTION", postID: "mention", createdAt: 1000},
+		{role: "assistant", text: "REPLY", postID: "reply", createdAt: 1100},
+	}
+	basePosts := []postSpec{
+		{id: "mention", createAt: 1000, message: "MENTION"},
+		{id: "reply", bot: true, createAt: 1050, message: "REPLY"},
+	}
+
+	tests := []struct {
+		name        string
+		turns       []turnSpec
+		posts       []postSpec
+		responseID  string
+		wantOrder   []string
+		wantMissing []string
+	}{
+		{
+			name:  "wake turn follows posts made while the agent slept and skips the wake placeholder",
+			turns: []turnSpec{{role: "user", text: "WAKE", createdAt: 5000}},
+			posts: []postSpec{
+				{id: "peer1", createAt: 2000, message: "PEER_ONE"},
+				{id: "peer2", createAt: 3000, message: "PEER_TWO"},
+				{id: "wake_placeholder", bot: true, createAt: 4999, message: "PLACEHOLDER_TEXT"},
+			},
+			responseID:  "wake_placeholder",
+			wantOrder:   []string{"REPLY", "PEER_ONE", "PEER_TWO", "WAKE"},
+			wantMissing: []string{"PLACEHOLDER_TEXT"},
+		},
+		{
+			name: "earlier wake stays before the post that answered it",
+			turns: []turnSpec{
+				{role: "user", text: "WAKE_ONE", createdAt: 5000},
+				{role: "assistant", text: "WAKE_ONE_TOOL_ROUND", createdAt: 5010},
+				{role: "assistant", text: "WAKE_ONE_REPLY", postID: "wake_reply", createdAt: 5020},
+				{role: "user", text: "WAKE_TWO", createdAt: 9000},
+			},
+			posts: []postSpec{
+				{id: "peer_a", createAt: 2000, message: "PEER_A"},
+				// The answer's post predates its wake turn, as when the
+				// placeholder is created first.
+				{id: "wake_reply", bot: true, createAt: 4999, message: "WAKE_ONE_REPLY"},
+				{id: "peer_b", createAt: 6000, message: "PEER_B"},
+				{id: "wake2_placeholder", bot: true, createAt: 8999},
+			},
+			responseID: "wake2_placeholder",
+			wantOrder:  []string{"REPLY", "PEER_A", "WAKE_ONE", "WAKE_ONE_TOOL_ROUND", "WAKE_ONE_REPLY", "PEER_B", "WAKE_TWO"},
+		},
+		{
+			name: "steering note follows the new message in a live turn",
+			turns: []turnSpec{
+				{role: "user", text: "SECOND_MESSAGE", postID: "second", createdAt: 3000},
+				{role: "user", text: "STEERED_NOTE", createdAt: 3001},
+			},
+			posts: []postSpec{
+				{id: "peer1", createAt: 2000, message: "PEER_ONE"},
+				{id: "second", createAt: 2999, message: "SECOND_MESSAGE"},
+				{id: "live_placeholder", bot: true, createAt: 3000, message: "PLACEHOLDER_TEXT"},
+			},
+			wantOrder:   []string{"REPLY", "PEER_ONE", "SECOND_MESSAGE", "STEERED_NOTE"},
+			wantMissing: []string{"PLACEHOLDER_TEXT"},
+		},
+		{
+			name: "steering note stays before the reply it preceded on later turns",
+			turns: []turnSpec{
+				{role: "user", text: "SECOND_MESSAGE", postID: "second", createdAt: 3000},
+				{role: "user", text: "STEERED_NOTE", createdAt: 3001},
+				{role: "assistant", text: "SECOND_REPLY", postID: "second_reply", createdAt: 3100},
+			},
+			posts: []postSpec{
+				{id: "second", createAt: 2999, message: "SECOND_MESSAGE"},
+				{id: "second_reply", bot: true, createAt: 3000, message: "SECOND_REPLY"},
+			},
+			wantOrder: []string{"REPLY", "SECOND_MESSAGE", "STEERED_NOTE", "SECOND_REPLY"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			botID := model.NewId()
+			userID := model.NewId()
+			peerID := model.NewId()
+			rootPostID := "mention"
+
+			conv := &store.Conversation{
+				ID: model.NewId(), UserID: userID, BotID: botID, RootPostID: &rootPostID,
+				SystemPrompt: "system", Operation: "conversation",
+			}
+			require.NoError(t, s.CreateConversation(conv))
+			for i, spec := range append(slices.Clone(baseTurns), tt.turns...) {
+				content, err := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: spec.text}})
+				require.NoError(t, err)
+				turn := &store.Turn{
+					ID: model.NewId(), ConversationID: conv.ID, Role: spec.role,
+					Content: content, Sequence: i + 1, CreatedAt: spec.createdAt,
+				}
+				if spec.postID != "" {
+					turn.PostID = new(spec.postID)
+				}
+				require.NoError(t, s.CreateTurn(turn))
+			}
+
+			var posts []*model.Post
+			for _, spec := range append(slices.Clone(basePosts), tt.posts...) {
+				author := peerID
+				switch {
+				case spec.bot:
+					author = botID
+				case strings.Contains(spec.message, "MENTION") || strings.Contains(spec.message, "SECOND_MESSAGE"):
+					author = userID
+				}
+				posts = append(posts, &model.Post{Id: spec.id, UserId: author, CreateAt: spec.createAt, Message: spec.message})
+			}
+			slices.SortStableFunc(posts, func(a, b *model.Post) int { return int(a.CreateAt - b.CreateAt) })
+			threadData := &mmapi.ThreadData{
+				Posts: posts,
+				UsersByID: map[string]*model.User{
+					userID: {Id: userID, Username: "alice"},
+					peerID: {Id: peerID, Username: "mallory"},
+					botID:  {Id: botID, Username: "aibot"},
+				},
+			}
+			svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+			req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData, BuildOptions{ResponsePostID: tt.responseID})
+			require.NoError(t, err)
+
+			var rendered []string
+			for _, post := range req.Posts[1:] {
+				rendered = append(rendered, post.Message)
+			}
+			last := -1
+			for _, marker := range tt.wantOrder {
+				idx := slices.IndexFunc(rendered, func(msg string) bool { return strings.HasSuffix(msg, marker) })
+				require.GreaterOrEqual(t, idx, 0, "%q missing from %q", marker, rendered)
+				require.Greater(t, idx, last, "%q out of order in %q", marker, rendered)
+				last = idx
+			}
+			for _, marker := range tt.wantMissing {
+				require.NotContains(t, strings.Join(rendered, "\n"), marker)
+			}
+		})
+	}
+}
+
+func TestBuildChannelMentionRequest_SkipThreadPostsAfterLatestUserTurn(t *testing.T) {
+	type postSpec struct {
+		id       string
+		createAt int64
+		updateAt int64
+	}
+	const (
+		anchorID = "mention"
+		anchorAt = int64(1000)
+	)
+
+	tests := []struct {
+		name        string
+		skip        bool
+		anchorGone  bool
+		peers       []postSpec
+		wantPeers   []string
+		wantMissing []string
+	}{
+		{
+			name:        "post created after the latest user turn is dropped",
+			skip:        true,
+			peers:       []postSpec{{id: "PEER_AFTER", createAt: 3000, updateAt: 3000}},
+			wantMissing: []string{"PEER_AFTER"},
+		},
+		{
+			name:      "post created before the latest user turn is kept",
+			skip:      true,
+			peers:     []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}},
+			wantPeers: []string{"PEER_BEFORE"},
+		},
+		{
+			name:        "post created at the latest user turn's time is kept, later edits drop it",
+			skip:        true,
+			peers:       []postSpec{{id: "PEER_SAME", createAt: anchorAt, updateAt: anchorAt}, {id: "PEER_EDITED", createAt: 500, updateAt: 3000}},
+			wantPeers:   []string{"PEER_SAME"},
+			wantMissing: []string{"PEER_EDITED"},
+		},
+		{
+			name:        "every non-turn post is dropped when the latest user turn's post is gone",
+			skip:        true,
+			anchorGone:  true,
+			peers:       []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}, {id: "PEER_AFTER", createAt: 3000, updateAt: 3000}},
+			wantMissing: []string{"PEER_BEFORE", "PEER_AFTER"},
+		},
+		{
+			name:      "later posts are included when the option is off",
+			skip:      false,
+			peers:     []postSpec{{id: "PEER_BEFORE", createAt: 500, updateAt: 500}, {id: "PEER_AFTER", createAt: 3000, updateAt: 3000}, {id: "PEER_EDITED", createAt: 600, updateAt: 3500}},
+			wantPeers: []string{"PEER_BEFORE", "PEER_AFTER", "PEER_EDITED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, s := setupTestService(t)
+			botID := model.NewId()
+			userID := model.NewId()
+			peerID := model.NewId()
+			rootPostID := anchorID
+
+			conv := &store.Conversation{
+				ID: model.NewId(), UserID: userID, BotID: botID, RootPostID: &rootPostID,
+				SystemPrompt: "system", Operation: "conversation",
+			}
+			require.NoError(t, s.CreateConversation(conv))
+			for i, spec := range []struct{ role, text, postID string }{
+				{"user", "MENTION", anchorID},
+				{"assistant", "REPLY", "reply"},
+				{"user", "WAKE", ""},
+			} {
+				content, err := json.Marshal([]ContentBlock{{Type: BlockTypeText, Text: spec.text}})
+				require.NoError(t, err)
+				turn := &store.Turn{ID: model.NewId(), ConversationID: conv.ID, Role: spec.role, Content: content, Sequence: i + 1, CreatedAt: anchorAt + int64(i)*2000}
+				if spec.postID != "" {
+					turn.PostID = new(spec.postID)
+				}
+				require.NoError(t, s.CreateTurn(turn))
+			}
+
+			posts := []*model.Post{
+				{Id: anchorID, UserId: userID, CreateAt: anchorAt, UpdateAt: anchorAt, Message: "MENTION"},
+				{Id: "reply", UserId: botID, CreateAt: 2000, UpdateAt: 2000, Message: "REPLY"},
+			}
+			if tt.anchorGone {
+				posts = posts[1:]
+			}
+			for _, peer := range tt.peers {
+				posts = append(posts, &model.Post{Id: peer.id, UserId: peerID, CreateAt: peer.createAt, UpdateAt: peer.updateAt, Message: peer.id})
+			}
+			slices.SortStableFunc(posts, func(a, b *model.Post) int { return int(a.CreateAt - b.CreateAt) })
+			threadData := &mmapi.ThreadData{
+				Posts: posts,
+				UsersByID: map[string]*model.User{
+					userID: {Id: userID, Username: "alice"},
+					peerID: {Id: peerID, Username: "mallory"},
+					botID:  {Id: botID, Username: "bot"},
+				},
+			}
+			svc.bots = &testBotLookup{botUserIDs: map[string]bool{botID: true}}
+
+			req, err := svc.BuildChannelMentionRequest(conv, &llm.Context{}, threadData,
+				BuildOptions{SkipThreadPostsAfterLatestUserTurn: tt.skip})
+			require.NoError(t, err)
+
+			var rendered strings.Builder
+			for _, post := range req.Posts {
+				rendered.WriteString(post.Message)
+				rendered.WriteString("\n")
+			}
+			// Post-linked turns and the post-less wake turn always render.
+			for _, always := range []string{"REPLY", "WAKE"} {
+				assert.Contains(t, rendered.String(), always)
+			}
+			if !tt.anchorGone {
+				assert.Contains(t, rendered.String(), "MENTION")
+			}
+			for _, peer := range tt.wantPeers {
+				assert.Contains(t, rendered.String(), peer)
+			}
+			for _, peer := range tt.wantMissing {
+				assert.NotContains(t, rendered.String(), peer)
+			}
+		})
 	}
 }
 

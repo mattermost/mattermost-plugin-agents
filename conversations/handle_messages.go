@@ -298,7 +298,7 @@ func (c *Conversations) handleMentionViaConversation(
 	}
 
 	userPostID := post.Id
-	convResult, convErr := c.convService.GetOrCreateConversation(conversation.GetOrCreateParams{
+	convResult, convErr := c.getOrCreateConversation(conversation.GetOrCreateParams{
 		UserID:       postingUser.Id,
 		SessionID:    auth.SessionIDFromContext(ctx),
 		BotID:        bot.GetMMBot().UserId,
@@ -317,6 +317,7 @@ func (c *Conversations) handleMentionViaConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.Conversation.ID,
@@ -459,6 +460,7 @@ func (c *Conversations) streamDMConversation(
 	if updateErr := c.mmClient.UpdatePost(responsePost); updateErr != nil {
 		return fmt.Errorf("failed to attach conversation to response placeholder: %w", updateErr)
 	}
+	llmContext.ResponsePostID = responsePost.Id
 
 	ctx, runSpan := c.startAgentRunSpan(ctx, agentRunInfo{
 		convID:     convResult.ConversationID,

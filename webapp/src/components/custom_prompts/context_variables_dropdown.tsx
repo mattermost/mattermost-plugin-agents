@@ -51,13 +51,18 @@ function useTemplateVariables(): TemplateVariable[] {
 
 interface Props {
     onSelect: (variable: string) => void;
+    open: boolean;
+    onExited: () => void;
 }
 
-const ContextVariablesDropdown = ({onSelect}: Props) => {
+const ContextVariablesDropdown = ({onSelect, open, onExited}: Props) => {
     const variables = useTemplateVariables();
 
     return (
-        <Menu>
+        <Menu
+            open={open}
+            onExited={onExited}
+        >
             <PopoverMenuTitle>
                 <FormattedMessage defaultMessage='Context Variables'/>
             </PopoverMenuTitle>

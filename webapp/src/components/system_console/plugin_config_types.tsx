@@ -32,4 +32,7 @@ export type PluginConfig = {
     embeddingSearchConfig: EmbeddingSearchConfig,
     mcp: MCPConfig,
     webSearch: WebSearchSettings,
+
+    // Versions of each agent's history to keep; 0 keeps every version.
+    agentVersionsToKeep?: number,
 }
