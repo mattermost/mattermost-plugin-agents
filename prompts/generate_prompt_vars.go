@@ -50,11 +50,18 @@ func main() {
 	}
 }
 
+// initialisms are kept all caps so generated names satisfy Go naming lint.
+var initialisms = map[string]bool{"ui": true}
+
 func toCamelCase(s string) string {
 	words := strings.FieldsFunc(s, func(r rune) bool {
 		return r == '_' || r == '-'
 	})
 	for i, word := range words {
+		if initialisms[strings.ToLower(word)] {
+			words[i] = strings.ToUpper(word)
+			continue
+		}
 		words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
 	}
 	return strings.Join(words, "")
