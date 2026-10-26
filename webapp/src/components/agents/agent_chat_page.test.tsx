@@ -91,7 +91,7 @@ interface StateOptions {
     loadedChannels?: string[];
     currentTeamId?: string;
     teamMembers?: string[];
-    posts?: Record<string, {id: string; channel_id: string; root_id: string}>;
+    posts?: Record<string, {id: string; channel_id: string; root_id: string; reply_count?: number}>;
 }
 
 // Minimal reducer covering only the slices and host action types the page touches.
@@ -118,6 +118,8 @@ const makeStore = ({bots, loadedChannels = [], currentTeamId = 'team1', teamMemb
             return {...state, entities: {...state.entities, channels: {...state.entities.channels, channels: {...state.entities.channels.channels, [action.data.id]: action.data}}}};
         case 'RECEIVED_MY_CHANNEL_MEMBER':
             return {...state, entities: {...state.entities, channels: {...state.entities.channels, myMembers: {...state.entities.channels.myMembers, [action.data.channel_id]: action.data}}}};
+        case 'TEST_RECEIVED_POST':
+            return {...state, entities: {...state.entities, posts: {...state.entities.posts, posts: {...state.entities.posts.posts, [action.data.id]: action.data}}}};
         case 'RECEIVED_ROLES': {
             const roles = {...state.entities.roles.roles};
             action.data.forEach((r: {name: string}) => {
@@ -307,7 +309,7 @@ describe('AgentChatPage', () => {
         {name: 'first team fallback', currentTeamId: '', teamMembers: ['teamA', 'teamB'], expected: 'teamA'},
         {name: 'no team: skip', currentTeamId: '', teamMembers: [], expected: null},
     ])('updateRead on open and unmount: $name', async ({currentTeamId, teamMembers, expected}) => {
-        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'dm1', root_id: ''});
+        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'dm1', root_id: '', reply_count: 1});
         const {unmount} = renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1'], currentTeamId, teamMembers}), {rootId: 'r1'});
         await screen.findByTestId('thread-viewer');
 
@@ -322,6 +324,30 @@ describe('AgentChatPage', () => {
         expect(mockUpdateRead).toHaveBeenCalledTimes(2);
     });
 
+    test('a new thread is marked read when the agent\'s first reply arrives, not before', async () => {
+        const store = makeStore({
+            bots: [makeBot('bot1', 'dm1')],
+            loadedChannels: ['dm1'],
+            posts: {r1: {id: 'r1', channel_id: 'dm1', root_id: '', reply_count: 0}},
+        });
+        renderPage(store, {rootId: 'r1'});
+        await screen.findByTestId('thread-viewer');
+
+        // No membership exists yet, so marking now would 404 and leave the reply unread.
+        expect(mockUpdateRead).not.toHaveBeenCalled();
+
+        act(() => {
+            store.dispatch({type: 'TEST_RECEIVED_POST', data: {id: 'r1', channel_id: 'dm1', root_id: '', reply_count: 1}});
+        });
+        expect(mockUpdateRead).toHaveBeenCalledTimes(1);
+        expect(mockUpdateRead).toHaveBeenLastCalledWith('me', 'team1', 'r1', expect.any(Number));
+
+        act(() => {
+            store.dispatch({type: 'TEST_RECEIVED_POST', data: {id: 'r1', channel_id: 'dm1', root_id: '', reply_count: 2}});
+        });
+        expect(mockUpdateRead).toHaveBeenCalledTimes(2);
+    });
+
     test.each([
         {name: 'missing thread membership is tolerated', message: 'User thread membership doesn\'t exist', warns: true},
         {name: 'other errors are logged', message: 'boom', warns: false},
@@ -329,7 +355,7 @@ describe('AgentChatPage', () => {
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => null);
         const error = jest.spyOn(console, 'error').mockImplementation(() => null);
         mockUpdateRead.mockRejectedValue(new Error(message));
-        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'dm1', root_id: ''});
+        mockGetPost.mockResolvedValue({id: 'r1', channel_id: 'dm1', root_id: '', reply_count: 1});
         renderPage(makeStore({bots: [makeBot('bot1', 'dm1')], loadedChannels: ['dm1']}), {rootId: 'r1'});
         await screen.findByTestId('thread-viewer');
 

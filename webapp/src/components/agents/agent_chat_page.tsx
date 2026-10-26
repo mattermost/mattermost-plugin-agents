@@ -236,6 +236,15 @@ const AgentThread = ({channelId, rootId, toAll}: AgentThreadProps) => {
     const store = useStore<GlobalState>();
     const markRead = useMarkThreadRead();
     const [check, setCheck] = useState<ThreadCheck>('loading');
+    const [fetchedReplyCount, setFetchedReplyCount] = useState(0);
+
+    // The host keeps the root's reply_count (and the loaded replies) current as
+    // replies arrive over the websocket.
+    const storeReplyCount = useSelector<GlobalState, number>((state) => Math.max(
+        state.entities.posts.posts[rootId]?.reply_count ?? 0,
+        state.entities.posts.postsInThread?.[rootId]?.length ?? 0,
+    ));
+    const replyCount = Math.max(storeReplyCount, fetchedReplyCount);
 
     useEffect(() => {
         let current = true;
@@ -243,12 +252,14 @@ const AgentThread = ({channelId, rootId, toAll}: AgentThreadProps) => {
 
         // After a submit the host has already put the new post in the store.
         const cached = store.getState().entities.posts.posts[rootId];
+        setFetchedReplyCount(0);
         if (cached) {
             setCheck(isRootInChannel(cached) ? 'valid' : 'invalid');
         } else {
             setCheck('loading');
             getPost(rootId).then((post) => {
                 if (current) {
+                    setFetchedReplyCount(post.reply_count ?? 0);
                     setCheck(isRootInChannel(post) ? 'valid' : 'invalid');
                 }
             }).catch((error: unknown) => {
@@ -263,18 +274,20 @@ const AgentThread = ({channelId, rootId, toAll}: AgentThreadProps) => {
         };
     }, [channelId, rootId, store]);
 
+    // The user's thread membership only exists once the thread has a reply, so
+    // marking a reply-less thread 404s and leaves the agent's first reply unread.
+    // Mark once replies exist, and again whenever another arrives.
+    const canMarkRead = check === 'valid' && replyCount > 0;
     useEffect(() => {
-        if (check === 'valid') {
+        if (canMarkRead) {
             markRead(rootId);
         }
+    }, [canMarkRead, replyCount, markRead, rootId]);
 
-        // The server can lag behind the open; mark again on switch/unmount (as the RHS does).
-        return () => {
-            if (check === 'valid') {
-                markRead(rootId);
-            }
-        };
-    }, [check, markRead, rootId]);
+    // The server can lag behind the open; mark again on switch/unmount (as the RHS does).
+    const markOnLeave = useRef<(() => void) | null>(null);
+    markOnLeave.current = canMarkRead ? () => markRead(rootId) : null;
+    useEffect(() => () => markOnLeave.current?.(), [rootId]);
 
     if (check === 'loading') {
         return <LoadingState/>;

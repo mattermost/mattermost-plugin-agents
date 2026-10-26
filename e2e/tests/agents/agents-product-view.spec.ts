@@ -339,17 +339,26 @@ test.describe('Agents product view', () => {
         await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText('reply sent with enter')).toBeVisible({timeout: 30000});
     });
 
-    // Known product bug (found by this spec): Enter does not send from the
-    // new-chat composer, only the Send button does. Remove test.fail() once fixed.
     test('Enter sends from the new-chat composer', async ({page}) => {
-        test.fail();
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
 
         const textbox = newChatComposer(page).getByRole('textbox');
         await expect(textbox).toBeEnabled({timeout: 30000});
         await textbox.fill('new chat sent with enter');
+
+        // The host editor swallows Enter for 500ms after it mounts for a new root
+        // post (CHANNEL_SWITCH_IGNORE_ENTER_THRESHOLD_MS in post_utils.ts), to avoid
+        // sending into a channel the user just switched to. A human cannot type a
+        // message that fast; a script can, so wait the guard out.
+        await page.waitForTimeout(600);
         await textbox.press('Enter');
+
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+        await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText('new chat sent with enter')).toBeVisible({timeout: 30000});
+
+        // The draft is cleared, so going back to a new chat starts empty.
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+        await expect(newChatComposer(page).getByRole('textbox')).toHaveValue('', {timeout: 30000});
     });
 });
