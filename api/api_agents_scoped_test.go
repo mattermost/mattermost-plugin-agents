@@ -6,6 +6,7 @@ package api
 import (
 	"maps"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
@@ -18,7 +19,8 @@ import (
 
 func TestAgentScopedChannelModeSave(t *testing.T) {
 	publicID, privateID, dmID, archivedID, missingID := model.NewId(), model.NewId(), model.NewId(), model.NewId(), model.NewId()
-	allowlist := []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard}}
+	allowlist := []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: "get_issue"}}
+	wildcard := []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard}}
 
 	tests := []struct {
 		name          string
@@ -76,6 +78,23 @@ func TestAgentScopedChannelModeSave(t *testing.T) {
 			systemAdmin: true,
 			wantStatus:  http.StatusBadRequest,
 			wantErr:     "explicit MCP tool allowlist",
+		},
+		{
+			name:        "it needs every tool named",
+			stored:      llm.BotConfig{UseServiceAccountAuth: true, EnabledMCPTools: allowlist},
+			overrides:   map[string]any{"scopedChannelMode": true, "enabledMCPTools": wildcard},
+			systemAdmin: true,
+			wantStatus:  http.StatusBadRequest,
+			wantErr:     "every MCP tool to be named",
+		},
+		{
+			name:        "an all-tools entry cannot be added to a scoped agent",
+			stored:      llm.BotConfig{UseServiceAccountAuth: true, EnabledMCPTools: allowlist, ScopedChannelMode: true},
+			overrides:   map[string]any{"enabledMCPTools": append(slices.Clone(allowlist), wildcard...)},
+			systemAdmin: true,
+			wantStatus:  http.StatusBadRequest,
+			wantErr:     "every MCP tool to be named",
+			wantScoped:  true,
 		},
 		{
 			name:          "older servers cannot turn it on",
@@ -175,7 +194,7 @@ func TestRestoreAgentVersionKeepsScopedChannelMode(t *testing.T) {
 
 	original := versionTestAgent()
 	original.UseServiceAccountAuth = true
-	original.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: llm.MCPServerToolWildcard}}
+	original.EnabledMCPTools = []llm.EnabledMCPTool{{ServerOrigin: "https://jira.example.com", ToolName: "get_issue"}}
 	original.ScopedChannelMode = true
 	original.ScopedExtraChannelIDs = []string{channelID}
 	seedVersionedAgent(t, e, original, map[string]any{"useServiceAccountAuth": true, "enabledMCPTools": original.EnabledMCPTools})

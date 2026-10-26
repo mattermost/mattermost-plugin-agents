@@ -325,6 +325,9 @@ func (c *BotConfig) Validate() error {
 	if c.ScopedChannelMode && c.AutoEnableNewMCPTools {
 		return errors.New("scopedChannelMode requires an explicit MCP tool allowlist (autoEnableNewMCPTools off)")
 	}
+	if c.ScopedChannelMode && slices.ContainsFunc(c.EnabledMCPTools, func(t EnabledMCPTool) bool { return t.ToolName == MCPServerToolWildcard }) {
+		return errors.New("scopedChannelMode requires every MCP tool to be named in enabledMCPTools; all-tools entries are not allowed")
+	}
 	if len(c.ScopedExtraChannelIDs) > MaxScopedExtraChannels {
 		return fmt.Errorf("scopedExtraChannelIDs exceeds the maximum of %d channels", MaxScopedExtraChannels)
 	}
