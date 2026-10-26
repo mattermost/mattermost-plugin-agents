@@ -13,6 +13,34 @@ type WebsocketListenerObject = {
 type WebsocketListeners = WebsocketListenerObject[]
 type ProgressUpdate = PluginWebSocketMessage<PostUpdateWebsocketMessage> | null;
 
+// Subscribers to every post update, regardless of post ID. index.tsx owns its own
+// PostEventListener instance and the host allows one handler per websocket event,
+// so this registry is module-level: any instance's handler notifies it, and
+// consumers outside the post tree (e.g. the Agents sidebar) need no shared instance.
+const allPostUpdateSubscribers = new Set<WebsocketListener>();
+
+export const subscribeToAllPostUpdates = (callback: WebsocketListener): (() => void) => {
+    allPostUpdateSubscribers.add(callback);
+    return () => {
+        allPostUpdateSubscribers.delete(callback);
+    };
+};
+
+// Tiny pub/sub so the chat page can ask the Agents sidebar to refresh its thread
+// list (with the delayed title retry) after a new chat is submitted.
+const agentThreadsRefreshSubscribers = new Set<() => void>();
+
+export const onAgentThreadsRefreshRequested = (callback: () => void): (() => void) => {
+    agentThreadsRefreshSubscribers.add(callback);
+    return () => {
+        agentThreadsRefreshSubscribers.delete(callback);
+    };
+};
+
+export const requestAgentThreadsRefresh = () => {
+    Array.from(agentThreadsRefreshSubscribers).forEach((callback) => callback());
+};
+
 export default class PostEventListener {
     postUpdateWebsocketListeners: WebsocketListeners = [];
     progressUpdates = new Map<string, ProgressUpdate>();
@@ -37,6 +65,8 @@ export default class PostEventListener {
         }
         this.lifecycleUpdates.set(postID, update);
     };
+
+    public subscribeAll = (callback: WebsocketListener): (() => void) => subscribeToAllPostUpdates(callback);
 
     public registerPostUpdateListener = (postID: string, listenerID: string, listener: WebsocketListener) => {
         this.postUpdateWebsocketListeners.push({postID, listenerID, listener});
@@ -88,5 +118,7 @@ export default class PostEventListener {
                 listenerObject.listener(msg);
             }
         });
+
+        Array.from(allPostUpdateSubscribers).forEach((callback) => callback(msg));
     };
 }

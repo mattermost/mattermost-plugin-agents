@@ -3,7 +3,7 @@
 
 import {PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import {PluginWebSocketMessage} from './types';
-import PostEventListener from './websocket';
+import PostEventListener, {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh} from './websocket';
 
 function message(data: PostUpdateWebsocketMessage): PluginWebSocketMessage<PostUpdateWebsocketMessage> {
     return {data} as PluginWebSocketMessage<PostUpdateWebsocketMessage>;
@@ -71,5 +71,54 @@ describe('PostEventListener progress buffering', () => {
         events.registerPostUpdateListener('post-id', 'listener-id', listener);
 
         expect(listener).not.toHaveBeenCalled();
+    });
+});
+
+describe('PostEventListener subscribeAll', () => {
+    const msg = (postID: string, control?: string) => ({data: {post_id: postID, control}} as PluginWebSocketMessage<PostUpdateWebsocketMessage>);
+
+    test('notifies subscribers for every post, after per-post listeners, until unsubscribed', () => {
+        const events = new PostEventListener();
+        const order: string[] = [];
+        events.registerPostUpdateListener('p1', 'l1', () => order.push('post'));
+        const all = jest.fn(() => order.push('all'));
+        const unsubscribe = events.subscribeAll(all);
+
+        events.handlePostUpdateWebsockets(msg('p1', 'end'));
+        events.handlePostUpdateWebsockets(msg('p2', 'end'));
+        expect(all).toHaveBeenCalledTimes(2);
+        expect(order).toEqual(['post', 'all', 'all']);
+
+        unsubscribe();
+        events.handlePostUpdateWebsockets(msg('p1', 'end'));
+        expect(all).toHaveBeenCalledTimes(2);
+    });
+
+    test('subscribers see events handled by a different instance', () => {
+        const all = jest.fn();
+        const unsubscribe = new PostEventListener().subscribeAll(all);
+        new PostEventListener().handlePostUpdateWebsockets(msg('p9', 'end'));
+        unsubscribe();
+        expect(all).toHaveBeenCalledTimes(1);
+    });
+
+    test('per-post delivery is unchanged', () => {
+        const events = new PostEventListener();
+        const listener = jest.fn();
+        events.registerPostUpdateListener('p1', 'l1', listener);
+        events.handlePostUpdateWebsockets(msg('p1', 'end'));
+        events.handlePostUpdateWebsockets(msg('p2', 'end'));
+        expect(listener).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('agent threads refresh requests', () => {
+    test('notifies subscribers until unsubscribed', () => {
+        const cb = jest.fn();
+        const unsubscribe = onAgentThreadsRefreshRequested(cb);
+        requestAgentThreadsRefresh();
+        unsubscribe();
+        requestAgentThreadsRefresh();
+        expect(cb).toHaveBeenCalledTimes(1);
     });
 });
