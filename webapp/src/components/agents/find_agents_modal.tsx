@@ -184,7 +184,7 @@ const Content = ({onClose}: {onClose: () => void}) => {
                     aria-autocomplete='list'
                     aria-controls={LISTBOX_ID}
                     {...(activeIndex >= 0 && {'aria-activedescendant': optionId(activeIndex)})}
-                    placeholder={intl.formatMessage({defaultMessage: 'Find agents'})}
+                    placeholder={intl.formatMessage({defaultMessage: 'Find agents and chats'})}
                     autoComplete='off'
                     spellCheck={false}
                     maxLength={64}
