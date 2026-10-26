@@ -485,6 +485,9 @@ func (b *Builder) getToolsStoreForUser(ctx stdcontext.Context, c *llm.Context, b
 		mcpTools = filterMCPToolsByDisabledOrigins(mcpTools, c.ToolCatalog.DisabledMCPServerOrigins)
 		mcpTools = filterMCPToolsByPredicate(mcpTools, c.ToolCatalog.KeepMCPTool)
 		if scopedRun != nil {
+			// Scoped turns run their tools without asking, so each one must be
+			// a tool the admin picked by name; a wildcard entry admits none.
+			mcpTools = llm.FilterMCPToolsByExplicitAllowlist(mcpTools, botCfg.EnabledMCPTools)
 			mcpTools = filterMCPToolsByPredicate(mcpTools, mcp.ScopedCatalogAllows)
 			c.ToolsScoped = true
 		}

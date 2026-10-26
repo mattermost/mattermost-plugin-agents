@@ -876,6 +876,16 @@ func FilterMCPToolsByEnabledAllowlist(tools []Tool, allowlist []EnabledMCPTool) 
 	return FilterMCPToolsByAllowlist(tools, mcpToolAllowlist(tools, allowlist))
 }
 
+// FilterMCPToolsByExplicitAllowlist is FilterMCPToolsByEnabledAllowlist
+// without wildcard expansion: an MCP tool passes only when an allowlist entry
+// names it.
+func FilterMCPToolsByExplicitAllowlist(tools []Tool, allowlist []EnabledMCPTool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	return FilterMCPToolsByAllowlist(tools, mcpToolAllowlist(nil, allowlist))
+}
+
 // RetainOnlyMCPTools filters the tool store to only retain MCP tools whose
 // (ServerOrigin, Name) pair appears in the allowlist. Built-in tools (those
 // with empty ServerOrigin) are never removed by this method.
