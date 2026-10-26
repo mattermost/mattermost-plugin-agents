@@ -39,7 +39,7 @@ docker run -d --name mm-server --network mm-network -p 8065:8065 \
   -e MM_PLUGINSETTINGS_AUTOMATICPREPACKAGEDPLUGINS=false \
   -e MM_PLUGINSETTINGS_ENABLEMARKETPLACE=false \
   -e MM_SERVICESETTINGS_ENABLELOCALMODE=true \
-  mattermostdevelopment/mattermost-enterprise-edition:master
+  mattermost/mattermost-enterprise-edition:latest
 
 docker exec mm-server mmctl user create --email admin@example.com --username admin --password 'Admin1234!' --system-admin --local
 docker exec mm-server mmctl team create --name dev --display-name "Dev Team" --local

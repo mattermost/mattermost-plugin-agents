@@ -17,8 +17,8 @@ const defaultUsername        = "admin";
 const defaultPassword        = "admin";
 const defaultTeamName        = "test";
 const defaultTeamDisplayName = "Test";
-// release-11.10 does not implement plugin EvaluateAccessControl (mattermost#37509 landed on master / 11.11).
-const defaultMattermostImage = "mattermostdevelopment/mattermost-enterprise-edition:master";
+// Needs 11.11+ for plugin EvaluateAccessControl (mattermost#37509).
+const defaultMattermostImage = "mattermost/mattermost-enterprise-edition:latest";
 export const POSTGRES_IMAGE = "pgvector/pgvector:pg15";
 
 export function mattermostImage(): string {

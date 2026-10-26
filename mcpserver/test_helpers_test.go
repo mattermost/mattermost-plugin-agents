@@ -70,10 +70,10 @@ func formatKV(kvs []any) string {
 // Compile-time check that testLogger satisfies logger.Logger.
 var _ loggerlib.Logger = (*testLogger)(nil)
 
-// withLatestMattermostImage runs the suite against the latest server; the
+// withLatestMattermostImage runs the suite against the latest stable server; the
 // library default is an old release.
 func withLatestMattermostImage(req *mmcontainer.MattermostContainerRequest) {
-	req.Image = "mattermostdevelopment/mattermost-enterprise-edition:master"
+	req.Image = "mattermost/mattermost-enterprise-edition:latest"
 	if image := os.Getenv("MM_IMAGE"); image != "" {
 		req.Image = image
 	}
