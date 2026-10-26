@@ -39,14 +39,16 @@ type ScopedSessionRequest struct {
 
 // ScopedRun is one run's scoped session and the embedded MCP connection that
 // uses it. It is never pooled, cached, or written to KV: Close revokes the
-// session and closes the connection.
+// session and closes the connection. The connection carries the run's scope
+// binding, which is how plugin services reading under the session learn its
+// scope.
 type ScopedRun struct {
 	session  *model.Session
 	scope    *model.SessionScope
+	binding  *scopedsession.Binding
 	clients  *UserClients
 	manager  *ClientManager
 	minter   scopedsession.Minter
-	registry *scopedsession.Registry
 	closeErr error
 	once     sync.Once
 	closed   atomic.Bool
@@ -97,8 +99,8 @@ func (r *ScopedRun) Close() error {
 		return nil
 	}
 	r.once.Do(func() {
+		r.binding.End()
 		r.closed.Store(true)
-		r.registry.Revoke(r.session.Id)
 		r.manager.forgetScopedRun(r)
 		r.clients.Close()
 		if err := r.minter.RevokeSession(r.session.Id); err != nil {
@@ -110,13 +112,12 @@ func (r *ScopedRun) Close() error {
 	return r.closeErr
 }
 
-// SetScopedSessions configures how scoped sessions are minted and where
-// plugin services look up their scope. Both are required to mint.
-func (m *ClientManager) SetScopedSessions(minter scopedsession.Minter, registry *scopedsession.Registry) {
+// SetScopedSessions configures how scoped sessions are minted; without a
+// minter, minting fails.
+func (m *ClientManager) SetScopedSessions(minter scopedsession.Minter) {
 	m.scopedMu.Lock()
 	defer m.scopedMu.Unlock()
 	m.scopedMinter = minter
-	m.scopedRegistry = registry
 }
 
 // MintScopedSession creates a scoped session for req's bot. The session can
@@ -142,9 +143,9 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 	}
 
 	m.scopedMu.Lock()
-	minter, registry := m.scopedMinter, m.scopedRegistry
+	minter := m.scopedMinter
 	m.scopedMu.Unlock()
-	if minter == nil || registry == nil {
+	if minter == nil {
 		return nil, ErrScopedSessionsUnavailable
 	}
 
@@ -191,10 +192,11 @@ func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 		return nil, errors.New("scoped session creation returned an unusable session")
 	}
 
-	registry.Register(session, scope)
+	binding := scopedsession.NewBinding(scope)
 	clients := newLocalClients(req.BotUserID, m.log, m.httpClient, m.toolsCache)
 	clients.admission = m.admission
-	run := &ScopedRun{session: session, scope: scope, clients: clients, manager: m, minter: minter, registry: registry}
+	clients.connCtx = scopedsession.WithBinding(context.Background(), binding)
+	run := &ScopedRun{session: session, scope: scope, binding: binding, clients: clients, manager: m, minter: minter}
 
 	m.scopedMu.Lock()
 	closed := m.scopedClosed

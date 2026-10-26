@@ -5,11 +5,9 @@ package scopedsession
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"testing"
 
-	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -90,65 +88,41 @@ func TestServerSupports(t *testing.T) {
 	}
 }
 
-func TestRegistryScopeForSession(t *testing.T) {
-	minted := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
-	mintedScope := &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{"c"}}}
-	encoded, err := json.Marshal(mintedScope)
-	require.NoError(t, err)
-	elsewhere := &model.Session{Id: model.NewId(), Props: map[string]string{model.SessionPropScope: string(encoded)}}
-	normal := &model.Session{Id: model.NewId()}
-	lookupErr := errors.New("db down")
-
-	registry := NewRegistry(func(id string) (*model.Session, error) {
-		switch id {
-		case elsewhere.Id:
-			return elsewhere, nil
-		case normal.Id:
-			return normal, nil
-		default:
-			return nil, lookupErr
-		}
-	})
-	registry.Register(minted, mintedScope)
-	revoked := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
-	registry.Register(revoked, mintedScope)
-	registry.Revoke(revoked.Id)
-	created := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
-	registry.Register(created, nil)
+func TestScopeFromContext(t *testing.T) {
+	scope := &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{"c"}}}
+	ended := NewBinding(scope)
+	ended.End()
 
 	tests := []struct {
-		name      string
-		registry  *Registry
-		sessionID string
-		expected  *model.SessionScope
-		wantErr   error
+		name     string
+		ctx      context.Context
+		expected *model.SessionScope
+		wantErr  error
 	}{
-		{name: "minted on this node", sessionID: minted.Id, expected: mintedScope},
-		{name: "revoked on this node is denied", sessionID: revoked.Id, wantErr: ErrRevoked},
-		{name: "scoped elsewhere", sessionID: elsewhere.Id, expected: mintedScope},
-		{name: "unscoped session", sessionID: normal.Id},
-		{name: "no session", sessionID: ""},
-		{name: "failed lookup is an error, not unscoped", sessionID: model.NewId(), wantErr: lookupErr},
-		{name: "unscoped session registered on this node needs no lookup", sessionID: created.Id},
-		{name: "no registry fails a read under a session", registry: (*Registry)(nil), sessionID: normal.Id, wantErr: ErrNoRegistry},
+		{name: "live binding", ctx: WithBinding(context.Background(), NewBinding(scope)), expected: scope},
+		{name: "ended binding is denied", ctx: WithBinding(context.Background(), ended), wantErr: ErrRunEnded},
+		{name: "binding without a scope is denied", ctx: WithBinding(context.Background(), NewBinding(nil)), wantErr: errAny},
+		{name: "nil binding is denied", ctx: WithBinding(context.Background(), nil), wantErr: errAny},
+		{name: "no binding is the user's own read", ctx: context.Background()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := registry
-			if tt.registry != nil || tt.wantErr == ErrNoRegistry {
-				r = tt.registry
-			}
-			scope, scopeErr := r.ScopeFromContext(auth.WithSessionID(context.Background(), tt.sessionID))
+			got, err := ScopeFromContext(tt.ctx)
 			if tt.wantErr != nil {
-				require.ErrorIs(t, scopeErr, tt.wantErr)
-				assert.Nil(t, scope)
+				require.Error(t, err)
+				if tt.wantErr != errAny {
+					require.ErrorIs(t, err, tt.wantErr)
+				}
+				assert.Nil(t, got)
 				return
 			}
-			require.NoError(t, scopeErr)
-			assert.Equal(t, tt.expected, scope)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, got)
 		})
 	}
 }
+
+var errAny = errors.New("any error")
 
 type fakeSessionAPI struct {
 	createErr *model.AppError

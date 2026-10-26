@@ -274,7 +274,7 @@ func TestGetContent(t *testing.T) {
 				).Return(true)
 			}
 			tt.setup(m)
-			svc := New(m, unscopedSessions())
+			svc := New(m)
 
 			ctx := auth.WithSessionID(t.Context(), sessionID)
 			c, err := svc.GetContent(ctx, userID, tt.fileID, tt.offset, tt.limit)
@@ -326,7 +326,7 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 				Maybe()
 
 			ctx := auth.WithSessionID(t.Context(), tt.sessionID)
-			_, err := New(m, unscopedSessions()).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
 
 			assert.ErrorIs(t, err, ErrForbidden)
 			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")
@@ -369,7 +369,7 @@ func TestGetContentDeniedOnContentRead(t *testing.T) {
 		Maybe()
 
 	ctx := auth.WithSessionID(t.Context(), sessionID)
-	_, err := New(m, unscopedSessions()).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+	_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
 
 	require.ErrorIs(t, err, ErrForbidden)
 	require.False(t, adminContentRead, "admin GetFile must not run after the content-read policy check denies access")
@@ -414,12 +414,11 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			session := &model.Session{Id: model.NewId(), UserId: botID, ExpiresAt: model.GetMillis() + 60_000}
-			registry := scopedsession.NewRegistry(nil)
-			registry.Register(session, scope)
+			sessionID := model.NewId()
+			ctx := scopedsession.WithBinding(auth.WithSessionID(t.Context(), sessionID), scopedsession.NewBinding(scope))
 
 			m := mocks.NewMockClient(t)
-			m.EXPECT().HasPermissionToFileAction(session.Id, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true).Maybe()
+			m.EXPECT().HasPermissionToFileAction(sessionID, fileID, model.AccessControlPolicyActionDownloadFileAttachment).Return(true).Maybe()
 			m.EXPECT().GetFileInfo(fileID).Return(&model.FileInfo{Id: fileID, ChannelId: tt.channel.Id, Name: "notes.pdf", Content: "evidence"}, nil)
 			m.EXPECT().GetChannel(tt.channel.Id).Return(tt.channel, nil)
 			if tt.team != nil {
@@ -430,8 +429,8 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 				m.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
 			}
 
-			svc := New(m, registry)
-			content, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
+			svc := New(m)
+			content, err := svc.GetContent(ctx, botID, fileID, 0, DefaultReadRunes)
 			if !tt.allowed {
 				require.ErrorIs(t, err, ErrForbidden)
 				return
@@ -441,21 +440,12 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 		})
 	}
 
-	t.Run("revoked session is denied before any read", func(t *testing.T) {
-		session := &model.Session{Id: model.NewId(), UserId: botID, ExpiresAt: model.GetMillis() + 60_000}
-		registry := scopedsession.NewRegistry(nil)
-		registry.Register(session, scope)
-		registry.Revoke(session.Id)
+	t.Run("a read after the run ended is denied before any read", func(t *testing.T) {
+		binding := scopedsession.NewBinding(scope)
+		binding.End()
 
-		svc := New(mocks.NewMockClient(t), registry)
-		_, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
-		require.ErrorIs(t, err, scopedsession.ErrRevoked)
-	})
-}
-
-// unscopedSessions resolves every session as a regular, unscoped one.
-func unscopedSessions() *scopedsession.Registry {
-	return scopedsession.NewRegistry(func(id string) (*model.Session, error) {
-		return &model.Session{Id: id}, nil
+		svc := New(mocks.NewMockClient(t))
+		_, err := svc.GetContent(scopedsession.WithBinding(t.Context(), binding), botID, fileID, 0, DefaultReadRunes)
+		require.ErrorIs(t, err, scopedsession.ErrRunEnded)
 	})
 }

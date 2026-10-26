@@ -547,7 +547,7 @@ type sessionEchoEmbeddedMCPServer struct {
 	lastToken string
 }
 
-func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ string, sessionID, sessionToken string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *sessionEchoEmbeddedMCPServer) CreateClientTransport(_ context.Context, _ string, sessionID, sessionToken string, _ *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	s.tokenMu.Lock()
 	s.lastToken = sessionToken
 	s.tokenMu.Unlock()
@@ -769,6 +769,6 @@ type failingEmbeddedMCPServer struct {
 	err error
 }
 
-func (s failingEmbeddedMCPServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s failingEmbeddedMCPServer) CreateClientTransport(context.Context, string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, s.err
 }

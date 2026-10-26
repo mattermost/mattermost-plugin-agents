@@ -100,11 +100,10 @@ type ClientManager struct {
 
 	// scopedMu guards the scoped-session fields below. Live runs are tracked
 	// so they can be revoked when their agent changes or the plugin stops.
-	scopedMu       sync.Mutex
-	scopedMinter   scopedsession.Minter
-	scopedRegistry *scopedsession.Registry
-	scopedRuns     map[*ScopedRun]struct{}
-	scopedClosed   bool
+	scopedMu     sync.Mutex
+	scopedMinter scopedsession.Minter
+	scopedRuns   map[*ScopedRun]struct{}
+	scopedClosed bool
 }
 
 // RemoteMCPAlwaysAllowed is the remoteAllowed predicate for callers that have
