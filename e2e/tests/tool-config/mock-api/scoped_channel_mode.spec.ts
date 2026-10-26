@@ -35,16 +35,19 @@ let teamID: string;
 let townSquareID: string;
 
 function versionAtLeast(version: string, minimum: number[]): boolean {
-    const parts = version.split('.').map((part) => parseInt(part, 10));
+    const match = /^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version);
+    if (!match) {
+        return false;
+    }
+    const parts = match.slice(1, 4).map((part) => parseInt(part ?? '0', 10));
     for (let i = 0; i < minimum.length; i++) {
-        if (Number.isNaN(parts[i])) {
-            return false;
-        }
         if (parts[i] !== minimum[i]) {
             return parts[i] > minimum[i];
         }
     }
-    return true;
+
+    // A prerelease of the minimum version predates it.
+    return !match[4];
 }
 
 async function createChannelWithPost(name: string, type: 'O' | 'P', message: string) {
