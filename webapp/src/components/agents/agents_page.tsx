@@ -99,7 +99,9 @@ const PageWrapper = styled.div`
     display: flex;
     flex-direction: row;
     width: 100%;
-    background: var(--center-channel-bg);
+
+    /* Same look as the Channels view: the sidebar-colored page behind a rounded center card. */
+    background: var(--sidebar-bg);
     overflow: hidden;
 `;
 
@@ -111,6 +113,8 @@ const ContentOutlet = styled.main`
     flex-direction: column;
     min-width: 0;
     min-height: 0;
+    border-radius: var(--radius-l);
+    background: var(--center-channel-bg);
     overflow-x: hidden;
     overflow-y: auto;
 `;
