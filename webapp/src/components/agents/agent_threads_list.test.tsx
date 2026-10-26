@@ -95,9 +95,10 @@ describe('AgentThreadsList', () => {
         expect(screen.getByRole('list', {name: 'Alpha chats'})).toBeTruthy();
     });
 
-    test('agent without threads has a disabled chevron', () => {
+    test('only agents with threads have an expand/collapse chevron', () => {
         renderList();
-        expect((screen.getByRole('button', {name: 'Collapse Beta chats'}) as HTMLButtonElement).disabled).toBe(true);
+        expect(screen.queryByRole('button', {name: 'Collapse Beta chats'})).toBeNull();
+        expect(screen.getByRole('button', {name: 'Collapse Alpha chats'})).not.toBeNull();
     });
 
     const clickCases: Array<{name: string; act: () => void; expected: (h: ReturnType<typeof renderList>) => void}> = [

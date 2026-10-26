@@ -196,18 +196,22 @@ const AgentThreadsList = ({
                                 active={isActiveAgent && (!activeRootId || isCollapsed)}
                                 onClick={openAgent}
                             />
-                            <ChevronSlot>
-                                <ChevronToggle
-                                    type='button'
-                                    aria-label={toggleLabel}
-                                    aria-expanded={!isCollapsed}
-                                    aria-controls={listId}
-                                    disabled={threads.length === 0}
-                                    onClick={() => toggle(bot.id)}
-                                >
-                                    <Icon glyph={isCollapsed ? <ChevronRightIcon/> : <ChevronDownIcon/>}/>
-                                </ChevronToggle>
-                            </ChevronSlot>
+                            {threads.length > 0 && (
+                                <ChevronSlot>
+                                    <ChevronToggle
+                                        type='button'
+                                        aria-label={toggleLabel}
+                                        aria-expanded={!isCollapsed}
+                                        aria-controls={listId}
+                                        onClick={() => toggle(bot.id)}
+                                    >
+                                        <Icon
+                                            glyph={isCollapsed ? <ChevronRightIcon/> : <ChevronDownIcon/>}
+                                            size='12'
+                                        />
+                                    </ChevronToggle>
+                                </ChevronSlot>
+                            )}
                             <NewChatSlot>
                                 <WithTooltip title={newChatLabel}>
                                     <TooltipTrigger>
@@ -410,14 +414,26 @@ const AgentBlock = styled.div`
     flex-direction: column;
 `;
 
+// Sits in the gutter left of the avatar (the avatar keeps the same leading position as the
+// nav items above) and only shows on row hover or keyboard focus.
 const ChevronSlot = styled.span`
     position: absolute;
     top: 0;
     bottom: 0;
-    left: var(--spacing-xs);
+    left: var(--spacing-xxs);
     z-index: 2;
     display: flex;
     align-items: center;
+    opacity: 0;
+    transition: opacity var(--duration-quick) var(--ease-transition);
+
+    &:focus-within {
+        opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        transition: none;
+    }
 `;
 
 // Just the chevron glyph (right when collapsed, down when expanded), with no button chrome.
@@ -433,11 +449,6 @@ const ChevronToggle = styled.button`
     background: transparent;
     color: var(--sidebar-text);
     cursor: pointer;
-
-    &:disabled {
-        cursor: default;
-        opacity: 0.32;
-    }
 
     &:focus-visible {
         border-radius: var(--radius-s);
@@ -478,13 +489,9 @@ const AgentRow = styled.div`
         display: none;
     }
 
-    /* Make room for the chevron before the avatar, in both the active and resting
-       states of the item (which pad the control differently). */
-    && [class*='__left'] {
-        padding-left: var(--spacing-xxxl);
-    }
-
-    &:hover ${NewChatSlot} {
+    &:hover ${NewChatSlot},
+    &:hover ${ChevronSlot},
+    &:focus-within ${ChevronSlot} {
         opacity: 1;
     }
 `;
@@ -524,10 +531,6 @@ const ThreadActionsSlot = styled.span`
 const ThreadListItem = styled.li`
     position: relative;
 
-    && [class*='__left'] {
-        padding-left: var(--spacing-xxxl);
-    }
-
     &:hover ${ThreadActionsSlot},
     &:focus-within ${ThreadActionsSlot},
     &[data-menu-open] ${ThreadActionsSlot} {
@@ -537,7 +540,7 @@ const ThreadListItem = styled.li`
 
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxl);
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-l);
 `;
 
 const ArchiveError = styled.p`
