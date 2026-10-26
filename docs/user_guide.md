@@ -31,7 +31,7 @@ Start or open a direct message with an agent. If your system admin has configure
 
 You can have conversations with Agents in several ways:
 
-**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned custom prompt buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
+**Agents pane**: Use the Agents right-hand pane for a streamlined experience. Begin with suggested prompts or pinned skill buttons, or engage in a private thread with an Agent for a tailored experience. If you have follow-up questions or need further insights, simply ask. You can also attach files for AI analysis or reference.
 
 **Direct messages**: Start a direct message with an Agent bot to have a private conversation. Chat privately with an Agent in direct message threads like you would any other Mattermost user.
 
@@ -61,18 +61,18 @@ An automatic reply behaves exactly as if you had @mentioned the agent: the same 
 
 > **Note:** The channel settings tab requires Mattermost Server v11.10 or later; on older servers, users with permission to manage channel settings can still configure auto-reply through the plugin REST API. Channel auto-reply is available at Enterprise Advanced; on other plans the **Agents** channel settings tab is not shown. See [license requirements](admin_guide.md#license-requirements) for details.
 
-### Use custom prompt templates
+### Use skills
 
-Custom prompts are saved prompt templates that you can reuse from the message composer or from pinned buttons in the Agents pane.
+Skills are saved instructions that you can run yourself from the message composer or from pinned buttons in the Agents pane. Agents can also load a skill on their own when your request matches its description, if the agent's admin allows it. See [Skills](features/skills.md).
 
-To manage custom prompts:
+To manage skills:
 
 1. Open the message composer in any channel or direct message.
 2. Select **AI Actions**.
-3. Open **Custom prompts**, then select **Manage prompts**.
-4. Select **Create new** to open the prompt editor and add a prompt with an **Action Title**, optional description, and template.
-5. Choose **Public** to share the prompt with other users, or **Private** to keep it visible only to you.
-6. Pin or unpin prompts directly from the prompt list. Pinned prompts appear as shortcuts in the Agents pane.
+3. Open **Skills**, then select **Manage skills**.
+4. Select **Create new** to open the editor and add a skill with an **Action Title**, a description, and instructions.
+5. Choose **Public** to share the skill with other users, or **Private** to keep it visible only to you.
+6. Pin or unpin skills directly from the list. Pinned skills appear as shortcuts in the Agents pane.
 
 The **All Prompts** tab shows prompts you created plus shared prompts from other users. The **Your Prompts** tab shows only prompts you created. Selecting a prompt from either list opens a dedicated prompt view inside the modal, with a back arrow to return to the list and the prompt name as the title. Shared prompts from other users open read-only. Only the prompt creator can edit or delete a prompt. Prompt titles can be up to 64 characters, and every prompt requires a template.
 

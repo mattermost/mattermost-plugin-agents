@@ -629,7 +629,7 @@ Traces include these semantic attributes for filtering and analysis. Cached toke
 
 ### Audit logging
 
-The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and custom prompt CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
+The plugin emits a server audit record for every state-changing operation: configuration saves, admin reindex and MCP cache operations, agent and skill (custom prompt) CRUD, MCP OAuth credential grant/revocation, per-user MCP preferences, inter-plugin MCP server registration, in-channel tool call approvals, and MCP session grants for external clients.
 
 Records identify the actor (user ID, session, IP), the event, the request path, the outcome (including failures and permission denials, as HTTP status codes), the OpenTelemetry `trace_id` for pivoting into traces, and identifiers of affected objects using the same attribute names as the table above. Records never contain prompt content, conversation or channel content, tool arguments or results, configuration values, or free-form error text — a configuration save records only which top-level sections changed, and failure detail stays in the server log (correlate by timestamp, actor, or `trace_id`).
 
@@ -642,7 +642,7 @@ The plugin stores agent data across both plugin configuration and plugin databas
 1. Ensure your regular Mattermost backup includes plugin configuration data.
 2. Include plugin database tables in your normal backup and restore process. In particular:
    - `Agents_UserAgents` for agents created or managed from the **Agents** page
-   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for custom prompt templates and prompt pins
+   - `LLM_CustomPrompts` and `LLM_CustomPromptPins` for skills (custom prompt templates) and their pins
 3. For larger deployments, consider backing up indexed vector data separately.
 
 Restoring only plugin configuration isn't sufficient to restore agents managed from the **Agents** page.
@@ -1033,7 +1033,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | AI agents | 1 | 3 | unlimited | unlimited |
 | Bring your own LLM, incl. local models | ✅ 1 provider | ✅ 1 provider | ✅ multi | ✅ multi + fallback |
 | Vision / document understanding | ✅ | ✅ | ✅ | ✅ |
-| Personal custom prompts | ✅ | ✅ | ✅ | ✅ |
+| Personal skills | ✅ | ✅ | ✅ | ✅ |
 | Built-in Mattermost tools | read-only | read-only | read + write | read + write |
 | Agent direct messages | ✅ | ✅ | ✅ | ✅ |
 | Multiplayer agents in channels | — | ✅ | ✅ | ✅ |
@@ -1048,7 +1048,7 @@ The plugin distinguishes four license levels: Free (no license), Professional, E
 | Semantic AI search | — | — | ✅ | ✅ |
 | Meeting transcription & summaries | — | — | ✅ | ✅ |
 | MCP service-account authentication | — | — | ✅ | ✅ |
-| Shared prompt libraries | — | — | ✅ | ✅ |
+| Shared skills | — | — | ✅ | ✅ |
 | Channel agent auto-reply | — | — | — | ✅ |
 | Attribute-based access control for AI | — | — | — | ✅ |
 
@@ -1058,7 +1058,7 @@ How each row is enforced:
 - **Bring your own LLM** — Free and Professional workspaces use one LLM service: the first service in the **Services** list. Agents that reference another service are inactive at those levels and take no slot in the agent cap; they are named in the server log and marked **Inactive** on the Agents page. LLM Bridge service calls address only that service. Enterprise and above route agents and LLM Bridge calls to any configured service. Fallback chains are followed at Enterprise Advanced; at lower levels a configured fallback stays stored but requests use the primary service only.
 - **Built-in Mattermost tools** — read-only tools (retrieving messages, channels, users, teams, files and search results) are available at every level. Tools that change state in Mattermost (posting, reacting, editing, creating or modifying channels, bookmarks, scheduled posts and similar) are available at Enterprise and above; below that they are absent from the tool list and calls to them return a licensing message.
 - **Tool approval policies** — admin-configured per-tool execution policies apply at Enterprise and above. Below that, embedded Mattermost tools use the product defaults and every other tool asks before running; a policy an administrator set to be narrower than the default (for example, ask) still applies. A tool that an administrator has disabled stays disabled at every level.
-- **Shared prompt libraries** — personal prompts are available at every level. Publishing a prompt to other users, and discovering or using prompts published by others, is available at Enterprise and above.
+- **Shared skills** — personal skills are available at every level. Publishing a skill to other users, discovering or using skills published by others, and enabling shared skills on an agent is available at Enterprise and above.
 
 At every level:
 

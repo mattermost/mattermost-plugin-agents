@@ -151,6 +151,18 @@ Dynamic tool loading and the auto-grant are separate controls: dynamic loading d
 
 Per-tool **approval policies** (`ask`, `auto_run`, `auto_run_everywhere`) are configured by an administrator in **System Console > Plugins > Agents > Model Context Protocol (MCP) > Tools**. Granting a tool to an agent on the MCPs tab does **not** override those policies — runtime approval still applies. MCP discovery and loading helpers run automatically, but MCP tools that are dynamically loaded still follow their configured approval policy. For more on MCP setup, see [Model Context Protocol (MCP)](../admin_guide.md#model-context-protocol-mcp-integration) in the Admin Guide. For more on the approval model, see [Multiplayer Tool Calling](multiplayer_tool_calling.md).
 
+### Skills tab
+
+The Skills tab is available only when **Enable Tools** is on (Configuration tab). It controls which [skills](skills.md) the agent can load on its own. The agent sees each available skill's name and description, and loads a skill's instructions when a request matches.
+
+- **Enable skills** turns every skill on or off for this agent, including the skills built into Agents.
+- **Allow personal skills** lets each user's own skills be used by this agent in that user's direct messages with it. Personal skills are never used in channels.
+- **Shared skills** lists skills shared with the workspace. Each one must be turned on for this agent; skills shared later are not added automatically. Shared skills require the same license as sharing skills.
+- **Description override** replaces a skill's description for this agent only (up to 1024 characters), for example to say when this agent should use it.
+- **Your personal skills** lists skills only you can use. Select **Share** to share one with the workspace and turn it on for this agent.
+
+Skills built into Agents are not listed; they are offered whenever the tools they need are available. A skill without a description is not offered to the agent automatically.
+
 ## Editing an agent
 
 To edit an agent:
@@ -382,9 +394,9 @@ Avatar upload runs as a second request after the agent record is saved. If the a
 
 This was a known issue (MM-68531, fixed in PR #690). If you observe this on a v2.0 build, confirm the plugin version includes that fix and refresh the page.
 
-### MCPs tab is grayed out
+### MCPs or Skills tab is grayed out
 
-The agent has **Enable Tools** turned off in the Configuration tab. Turn it back on to access MCP configuration. Some product features (channel summaries with tool-backed actions, tool-using custom prompts) will not work for this agent until tools are enabled.
+The agent has **Enable Tools** turned off in the Configuration tab. Turn it back on to access MCP and skill configuration. Some product features (channel summaries with tool-backed actions, skills, tool-using skills) will not work for this agent until tools are enabled.
 
 ### MCP server is shown but tools list is empty
 
@@ -404,6 +416,6 @@ Migrated legacy bots have no creator and no agent admins, so only system adminis
 
 - [Admin Guide](../admin_guide.md) — installing the plugin, configuring services, embedding search, MCP servers, per-tool policies.
 - [Upgrading to 2.0](../upgrading_to_2.0.md) — full upgrade path including the `config.bots` → DB migration covered above.
-- [Custom Prompts](custom_prompts.md) — reusable prompt templates that can target a specific agent.
+- [Skills](skills.md) — reusable instructions that you can run yourself or that agents load when a request matches.
 - [Multiplayer Tool Calling](multiplayer_tool_calling.md) — how tool approval works in channels, including the initiator-only approval rule.
 - [Providers](../providers.md) — provider-specific configuration referenced by the **AI Service** field.
