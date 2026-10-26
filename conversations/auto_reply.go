@@ -48,8 +48,8 @@ func (c *Conversations) autoReplySettingForChannel(channel *model.Channel) *auto
 // permissions and usage restrictions apply, and conversation creation, tool
 // running, streaming, and CheckUsageRestrictions are all reused.
 //
-// All conditions that prevent a reply return an error wrapping ErrNoResponse so
-// MessageHasBeenPosted logs them at debug, not error, level.
+// Expected conditions that prevent a reply return an error wrapping
+// ErrNoResponse so MessageHasBeenPosted logs them at debug, not error, level.
 func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.Setting, post *model.Post, postingUser *model.User, channel *model.Channel) error {
 	// Mode gate: root_posts fires only for top-level posts, ambient_threads
 	// only for thread replies; threads and ambient fire for both. A mode this

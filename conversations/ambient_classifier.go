@@ -36,7 +36,7 @@ const (
 
 // errAmbientDeclined marks the classifier deciding not to reply. Unlike other
 // auto-reply no-ops it is a deliberate answer, so it must not trigger the
-// @mention reminder.
+// @mention reminder for the configured agent.
 var errAmbientDeclined = fmt.Errorf("ambient classifier declined: %w", ErrNoResponse)
 
 // ambientClassifierJSON is the structured output schema.
