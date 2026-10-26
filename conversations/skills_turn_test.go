@@ -73,13 +73,11 @@ func TestTurnPolicySkills(t *testing.T) {
 			}
 			isDM := tt.channelType == model.ChannelTypeDirect
 			policy := &turnPolicy{
-				c: &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
-				turnRequest: turnRequest{
-					bot:     bot,
-					user:    &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
-					channel: &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
-					conv:    conv,
-				},
+				c:            &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
+				bot:          bot,
+				user:         &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
+				channel:      &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
+				conv:         conv,
 				isDM:         isDM,
 				toolsEnabled: isDM || tt.allowToolsInChannel,
 			}
