@@ -15,6 +15,7 @@ import {getPost, updateRead} from '@/client';
 import {fetchAndStoreBots, useBotlist} from '@/bots';
 import {requestAgentThreadsRefresh} from '@/websocket';
 
+import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
 import AgentNewChat from '../agent_chat/agent_new_chat';
 
@@ -181,7 +182,9 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                 onArchived={newChat}
                 {...(access.status === 'allowed' ? {onOpenSettings: () => setSettingsOpen(true)} : {})}
             />
-            {body}
+            <AgentChatDropZone testId='agent-chat-file-drop-zone'>
+                {body}
+            </AgentChatDropZone>
         </ChatPane>
     );
 };

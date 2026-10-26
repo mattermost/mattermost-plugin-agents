@@ -3,6 +3,7 @@
 
 import {Client4 as Client4Class, ClientError} from '@mattermost/client';
 import {ChannelWithTeamData} from '@mattermost/types/channels';
+import type {FileInfo} from '@mattermost/types/files';
 import {PreferenceType} from '@mattermost/types/preferences';
 
 import {NotPagedTeamSearchOpts, Team} from '@mattermost/types/teams';
@@ -552,6 +553,81 @@ export async function getAIBots() {
 export async function createPost(post: any) {
     const created = await Client4.createPost(post);
     return created;
+}
+
+export interface FileUpload {
+    promise: Promise<FileInfo>;
+    abort: () => void;
+}
+
+export class FileUploadAbortedError extends Error {
+    constructor() {
+        super('File upload was cancelled');
+        this.name = 'FileUploadAbortedError';
+    }
+}
+
+// Uploads one file to a channel as the host composer does (POST /files with
+// channel_id, client_ids and the file as multipart form data), but over XHR so
+// the caller gets upload progress and can cancel. The returned FileInfo's id
+// goes into the post's file_ids.
+export function uploadFile(file: File, channelId: string, clientId: string, onProgress?: (percent: number) => void): FileUpload {
+    const url = Client4.getFilesRoute();
+    const xhr = new XMLHttpRequest();
+    const promise = new Promise<FileInfo>((resolve, reject) => {
+        xhr.open('POST', url, true);
+        const headers = Client4.getOptions({method: 'POST'}).headers as Record<string, string | undefined>;
+        Object.entries(headers).forEach(([name, value]) => {
+            if (value) {
+                xhr.setRequestHeader(name, value);
+            }
+        });
+        xhr.setRequestHeader('Accept', 'application/json');
+
+        if (onProgress && xhr.upload) {
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable && event.total > 0) {
+                    onProgress(Math.floor((event.loaded / event.total) * 100));
+                }
+            };
+        }
+
+        const fail = (message: string) => reject(new ClientError(Client4.url, {message, status_code: xhr.status, url}));
+        xhr.onload = () => {
+            let body: any = null;
+            try {
+                body = JSON.parse(xhr.responseText);
+            } catch {
+                body = null;
+            }
+            if (xhr.status === 201) {
+                const index = body?.client_ids?.indexOf(clientId) ?? -1;
+                const info: FileInfo | undefined = body?.file_infos?.[index >= 0 ? index : 0];
+                if (info?.id) {
+                    resolve(info);
+                    return;
+                }
+                fail('File upload returned no file');
+                return;
+            }
+            fail(body?.message || `File upload failed with status ${xhr.status}`);
+        };
+        xhr.onerror = () => fail('File upload failed: network error');
+        xhr.onabort = () => reject(new FileUploadAbortedError());
+
+        const formData = new FormData();
+        formData.append('channel_id', channelId);
+        formData.append('client_ids', clientId);
+
+        // The file goes last so the server can stream it.
+        formData.append('files', file, file.name);
+        xhr.send(formData);
+    });
+    return {promise, abort: () => xhr.abort()};
+}
+
+export function getFileThumbnailUrl(fileId: string): string {
+    return Client4.getFileThumbnailUrl(fileId, 0);
 }
 
 export function updateRead(userId: string, teamId: string, selectedPostId: string, timestamp: number) {

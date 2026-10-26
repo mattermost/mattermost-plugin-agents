@@ -17,6 +17,7 @@ import type {AIThread} from '@/types/ai_thread';
 
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 
+import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
 import type {UserMCPServerInfo} from './tool_provider_popover';
@@ -127,7 +128,11 @@ export default function RHS() {
     }
 
     let content = null;
+
+    // The new chat and a thread take files dropped anywhere on the pane.
+    let dropZone = false;
     if (selectedPostId) {
+        dropZone = true;
         if (currentTab !== 'thread') {
             setCurrentTab('thread');
         }
@@ -172,6 +177,7 @@ export default function RHS() {
             content = null;
         }
     } else if (currentTab === 'new') {
+        dropZone = true;
         content = (
             <RHSNewTab
                 setCurrentTab={setCurrentTab}
@@ -196,7 +202,9 @@ export default function RHS() {
                 preloadedServers={preloadedServers}
                 activeConversationId={activeConversationId}
             />
-            {content}
+            {dropZone ? (
+                <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
+            ) : content}
         </RhsContainer>
     );
 }

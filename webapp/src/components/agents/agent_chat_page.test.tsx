@@ -22,8 +22,12 @@ const mockGetRolesByNames = jest.fn();
 const mockCreatePost = jest.fn();
 const mockGetAgents = jest.fn();
 const mockGetServices = jest.fn();
+const mockUploadFile = jest.fn();
 
 jest.mock('@/client', () => ({
+    uploadFile: (...args: unknown[]) => mockUploadFile(...args),
+    getFileThumbnailUrl: (id: string) => `/files/${id}/thumbnail`,
+    FileUploadAbortedError: class extends Error {},
     getBotDirectChannel: (...args: unknown[]) => mockGetBotDirectChannel(...args),
     getPost: (...args: unknown[]) => mockGetPost(...args),
     updateRead: (...args: unknown[]) => mockUpdateRead(...args),
@@ -90,6 +94,7 @@ jest.mock('react-intl', () => {
         formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string>) => (
             defaultMessage.replace(/\{(\w+)\}/g, (_m, k) => values?.[k] ?? '')
         ),
+        formatNumber: (n: number, opts?: Intl.NumberFormatOptions) => new Intl.NumberFormat('en', opts).format(n),
     };
     return {
         ...actual,
@@ -241,6 +246,27 @@ describe('AgentChatPage', () => {
         expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: 'hello'}));
         expect(toChat).toHaveBeenCalledWith('bot1', 'new-root');
         expect(mockRequestRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    test('a file dropped anywhere on the chat uploads to the DM and goes out with the post', async () => {
+        mockGetBotDirectChannel.mockResolvedValue('dm1');
+        mockGetChannel.mockResolvedValue({id: 'dm1'});
+        mockGetChannelMember.mockResolvedValue({channel_id: 'dm1', roles: 'channel_user'});
+        mockUploadFile.mockReturnValue({promise: Promise.resolve({id: 'file1'}), abort: jest.fn()});
+        mockCreatePost.mockResolvedValue({id: 'new-root'});
+        renderPage(makeStore({bots: [makeBot('bot1', '')]}));
+        const composer = await screen.findByRole('textbox', {name: 'Message Agent bot1'});
+
+        const dataTransfer = {types: ['Files'], files: [new File(['hi'], 'notes.txt', {type: 'text/plain'})], dropEffect: ''};
+        await act(async () => {
+            fireEvent.drop(screen.getByTestId('agent-chat-file-drop-zone'), {dataTransfer});
+        });
+        expect(mockUploadFile).toHaveBeenCalledWith(expect.any(File), 'dm1', expect.any(String), expect.any(Function));
+
+        await act(async () => {
+            fireEvent.keyDown(composer, {key: 'Enter'});
+        });
+        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: 'dm1', root_id: '', message: '', file_ids: ['file1']}));
     });
 
     test('shows an error and no composer when the DM channel cannot be created', async () => {
