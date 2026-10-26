@@ -16,14 +16,17 @@ type Props = {
     scopedExtraChannelIds: string[];
     autoEnableNewMCPTools: boolean;
 
+    /** The allowlist grants every tool on some server instead of naming them. */
+    hasAllToolsGrants: boolean;
+
     /** Only system admins may change these settings. */
     editable: boolean;
     onChange: (updates: {scopedChannelMode?: boolean; scopedExtraChannelIds?: string[]}) => void;
 };
 
-const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, editable, onChange}: Props) => {
+const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, autoEnableNewMCPTools, hasAllToolsGrants, editable, onChange}: Props) => {
     const serverSupported = useServerSupportsScopedSessions();
-    const canTurnOn = editable && serverSupported && !autoEnableNewMCPTools;
+    const canTurnOn = editable && serverSupported && !autoEnableNewMCPTools && !hasAllToolsGrants;
 
     return (
         <Section data-testid='scoped-channel-mode-section'>
@@ -38,7 +41,7 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                         <FormattedMessage defaultMessage='Run tools in channels without asking'/>
                     </CheckboxTitle>
                     <CheckboxHint>
-                        <FormattedMessage defaultMessage="In channels, this agent's tools run on a short-lived session for the agent's own account that can only read, and results are shared in the thread without a Share step. Tools that change data in Mattermost and tools from other plugins are not used in channels. Direct messages are not affected."/>
+                        <FormattedMessage defaultMessage="In channels, this agent's tools run without asking and their results are shared in the thread without a Share step. Mattermost tools read through a short-lived session for the agent's own account; tools that change data in Mattermost and tools from other plugins are not used. External MCP tools run with the service account and can do whatever the tools you pick allow there. Web search and URL fetch also run without asking when they are turned on for this agent. Direct messages are not affected."/>
                     </CheckboxHint>
                 </CheckboxText>
             </Checkbox>
@@ -54,11 +57,23 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                     title={<FormattedMessage defaultMessage='To use this setting, turn off "Automatically enable all MCP tools" and pick the tools this agent may use.'/>}
                 />
             )}
+            {serverSupported && !autoEnableNewMCPTools && hasAllToolsGrants && !scopedChannelMode && (
+                <SectionNotice
+                    type='info'
+                    title={<FormattedMessage defaultMessage='To use this setting, replace the servers granted with all of their tools by the specific tools this agent may use.'/>}
+                />
+            )}
+            {scopedChannelMode && hasAllToolsGrants && (
+                <SectionNotice
+                    type='warning'
+                    title={<FormattedMessage defaultMessage='Pick each tool by name. While this setting is on, a server cannot be granted with all of its tools, and the agent cannot be saved until those grants are replaced.'/>}
+                />
+            )}
             {scopedChannelMode && (
                 <>
                     <SectionNotice
                         type='info'
-                        title={<FormattedMessage defaultMessage="Without asking, this agent can read the channel it's used in, all public channels on teams anyone can join, and the channels below. Channel tool calling must also be turned on in the plugin settings."/>}
+                        title={<FormattedMessage defaultMessage="Without asking, this agent can read the channel it's used in, all public channels on teams anyone can join, and the channels below, and run the external MCP tools picked below. Channel tool calling must also be turned on in the plugin settings."/>}
                     />
                     <ExtraChannels>
                         <ExtraChannelsLabel>

@@ -38,6 +38,8 @@ const mockedServerSupport = useServerSupportsScopedSessions as unknown as jest.M
 const toggleName = /^Run tools in channels without asking/;
 const unsupportedNotice = /needs Mattermost Server 12.2 or later/;
 const allowlistNotice = /turn off "Automatically enable all MCP tools"/;
+const allToolsNotice = /^To use this setting, replace the servers granted with all of their tools/;
+const allToolsWarning = /^Pick each tool by name/;
 const summary = /^Without asking, this agent can read the channel it's used in/;
 const extrasWarning = /^Content from these channels may appear in any channel/;
 
@@ -45,6 +47,7 @@ type Opts = {
     scopedChannelMode?: boolean;
     scopedExtraChannelIds?: string[];
     autoEnableNewMCPTools?: boolean;
+    hasAllToolsGrants?: boolean;
     editable?: boolean;
 };
 
@@ -56,6 +59,7 @@ function renderSection(opts: Opts = {}) {
                 scopedChannelMode={opts.scopedChannelMode ?? false}
                 scopedExtraChannelIds={opts.scopedExtraChannelIds ?? []}
                 autoEnableNewMCPTools={opts.autoEnableNewMCPTools ?? false}
+                hasAllToolsGrants={opts.hasAllToolsGrants ?? false}
                 editable={opts.editable ?? true}
                 onChange={onChange}
             />
@@ -82,6 +86,7 @@ describe('ScopedChannelModeSection', () => {
         {name: 'agent managers', opts: {editable: false}, notice: null},
         {name: 'older servers', server: false, opts: {}, notice: unsupportedNotice},
         {name: 'agents that enable every MCP tool', opts: {autoEnableNewMCPTools: true}, notice: allowlistNotice},
+        {name: 'agents granted all tools of a server', opts: {hasAllToolsGrants: true}, notice: allToolsNotice},
     ])('$name cannot turn it on', ({server, opts, notice}) => {
         mockedServerSupport.mockReturnValue(server ?? true);
         const {toggle} = renderSection(opts);
@@ -105,6 +110,13 @@ describe('ScopedChannelModeSection', () => {
 
         expect(toggle.disabled).toBe(true);
         expect(screen.getByTestId('channel-picker').getAttribute('data-disabled')).toBe('true');
+    });
+
+    test('warns a scoped agent that still has all-tools grants', () => {
+        const {toggle} = renderSection({scopedChannelMode: true, hasAllToolsGrants: true});
+
+        expect(toggle.disabled).toBe(false);
+        expect(screen.getByText(allToolsWarning)).not.toBeNull();
     });
 
     test('no extra channels means no extra-channel warning', () => {
