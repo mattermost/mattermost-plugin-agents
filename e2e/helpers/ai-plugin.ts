@@ -12,8 +12,11 @@ export class AIPlugin {
   constructor(page: Page) {
     this.page = page;
     this.appBarIcon = page.locator('#app-bar-icon-mattermost-ai');
-    this.rhsPostTextarea = page.locator('#rhsContainer').locator('textarea');
-    this.rhsSendButton = page.locator('#rhsContainer').getByTestId('SendMessageButton');
+    // The plugin's pill composer, on the New chat tab ("Message <agent>") and
+    // under a thread ("Reply to <agent>", or "Reply"). Role queries skip the
+    // host reply box, which the plugin keeps mounted but hidden.
+    this.rhsPostTextarea = page.getByTestId('mattermost-ai-rhs').getByRole('textbox', { name: /^(Message |Reply\b)/ });
+    this.rhsSendButton = page.getByTestId('mattermost-ai-rhs').getByRole('button', { name: 'Send message' });
     this.regenerateButton = page.getByRole('button', { name: 'Regenerate' });
     this.chatHistoryButton = page.getByTestId('chat-history');
     this.threadsListContainer = page.getByTestId('rhs-threads-list');
@@ -92,33 +95,11 @@ export class AIPlugin {
   }
 
   async sendMessage(message: string) {
-    // Both the new-chat tab (AdvancedTextEditor, location RHS_COMMENT) and
-    // ThreadViewer (after analysis / summarize) use reply_textbox inside the
-    // plugin RHS. New-chat does not submit on Enter — click Send Now.
-    // ThreadViewer's split Send Now is often disabled; Enter submits replies.
-    const rhs = this.getRhsContainer();
-    const composer = rhs.getByTestId('reply_textbox');
-    if (await composer.isVisible().catch(() => false)) {
-      await expect(composer).toBeEnabled({ timeout: 30000 });
-      await composer.click();
-      await composer.fill(message);
-      const send = rhs.getByTestId('SendMessageButton');
-      const newChat = rhs.getByTestId('rhs-new-tab-create-post');
-      if (await newChat.isVisible().catch(() => false)) {
-        await expect(send).toBeEnabled({ timeout: 10000 });
-        await send.click();
-        return;
-      }
-      if (await send.isEnabled().catch(() => false)) {
-        await send.click();
-      } else {
-        await composer.press('Enter');
-      }
-      return;
-    }
-
+    // The new-chat tab and the thread view both use the plugin's pill
+    // composer; Enter sends as soon as it is enabled.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
     await this.rhsPostTextarea.fill(message);
-    await this.rhsSendButton.click();
+    await this.rhsPostTextarea.press('Enter');
   }
 
   /** Wait until no in-progress generation remains in the plugin RHS. */
@@ -129,8 +110,7 @@ export class AIPlugin {
   /** Wait until ThreadViewer is not generating and the reply box accepts input. */
   async waitForThreadComposerIdle() {
     await this.waitForGeneratingToStop();
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    await expect(threadReply).toBeEnabled({ timeout: 30000 });
+    await expect(this.getRhsContainer().getByTestId('agent-chat-reply-composer').getByRole('textbox')).toBeEnabled({ timeout: 30000 });
   }
 
   async regenerateResponse() {
@@ -168,13 +148,8 @@ export class AIPlugin {
     // control (one per generating post); require all of them to be gone.
     await this.waitForGeneratingToStop();
 
-    // 3. ThreadViewer uses reply_textbox; new-chat uses the plugin composer.
-    const threadReply = this.getRhsContainer().getByTestId('reply_textbox');
-    if (await threadReply.isVisible().catch(() => false)) {
-      await expect(threadReply).toBeEnabled({ timeout: 30000 });
-      return;
-    }
-    await expect(this.rhsSendButton).toBeVisible({ timeout: 30000 });
+    // 3. The composer (reply or new chat) accepts input again.
+    await expect(this.rhsPostTextarea).toBeEnabled({ timeout: 30000 });
   }
 
   async openChatHistory() {

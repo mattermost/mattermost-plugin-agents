@@ -81,6 +81,9 @@ async function login(page: Page): Promise<void> {
 const sidebar = (page: Page) => page.getByRole('complementary', {name: 'Agents'});
 const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-composer');
 
+// The plugin's pill reply composer under the thread (the host reply box is hidden).
+const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
+
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
     await page.getByRole('button', {name: 'Open product menu'}).click();
     await page.getByRole('menuitem', {name: 'Agents'}).click();
@@ -183,8 +186,8 @@ test.describe('Agents product view', () => {
         await expect(thread.getByText(FIRST_PROMPT)).toBeVisible({timeout: 30000});
         await expect(thread.getByText(FIRST_REPLY)).toBeVisible({timeout: 60000});
 
-        // Composer is pinned below the messages (not centered any more).
-        const reply = thread.getByRole('textbox');
+        // The pill reply composer is pinned below the messages (not centered any more).
+        const reply = replyComposer(page);
         await expect(reply).toBeVisible();
         const paneBox = (await page.getByRole('region', {name: `Chat with ${botDisplayName}`}).boundingBox())!;
         const replyBox = (await reply.boundingBox())!;
@@ -295,8 +298,11 @@ test.describe('Agents product view', () => {
         // Messages are limited to the prototype's 800px column.
         expect(own.postWidth).toBeLessThanOrEqual(800);
         expect(agent.postWidth).toBeLessThanOrEqual(800);
-        const composerBox = (await thread.getByTestId('comment-create').boundingBox())!;
+        const composerBox = (await thread.getByTestId('agent-chat-reply-composer').boundingBox())!;
         expect(composerBox.width).toBeLessThanOrEqual(800);
+
+        // The host reply box is replaced, not shown alongside.
+        await expect(thread.getByTestId('comment-create')).toBeHidden();
 
         // Hover: only the bubble reacts, and the toolbar shows only over the bubble.
         const agentPost = thread.locator('.post').filter({hasText: FIRST_REPLY}).first();
@@ -344,28 +350,35 @@ test.describe('Agents product view', () => {
         expect((await state()).row).toBe('rgba(0, 0, 0, 0)');
     });
 
-    test('header menu: agent name opens New chat, Rename chat and Archive chat', async ({page}) => {
+    test('header: chat title opens the agent menu; the actions menu switches, renames and creates chats', async ({page}) => {
         recordConversationResponses(page, 'header rename');
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
         const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
         await expect(chat.getByTestId('agent-chat-thread').getByText(FIRST_REPLY)).toBeVisible({timeout: 30000});
 
-        // The compass ChannelHeader (DM variant) is a <header> named after the agent, showing the chat title.
+        // The header is a <header> landmark named after the agent; in an open chat the h1 is the chat title.
         const header = chat.locator(`header[aria-label="${botDisplayName}"]`);
         await expect(header).toBeVisible();
-        await expect(header.getByText(THREAD_TITLE, {exact: true})).toBeVisible({timeout: 15000});
+        await expect(header.getByRole('heading', {level: 1, name: THREAD_TITLE, exact: true})).toBeVisible({timeout: 15000});
 
-        // The agent name is the h1 and the menu button (the open menu's focus manager hides the rest).
-        await expect(chat.getByRole('heading', {level: 1}).getByRole('button', {name: botDisplayName})).toBeVisible();
+        // The name button carries the full title and the agent name in its accessible name.
         const trigger = page.getByTestId('agent-chat-menu-button');
+        await expect(trigger).toHaveAttribute('aria-label', `${THREAD_TITLE}, ${botDisplayName} options`);
         await trigger.click();
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-        const menu = page.getByRole('menu', {name: `${botDisplayName} options`});
-        await expect(menu.getByRole('menuitem')).toHaveText(['New chat', 'Rename chat', 'Archive chat']);
-
+        const nameMenu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
         // A regular user cannot edit the agent, so no Agent settings.
-        await expect(menu.getByRole('menuitem', {name: 'Agent settings'})).toHaveCount(0);
+        await expect(nameMenu.getByRole('menuitem')).toHaveText(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        await page.keyboard.press('Escape');
+        await expect(nameMenu).toHaveCount(0);
+
+        // The actions menu lists this agent's chats (the open one marked) and the chat actions.
+        const actions = page.getByTestId('agent-chat-actions-button');
+        await actions.click();
+        const menu = page.getByRole('menu', {name: 'Chat actions'});
+        await expect(menu.getByRole('menuitem', {name: THREAD_TITLE, exact: true})).toHaveAttribute('aria-current', 'true');
+        await expect(menu.getByRole('menuitem', {name: 'Rename chat'})).toBeEnabled();
 
         // Rename updates the sidebar title.
         await menu.getByRole('menuitem', {name: 'Rename chat'}).click();
@@ -377,16 +390,19 @@ test.describe('Agents product view', () => {
         expect((await renameResponse).status()).toBe(200);
         await expect(name).toHaveCount(0);
         await expect(sidebar(page).getByRole('button', {name: RENAMED_TITLE, exact: true})).toBeVisible({timeout: 15000});
-        await expect(header.getByText(RENAMED_TITLE, {exact: true})).toBeVisible();
+        await expect(header.getByRole('heading', {level: 1, name: RENAMED_TITLE, exact: true})).toBeVisible();
 
-        // New chat from the menu.
-        await trigger.click();
-        await page.getByRole('menu', {name: `${botDisplayName} options`}).getByRole('menuitem', {name: 'New chat'}).click();
+        // New chat from the actions menu.
+        await actions.click();
+        await page.getByRole('menu', {name: 'Chat actions'}).getByRole('menuitem', {name: 'New chat'}).first().click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
 
-        // The new-chat state has no chat to rename or archive.
-        await trigger.click();
-        await expect(page.getByRole('menu', {name: `${botDisplayName} options`}).getByRole('menuitem')).toHaveText(['New chat']);
+        // The new-chat state shows the agent name and has no chat to rename or archive.
+        await expect(header.getByRole('heading', {level: 1, name: botDisplayName})).toBeVisible();
+        await actions.click();
+        const newMenu = page.getByRole('menu', {name: 'Chat actions'});
+        await expect(newMenu.getByRole('menuitem', {name: 'Rename chat'})).toBeDisabled();
+        await expect(newMenu.getByRole('menuitem', {name: 'Archive chat'})).toBeDisabled();
         await page.keyboard.press('Escape');
     });
 
@@ -597,11 +613,15 @@ test.describe('Agents product view', () => {
         await login(page);
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
 
-        const reply = page.getByTestId('agent-chat-thread').getByRole('textbox');
+        const reply = replyComposer(page);
         await expect(reply).toBeEnabled({timeout: 30000});
         await reply.fill('reply sent with enter');
         await reply.press('Enter');
         await expect(page.getByTestId('agent-chat-thread').getByTestId('post-message-text').getByText('reply sent with enter')).toBeVisible({timeout: 30000});
+
+        // Cleared and focused, ready for the next reply.
+        await expect(reply).toHaveValue('');
+        await expect(reply).toBeFocused();
     });
 
     test('Enter sends from the new-chat composer, then the header archives it', async ({page}) => {
@@ -625,11 +645,11 @@ test.describe('Agents product view', () => {
 
         // Archive it from the header once the agent's reply (which carries the conversation id) is in.
         const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
-        const trigger = page.getByTestId('agent-chat-menu-button');
-        const menu = page.getByRole('menu', {name: `${botDisplayName} options`});
+        const trigger = page.getByTestId('agent-chat-actions-button');
+        const menu = page.getByRole('menu', {name: 'Chat actions'});
         await expect.poll(async () => {
             await trigger.click();
-            const count = await menu.getByRole('menuitem', {name: 'Archive chat'}).count();
+            const count = await menu.getByRole('menuitem', {name: 'Archive chat', disabled: false}).count();
             if (count === 0) {
                 await page.keyboard.press('Escape');
                 await expect(menu).toHaveCount(0);

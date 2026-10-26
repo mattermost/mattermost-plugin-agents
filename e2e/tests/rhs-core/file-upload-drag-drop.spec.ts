@@ -55,7 +55,11 @@ async function dispatchFileDrop(page: Page, selector: string, fileName: string, 
 }
 
 test.describe('Agents RHS drag-and-drop file upload', () => {
-    test('drops a file onto the RHS new-tab and attaches it to the editor', async ({page}) => {
+    // Skipped: the RHS now uses the plugin's pill composer (new chat and thread
+    // replies), which does not take attachments yet, so the drop zone that fed
+    // the host editor's file input is no longer mounted. Re-enable once the
+    // pill composer supports attachments.
+    test.skip('drops a file onto the RHS new-tab and attaches it to the editor', async ({page}) => {
         const {aiPlugin} = await setupTestPage(page);
 
         const rhs = aiPlugin.getRhsContainer();
