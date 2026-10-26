@@ -134,7 +134,7 @@ describe('ProductSidebar "Your agents" section', () => {
         mockGetAIThreads.mockResolvedValue([thread('1', 'Older'), thread('2', 'Newest')]);
         const history = renderWithStore(buildChatPath('a', 'root_1'));
         await screen.findByRole('button', {name: 'Newest'});
-        expect(screen.getByRole('button', {name: 'Older'}).getAttribute('aria-current')).toBe('page');
+        expect(screen.getByRole('button', {name: 'Older'}).getAttribute('aria-current')).toBe('true');
 
         fireEvent.click(screen.getByRole('button', {name: 'Newest'}));
         expect(history.push).toHaveBeenCalledWith(buildChatPath('a', 'root_2'));

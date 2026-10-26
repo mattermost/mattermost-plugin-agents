@@ -5,9 +5,8 @@ import React, {useEffect, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
-import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
-import MessageTextOutlineIcon from '@mattermost/compass-icons/components/message-text-outline';
+import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import {Button} from '@mattermost/compass-ui/components/button';
@@ -88,7 +87,7 @@ const AgentThreadsList = ({
         if (!list || list.querySelector('[data-more-threads]')) {
             return;
         }
-        list.querySelectorAll<HTMLElement>('[data-thread-button]')[target.index]?.focus();
+        list.querySelectorAll<HTMLElement>('[data-thread-item]')[target.index]?.querySelector('button')?.focus();
     });
 
     const toggle = (botId: string) => {
@@ -131,6 +130,11 @@ const AgentThreadsList = ({
     }
 
     const sectionTitle = intl.formatMessage({defaultMessage: 'Your agents'});
+
+    // Titles are generated asynchronously, so a blank title falls back to the placeholder.
+    // The actions menu does not depend on the thread being loadable, so a "New chat" row
+    // whose chat cannot be opened can still be archived.
+    const newChatPlaceholder = intl.formatMessage({defaultMessage: 'New chat'});
 
     return (
         <Section aria-label={sectionTitle}>
@@ -231,7 +235,7 @@ const AgentThreadsList = ({
                                         key={thread.id}
                                         thread={thread}
                                         active={isActiveAgent && activeRootId === thread.root_post_id}
-                                        placeholder={intl.formatMessage({defaultMessage: 'New chat'})}
+                                        placeholder={newChatPlaceholder}
                                         onSelect={() => onSelectThread(bot.id, thread.root_post_id as string)}
                                         onArchive={() => {
                                             setArchiveFailed(false);
@@ -303,9 +307,9 @@ interface ThreadItemProps {
     onArchive: () => void;
 }
 
-// Titles are generated asynchronously, so a blank title falls back to the placeholder.
-// The actions menu does not depend on the thread being loadable, so a "New chat" row
-// whose chat cannot be opened can still be archived.
+// A compass ChannelSidebarItem only renders its own kebab for channel and DM rows, so the
+// actions button is overlaid on the row (as the agent rows do for their chevron and [+]),
+// with the same hover/focus reveal as the compass kebab.
 const ThreadItem = ({thread, active, placeholder, onSelect, onArchive}: ThreadItemProps) => {
     const intl = useIntl();
     const [menuOpen, setMenuOpen] = useState(false);
@@ -314,21 +318,16 @@ const ThreadItem = ({thread, active, placeholder, onSelect, onArchive}: ThreadIt
     const actionsLabel = intl.formatMessage({defaultMessage: 'Actions for {title}'}, {title});
 
     return (
-        <ThreadListItem {...(menuOpen && {'data-menu-open': true})}>
-            <ThreadButton
-                type='button'
-                data-thread-button={true}
-                {...(active && {'aria-current': 'page' as const})}
+        <ThreadListItem
+            data-thread-item={true}
+            {...(menuOpen && {'data-menu-open': true})}
+        >
+            <ChannelSidebarItem
+                name={title}
+                leadingVisual='threads'
+                active={active}
                 onClick={onSelect}
-            >
-                <ThreadIcon aria-hidden={true}>
-                    <Icon
-                        size='16'
-                        glyph={<MessageTextOutlineIcon/>}
-                    />
-                </ThreadIcon>
-                <ThreadLabel>{title}</ThreadLabel>
-            </ThreadButton>
+            />
             <ThreadActionsSlot>
                 <Dropdown
                     isOpen={rendered}
@@ -485,9 +484,6 @@ const TooltipTrigger = styled.span`
     display: inline-flex;
 `;
 
-// Aligns thread icons under the agent avatar (item padding + the avatar container padding).
-const THREAD_INDENT = 'calc(var(--spacing-xxxl) + var(--spacing-xxxxs))';
-
 const ThreadList = styled.ul`
     display: flex;
     flex-direction: column;
@@ -496,10 +492,14 @@ const ThreadList = styled.ul`
     list-style: none;
 `;
 
+// Thread rows are compass ChannelSidebarItems, like the agent rows above them, so height,
+// type and hover/active states match. Only the icon column is moved: the same left padding as
+// the agent row (which clears its chevron) puts each icon under the agent's avatar, in both the
+// resting and active states of the item (which pad the control differently).
 const ThreadActionsSlot = styled.span`
     position: absolute;
     top: 0;
-    right: var(--spacing-xs);
+    right: var(--spacing-l);
     bottom: 0;
     z-index: 1;
     display: flex;
@@ -515,95 +515,25 @@ const ThreadActionsSlot = styled.span`
 const ThreadListItem = styled.li`
     position: relative;
 
+    && [class*='__left'] {
+        padding-left: var(--spacing-xxxl);
+    }
+
     &:hover ${ThreadActionsSlot},
     &:focus-within ${ThreadActionsSlot},
     &[data-menu-open] ${ThreadActionsSlot} {
         opacity: 1;
     }
-
-    /* Keep the label clear of the actions button while it is showing. */
-    &:hover > button[data-thread-button],
-    &:focus-within > button[data-thread-button],
-    &[data-menu-open] > button[data-thread-button] {
-        padding-right: var(--spacing-xxxxl);
-    }
 `;
 
 const MoreRow = styled.div`
     display: flex;
-    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) calc(${THREAD_INDENT} - var(--spacing-xs));
+    padding: var(--spacing-xxxxs) var(--spacing-l) var(--spacing-xxxxs) var(--spacing-xxxl);
 `;
 
 const ArchiveError = styled.p`
     margin: var(--spacing-xs) 0 0;
     color: var(--error-text);
-`;
-
-// No compass equivalent for a nested text-only list row, so this is a bare button
-// (as in the prototype). It is declared here, next to its handler, for the a11y lint rules.
-const ThreadButton = styled.button`
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-xs);
-    width: 100%;
-    margin: 0;
-    padding: var(--spacing-xxxs) var(--spacing-l) var(--spacing-xxxs) ${THREAD_INDENT};
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--sidebar-text);
-    font-family: var(--font-family-body);
-    text-align: left;
-    cursor: pointer;
-
-    &::after {
-        content: '';
-        position: absolute;
-        inset: 0;
-        background: currentColor;
-        opacity: 0;
-        pointer-events: none;
-    }
-
-    &:hover::after,
-    &[aria-current='page']::after {
-        opacity: 0.08;
-    }
-
-    &[aria-current='page']::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        width: var(--spacing-xxxxs);
-        background: var(--sidebar-text-active-border);
-    }
-
-    &:focus-visible {
-        outline: var(--spacing-xxxxs) solid var(--sidebar-text);
-        outline-offset: calc(-1 * var(--spacing-xxxxs));
-    }
-`;
-
-const ThreadIcon = styled.span`
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: center;
-    opacity: 0.72;
-`;
-
-const ThreadLabel = styled.span`
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    font-size: var(--font-size-100);
-    font-weight: var(--font-weight-regular);
-    line-height: var(--line-height-100);
-    text-overflow: ellipsis;
-    white-space: nowrap;
 `;
 
 export default AgentThreadsList;

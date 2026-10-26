@@ -130,7 +130,7 @@ describe('AgentThreadsList', () => {
 
     test('highlights only the active thread', () => {
         renderList({activeBotId: 'a', activeRootId: 'root_1'});
-        expect(screen.getByRole('button', {name: 'First chat'}).getAttribute('aria-current')).toBe('page');
+        expect(screen.getByRole('button', {name: 'First chat'}).getAttribute('aria-current')).toBe('true');
         expect(screen.getByRole('button', {name: 'New chat'}).getAttribute('aria-current')).toBeNull();
     });
 
@@ -184,7 +184,7 @@ describe('AgentThreadsList', () => {
             const titles = chatTitles();
             expect(titles).toHaveLength(THREADS_PAGE_SIZE + 1);
             expect(titles[THREADS_PAGE_SIZE]).toBe('Chat 18');
-            expect(screen.getByRole('button', {name: 'Chat 18'}).getAttribute('aria-current')).toBe('page');
+            expect(screen.getByRole('button', {name: 'Chat 18'}).getAttribute('aria-current')).toBe('true');
         });
 
         test('collapsing an agent resets its expansion', () => {
