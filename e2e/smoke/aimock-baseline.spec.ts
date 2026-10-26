@@ -11,6 +11,7 @@ import {
     TITLE_GENERATION_PROMPT_PREFIX,
 } from 'helpers/aimock-fixtures';
 import { containerTest } from 'helpers/container-fixture';
+import { withDeadline } from 'helpers/deadline';
 import { RunAIMockContainer } from 'helpers/plugincontainer';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
@@ -76,7 +77,7 @@ test.describe('aimock fixture builders', () => {
 });
 
 const sidecarTest = containerTest(async (own) => {
-    const network = own(await new Network().start());
+    const network = own(await withDeadline('Creating the Docker network', 60000, () => new Network().start()));
     const aimock = own(await RunAIMockSidecar(network, {
         fixtures: buildTextResponse({
             userMessage: TEXT_USER_MESSAGE,

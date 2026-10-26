@@ -130,14 +130,14 @@ const test = containerTest(async (own) => {
         ],
     }));
     const openAIMock = own(await RunOpenAIMocks(mattermost.network));
-    await openAIMock.addCompletionMock(responseTest);
-    await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
     return { mattermost, openAIMock };
 });
 
 test.describe('Agent versioning, export and import', () => {
     test.beforeAll(async ({ containers }) => {
         ({ mattermost, openAIMock } = containers);
+        await openAIMock.addCompletionMock(responseTest);
+        await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
     });
 
     test('the version history modal lists every save and shows an old version read-only', async ({ page }) => {

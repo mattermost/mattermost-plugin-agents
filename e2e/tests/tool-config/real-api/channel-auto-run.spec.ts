@@ -86,6 +86,8 @@ test.describe('Channel Auto Run Policy (Aimock)', () => {
     let townSquareChannelID: string;
 
     test.beforeAll(async ({ containers }) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
+        test.setTimeout(180000);
         ({ mattermost, aimock } = containers);
         await setupRegularTestUser(mattermost);
         townSquareChannelID = await getTownSquareChannelID(mattermost);

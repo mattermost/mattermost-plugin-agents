@@ -82,6 +82,8 @@ test.describe('Collapsed Tool Activity (Aimock)', () => {
     let aimock: AIMockContainer;
 
     test.beforeAll(async ({containers}) => {
+        // setFixtures can fall back to restarting aimock, which outlasts the default hook timeout.
+        test.setTimeout(180000);
         ({mattermost, aimock} = containers);
         await setupRegularTestUser(mattermost);
         const townSquare = await getTownSquareChannel(mattermost, username, password);
