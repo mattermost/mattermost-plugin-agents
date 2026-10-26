@@ -252,7 +252,7 @@ func TestAmbientAutoReply(t *testing.T) {
 			classifierJSON: falseJSON,
 			setup: func(env *autoReplyTestEnv) {
 				posts := make([]*model.Post, 0, 25)
-				for i := 0; i < 25; i++ {
+				for i := range 25 {
 					msg := fmt.Sprintf("ambient-post-%d", i)
 					if i == 0 {
 						msg = "OLDEST-AMBIENT-MARKER"
