@@ -334,7 +334,7 @@ describe('AgentsList import and export', () => {
         schemaVersion: 1,
         exportedAt: 1,
         agentVersion: 2,
-        agent: {name: 'helper', displayName: 'Helper', customInstructions: 'Imported instructions', disableTools: false, maxToolTurns: 10, mcpDynamicToolLoading: true, autoEnableNewMCPTools: true, mcpTools: []},
+        agent: {name: 'helper', displayName: 'Helper', customInstructions: 'Imported instructions', disableTools: false, maxToolTurns: 10, mcpDynamicToolLoading: true, autoEnableNewMCPTools: true, mcpTools: [], skills: {disabled: false, allowPersonal: false, enabledSharedIDs: [], descriptionOverrides: {}}},
     } as AgentExportDocument;
 
     function pickFile() {
