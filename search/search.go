@@ -195,11 +195,11 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		return nil, err
 	}
 	if scope != nil {
-		var cfg *model.Config
+		var settings scopedsession.ServerSettings
 		if s.mmclient != nil {
-			cfg = s.mmclient.GetConfig()
+			settings = s.mmclient
 		}
-		readable := scopedsession.ContentChannels(scope, scopedsession.ComplianceEnabled(cfg))
+		readable := scopedsession.ContentChannels(scope, scopedsession.OpenTeamGrantDisabled(settings))
 		searchOpts.Scope = &readable
 	}
 

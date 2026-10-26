@@ -136,7 +136,7 @@ func (s *Service) scopeAllowsChannel(scope *model.SessionScope, channelID string
 			return false, fmt.Errorf("failed to get file team: %w", err)
 		}
 	}
-	return scopedsession.AllowsChannelContent(scope, channel, team, scopedsession.ComplianceEnabled(s.mm.GetConfig())), nil
+	return scopedsession.AllowsChannelContent(scope, channel, team, scopedsession.OpenTeamGrantDisabled(s.mm)), nil
 }
 
 // Slice returns the [offset, offset+limit) rune window of text as a Content,

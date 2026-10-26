@@ -20,29 +20,41 @@ func readsContent(scope *model.SessionScope) bool {
 
 // ContentChannels is the channel set whose content scope can read, for stores
 // that filter in their own queries. A scope that cannot read content yields
-// an empty set, which matches nothing. Compliance mode turns the open-team
-// grant off, as it does on the server.
-func ContentChannels(scope *model.SessionScope, complianceEnabled bool) model.SessionScopeResources {
+// an empty set, which matches nothing. See OpenTeamGrantDisabled for when the
+// open-team grant is off.
+func ContentChannels(scope *model.SessionScope, openTeamGrantDisabled bool) model.SessionScopeResources {
 	if !readsContent(scope) {
 		return model.SessionScopeResources{}
 	}
 	return model.SessionScopeResources{
 		ChannelIDs:             slices.Clone(scope.Resources.ChannelIDs),
-		OpenTeamPublicChannels: scope.Resources.OpenTeamPublicChannels && !complianceEnabled,
+		OpenTeamPublicChannels: scope.Resources.OpenTeamPublicChannels && !openTeamGrantDisabled,
 	}
 }
 
 // AllowsChannelContent reports whether scope can read channel's posts and
 // files. team is channel's team, or nil when it has none.
-func AllowsChannelContent(scope *model.SessionScope, channel *model.Channel, team *model.Team, complianceEnabled bool) bool {
-	return readsContent(scope) && model.SessionScopeAllowsChannel(scope, channel, team, complianceEnabled)
+func AllowsChannelContent(scope *model.SessionScope, channel *model.Channel, team *model.Team, openTeamGrantDisabled bool) bool {
+	return readsContent(scope) && model.SessionScopeAllowsChannel(scope, channel, team, openTeamGrantDisabled)
 }
 
-// ComplianceEnabled reports server-wide compliance mode. A missing config
-// counts as enabled, so open-team reads fail closed.
-func ComplianceEnabled(cfg *model.Config) bool {
-	if cfg == nil || cfg.ComplianceSettings.Enable == nil {
+// ServerSettings is the part of the Mattermost API that decides whether the
+// open-team grant applies.
+type ServerSettings interface {
+	GetConfig() *model.Config
+	RolesGrantPermission(roleNames []string, permissionID string) bool
+}
+
+// OpenTeamGrantDisabled mirrors the server: the open-team grant is off in
+// compliance mode and when the system_user role lacks join_public_teams.
+// Without settings it is off, so open-team reads fail closed.
+func OpenTeamGrantDisabled(settings ServerSettings) bool {
+	if settings == nil {
 		return true
 	}
-	return *cfg.ComplianceSettings.Enable
+	cfg := settings.GetConfig()
+	if cfg == nil || cfg.ComplianceSettings.Enable == nil || *cfg.ComplianceSettings.Enable {
+		return true
+	}
+	return !settings.RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id)
 }

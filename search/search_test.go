@@ -635,10 +635,12 @@ func TestSearchUnderScopedSession(t *testing.T) {
 	tests := []struct {
 		name       string
 		compliance bool
+		noJoin     bool
 		expected   model.SessionScopeResources
 	}{
 		{name: "searches the scope instead of memberships", expected: scope.Resources},
 		{name: "compliance mode drops open-team channels", compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
+		{name: "system_user without join_public_teams drops open-team channels", noJoin: true, expected: model.SessionScopeResources{ChannelIDs: []string{"trigger"}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -650,6 +652,9 @@ func TestSearchUnderScopedSession(t *testing.T) {
 			mockClient := mmapimocks.NewMockClient(t)
 			allowVectorIndexStateRead(mockClient)
 			mockClient.On("GetConfig").Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			if !tt.compliance {
+				mockClient.On("RolesGrantPermission", []string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
+			}
 			expected := tt.expected
 			mockEmbedding.On("Search", mock.Anything, "evidence", embeddings.SearchOptions{
 				Limit:  5,

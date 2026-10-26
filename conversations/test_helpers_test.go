@@ -279,6 +279,10 @@ func (c *fakeMMClient) GetPluginStatus(string) (*model.PluginStatus, error) {
 	return nil, errors.New("not implemented")
 }
 
+func (c *fakeMMClient) RolesGrantPermission([]string, string) bool {
+	return false
+}
+
 func (c *fakeMMClient) PluginHTTP(*http.Request) *http.Response {
 	return nil
 }
