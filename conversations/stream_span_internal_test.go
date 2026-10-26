@@ -48,7 +48,7 @@ func TestEndSpanOnStreamCloseReleaseAfterAbandon(t *testing.T) {
 	case _, open := <-wrapped.Stream:
 		require.False(t, open, "nothing may be forwarded after release")
 	case <-time.After(time.Second):
-		t.Fatal("forwarder still blocked after release")
+		require.FailNow(t, "forwarder still blocked after release")
 	}
 }
 
@@ -103,12 +103,12 @@ func TestEndSpanOnStreamCloseReleaseDrainsUpstreamStage(t *testing.T) {
 	select {
 	case <-stageDone:
 	case <-time.After(time.Second):
-		t.Fatal("upstream stage blocked: forwarder stopped reading after release")
+		require.FailNow(t, "upstream stage blocked: forwarder stopped reading after release")
 	}
 	select {
 	case _, open := <-wrapped.Stream:
 		require.False(t, open, "nothing may be forwarded after release")
 	case <-time.After(time.Second):
-		t.Fatal("forwarder did not close its output")
+		require.FailNow(t, "forwarder did not close its output")
 	}
 }

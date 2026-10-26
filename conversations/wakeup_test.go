@@ -40,7 +40,7 @@ const wakeScheduledAt = 1000
 var wakeUserID = model.NewId()
 
 func newWakeJob(postID, convID, userID string, scheduledAt int64) WakeJob {
-	return WakeJob{PostID: postID, UserID: userID, wakeMarker: wakeMarker{ConversationID: convID, ScheduledAt: scheduledAt}}
+	return WakeJob{PostID: postID, UserID: userID, ConversationID: convID, ScheduledAt: scheduledAt}
 }
 
 func wakeConversationStore() (*loadedStateFlowStore, *store.Conversation) {

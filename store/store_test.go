@@ -253,7 +253,7 @@ func TestSystemKeyValue(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				val, err := s.GetSystemValue("nonexistent")
 				require.NoError(t, err)
-				assert.Equal(t, "", val)
+				assert.Empty(t, val)
 			},
 		},
 		{
@@ -309,7 +309,7 @@ func TestSystemKeyValue(t *testing.T) {
 			validate: func(t *testing.T, s *Store) {
 				val, err := s.GetSystemValue("empty_key")
 				require.NoError(t, err)
-				assert.Equal(t, "", val)
+				assert.Empty(t, val)
 			},
 		},
 	}
