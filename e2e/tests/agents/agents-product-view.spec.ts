@@ -29,11 +29,13 @@ const RENAMED_TITLE = 'Renamed Product View Chat';
 const ENTER_PROMPT = 'new chat sent with enter';
 const SIDEBAR_ARCHIVE_PROMPT = 'product-view-sidebar-archive-002';
 const EMPTY_TITLE_PROMPT = 'product-view-empty-title-003';
+const ATTACH_PROMPT = 'product-view-attach-004';
+const ATTACH_FILE = 'product-view-attachment.txt';
 
 const replyFixtures = (prompts: string[]) => prompts.flatMap((prompt) => buildTextResponse({userMessage: prompt, content: `Reply to ${prompt}.`}).fixtures);
 const baseFixtures = () => [
     ...buildTextResponse({userMessage: FIRST_PROMPT, content: FIRST_REPLY, title: THREAD_TITLE}).fixtures,
-    ...replyFixtures([ENTER_PROMPT, SIDEBAR_ARCHIVE_PROMPT]),
+    ...replyFixtures([ENTER_PROMPT, SIDEBAR_ARCHIVE_PROMPT, ATTACH_PROMPT]),
 ];
 
 // Rename/archive responses seen during the run, written next to the screenshots.
@@ -622,6 +624,40 @@ test.describe('Agents product view', () => {
         // Cleared and focused, ready for the next reply.
         await expect(reply).toHaveValue('');
         await expect(reply).toBeFocused();
+    });
+
+    test('a file attached with the "+" picker uploads and goes out with the first message', async ({page}) => {
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+
+        const composer = newChatComposer(page);
+        const textbox = composer.getByRole('textbox');
+        await expect(textbox).toBeEnabled({timeout: 30000});
+
+        const chooser = page.waitForEvent('filechooser');
+        await composer.getByRole('button', {name: 'Attach files'}).click();
+        await (await chooser).setFiles({name: ATTACH_FILE, mimeType: 'text/plain', buffer: Buffer.from('attached from the product view')});
+
+        // Uploaded (removable, no longer cancellable) before the message goes out.
+        const card = composer.getByRole('list', {name: 'Attachments'}).getByRole('listitem');
+        await expect(card).toHaveCount(1);
+        await expect(card).toHaveAttribute('data-status', 'done', {timeout: 30000});
+        await expect(card.getByRole('button', {name: `Remove ${ATTACH_FILE}`})).toBeVisible();
+
+        await textbox.fill(ATTACH_PROMPT);
+        await textbox.press('Enter');
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+
+        // The user's root post carries the file.
+        const thread = page.getByTestId('agent-chat-thread');
+        const userPost = thread.locator('.post').filter({has: page.getByTestId('post-message-text').getByText(ATTACH_PROMPT)}).first();
+        await expect(userPost).toBeVisible({timeout: 30000});
+        await expect(userPost.getByText(ATTACH_FILE)).toBeVisible({timeout: 30000});
+
+        const newRootId = new URL(page.url()).pathname.split('/').pop()!;
+        const client = await mattermost.getClient(username, password);
+        const root = await client.getPost(newRootId);
+        expect(root.file_ids).toHaveLength(1);
     });
 
     test('Enter sends from the new-chat composer, then the header archives it', async ({page}) => {
