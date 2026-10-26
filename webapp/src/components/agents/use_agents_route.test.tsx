@@ -24,9 +24,11 @@ const makeHistory = (initial: string) => {
 
 describe('parseAgentsRoute', () => {
     test.each([
-        {path: AGENTS_ROUTE, expected: {view: 'all'}},
-        {path: `${AGENTS_ROUTE}/`, expected: {view: 'all'}},
+        {path: AGENTS_ROUTE, expected: {view: 'landing'}},
+        {path: `${AGENTS_ROUTE}/`, expected: {view: 'landing'}},
         {path: `${AGENTS_ROUTE}/all`, expected: {view: 'all'}},
+        {path: `${AGENTS_ROUTE}/all/extra`, expected: {view: 'all'}},
+        {path: `${AGENTS_ROUTE}/chat/bot%201`, expected: {view: 'chat', botId: 'bot 1'}},
         {path: `${AGENTS_ROUTE}/prompts`, expected: {view: 'prompts'}},
         {path: `${AGENTS_ROUTE}/chat/bot1`, expected: {view: 'chat', botId: 'bot1'}},
         {path: `${AGENTS_ROUTE}/chat/bot1/root1`, expected: {view: 'chat', botId: 'bot1', rootId: 'root1'}},
@@ -76,9 +78,15 @@ describe('useAgentsRoute', () => {
             `${AGENTS_ROUTE}/prompts`,
             `${AGENTS_ROUTE}/chat/bot1`,
             `${AGENTS_ROUTE}/chat/bot1/root1`,
-            AGENTS_ROUTE,
+            `${AGENTS_ROUTE}/all`,
         ]);
         expect(result.current.view).toBe('all');
+    });
+
+    test('opens on the landing at the product root', () => {
+        window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
+        const {result} = renderHook(() => useAgentsRoute());
+        expect(result.current.view).toBe('landing');
     });
 
     test('falls back to all agents without a host history', () => {

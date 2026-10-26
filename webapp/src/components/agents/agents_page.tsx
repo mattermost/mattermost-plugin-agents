@@ -4,20 +4,31 @@
 import React, {ReactNode, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 
+import CustomPromptsPage from '@/components/custom_prompts/custom_prompts_page';
+
+import AgentChatPage from './agent_chat_page';
+import AgentsLanding from './agents_landing';
 import AgentsList from './agents_list';
 import ProductSidebar from './product_sidebar';
-import {AGENTS_ROUTE, AgentsRoute, AgentsView, useAgentsRoute} from './use_agents_route';
+import {AGENTS_ROUTE, AgentsNavigation, AgentsRoute, AgentsView, useAgentsRoute} from './use_agents_route';
 
 export {AGENTS_ROUTE};
 
-// Seam for the center pane: each view maps to its content. Later steps replace the
-// null entries with CustomPromptsPage and AgentChatPage (one line each).
-export type ContentRenderers = Record<AgentsView, (route: AgentsRoute) => ReactNode>;
+// Seam for the center pane: each view maps to its content.
+export type ContentRenderers = Record<AgentsView, (route: AgentsRoute & AgentsNavigation) => ReactNode>;
 
 export const defaultContentRenderers: ContentRenderers = {
+    landing: (route) => <AgentsLanding nav={route}/>,
     all: () => <AgentsList/>,
-    prompts: () => null,
-    chat: () => null,
+    prompts: () => <CustomPromptsPage/>,
+    chat: (route) => (
+        <AgentChatPage
+            botId={route.botId ?? ''}
+            rootId={route.rootId}
+            toChat={route.toChat}
+            toAll={route.toAll}
+        />
+    ),
 };
 
 interface AgentsPageProps {

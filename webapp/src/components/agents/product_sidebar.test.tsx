@@ -2,9 +2,38 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {Provider} from 'react-redux';
+import {createStore} from 'redux';
+
+import {getAIThreads} from '@/client';
+import type {AIThread} from '@/types/ai_thread';
+import PostEventListener, {requestAgentThreadsRefresh} from '@/websocket';
 
 import ProductSidebar from './product_sidebar';
+import {AGENTS_ROUTE, buildChatPath} from './use_agents_route';
+
+jest.mock('@/client', () => ({getAIThreads: jest.fn()}));
+jest.mock('@/bots', () => ({
+    useBotlist: () => ({bots: mockBots}),
+}));
+jest.mock('@mattermost/shared/components/tooltip', () => ({
+    WithTooltip: ({children}: {children: React.ReactNode}) => <>{children}</>,
+}));
+
+const mockBots = [{id: 'a', displayName: 'Alpha', dmChannelID: 'dm_a'}];
+
+const mockGetAIThreads = getAIThreads as jest.Mock;
+
+const thread = (id: string, title: string): AIThread => ({
+    id,
+    channel_id: 'dm_a',
+    bot_id: 'a',
+    root_post_id: `root_${id}`,
+    title,
+    turn_count: 1,
+    update_at: Number(id),
+});
 
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
@@ -49,5 +78,87 @@ describe('ProductSidebar', () => {
     test('renders the extension point children', () => {
         renderSidebar({children: <div>{'Your agents section'}</div>});
         expect(screen.getByText('Your agents section')).toBeTruthy();
+    });
+});
+
+describe('ProductSidebar "Your agents" section', () => {
+    const makeHistory = (initial: string) => {
+        const listeners = new Set<() => void>();
+        const history = {
+            location: {pathname: initial},
+            push: jest.fn((path: string) => {
+                history.location = {pathname: path};
+                listeners.forEach((l) => l());
+            }),
+            listen: (l: () => void) => {
+                listeners.add(l);
+                return () => listeners.delete(l);
+            },
+        };
+        return history;
+    };
+
+    const renderWithStore = (initialPath: string) => {
+        const history = makeHistory(initialPath);
+        window.WebappUtils = {browserHistory: history} as any;
+        render(
+            <Provider store={createStore(() => ({}))}>
+                <ProductSidebar
+                    activeView='all'
+                    onSelectAll={jest.fn()}
+                    onSelectPrompts={jest.fn()}
+                />
+            </Provider>,
+        );
+        return history;
+    };
+
+    afterEach(() => {
+        delete window.WebappUtils;
+        mockGetAIThreads.mockReset();
+    });
+
+    test('lists fetched threads and navigates on click', async () => {
+        mockGetAIThreads.mockResolvedValue([thread('1', 'Older'), thread('2', 'Newest')]);
+        const history = renderWithStore(buildChatPath('a', 'root_1'));
+        await screen.findByRole('button', {name: 'Newest'});
+        expect(screen.getByRole('button', {name: 'Older'}).getAttribute('aria-current')).toBe('page');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Newest'}));
+        expect(history.push).toHaveBeenCalledWith(buildChatPath('a', 'root_2'));
+
+        fireEvent.click(screen.getByRole('button', {name: 'New chat with Alpha'}));
+        expect(history.push).toHaveBeenCalledWith(buildChatPath('a'));
+    });
+
+    test('surfaces a fetch failure', async () => {
+        mockGetAIThreads.mockRejectedValue(new Error('nope'));
+        renderWithStore(AGENTS_ROUTE);
+        expect((await screen.findByRole('alert')).textContent).toContain('Couldn\'t load your chats.');
+    });
+
+    test('refreshes when a reply finishes, and on chat-page refresh requests, not on other updates', async () => {
+        mockGetAIThreads.mockResolvedValue([]);
+        renderWithStore(AGENTS_ROUTE);
+        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(1));
+
+        const events = new PostEventListener();
+        const msg = (control: string) => ({data: {post_id: 'p', control}} as any);
+        await act(async () => {
+            events.handlePostUpdateWebsockets(msg('start'));
+        });
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            events.handlePostUpdateWebsockets(msg('end'));
+        });
+        await waitFor(() => expect(mockGetAIThreads).toHaveBeenCalledTimes(2));
+
+        jest.useFakeTimers();
+        await act(async () => {
+            requestAgentThreadsRefresh();
+        });
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(3);
+        jest.useRealTimers();
     });
 });

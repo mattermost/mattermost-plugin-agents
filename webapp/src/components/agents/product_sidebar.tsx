@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {ReactNode} from 'react';
+import React, {ReactNode, useContext, useEffect} from 'react';
+import {ReactReduxContext} from 'react-redux';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 import CodeBracketsIcon from '@mattermost/compass-icons/components/code-brackets';
@@ -10,7 +11,12 @@ import {ChannelSidebarItem} from '@mattermost/compass-ui/components/channel-side
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {Scrollbar} from '@mattermost/compass-ui/components/scrollbar';
 
-import type {AgentsView} from './use_agents_route';
+import {useBotlist} from '@/bots';
+import {useAgentThreads} from '@/hooks/use_agent_threads';
+import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/websocket';
+
+import AgentThreadsList from './agent_threads_list';
+import {useAgentsRoute, type AgentsView} from './use_agents_route';
 
 interface ProductSidebarProps {
     activeView: AgentsView;
@@ -47,9 +53,42 @@ const NavRow = ({name, glyph, active, onClick}: NavRowProps) => (
     </NavRowWrapper>
 );
 
+// Data wiring for the "Your agents" section: bots, DM threads, route highlighting and
+// refresh triggers (reply finished over websocket; new-chat requests from the chat page).
+const YourAgentsSection = () => {
+    const route = useAgentsRoute();
+    const {bots} = useBotlist();
+    const {threadsByBot, loading, error, refresh, refreshWithTitleRetry} = useAgentThreads(bots);
+
+    useEffect(() => subscribeToAllPostUpdates((msg) => {
+        if (msg.data.control === 'end') {
+            refresh();
+        }
+    }), [refresh]);
+
+    useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
+
+    return (
+        <AgentThreadsList
+            bots={bots ?? []}
+            threadsByBot={threadsByBot}
+            loading={loading && Object.keys(threadsByBot).length === 0}
+            error={error}
+            activeBotId={route.view === 'chat' ? route.botId : ''}
+            activeRootId={route.view === 'chat' ? route.rootId : ''}
+            onSelectThread={route.toChat}
+            onNewChat={route.toChat}
+            onRetry={refresh}
+        />
+    );
+};
+
 const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: ProductSidebarProps) => {
     const intl = useIntl();
     const title = intl.formatMessage({defaultMessage: 'Agents'});
+
+    // The section needs the plugin's redux store; without one there is nothing to list.
+    const hasStore = useContext(ReactReduxContext) !== null;
 
     return (
         <Aside aria-label={title}>
@@ -73,6 +112,7 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: Pr
                         />
                     </NavGroup>
                 </nav>
+                {hasStore && <YourAgentsSection/>}
                 {children}
             </ScrollArea>
         </Aside>

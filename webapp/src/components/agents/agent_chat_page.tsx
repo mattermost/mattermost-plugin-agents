@@ -1,0 +1,411 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {FormattedMessage, defineMessages, useIntl} from 'react-intl';
+import {useSelector, useStore} from 'react-redux';
+import styled, {keyframes} from 'styled-components';
+
+import {GlobalState} from '@mattermost/types/store';
+import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
+import {Spinner} from '@mattermost/compass-ui/components/spinner';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+
+import {getPost, getProfilePictureUrl, updateRead} from '@/client';
+import {LLMBot, useBotlist} from '@/bots';
+import {AdvancedTextEditor, ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
+import {requestAgentThreadsRefresh} from '@/websocket';
+
+import {useAgentDMChannel} from './use_agent_dm_channel';
+
+// Empty-chat titles ported from the prototype's EMPTY_CHAT_TITLES.
+export const emptyChatTitles = defineMessages({
+    helpToday: {defaultMessage: 'How can I help today?'},
+    getWorkDone: {defaultMessage: 'Let\'s get some work done'},
+    tackle: {defaultMessage: 'What should we tackle?'},
+    ready: {defaultMessage: 'Ready when you are'},
+    start: {defaultMessage: 'Where should we start?'},
+    onYourMind: {defaultMessage: 'Got something on your mind?'},
+});
+const EMPTY_CHAT_TITLE_LIST = Object.values(emptyChatTitles);
+
+// Draft key for the new-chat composer. Distinct from the host's `draft_<channelId>`
+// so a half-typed new chat does not collide with the Channels DM composer.
+export const newChatStorageKey = (channelId: string) => `agents_new_chat_draft_${channelId}`;
+
+const READ_AHEAD_MS = 24 * 60 * 60 * 1000;
+const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
+
+const isMissingThreadMembershipError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes(missingThreadMembershipMessage);
+};
+
+// The product URL is not team-scoped, so currentTeamId may be empty on a cold
+// load. Fall back to the user's first team; '' means skip updateRead.
+export const resolveReadTeamId = (state: GlobalState): string => {
+    const {currentTeamId, myMembers} = state.entities.teams;
+    if (currentTeamId) {
+        return currentTeamId;
+    }
+    return Object.keys(myMembers ?? {})[0] ?? '';
+};
+
+const useMarkThreadRead = () => {
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
+    const teamId = useSelector<GlobalState, string>(resolveReadTeamId);
+
+    return useCallback((rootId: string) => {
+        if (!teamId || !currentUserId) {
+            return;
+        }
+
+        // Mark read until tomorrow so agent threads never show as unread (as the RHS does).
+        updateRead(currentUserId, teamId, rootId, Date.now() + READ_AHEAD_MS).catch((error: unknown) => {
+            if (isMissingThreadMembershipError(error)) {
+                console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
+                return;
+            }
+            console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
+        });
+    }, [currentUserId, teamId]);
+};
+
+interface AgentChatPageProps {
+    botId: string;
+    rootId?: string;
+    toChat: (botId: string, rootId?: string) => void;
+    toAll: () => void;
+}
+
+const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
+    const intl = useIntl();
+    const {bots} = useBotlist();
+    const bot = useMemo(() => bots?.find((b) => b.id === botId) ?? null, [bots, botId]);
+    const dm = useAgentDMChannel(bot);
+
+    if (!bots) {
+        return <LoadingState/>;
+    }
+
+    // Fail closed: an agent the user cannot access (or that no longer exists) is not rendered.
+    if (!bot) {
+        return (
+            <CenteredState>
+                <EmptyState
+                    title={intl.formatMessage({defaultMessage: 'This agent isn\'t available'})}
+                    description={intl.formatMessage({defaultMessage: 'It may have been removed, or you may not have access to it.'})}
+                    action={{children: intl.formatMessage({defaultMessage: 'View all agents'}), onClick: toAll}}
+                />
+            </CenteredState>
+        );
+    }
+
+    let body;
+    if (dm.status === 'error') {
+        body = (
+            <CenteredState>
+                <EmptyState
+                    title={intl.formatMessage({defaultMessage: 'Couldn\'t open this chat'})}
+                    description={intl.formatMessage({defaultMessage: 'Something went wrong while setting up the chat. Please try again later.'})}
+                />
+            </CenteredState>
+        );
+    } else if (dm.status === 'loading') {
+        body = <LoadingState label={intl.formatMessage({defaultMessage: 'Setting up chat…'})}/>;
+    } else if (rootId) {
+        body = (
+            <AgentThread
+                key={rootId}
+                channelId={dm.channelId}
+                rootId={rootId}
+                toAll={toAll}
+            />
+        );
+    } else {
+        body = (
+            <NewChat
+                key={bot.id}
+                bot={bot}
+                channelId={dm.channelId}
+                onCreated={(newRootId) => {
+                    // The sidebar refetches its threads, plus a delayed retry for the async title.
+                    requestAgentThreadsRefresh();
+                    toChat(bot.id, newRootId);
+                }}
+            />
+        );
+    }
+
+    return (
+        <ChatPane
+            aria-label={intl.formatMessage({defaultMessage: 'Chat with {name}'}, {name: bot.displayName})}
+        >
+            <ChatHeader>
+                <AgentName>{bot.displayName}</AgentName>
+            </ChatHeader>
+            {body}
+        </ChatPane>
+    );
+};
+
+const LoadingState = ({label}: {label?: string}) => (
+    <CenteredState>
+        <Spinner
+            size='20'
+            aria-label={label}
+        />
+        {label && <span>{label}</span>}
+    </CenteredState>
+);
+
+interface NewChatProps {
+    bot: LLMBot;
+    channelId: string;
+    onCreated: (rootId: string) => void;
+}
+
+const NewChat = ({bot, channelId, onCreated}: NewChatProps) => {
+    const intl = useIntl();
+    const composerRef = useRef<HTMLDivElement>(null);
+
+    // Picked once per mount so re-renders don't change the greeting.
+    const [title] = useState(() => EMPTY_CHAT_TITLE_LIST[Math.floor(Math.random() * EMPTY_CHAT_TITLE_LIST.length)]);
+
+    useEffect(() => {
+        const focusComposer = () => composerRef.current?.querySelector<HTMLElement>('textarea, [contenteditable="true"]')?.focus();
+        focusComposer();
+
+        // The host editor can mount its textbox a frame later.
+        const frame = window.requestAnimationFrame(focusComposer);
+        return () => window.cancelAnimationFrame(frame);
+    }, []);
+
+    const afterSubmit = useCallback((result: {created?: {id?: string}}) => {
+        const id = result?.created?.id;
+        if (id) {
+            onCreated(id);
+        }
+    }, [onCreated]);
+
+    return (
+        <EmptyChat>
+            <EmptyIntro>
+                <UserAvatar
+                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                    alt={bot.displayName}
+                    name={bot.displayName}
+                    size='48'
+                />
+                <EmptyTitle>{intl.formatMessage(title)}</EmptyTitle>
+            </EmptyIntro>
+            <Composer
+                ref={composerRef}
+                data-testid='agent-chat-new-composer'
+            >
+                {AdvancedTextEditor ? (
+                    <AdvancedTextEditor
+                        channelId={channelId}
+                        rootId={''}
+                        location={'RHS_COMMENT'}
+                        isThreadView={true}
+                        storageKey={newChatStorageKey(channelId)}
+                        placeholder={intl.formatMessage({defaultMessage: 'Message {name}'}, {name: bot.displayName})}
+                        afterSubmit={afterSubmit}
+                    />
+                ) : (
+                    <FormattedMessage defaultMessage='This version of Mattermost does not support chatting here.'/>
+                )}
+            </Composer>
+        </EmptyChat>
+    );
+};
+
+type ThreadCheck = 'loading' | 'valid' | 'invalid' | 'error';
+
+interface AgentThreadProps {
+    channelId: string;
+    rootId: string;
+    toAll: () => void;
+}
+
+// Renders one thread, but only after confirming the root post is a root post in
+// this agent's DM channel. Fails closed on mismatch and on lookup errors.
+const AgentThread = ({channelId, rootId, toAll}: AgentThreadProps) => {
+    const intl = useIntl();
+    const store = useStore<GlobalState>();
+    const markRead = useMarkThreadRead();
+    const [check, setCheck] = useState<ThreadCheck>('loading');
+
+    useEffect(() => {
+        let current = true;
+        const isRootInChannel = (post: {channel_id: string; root_id?: string}) => post.channel_id === channelId && !post.root_id;
+
+        // After a submit the host has already put the new post in the store.
+        const cached = store.getState().entities.posts.posts[rootId];
+        if (cached) {
+            setCheck(isRootInChannel(cached) ? 'valid' : 'invalid');
+        } else {
+            setCheck('loading');
+            getPost(rootId).then((post) => {
+                if (current) {
+                    setCheck(isRootInChannel(post) ? 'valid' : 'invalid');
+                }
+            }).catch((error: unknown) => {
+                if (current) {
+                    console.error('Failed to load agent thread root post:', error); // eslint-disable-line no-console
+                    setCheck('error');
+                }
+            });
+        }
+        return () => {
+            current = false;
+        };
+    }, [channelId, rootId, store]);
+
+    useEffect(() => {
+        if (check === 'valid') {
+            markRead(rootId);
+        }
+
+        // The server can lag behind the open; mark again on switch/unmount (as the RHS does).
+        return () => {
+            if (check === 'valid') {
+                markRead(rootId);
+            }
+        };
+    }, [check, markRead, rootId]);
+
+    if (check === 'loading') {
+        return <LoadingState/>;
+    }
+    if (check !== 'valid' || !ThreadViewer) {
+        return (
+            <CenteredState>
+                <EmptyState
+                    title={intl.formatMessage({defaultMessage: 'Couldn\'t open this chat'})}
+                    description={check === 'invalid' ? intl.formatMessage({defaultMessage: 'This chat doesn\'t belong to this agent, or it no longer exists.'}) : intl.formatMessage({defaultMessage: 'Something went wrong while loading this chat. Please try again later.'})}
+                    action={{children: intl.formatMessage({defaultMessage: 'View all agents'}), onClick: toAll}}
+                />
+            </CenteredState>
+        );
+    }
+
+    return (
+        <ThreadPane data-testid='agent-chat-thread'>
+            <ThreadViewer
+                rootPostId={rootId}
+                isThreadView={true}
+                useRelativeTimestamp={false}
+                inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply…'})}
+            />
+        </ThreadPane>
+    );
+};
+
+// No compass token covers content widths; matches the prototype's 800px composer.
+const COMPOSER_MAX_WIDTH = '800px';
+
+const fadeIn = keyframes`
+    from { opacity: 0; }
+    to { opacity: 1; }
+`;
+
+const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
+    height: 100%;
+`;
+
+// Definite height, no own scroll: the host ThreadViewer brings its own scroller.
+const ChatPane = styled.section`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    color: var(--center-channel-color);
+    background: var(--center-channel-bg);
+`;
+
+const ChatHeader = styled.header`
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: var(--spacing-s);
+    padding: var(--spacing-m) var(--spacing-xl);
+    border-bottom: var(--border-light);
+`;
+
+const AgentName = styled.h1`
+    margin: 0;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-200);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-200);
+`;
+
+const CenteredState = styled.div`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-s);
+    min-height: 0;
+    padding: var(--spacing-xxxxl);
+`;
+
+const EmptyChat = styled.div`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xxl);
+    min-height: 0;
+    padding: var(--spacing-xxxxl);
+
+    /* Sit slightly above true center, as in the prototype. */
+    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l))));
+`;
+
+const EmptyIntro = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-m);
+    text-align: center;
+`;
+
+const EmptyTitle = styled.h2`
+    margin: 0;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-600);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-600);
+    color: var(--center-channel-color);
+`;
+
+const Composer = styled.div`
+    width: 100%;
+    max-width: ${COMPOSER_MAX_WIDTH};
+
+    .AdvancedTextEditor {
+        padding: 0;
+    }
+`;
+
+const ThreadPane = styled.div`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    animation: ${fadeIn} var(--duration-moderate) var(--ease-entrance);
+
+    @media (prefers-reduced-motion: reduce) {
+        animation: none;
+    }
+`;
+
+export default AgentChatPage;

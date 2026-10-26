@@ -16,7 +16,13 @@ jest.mock('react-intl', () => {
     return {...actual, useIntl: () => intl};
 });
 
+// The sidebar's "Your agents" section pulls in the plugin's redux-backed bots module.
+jest.mock('@/bots', () => ({useBotlist: () => ({bots: []})}));
+
 jest.mock('./agents_list', () => ({__esModule: true, default: () => <div>{'agents list'}</div>}));
+
+// The default chat renderer imports host components from window.Components.
+jest.mock('@/mm_webapp', () => ({AdvancedTextEditor: null, ThreadViewer: null}));
 
 const makeHistory = (initial: string) => {
     const listeners = new Set<() => void>();
@@ -43,15 +49,20 @@ describe('AgentsPage', () => {
         delete window.WebappUtils;
     });
 
-    test('opens on All agents and navigates via the sidebar', () => {
+    test('opens on the landing and navigates via the sidebar', () => {
         const history = makeHistory(AGENTS_ROUTE);
         window.WebappUtils = {browserHistory: history} as any;
         const renderers: ContentRenderers = {
+            landing: () => <div>{'landing view'}</div>,
             all: () => <div>{'all view'}</div>,
             prompts: () => <div>{'prompts view'}</div>,
             chat: (r) => <div>{`chat ${r.botId}`}</div>,
         };
         renderPage(renderers);
+        expect(screen.getByText('landing view')).toBeTruthy();
+
+        act(() => screen.getByRole('button', {name: /All agents/}).click());
+        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all`);
         expect(screen.getByText('all view')).toBeTruthy();
 
         act(() => screen.getByRole('button', {name: /Custom Prompts/}).click());
@@ -63,8 +74,15 @@ describe('AgentsPage', () => {
     });
 
     test('renders the agents list for the all view by default', () => {
+        window.WebappUtils = {browserHistory: makeHistory(`${AGENTS_ROUTE}/all`)} as any;
+        renderPage();
+        expect(screen.getByText('agents list')).toBeTruthy();
+    });
+
+    test('the default landing falls back to All agents when no default agent is available', () => {
         window.WebappUtils = {browserHistory: makeHistory(AGENTS_ROUTE)} as any;
         renderPage();
+        expect(screen.getByText('No default agent is available')).toBeTruthy();
         expect(screen.getByText('agents list')).toBeTruthy();
     });
 });

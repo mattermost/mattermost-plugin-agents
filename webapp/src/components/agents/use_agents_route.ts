@@ -7,7 +7,8 @@ import manifest from '@/manifest';
 
 export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
 
-export type AgentsView = 'all' | 'prompts' | 'chat';
+// 'landing' is the product root: a new chat with the workspace default agent.
+export type AgentsView = 'landing' | 'all' | 'prompts' | 'chat';
 
 export interface AgentsRoute {
     view: AgentsView;
@@ -42,7 +43,10 @@ const decode = (segment: string): string => {
     }
 };
 
-// Anything that is not a recognized sub-route falls back to the all-agents view.
+// The bare product root is the landing. Anything that is not a recognized
+// sub-route falls back to the all-agents view rather than the landing, so a
+// mistyped or stale link never starts a chat (or creates a DM channel) as a
+// side effect.
 export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
     if (!pathname || !pathname.startsWith(AGENTS_ROUTE)) {
         return {view: 'all'};
@@ -53,6 +57,12 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
     }
     const segments = rest.split('/').filter(Boolean).map(decode);
 
+    if (segments.length === 0) {
+        return {view: 'landing'};
+    }
+    if (segments[0] === 'all' && segments.length === 1) {
+        return {view: 'all'};
+    }
     if (segments[0] === 'prompts' && segments.length === 1) {
         return {view: 'prompts'};
     }
@@ -65,6 +75,9 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
     }
     return {view: 'all'};
 };
+
+export const ALL_AGENTS_PATH = `${AGENTS_ROUTE}/all`;
+export const PROMPTS_PATH = `${AGENTS_ROUTE}/prompts`;
 
 export const buildChatPath = (botId: string, rootId?: string): string => {
     const base = `${AGENTS_ROUTE}/chat/${encodeURIComponent(botId)}`;
@@ -98,8 +111,8 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
     }, []);
 
     const nav = useMemo<AgentsNavigation>(() => ({
-        toAll: () => push(AGENTS_ROUTE),
-        toPrompts: () => push(`${AGENTS_ROUTE}/prompts`),
+        toAll: () => push(ALL_AGENTS_PATH),
+        toPrompts: () => push(PROMPTS_PATH),
         toChat: (botId, rootId) => push(buildChatPath(botId, rootId)),
     }), [push]);
 
