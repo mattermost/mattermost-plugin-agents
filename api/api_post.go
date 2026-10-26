@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -299,6 +300,21 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 	c.Render(http.StatusOK, render.JSON{Data: result})
 }
 
+// detachedRequestContext returns a context for a run that starts in this
+// request but must outlive it: the continuation streams in a goroutine, and
+// core cancels the request context once the handler returns. Only the active
+// span, the authenticated session ID, and the request's audit record carry
+// over (telemetry.DetachContext keeps only the span, and the services read
+// the latter two from ctx); canceling the request (e.g. a browser
+// disconnect) does not stop the run, the stop route does. The audit record
+// is emitted when the handler returns, so only synchronous service code may
+// enrich it.
+func detachedRequestContext(c *gin.Context) context.Context {
+	reqCtx := c.Request.Context()
+	ctx := auth.WithSessionID(telemetry.DetachContext(reqCtx), auth.SessionIDFromContext(reqCtx))
+	return audit.WithRecord(ctx, audit.RecordFromContext(reqCtx))
+}
+
 func (a *API) handleStop(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	post := c.MustGet(ContextPostKey).(*model.Post)
@@ -340,7 +356,7 @@ func (a *API) handleRegenerate(c *gin.Context) {
 		return
 	}
 
-	if err := a.conversationsService.HandleRegenerate(c.Request.Context(), userID, post, channel); err != nil {
+	if err := a.conversationsService.HandleRegenerate(detachedRequestContext(c), userID, post, channel); err != nil {
 		abortWithServiceError(c, err, regenerateHTTPStatus)
 		return
 	}
@@ -385,7 +401,7 @@ func (a *API) handleToolCall(c *gin.Context) {
 	// Opaque block IDs only — never the tool answers carried alongside them.
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
-	if err := a.conversationsService.HandleToolCall(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
+	if err := a.conversationsService.HandleToolCall(detachedRequestContext(c), userID, post, channel, data.AcceptedToolIDs, data.ToolAnswers); err != nil {
 		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}
@@ -432,7 +448,7 @@ func (a *API) handleToolResult(c *gin.Context) {
 
 	audit.AddParam(rec, "accepted_tool_ids", audit.TruncateIDs(data.AcceptedToolIDs))
 
-	if err := a.conversationsService.HandleToolResult(c.Request.Context(), userID, post, channel, data.AcceptedToolIDs); err != nil {
+	if err := a.conversationsService.HandleToolResult(detachedRequestContext(c), userID, post, channel, data.AcceptedToolIDs); err != nil {
 		abortWithServiceError(c, err, toolApprovalHTTPStatus)
 		return
 	}
