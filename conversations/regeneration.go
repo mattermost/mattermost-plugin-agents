@@ -261,7 +261,10 @@ func (c *Conversations) regenerateViaConversation(ctx stdcontext.Context, policy
 	// steering note would never reach the model: cancel without one.
 	c.cancelThreadWake(responsePostMarkerKey(post))
 
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	llmContext, err := policy.buildContext(ctx, "Failed to load user tool preferences on regen, proceeding without filtering")
+	if err != nil {
+		return nil, err
+	}
 	llmContext.ResponsePostID = post.Id
 
 	// Build the request BEFORE scrubbing — ExcludeAfterPostID needs the anchor.

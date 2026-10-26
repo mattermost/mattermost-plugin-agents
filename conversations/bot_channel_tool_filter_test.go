@@ -440,7 +440,8 @@ func TestChannelFollowUpStrictRegistry(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			llmContext := policy.buildContext(context.Background(), "Failed to load user tool preferences")
+			llmContext, err := policy.buildContext(context.Background(), "Failed to load user tool preferences")
+			require.NoError(t, err)
 
 			require.Contains(t, channelFollowUpSearchToolNames(t, llmContext.Tools, "safe"), "jira__safe_tool")
 			if tt.expectAskTool {
@@ -487,7 +488,8 @@ func TestChannelMentionSystemPromptDynamicToolWorkflow(t *testing.T) {
 				isDM:         isDM,
 				toolsEnabled: isDM || tt.allowToolsInChannel,
 			}
-			llmContext := policy.buildContext(context.Background(), "")
+			llmContext, err := policy.buildContext(context.Background(), "")
+			require.NoError(t, err)
 			require.NotNil(t, llmContext.Tools.GetTool(mcp.SearchToolsName))
 
 			systemPrompt, err := promptsEngine.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)

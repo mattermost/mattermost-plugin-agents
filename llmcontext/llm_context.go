@@ -243,8 +243,7 @@ func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
 	}
 }
 
-// WithLLMContextSkills sets whether the skill tools are cataloged. Must be
-// configured before default tools are built.
+// WithLLMContextSkills sets whether AddSkillTools catalogs the skill tools.
 func (b *Builder) WithLLMContextSkills(enabled bool) llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.SkillsEnabled = enabled
@@ -540,12 +539,6 @@ func (b *Builder) logWarn(message string, keyValuePairs ...any) {
 	}
 }
 
-func (b *Builder) logError(message string, keyValuePairs ...any) {
-	if b != nil && b.pluginAPI != nil {
-		b.pluginAPI.Log.Error(message, keyValuePairs...)
-	}
-}
-
 func (b *Builder) logDebug(message string, keyValuePairs ...any) {
 	if b != nil && b.pluginAPI != nil {
 		b.pluginAPI.Log.Debug(message, keyValuePairs...)
@@ -594,24 +587,23 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 
 		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
-		b.addSkillTools(c, bot)
 	}
 }
 
-// addSkillTools catalogs the skill tools after the rest of the store is built,
-// since built-in skills depend on the tools beside them. A failed skill lookup
-// leaves the turn without skills rather than failing it.
-func (b *Builder) addSkillTools(c *llm.Context, bot *bots.Bot) {
-	if !c.ToolCatalog.SkillsEnabled || b.skillProvider == nil || bot == nil || bot.GetConfig().DisableTools {
-		return
+// AddSkillTools catalogs the skill tools for cfg when the context enables
+// skills. Call it after the tool store is built: built-in skills depend on the
+// tools beside them.
+func (b *Builder) AddSkillTools(c *llm.Context, cfg llm.BotConfig) error {
+	if !c.ToolCatalog.SkillsEnabled || b.skillProvider == nil || cfg.DisableTools || c.Tools == nil {
+		return nil
 	}
-	tools, catalog, err := b.skillProvider.Tools(bot.GetConfig(), c)
+	tools, catalog, err := b.skillProvider.Tools(cfg, c)
 	if err != nil {
-		b.logError("Failed to load skills; continuing without them", "bot_id", bot.GetConfig().ID, "error", err)
-		return
+		return err
 	}
 	c.Tools.AddTools(tools)
 	c.Skills = catalog
+	return nil
 }
 
 func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {

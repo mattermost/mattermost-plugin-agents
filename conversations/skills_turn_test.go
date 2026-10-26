@@ -5,6 +5,7 @@ package conversations
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
@@ -20,12 +21,16 @@ import (
 
 type skillsTestPromptStore struct {
 	prompts []customprompts.CustomPrompt
+	err     error
 }
 
 func (s skillsTestPromptStore) ListForUser(userID string, _ bool) ([]customprompts.CustomPrompt, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	var out []customprompts.CustomPrompt
 	for _, p := range s.prompts {
-		if p.CreatorID == userID {
+		if p.CreatorID == userID || p.IsShared {
 			out = append(out, p)
 		}
 	}
@@ -37,6 +42,7 @@ func (s skillsTestPromptStore) ListForUser(userID string, _ bool) ([]custompromp
 func TestTurnPolicySkills(t *testing.T) {
 	const loadInstruction = "call load_skill"
 	personal := customprompts.CustomPrompt{ID: model.NewId(), CreatorID: testRequesterID, Name: "Standup", Description: "Use for standup notes.", Template: "Standup"}
+	shared := customprompts.CustomPrompt{ID: model.NewId(), CreatorID: model.NewId(), Name: "Release notes", Description: "Use for release notes.", Template: "Release notes", IsShared: true}
 
 	promptsEngine, err := llm.NewPrompts(prompts.PromptsFolder)
 	require.NoError(t, err)
@@ -45,13 +51,18 @@ func TestTurnPolicySkills(t *testing.T) {
 		name                string
 		channelType         model.ChannelType
 		allowToolsInChannel bool
+		unattended          bool
+		storeErr            error
 		operation           string
 		wantSkills          []string
+		wantErr             bool
 	}{
-		{name: "new DM conversation", channelType: model.ChannelTypeDirect, wantSkills: []string{"mattermost/summarize-conversations", personal.ID}},
-		{name: "DM conversation follow-up", channelType: model.ChannelTypeDirect, operation: llm.OperationConversation, wantSkills: []string{"mattermost/summarize-conversations", personal.ID}},
-		{name: "channel mention lists no personal skills", channelType: model.ChannelTypeOpen, allowToolsInChannel: true, wantSkills: []string{"mattermost/summarize-conversations"}},
+		{name: "new DM conversation", channelType: model.ChannelTypeDirect, wantSkills: []string{"mattermost/summarize-conversations", personal.ID, shared.ID}},
+		{name: "DM conversation follow-up", channelType: model.ChannelTypeDirect, operation: llm.OperationConversation, wantSkills: []string{"mattermost/summarize-conversations", personal.ID, shared.ID}},
+		{name: "channel mention lists shared but not personal skills", channelType: model.ChannelTypeOpen, allowToolsInChannel: true, wantSkills: []string{"mattermost/summarize-conversations", shared.ID}},
 		{name: "channel mention with tool calling disabled", channelType: model.ChannelTypeOpen},
+		{name: "run with nobody present lists only built-in skills", channelType: model.ChannelTypeOpen, allowToolsInChannel: true, unattended: true, wantSkills: []string{"mattermost/summarize-conversations"}},
+		{name: "skill store failure fails the turn", channelType: model.ChannelTypeDirect, storeErr: errors.New("db down"), wantErr: true},
 		{name: "search conversation", channelType: model.ChannelTypeDirect, operation: llm.OperationSearch},
 		{name: "thread analysis conversation", channelType: model.ChannelTypeDirect, operation: llm.OperationThreadAnalysis},
 	}
@@ -61,10 +72,10 @@ func TestTurnPolicySkills(t *testing.T) {
 			builder := newChannelFollowUpTestBuilder(t, []llm.Tool{
 				channelFollowUpTestMCPTool("mattermost__read_channel", "embedded://mattermost", "Read channel posts"),
 			}, &channelFollowUpTestConfig{enableChannelMentionToolCalling: tt.allowToolsInChannel})
-			builder.SetSkillProvider(skills.NewProvider(skillsTestPromptStore{prompts: []customprompts.CustomPrompt{personal}}, promptsEngine, func() bool { return true }))
+			builder.SetSkillProvider(skills.NewProvider(skillsTestPromptStore{prompts: []customprompts.CustomPrompt{personal, shared}, err: tt.storeErr}, promptsEngine, func() bool { return true }))
 
 			cfg := channelFollowUpTestBot().GetConfig()
-			cfg.Skills = llm.SkillsConfig{AllowPersonal: true}
+			cfg.Skills = llm.SkillsConfig{AllowPersonal: true, EnabledSharedIDs: []string{shared.ID}}
 			bot := bots.NewBot(cfg, llm.ServiceConfig{DefaultModel: "test-model", Type: llm.ServiceTypeOpenAI}, &model.Bot{UserId: "bot-id", Username: "matty"}, nil)
 
 			var conv *store.Conversation
@@ -72,16 +83,26 @@ func TestTurnPolicySkills(t *testing.T) {
 				conv = &store.Conversation{ID: "conv-id", Operation: tt.operation}
 			}
 			isDM := tt.channelType == model.ChannelTypeDirect
+			channel := &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType}
+			if isDM {
+				channel.Name = model.GetDMNameFromIds(testRequesterID, "bot-id")
+			}
 			policy := &turnPolicy{
 				c:            &Conversations{contextBuilder: builder, toolPolicyChecker: mapPolicyChecker{}},
 				bot:          bot,
 				user:         &model.User{Id: testRequesterID, Username: "user", Locale: "en"},
-				channel:      &model.Channel{Id: "channel-id", TeamId: "team-id", Type: tt.channelType},
+				channel:      channel,
 				conv:         conv,
 				isDM:         isDM,
 				toolsEnabled: isDM || tt.allowToolsInChannel,
+				interactive:  !tt.unattended,
 			}
-			llmContext := policy.buildContext(context.Background(), "")
+			llmContext, err := policy.buildContext(context.Background(), "")
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
 
 			systemPrompt, err := promptsEngine.Format(prompts.PromptDirectMessageQuestionSystem, llmContext)
 			require.NoError(t, err)
