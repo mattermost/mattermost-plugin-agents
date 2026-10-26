@@ -4,7 +4,7 @@
 package audit
 
 // Events emitted outside the gin audit middleware. They are declared here so
-// every package that emits them, and the API registry, share one name.
+// every package that emits them shares one name.
 const (
 	// EventAgentScopedSessionGrant: an agent's bot was granted a scoped
 	// session for one channel-triggered run. The actor is the requester.

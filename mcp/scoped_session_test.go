@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
 )
 
 var errServerRefused = errors.New("server refused to create scoped session")
@@ -26,6 +28,9 @@ var errServerRefused = errors.New("server refused to create scoped session")
 type fakeScopedMinter struct {
 	mu        sync.Mutex
 	createErr error
+	// rejected channels make the server refuse any scope listing them.
+	rejected  map[string]bool
+	attempts  int
 	wrongUser bool
 	created   []mintedScopedSession
 	revoked   []string
@@ -41,8 +46,12 @@ type mintedScopedSession struct {
 func (f *fakeScopedMinter) CreateScopedSession(userID string, scope *model.SessionScope, expiresAt int64) (*model.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.attempts++
 	if f.createErr != nil {
 		return nil, f.createErr
+	}
+	if slices.ContainsFunc(scope.Resources.ChannelIDs, func(id string) bool { return f.rejected[id] }) {
+		return nil, errServerRefused
 	}
 	session := &model.Session{Id: model.NewId(), UserId: userID, Token: model.NewId(), ExpiresAt: expiresAt}
 	if f.wrongUser {
@@ -116,7 +125,7 @@ func TestScopedCatalog(t *testing.T) {
 	registry := scopedsession.NewRegistry(nil)
 	m.SetScopedSessions(minter, registry)
 
-	run, err := m.MintScopedSession(ScopedSessionRequest{
+	run, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{
 		BotUserID:       botUserID,
 		RequesterID:     requesterID,
 		ChannelID:       channelID,
@@ -146,6 +155,9 @@ func TestScopedCatalog(t *testing.T) {
 	// A regular catalog for the same requester afterwards is unaffected.
 	userTools, _ := m.GetTools(context.Background(), ServiceAccountCatalogRequest(botUserID, requesterID))
 	requireToolNames(t, userTools, "mattermost__read_channel", "mattermost__create_post", "sa_server__sa_tool", "example__test_tool_0")
+	requesterScope, err := registry.ScopeForSession("requester-session")
+	require.NoError(t, err, "the requester's embedded session resolves without a server lookup")
+	assert.Nil(t, requesterScope)
 
 	require.NoError(t, run.Close())
 	require.NoError(t, run.Close())
@@ -183,7 +195,7 @@ func TestMintScopedSessionFailsClosed(t *testing.T) {
 				m.SetScopedSessions(tt.minter, registry)
 			}
 
-			run, err := m.MintScopedSession(tt.req)
+			run, err := m.MintScopedSession(context.Background(), tt.req)
 			require.Error(t, err)
 			assert.Nil(t, run)
 			if tt.wantErr != nil {
@@ -196,6 +208,67 @@ func TestMintScopedSessionFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMintScopedSessionWithDeletedExtraChannels(t *testing.T) {
+	trigger, kept, deleted, unreadable := model.NewId(), model.NewId(), model.NewId(), model.NewId()
+	notFound := model.NewAppError("GetChannel", "app.channel.get.existing.app_error", nil, "", http.StatusNotFound)
+
+	tests := []struct {
+		name         string
+		rejected     map[string]bool
+		channelErrs  map[string]*model.AppError
+		wantErr      bool
+		wantChannels []string
+		wantAttempts int
+	}{
+		{
+			name:         "a deleted extra channel is left out instead of failing the run",
+			rejected:     map[string]bool{deleted: true},
+			channelErrs:  map[string]*model.AppError{deleted: notFound},
+			wantChannels: []string{trigger, kept, unreadable},
+			wantAttempts: 2,
+		},
+		{
+			name:         "a failed channel lookup fails the run",
+			rejected:     map[string]bool{deleted: true},
+			channelErrs:  map[string]*model.AppError{deleted: notFound, unreadable: model.NewAppError("GetChannel", "app.channel.get.find.app_error", nil, "", http.StatusInternalServerError)},
+			wantErr:      true,
+			wantAttempts: 1,
+		},
+		{
+			name:         "a refusal with every channel present is not retried",
+			rejected:     map[string]bool{trigger: true},
+			wantErr:      true,
+			wantAttempts: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pluginAPI := pluginapi.NewClient(&fixedPluginAPI{channelErrs: tt.channelErrs}, nil)
+			m := NewClientManager(Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, nil, nil, http.DefaultClient, nil, RemoteMCPAlwaysAllowed)
+			t.Cleanup(m.Close)
+			minter := &fakeScopedMinter{rejected: tt.rejected}
+			m.SetScopedSessions(minter, scopedsession.NewRegistry(nil))
+
+			run, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{
+				BotUserID:       model.NewId(),
+				RequesterID:     model.NewId(),
+				ChannelID:       trigger,
+				ExtraChannelIDs: []string{kept, deleted, unreadable},
+			})
+			assert.Equal(t, tt.wantAttempts, minter.attempts)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, run)
+				return
+			}
+			require.NoError(t, err)
+			wantExtras := tt.wantChannels[1:]
+			assert.Equal(t, tt.wantChannels, run.Scope().Resources.ChannelIDs)
+			assert.Equal(t, wantExtras, run.ExtraChannelIDs())
+		})
+	}
+}
+
 func TestScopedRunsRevokedWithTheirAgent(t *testing.T) {
 	pluginAPI := newTestPluginAPIForEmbeddedUsers(nil)
 	m := NewClientManager(Config{IdleTimeoutMinutes: 30}, pluginAPI.Log, pluginAPI, nil, nil, http.DefaultClient, nil, RemoteMCPAlwaysAllowed)
@@ -203,20 +276,22 @@ func TestScopedRunsRevokedWithTheirAgent(t *testing.T) {
 	m.SetScopedSessions(minter, scopedsession.NewRegistry(nil))
 
 	mint := func(botUserID string) *ScopedRun {
-		run, err := m.MintScopedSession(ScopedSessionRequest{BotUserID: botUserID, RequesterID: model.NewId(), ChannelID: model.NewId()})
+		run, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botUserID, RequesterID: model.NewId(), ChannelID: model.NewId()})
 		require.NoError(t, err)
 		return run
 	}
 	botA, botB := model.NewId(), model.NewId()
 	runA1, runA2, runB := mint(botA), mint(botA), mint(botB)
 
-	m.RevokeScopedSessionsForBot(botA)
+	m.RevokeScopedSessionsWhere(func(run *ScopedRun) bool { return run.BotUserID() == botA })
+	assert.True(t, runA1.Closed())
+	assert.False(t, runB.Closed())
 	assert.ElementsMatch(t, []string{runA1.Session().Id, runA2.Session().Id}, minter.revokedIDs())
 
 	m.Close()
 	assert.ElementsMatch(t, []string{runA1.Session().Id, runA2.Session().Id, runB.Session().Id}, minter.revokedIDs(), "stopping the plugin revokes every live run")
 
-	_, err := m.MintScopedSession(ScopedSessionRequest{BotUserID: botA, RequesterID: model.NewId(), ChannelID: model.NewId()})
+	_, err := m.MintScopedSession(context.Background(), ScopedSessionRequest{BotUserID: botA, RequesterID: model.NewId(), ChannelID: model.NewId()})
 	require.True(t, errors.Is(err, ErrScopedSessionsUnavailable))
 }
 

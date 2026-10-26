@@ -5,6 +5,7 @@ package llmcontext
 
 import (
 	stdcontext "context"
+	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -50,7 +51,7 @@ var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
 // ScopedSessionMinter mints the per-run scoped sessions scoped channel turns
 // connect with.
 type ScopedSessionMinter interface {
-	MintScopedSession(req mcp.ScopedSessionRequest) (*mcp.ScopedRun, error)
+	MintScopedSession(ctx stdcontext.Context, req mcp.ScopedSessionRequest) (*mcp.ScopedRun, error)
 }
 
 var _ ScopedSessionMinter = (*mcp.ClientManager)(nil)
@@ -331,6 +332,10 @@ func (b *Builder) channelToolCallingEnabled() bool {
 	return ok && cfg.EnableChannelMentionToolCalling()
 }
 
+// ErrScopedRequesterCannotReadChannel is returned when a scoped turn's
+// requester cannot read the channel the session would be scoped to.
+var ErrScopedRequesterCannotReadChannel = errors.New("requester cannot read the scoped turn's channel")
+
 // mintScopedRun mints the turn's scoped session and records the grant. The
 // returned run is owned by c: ReleaseScopedSession closes it.
 func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bots.Bot, requesterID string) (*mcp.ScopedRun, error) {
@@ -349,11 +354,18 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, true)
 	defer b.pluginAPI.Audit.Record(rec)
 
+	// The scope grants its channel regardless of membership, so the requester
+	// must be able to read it; otherwise a caller-supplied channel (the LLM
+	// Bridge) would read through the bot what the requester cannot.
+	if !b.pluginAPI.User.HasPermissionToChannel(requesterID, c.Channel.Id, model.PermissionReadChannel) {
+		return nil, ErrScopedRequesterCannotReadChannel
+	}
+
 	minter, ok := b.mcpToolProvider.(ScopedSessionMinter)
 	if !ok {
 		return nil, mcp.ErrScopedSessionsUnavailable
 	}
-	run, err := minter.MintScopedSession(mcp.ScopedSessionRequest{
+	run, err := minter.MintScopedSession(ctx, mcp.ScopedSessionRequest{
 		BotUserID:       bot.BotUserID(),
 		RequesterID:     requesterID,
 		ChannelID:       c.Channel.Id,
@@ -363,7 +375,7 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		return nil, err
 	}
 	rec.Success()
-	c.SetScopedSessionRelease(func() { _ = run.Close() })
+	c.SetScopedSession(func() { _ = run.Close() }, run.Closed)
 	return run, nil
 }
 

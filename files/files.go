@@ -61,14 +61,11 @@ type Service struct {
 }
 
 // New creates a file content service backed by the given Mattermost client.
-func New(mm mmapi.Client) *Service {
-	return &Service{mm: mm}
-}
-
-// SetScopeRegistry makes reads under a scoped session check the file's
-// channel against that session's scope instead of the user's membership.
-func (s *Service) SetScopeRegistry(scopes *scopedsession.Registry) {
-	s.scopes = scopes
+// scopes makes reads under a scoped session check the file's channel against
+// that session's scope instead of the user's membership; without it, reads
+// under any session fail.
+func New(mm mmapi.Client, scopes *scopedsession.Registry) *Service {
+	return &Service{mm: mm, scopes: scopes}
 }
 
 // GetContent returns the [offset, offset+limit) rune window of a file's text for

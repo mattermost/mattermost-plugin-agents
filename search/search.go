@@ -49,21 +49,20 @@ type Search struct {
 	scopes         *scopedsession.Registry
 }
 
-// SetScopeRegistry makes searches under a scoped session read exactly that
-// session's scope instead of the user's channel memberships.
-func (s *Search) SetScopeRegistry(scopes *scopedsession.Registry) {
-	s.scopes = scopes
-}
-
+// New creates the search service. scopes makes searches under a scoped
+// session read exactly that session's scope instead of the user's channel
+// memberships; without it, searches under any session fail.
 func New(
 	getSearch func() embeddings.EmbeddingSearch,
 	mmclient mmapi.Client,
 	licenseChecker *enterprise.LicenseChecker,
+	scopes *scopedsession.Registry,
 ) *Search {
 	return &Search{
 		getSearch:      getSearch,
 		mmclient:       mmclient,
 		licenseChecker: licenseChecker,
+		scopes:         scopes,
 	}
 }
 

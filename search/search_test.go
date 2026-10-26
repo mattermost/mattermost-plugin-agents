@@ -293,7 +293,7 @@ func TestEnrichResults(t *testing.T) {
 				tc.setupMock(mockClient)
 			}
 
-			s := New(nil, mockClient, nil)
+			s := New(nil, mockClient, nil, unscopedSessions())
 			results := s.enrichResults(tc.searchResults)
 
 			require.Len(t, results, tc.expectedLen)
@@ -414,7 +414,7 @@ func TestExecuteSearch(t *testing.T) {
 				tc.setupMocks(mockEmbedding, mockClient)
 			}
 
-			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker(), unscopedSessions())
 			results, err := s.Search(context.Background(), tc.query, tc.opts)
 
 			if tc.expectError != "" {
@@ -481,7 +481,7 @@ func TestExecuteSearchReturnsIndexedRowsOutsideWriteWindow(t *testing.T) {
 	}, nil).Maybe()
 
 	store := &fixedDocsSearch{docs: []embeddings.PostDocument{stale, fresh}}
-	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, licensedChecker())
+	s := New(func() embeddings.EmbeddingSearch { return store }, mockClient, licensedChecker(), unscopedSessions())
 
 	results, err := s.Search(context.Background(), "test query", Options{Limit: 5})
 	require.NoError(t, err)
@@ -508,7 +508,7 @@ func TestSearchUnavailableDuringDeferredReindex(t *testing.T) {
 		mockClient := mmapimocks.NewMockClient(t)
 		mockDeferredReindexActive(mockClient)
 
-		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker(), unscopedSessions())
 		results, err := s.Search(context.Background(), "test query", Options{Limit: 5})
 
 		require.ErrorIs(t, err, ErrSearchUnavailable)
@@ -554,7 +554,7 @@ func TestEnrichResultsSameChannelMultipleTimes(t *testing.T) {
 		},
 	}
 
-	s := New(nil, mockClient, nil)
+	s := New(nil, mockClient, nil, unscopedSessions())
 	results := s.enrichResults(searchResults)
 
 	require.Len(t, results, 2)
@@ -607,7 +607,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 		},
 	}
 
-	s := New(nil, mockClient, nil)
+	s := New(nil, mockClient, nil, unscopedSessions())
 	results := s.enrichResults(searchResults)
 
 	require.Len(t, results, 2)
@@ -617,7 +617,7 @@ func TestEnrichResultsSameUserMultipleTimes(t *testing.T) {
 
 func TestExecuteSearchNotConfigured(t *testing.T) {
 	// Test Search when getSearch() returns nil
-	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, licensedChecker())
+	s := New(func() embeddings.EmbeddingSearch { return nil }, nil, licensedChecker(), unscopedSessions())
 
 	results, err := s.Search(context.Background(), "test query", Options{})
 
@@ -662,8 +662,7 @@ func TestSearchUnderScopedSession(t *testing.T) {
 				Scope:  &expected,
 			}).Return([]embeddings.SearchResult{}, nil)
 
-			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
-			s.SetScopeRegistry(registry)
+			s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker(), registry)
 			_, err := s.Search(auth.WithSessionID(context.Background(), session.Id), "evidence", Options{UserID: "bot"})
 			require.NoError(t, err)
 		})
@@ -675,9 +674,15 @@ func TestSearchUnderScopedSession(t *testing.T) {
 		allowVectorIndexStateRead(mockClient)
 		registry := scopedsession.NewRegistry(func(string) (*model.Session, error) { return nil, errors.New("db down") })
 
-		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker())
-		s.SetScopeRegistry(registry)
+		s := New(func() embeddings.EmbeddingSearch { return mockEmbedding }, mockClient, licensedChecker(), registry)
 		_, err := s.Search(auth.WithSessionID(context.Background(), model.NewId()), "evidence", Options{UserID: "bot"})
 		require.Error(t, err)
+	})
+}
+
+// unscopedSessions resolves every session as a regular, unscoped one.
+func unscopedSessions() *scopedsession.Registry {
+	return scopedsession.NewRegistry(func(id string) (*model.Session, error) {
+		return &model.Session{Id: id}, nil
 	})
 }

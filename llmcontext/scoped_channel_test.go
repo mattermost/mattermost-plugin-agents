@@ -78,9 +78,10 @@ func (p *scopedCatalogProvider) GetToolsWithSelection(_ stdcontext.Context, req 
 }
 
 type scopedTestEnv struct {
-	level              enterprise.Level
-	serverVersion      string
-	channelToolCalling bool
+	level               enterprise.Level
+	serverVersion       string
+	channelToolCalling  bool
+	requesterCannotRead bool
 }
 
 func defaultScopedTestEnv() scopedTestEnv {
@@ -95,6 +96,7 @@ func newScopedTestBuilder(t *testing.T, env scopedTestEnv, toolProvider ToolProv
 	mockAPI.On("GetLicense").Return(enterprisetest.LicenseFor(env.level)).Maybe()
 	mockAPI.On("GetServerVersion").Return(env.serverVersion).Maybe()
 	mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: "team-id"}, nil).Maybe()
+	mockAPI.On("HasPermissionToChannel", mock.Anything, mock.Anything, model.PermissionReadChannel).Return(!env.requesterCannotRead).Maybe()
 	for i := 1; i <= 10; i++ {
 		args := make([]any, i)
 		for j := range args {
@@ -192,6 +194,7 @@ func newScopedCatalogProvider(t *testing.T, minter scopedsession.Minter, tools [
 		mockAPI.On("LogWarn", args...).Maybe().Return()
 	}
 	mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+	mockAPI.On("GetChannel", mock.Anything).Return(&model.Channel{}, nil).Maybe()
 	client := pluginapi.NewClient(mockAPI, nil)
 	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 	t.Cleanup(manager.Close)
@@ -262,9 +265,28 @@ func TestScopedChannelTurnCatalog(t *testing.T) {
 	assert.NotContains(t, string(encoded), req.Scoped.Session().Token)
 
 	assert.Empty(t, minter.revoked)
+	assert.False(t, llmContext.ScopedSessionReleased())
 	llmContext.ReleaseScopedSession()
 	llmContext.ReleaseScopedSession()
 	assert.Equal(t, []string{sessionID}, minter.revoked, "releasing the turn revokes its session once")
+	assert.True(t, llmContext.ScopedSessionReleased())
+}
+
+func TestScopedChannelTurnSeesRevocation(t *testing.T) {
+	minter := &recordingScopedMinter{}
+	provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
+	builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+	bot := newScopedTestBot(scopedTestBotConfig())
+
+	llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+		builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
+		builder.WithLLMContextTools(stdcontext.Background(), bot),
+	)
+	require.True(t, llmContext.ToolsScoped)
+	require.False(t, llmContext.ScopedSessionReleased())
+
+	provider.RevokeScopedSessionsWhere(func(*mcp.ScopedRun) bool { return true })
+	assert.True(t, llmContext.ScopedSessionReleased(), "a run revoked because its mode lapsed counts as released")
 }
 
 func TestScopedChannelTurnFallsBackOnlyWithApproval(t *testing.T) {
@@ -310,26 +332,43 @@ func TestScopedChannelTurnFallsBackOnlyWithApproval(t *testing.T) {
 }
 
 func TestScopedChannelTurnMintFailureHasNoMCPTools(t *testing.T) {
-	minter := &recordingScopedMinter{createErr: errors.New("server unavailable")}
-	provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
-	builder, auditRecords := newScopedTestBuilder(t, defaultScopedTestEnv(), &staticToolProvider{tools: []llm.Tool{testBuiltinTool("web_search")}}, provider)
-	bot := newScopedTestBot(scopedTestBotConfig())
-	requester := &model.User{Id: model.NewId()}
+	tests := []struct {
+		name      string
+		createErr error
+		env       func(*scopedTestEnv)
+	}{
+		{name: "server refuses the session", createErr: errors.New("server unavailable")},
+		{name: "requester cannot read the channel", env: func(e *scopedTestEnv) { e.requesterCannotRead = true }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minter := &recordingScopedMinter{createErr: tt.createErr}
+			provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
+			env := defaultScopedTestEnv()
+			if tt.env != nil {
+				tt.env(&env)
+			}
+			builder, auditRecords := newScopedTestBuilder(t, env, &staticToolProvider{tools: []llm.Tool{testBuiltinTool("web_search")}}, provider)
+			bot := newScopedTestBot(scopedTestBotConfig())
+			requester := &model.User{Id: model.NewId()}
 
-	llmContext := builder.BuildLLMContextUserRequest(bot, requester, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
-		builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
-		builder.WithLLMContextTools(stdcontext.Background(), bot),
-	)
+			llmContext := builder.BuildLLMContextUserRequest(bot, requester, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypePrivate},
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId()}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
 
-	assert.False(t, llmContext.ToolsScoped)
-	assert.Equal(t, []string{"web_search"}, toolNames(llmContext.Tools))
-	assert.Empty(t, provider.reqs, "a failed mint must never fall back to the requester's credentials")
+			assert.False(t, llmContext.ToolsScoped)
+			assert.Equal(t, []string{"web_search"}, toolNames(llmContext.Tools))
+			assert.Empty(t, provider.reqs, "a failed mint must never fall back to the requester's credentials")
+			assert.Empty(t, minter.userIDs)
 
-	records := auditRecords()
-	require.Len(t, records, 1)
-	assert.Equal(t, audit.EventAgentScopedSessionGrant, records[0].EventName)
-	assert.Equal(t, model.AuditStatusFail, records[0].Status)
-	assert.Equal(t, requester.Id, records[0].Actor.UserId)
+			records := auditRecords()
+			require.Len(t, records, 1)
+			assert.Equal(t, audit.EventAgentScopedSessionGrant, records[0].EventName)
+			assert.Equal(t, model.AuditStatusFail, records[0].Status)
+			assert.Equal(t, requester.Id, records[0].Actor.UserId)
+		})
+	}
 }
 
 type panickingCatalogProvider struct {

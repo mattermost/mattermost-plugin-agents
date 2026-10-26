@@ -179,17 +179,19 @@ type ToolRuntimeContext struct {
 }
 
 type scopedSessionHandle struct {
-	once    sync.Once
-	release func()
+	once     sync.Once
+	release  func()
+	released func() bool
 }
 
-// SetScopedSessionRelease records how to end this turn's scoped session. It is
-// called while the context is built, before the turn runs.
-func (c *Context) SetScopedSessionRelease(release func()) {
-	if c == nil || release == nil {
+// SetScopedSession records how to end this turn's scoped session and how to
+// tell whether it has ended, including when something other than this turn
+// ended it. It is called while the context is built, before the turn runs.
+func (c *Context) SetScopedSession(release func(), released func() bool) {
+	if c == nil || release == nil || released == nil {
 		return
 	}
-	c.ToolRuntime.scopedSession = &scopedSessionHandle{release: release}
+	c.ToolRuntime.scopedSession = &scopedSessionHandle{release: release, released: released}
 }
 
 // ReleaseScopedSession ends this turn's scoped session, if it has one. Every
@@ -201,6 +203,16 @@ func (c *Context) ReleaseScopedSession() {
 	}
 	handle := c.ToolRuntime.scopedSession
 	handle.once.Do(handle.release)
+}
+
+// ScopedSessionReleased reports whether this turn had a scoped session that
+// has since ended: released by the turn, or revoked because the agent's
+// scoped mode lapsed. Tools must no longer run without approval then.
+func (c *Context) ScopedSessionReleased() bool {
+	if c == nil || c.ToolRuntime.scopedSession == nil {
+		return false
+	}
+	return c.ToolRuntime.scopedSession.released()
 }
 
 type MCPDynamicToolTelemetry interface {
