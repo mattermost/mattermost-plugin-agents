@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -50,7 +51,10 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 		UserInteraction: llm.UserInteractionSelect,
 	}
 
-	autoRunRound := []llm.ToolCall{{ID: "tool-use-0", Name: "read_channel", Arguments: []byte(`{}`), Status: llm.ToolCallStatusSuccess, Result: "ok"}}
+	autoRunCall := llm.ToolCall{ID: "tool-use-0", Name: "read_channel", Arguments: []byte(`{}`), Status: llm.ToolCallStatusPending, WouldAutoExecute: true}
+	autoRunDone := autoRunCall
+	autoRunDone.Status = llm.ToolCallStatusAutoApproved
+	autoRunDone.Result = "ok"
 
 	tests := []struct {
 		name        string
@@ -60,7 +64,7 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 	}{
 		{name: "accept", toolCall: approvalCall, body: `{"accepted_tool_ids":["tool-use-1"]}`},
 		{name: "reject", toolCall: approvalCall, body: `{"accepted_tool_ids":[]}`},
-		{name: "accept after an auto-run round", priorRounds: [][]llm.ToolCall{autoRunRound}, toolCall: approvalCall, body: `{"accepted_tool_ids":["tool-use-1"]}`},
+		{name: "accept after an auto-run round", priorRounds: [][]llm.ToolCall{{autoRunCall}, {autoRunDone}}, toolCall: approvalCall, body: `{"accepted_tool_ids":["tool-use-1"]}`},
 		{name: "ask-user answer", toolCall: questionCall, body: `{"accepted_tool_ids":["tool-use-1"],"tool_answers":{"tool-use-1":{"selected":["Blue"]}}}`},
 	}
 
@@ -95,6 +99,7 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
 			e.mockAPI.On("UpdatePost", mock.Anything).Return(func(p *model.Post) (*model.Post, *model.AppError) { return p.Clone(), nil }).Maybe()
 
+			var clicked atomic.Bool
 			clickStatus := 0
 			clickBody := ""
 			resumeEnded := make(chan struct{})
@@ -105,11 +110,20 @@ func TestToolApprovalClickOnFirstVisiblePendingCard(t *testing.T) {
 				if payload["control"] == streaming.PostStreamingControlEnd && ends.Add(1) == 2 {
 					close(resumeEnded)
 				}
-				if payload["control"] != "tool_call" || broadcast == nil || broadcast.UserId != testUserID || clickStatus != 0 {
+				if payload["control"] != "tool_call" || broadcast == nil || broadcast.UserId != testUserID {
 					return
 				}
 				var calls []llm.ToolCall
-				if raw, _ := payload["tool_call"].(string); json.Unmarshal([]byte(raw), &calls) != nil || llm.IsResolvedToolCallBatch(calls) {
+				if raw, _ := payload["tool_call"].(string); json.Unmarshal([]byte(raw), &calls) != nil {
+					return
+				}
+				// Only a card with a call awaiting the user has controls to click.
+				if !slices.ContainsFunc(calls, func(tc llm.ToolCall) bool {
+					return tc.Status == llm.ToolCallStatusPending && !tc.WouldAutoExecute
+				}) {
+					return
+				}
+				if !clicked.CompareAndSwap(false, true) {
 					return
 				}
 				req := httptest.NewRequest(http.MethodPost, "/post/"+postID+"/tool_call", strings.NewReader(test.body))
