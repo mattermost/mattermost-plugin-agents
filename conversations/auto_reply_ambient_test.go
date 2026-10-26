@@ -128,7 +128,7 @@ func TestAmbientAutoReply(t *testing.T) {
 				return env.threadReply(autoReplyUserID, "follow up", true)
 			},
 			expectClassify: true,
-			promptOmits:    []string{"@mentioned earlier in this thread"},
+			promptOmits:    []string{"The agent has already replied in this thread."},
 		},
 		{
 			name:           "ambient_threads replies once the agent has replied in the thread",
@@ -140,7 +140,7 @@ func TestAmbientAutoReply(t *testing.T) {
 			},
 			expectFired:    true,
 			expectClassify: true,
-			promptContains: []string{"ONLY-BILLING-QUESTIONS", "@mentioned earlier in this thread"},
+			promptContains: []string{"ONLY-BILLING-QUESTIONS", "The agent has already replied in this thread."},
 		},
 		{
 			name:           "ambient_threads false is fail-closed",
