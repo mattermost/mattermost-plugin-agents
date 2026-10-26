@@ -13,7 +13,8 @@
     "i18n-extract": "formatjs extract",
     "check-types": "tsc",
     "check-editor-contract": "node scripts/check_editor_contract.mjs",
-    "update-editor-contract-snapshot": "node scripts/check_editor_contract.mjs --update-snapshot"
+    "update-editor-contract-snapshot": "node scripts/check_editor_contract.mjs --update-snapshot",
+    "generate-genui-prompt": "UPDATE_GENERATIVE_UI_PROMPT=1 jest --config jest.config.js src/components/generative_ui/prompt.test.ts"
   },
   "devDependencies": {
     "@babel/cli": "8.1.0",
@@ -69,6 +70,7 @@
     "@mattermost/compass-icons": "0.1.64",
     "@mattermost/compass-ui": "0.1.0-alpha.23",
     "@mattermost/shared": "11.9.0",
+    "@openuidev/react-lang": "1.0.1",
     "@tippyjs/react": "4.2.6",
     "core-js": "3.51.0",
     "debounce": "3.0.0",
@@ -83,6 +85,7 @@
     "redux": "5.0.1",
     "simplebar-react": "3.3.2",
     "styled-components": "6.6.0",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "zod": "4.6.7"
   }
 }

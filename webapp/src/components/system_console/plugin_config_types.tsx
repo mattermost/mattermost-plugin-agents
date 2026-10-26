@@ -28,6 +28,7 @@ export type PluginConfig = {
     allowUnsafeLinks: boolean,
     allowedLinkDomains: string,
     enableHTMLArtifacts?: boolean,
+    enableGenerativeUI?: boolean,
     enableChannelMentionToolCalling: boolean,
     enableAmbientAutoReply?: boolean,
     allowNativeWebSearchInChannels: boolean,

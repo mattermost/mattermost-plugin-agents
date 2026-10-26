@@ -93,6 +93,11 @@ export async function fetchAndStoreBots(dispatch: Dispatch): Promise<LLMBot[] | 
         htmlArtifactsEnabled: Boolean(response.htmlArtifactsEnabled),
     });
 
+    dispatch({
+        type: 'SET_GENERATIVE_UI_ENABLED',
+        generativeUIEnabled: Boolean(response.generativeUIEnabled),
+    });
+
     return response.bots;
 }
 

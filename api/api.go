@@ -65,6 +65,7 @@ type Config interface {
 	AllowUnsafeLinks() bool
 	LinkPolicy() config.LinkPolicy
 	EnableHTMLArtifacts() bool
+	EnableGenerativeUI() bool
 	EmbeddingSearchConfig() embeddings.EmbeddingSearchConfig
 	EnableChannelMentionToolCalling() bool
 	EnableAmbientAutoReply() bool
@@ -761,6 +762,7 @@ type AIBotsResponse struct {
 	// API compatibility.
 	LinkPolicy           config.LinkPolicy `json:"linkPolicy"`
 	HTMLArtifactsEnabled bool              `json:"htmlArtifactsEnabled"`
+	GenerativeUIEnabled  bool              `json:"generativeUIEnabled"`
 }
 
 // usesServiceAccountAuth reports the effective service account mode for a bot:
@@ -854,6 +856,7 @@ func (a *API) handleGetAIBots(c *gin.Context) {
 		AllowUnsafeLinks:     a.config.AllowUnsafeLinks(),
 		LinkPolicy:           a.config.LinkPolicy(),
 		HTMLArtifactsEnabled: a.config.EnableHTMLArtifacts(),
+		GenerativeUIEnabled:  a.config.EnableGenerativeUI(),
 	})
 }
 

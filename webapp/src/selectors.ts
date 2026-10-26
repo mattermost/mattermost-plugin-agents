@@ -14,6 +14,7 @@ interface PluginState {
     showCustomPromptsModal: boolean;
     linkPolicy: LinkPolicy;
     htmlArtifactsEnabled?: boolean;
+    generativeUIEnabled?: boolean;
 }
 
 type AppState = GlobalState & {
@@ -38,3 +39,6 @@ export const getLinkPolicy = (state: AppState): LinkPolicy =>
 
 export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.htmlArtifactsEnabled);
+
+export const getGenerativeUIEnabled = (state: AppState): boolean =>
+    Boolean(state[`plugins-${manifest.id}`]?.generativeUIEnabled);

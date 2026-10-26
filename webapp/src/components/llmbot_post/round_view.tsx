@@ -58,6 +58,7 @@ export const RoundView = React.memo((props: RoundViewProps) => {
                     postID={props.postID}
                     showCursor={props.showCursor}
                     reveal={props.reveal}
+                    allowGenerativeUI={true}
                     annotations={round.annotations.length > 0 ? round.annotations : undefined} // eslint-disable-line no-undefined
                 />
             )}
