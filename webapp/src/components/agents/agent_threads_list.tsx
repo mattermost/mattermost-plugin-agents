@@ -7,6 +7,7 @@ import styled from 'styled-components';
 import ArchiveOutlineIcon from '@mattermost/compass-icons/components/archive-outline';
 import DotsHorizontalIcon from '@mattermost/compass-icons/components/dots-horizontal';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
+import ChevronRightIcon from '@mattermost/compass-icons/components/chevron-right';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 import {Button} from '@mattermost/compass-ui/components/button';
@@ -181,9 +182,7 @@ const AgentThreadsList = ({
                     }
                 };
 
-                const toggleLabel = isCollapsed ?
-                    intl.formatMessage({defaultMessage: 'Expand {agent} chats'}, {agent: bot.displayName}) :
-                    intl.formatMessage({defaultMessage: 'Collapse {agent} chats'}, {agent: bot.displayName});
+                const toggleLabel = isCollapsed ? intl.formatMessage({defaultMessage: 'Expand {agent} chats'}, {agent: bot.displayName}) : intl.formatMessage({defaultMessage: 'Collapse {agent} chats'}, {agent: bot.displayName});
                 const newChatLabel = intl.formatMessage({defaultMessage: 'New chat with {agent}'}, {agent: bot.displayName});
 
                 return (
@@ -198,17 +197,16 @@ const AgentThreadsList = ({
                                 onClick={openAgent}
                             />
                             <ChevronSlot>
-                                <IconButton
-                                    size='x-small'
-                                    // eslint-disable-next-line react/style-prop-object -- compass IconButton `style` is a variant prop, not CSS
-                                    style='inverted'
-                                    icon={<Icon glyph={<ChevronDownIcon/>}/>}
+                                <ChevronToggle
+                                    type='button'
                                     aria-label={toggleLabel}
                                     aria-expanded={!isCollapsed}
                                     aria-controls={listId}
                                     disabled={threads.length === 0}
                                     onClick={() => toggle(bot.id)}
-                                />
+                                >
+                                    <Icon glyph={isCollapsed ? <ChevronRightIcon/> : <ChevronDownIcon/>}/>
+                                </ChevronToggle>
                             </ChevronSlot>
                             <NewChatSlot>
                                 <WithTooltip title={newChatLabel}>
@@ -420,19 +418,30 @@ const ChevronSlot = styled.span`
     z-index: 2;
     display: flex;
     align-items: center;
+`;
 
-    svg {
-        transition: transform var(--duration-quick) var(--ease-transition);
+// Just the chevron glyph (right when collapsed, down when expanded), with no button chrome.
+// It is a bare native button, declared next to its handler for the a11y lint rules,
+// because compass has no glyph-only toggle without the IconButton surface.
+const ChevronToggle = styled.button`
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--sidebar-text);
+    cursor: pointer;
+
+    &:disabled {
+        cursor: default;
+        opacity: 0.32;
     }
 
-    @media (prefers-reduced-motion: reduce) {
-        svg {
-            transition: none;
-        }
-    }
-
-    button[aria-expanded='false'] svg {
-        transform: rotate(-90deg);
+    &:focus-visible {
+        border-radius: var(--radius-s);
+        outline: var(--spacing-xxxxs) solid var(--focus-ring-color);
     }
 `;
 
