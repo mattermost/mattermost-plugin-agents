@@ -801,7 +801,7 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 			},
 		},
 		{
-			name: "restore brings back the archived thread conversation",
+			name: "restore brings back the archived conversation once",
 			validate: func(t *testing.T, s *Store) {
 				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
 				conv := makeConversation(inThread(rootPostID, botID, userID), func(c *Conversation) { c.Title = "Kept" })
@@ -809,7 +809,7 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				_, err := s.ArchiveConversation(conv.ID, 1000)
 				require.NoError(t, err)
 
-				restored, err := s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				restored, err := s.RestoreConversation(conv.ID)
 				require.NoError(t, err)
 				assert.Equal(t, conv.ID, restored.ID)
 				assert.Equal(t, "Kept", restored.Title)
@@ -819,27 +819,10 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, conv.ID, active.ID)
 
-				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				_, err = s.RestoreConversation(conv.ID)
 				assert.ErrorIs(t, err, ErrConversationNotFound, "nothing is left to restore")
-			},
-		},
-		{
-			name: "restore only matches the same thread, bot, and user",
-			validate: func(t *testing.T, s *Store) {
-				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
-				conv := makeConversation(inThread(rootPostID, botID, userID))
-				require.NoError(t, s.CreateConversation(conv))
-				_, err := s.ArchiveConversation(conv.ID, 1000)
-				require.NoError(t, err)
-
-				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, model.NewId())
+				_, err = s.RestoreConversation(model.NewId())
 				assert.ErrorIs(t, err, ErrConversationNotFound)
-				_, err = s.RestoreConversationByThreadBotUser(rootPostID, model.NewId(), userID)
-				assert.ErrorIs(t, err, ErrConversationNotFound)
-
-				got, err := s.GetConversationIncludingArchived(conv.ID)
-				require.NoError(t, err)
-				assert.Equal(t, int64(1000), got.DeleteAt)
 			},
 		},
 		{
@@ -853,12 +836,42 @@ func TestArchiveRenameRestoreConversation(t *testing.T) {
 				activeConv := makeConversation(inThread(rootPostID, botID, userID))
 				require.NoError(t, s.CreateConversation(activeConv))
 
-				_, err = s.RestoreConversationByThreadBotUser(rootPostID, botID, userID)
+				_, err = s.RestoreConversation(archivedConv.ID)
 				assert.ErrorIs(t, err, ErrConversationConflict)
 
 				got, err := s.GetConversationIncludingArchived(archivedConv.ID)
 				require.NoError(t, err)
 				assert.Equal(t, int64(1000), got.DeleteAt, "a failed restore leaves the archived row untouched")
+			},
+		},
+		{
+			name: "latest thread lookup prefers the active row, then the newest archive, and never writes",
+			validate: func(t *testing.T, s *Store) {
+				rootPostID, botID, userID := model.NewId(), model.NewId(), model.NewId()
+				older := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(older))
+				_, err := s.ArchiveConversation(older.ID, 1000)
+				require.NoError(t, err)
+				newer := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(newer))
+				_, err = s.ArchiveConversation(newer.ID, 2000)
+				require.NoError(t, err)
+
+				got, err := s.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, newer.ID, got.ID)
+				assert.Equal(t, int64(2000), got.DeleteAt, "the lookup must not restore")
+
+				_, err = s.GetLatestConversationByThreadBotUser(rootPostID, botID, model.NewId())
+				assert.ErrorIs(t, err, ErrConversationNotFound, "another user's thread conversation is not found")
+				_, err = s.GetLatestConversationByThreadBotUser(rootPostID, model.NewId(), userID)
+				assert.ErrorIs(t, err, ErrConversationNotFound)
+
+				active := makeConversation(inThread(rootPostID, botID, userID))
+				require.NoError(t, s.CreateConversation(active))
+				got, err = s.GetLatestConversationByThreadBotUser(rootPostID, botID, userID)
+				require.NoError(t, err)
+				assert.Equal(t, active.ID, got.ID)
 			},
 		},
 	}

@@ -294,7 +294,7 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 		return c.dropWake("steered or superseded", nil, "conversation_id", job.ConversationID)
 	}
 
-	conv, err := c.convService.GetConversation(job.ConversationID)
+	conv, err := c.convService.GetConversationIncludingArchived(job.ConversationID)
 	if err != nil {
 		return c.dropIfMissing("conversation", err, "conversation_id", job.ConversationID)
 	}
@@ -337,6 +337,16 @@ func (c *Conversations) ResumeConversation(ctx context.Context, job WakeJob) (er
 	if wakes := countConsecutiveWakes(turns); wakes >= maxConsecutiveWakes {
 		return c.dropWake("chain limit reached", nil, "conversation_id", conv.ID, "wakes", wakes)
 	}
+
+	// The requester started this wait before archiving, so the wake resumes
+	// the conversation like any other turn on it would.
+	if err := c.activateTurnConversation(policy); err != nil {
+		if errors.Is(err, conversation.ErrConversationArchived) {
+			return c.dropWake("conversation archived", err, "conversation_id", conv.ID)
+		}
+		return err
+	}
+	conv = policy.conv
 
 	wakePost := &model.Post{
 		ChannelId: post.ChannelId,

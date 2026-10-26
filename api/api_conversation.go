@@ -47,8 +47,10 @@ func (a *API) handleGetConversation(c *gin.Context) {
 	userID := c.GetHeader("Mattermost-User-Id")
 	conversationID := c.Param("conversationid")
 
-	// 1. Load conversation
-	conv, err := a.conversationStore.GetConversation(conversationID)
+	// 1. Load conversation. Archiving keeps the Mattermost posts, which
+	// render from their conversation, so archived conversations are served
+	// under the same authorization as active ones.
+	conv, err := a.conversationStore.GetConversationIncludingArchived(conversationID)
 	if err != nil {
 		if errors.Is(err, store.ErrConversationNotFound) {
 			c.AbortWithError(http.StatusNotFound, fmt.Errorf("conversation not found"))

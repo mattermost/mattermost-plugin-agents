@@ -91,16 +91,31 @@ func (s *fakeConvStore) GetConversationByThreadBotUser(rootPostID, botID, userID
 	return nil, store.ErrConversationNotFound
 }
 
-func (s *fakeConvStore) RestoreConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+func (s *fakeConvStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	conv, ok := s.conversations[id]
+	if !ok {
+		return nil, store.ErrConversationNotFound
+	}
+	c := *conv
+	return &c, nil
+}
+
+func (s *fakeConvStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lookupErr != nil {
+		return nil, s.lookupErr
+	}
 	var latest *store.Conversation
 	for _, conv := range s.conversations {
 		if conv.RootPostID == nil || *conv.RootPostID != rootPostID || conv.BotID != botID || conv.UserID != userID {
 			continue
 		}
 		if conv.DeleteAt == 0 {
-			return nil, store.ErrConversationConflict
+			latest = conv
+			break
 		}
 		if latest == nil || conv.DeleteAt > latest.DeleteAt {
 			latest = conv
@@ -109,9 +124,40 @@ func (s *fakeConvStore) RestoreConversationByThreadBotUser(rootPostID, botID, us
 	if latest == nil {
 		return nil, store.ErrConversationNotFound
 	}
-	latest.DeleteAt = 0
 	c := *latest
 	return &c, nil
+}
+
+func (s *fakeConvStore) RestoreConversation(id string) (*store.Conversation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	conv, ok := s.conversations[id]
+	if !ok || conv.DeleteAt == 0 {
+		return nil, store.ErrConversationNotFound
+	}
+	for _, other := range s.conversations {
+		if other.ID != id && other.DeleteAt == 0 && other.RootPostID != nil && conv.RootPostID != nil &&
+			*other.RootPostID == *conv.RootPostID && other.BotID == conv.BotID && other.UserID == conv.UserID {
+			return nil, store.ErrConversationConflict
+		}
+	}
+	conv.DeleteAt = 0
+	c := *conv
+	return &c, nil
+}
+
+// archive marks a conversation archived, as POST /conversations/:id/archive does.
+func (s *fakeConvStore) archive(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.conversations[id].DeleteAt = model.GetMillis()
+}
+
+// deleteAt reports a conversation's DeleteAt, archived or not.
+func (s *fakeConvStore) deleteAt(id string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conversations[id].DeleteAt
 }
 
 func (s *fakeConvStore) UpdateConversationTitle(id, title string) error {

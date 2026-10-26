@@ -110,7 +110,15 @@ func (m *mockConvServiceStore) GetConversation(id string) (*store.Conversation, 
 	return conv, nil
 }
 
-func (*mockConvServiceStore) RestoreConversationByThreadBotUser(_, _, _ string) (*store.Conversation, error) {
+func (m *mockConvServiceStore) GetConversationIncludingArchived(id string) (*store.Conversation, error) {
+	return m.GetConversation(id)
+}
+
+func (m *mockConvServiceStore) GetLatestConversationByThreadBotUser(rootPostID, botID, userID string) (*store.Conversation, error) {
+	return m.GetConversationByThreadBotUser(rootPostID, botID, userID)
+}
+
+func (*mockConvServiceStore) RestoreConversation(_ string) (*store.Conversation, error) {
 	return nil, store.ErrConversationNotFound
 }
 
