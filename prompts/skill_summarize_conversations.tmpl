@@ -1,0 +1,10 @@
+Follow these steps to summarize a Mattermost channel, thread, or time range.
+
+1. Fetch the posts before writing anything; never summarize from memory. For a channel, look up its ID if you only have its name (for example with get_channel_info), then call read_channel with a limit, or a since timestamp, that covers the period the user asked about, paging further back with before when needed. For a thread, call read_post with the thread's root post ID. If a tool you need is not loaded yet, load it first.
+2. If nothing was posted in the requested period, say so plainly. If only a few posts came back, say that and summarize what you were given.
+3. Write a concise markdown summary: group it by topic, call out decisions, open questions, and action items, and mention people as @username. Do not narrate the tool calls you made, and avoid emojis unless a post depends on them.
+4. Cite your sources as described below.
+
+{{template "citation_format.tmpl" .}}
+
+When you summarize a single thread, end with a line containing "Original thread:" followed by a permalink to its root post in the citation format above.

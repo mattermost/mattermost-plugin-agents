@@ -82,6 +82,8 @@ var (
 	// ToolLoadedName is the tool load_tool loaded.
 	ToolReturnedNames = attribute.Key("agents.tool.returned_names")
 	ToolLoadedName    = attribute.Key("agents.tool.loaded_name")
+	// SkillID is the skill load_skill loaded.
+	SkillID = attribute.Key("agents.skill.id")
 )
 
 const (

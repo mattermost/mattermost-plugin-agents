@@ -19,6 +19,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm/llmtest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
+	"github.com/mattermost/mattermost-plugin-agents/v2/skills"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
 	"github.com/mattermost/mattermost/server/public/plugin/plugintest"
@@ -45,6 +46,8 @@ type evalScenario struct {
 	fileInfos map[string]*model.FileInfo
 	files     map[string][]byte
 	tools     []llm.Tool
+	// skillStore supplies user-created skills; nil leaves only built-in skills.
+	skillStore skills.PromptStore
 }
 
 type evalReply struct {
@@ -141,6 +144,7 @@ func respondAsAgent(t *evals.EvalT, scenario evalScenario, post *model.Post) str
 	require.NoError(t, err)
 
 	contextBuilder := llmcontext.NewLLMContextBuilder(pluginClient, &testToolProvider{tools: scenario.tools}, &testMCPClientManager{}, &mockConfigProvider{})
+	contextBuilder.SetSkillProvider(skills.NewProvider(scenario.skillStore, promptsManager, func() bool { return true }))
 	streamService := &evalStreamingService{replies: make(chan evalReply, 1)}
 
 	convs := conversations.New(

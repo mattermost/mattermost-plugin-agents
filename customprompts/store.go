@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	sq "github.com/Masterminds/squirrel"
+	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	"github.com/mattermost/mattermost/server/public/model"
 )
@@ -33,6 +34,9 @@ func (p *CustomPrompt) Validate() error {
 	}
 	if len([]rune(p.Name)) > MaxPromptNameLength {
 		return fmt.Errorf("name must be at most %d characters", MaxPromptNameLength)
+	}
+	if len([]rune(p.Description)) > llm.MaxSkillDescriptionRunes {
+		return fmt.Errorf("description must be at most %d characters", llm.MaxSkillDescriptionRunes)
 	}
 	if p.Template == "" {
 		return fmt.Errorf("template is required")

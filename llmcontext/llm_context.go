@@ -43,6 +43,11 @@ type MCPServerDescriber interface {
 
 var _ MCPServerDescriber = (*mcp.ClientManager)(nil)
 
+// SkillProvider provides the skill tools and catalog for a request.
+type SkillProvider interface {
+	Tools(bot llm.BotConfig, c *llm.Context) ([]llm.Tool, []llm.SkillInfo, error)
+}
+
 // ConfigProvider provides configuration access
 type ConfigProvider interface {
 	GetServiceByID(id string) (llm.ServiceConfig, bool)
@@ -55,6 +60,7 @@ type Builder struct {
 	mcpToolProvider MCPToolProvider
 	configProvider  ConfigProvider
 	licenseChecker  *enterprise.LicenseChecker
+	skillProvider   SkillProvider
 
 	mcpDynamicToolTelemetry llm.MCPDynamicToolTelemetry
 }
@@ -77,6 +83,10 @@ func NewLLMContextBuilder(
 
 func (b *Builder) SetMCPDynamicToolTelemetry(telemetry llm.MCPDynamicToolTelemetry) {
 	b.mcpDynamicToolTelemetry = telemetry
+}
+
+func (b *Builder) SetSkillProvider(provider SkillProvider) {
+	b.skillProvider = provider
 }
 
 // BuildLLMContextUserRequest is a helper function to collect the required context for a user request.
@@ -230,6 +240,14 @@ func (b *Builder) WithLLMContextInteractive() llm.ContextOption {
 func (b *Builder) WithLLMContextResponseFiles() llm.ContextOption {
 	return func(c *llm.Context) {
 		c.ToolCatalog.ResponseFilesSupported = true
+	}
+}
+
+// WithLLMContextSkills sets whether the skill tools are cataloged. Must be
+// configured before default tools are built.
+func (b *Builder) WithLLMContextSkills(enabled bool) llm.ContextOption {
+	return func(c *llm.Context) {
+		c.ToolCatalog.SkillsEnabled = enabled
 	}
 }
 
@@ -522,6 +540,12 @@ func (b *Builder) logWarn(message string, keyValuePairs ...any) {
 	}
 }
 
+func (b *Builder) logError(message string, keyValuePairs ...any) {
+	if b != nil && b.pluginAPI != nil {
+		b.pluginAPI.Log.Error(message, keyValuePairs...)
+	}
+}
+
 func (b *Builder) logDebug(message string, keyValuePairs ...any) {
 	if b != nil && b.pluginAPI != nil {
 		b.pluginAPI.Log.Debug(message, keyValuePairs...)
@@ -570,7 +594,24 @@ func (b *Builder) WithLLMContextTools(ctx stdcontext.Context, bot *bots.Bot) llm
 
 		markSandboxFileAttachment(c, bot)
 		c.Tools = b.getToolsStoreForUser(ctx, c, bot, c.RequestingUser.Id, false)
+		b.addSkillTools(c, bot)
 	}
+}
+
+// addSkillTools catalogs the skill tools after the rest of the store is built,
+// since built-in skills depend on the tools beside them. A failed skill lookup
+// leaves the turn without skills rather than failing it.
+func (b *Builder) addSkillTools(c *llm.Context, bot *bots.Bot) {
+	if !c.ToolCatalog.SkillsEnabled || b.skillProvider == nil || bot == nil || bot.GetConfig().DisableTools {
+		return
+	}
+	tools, catalog, err := b.skillProvider.Tools(bot.GetConfig(), c)
+	if err != nil {
+		b.logError("Failed to load skills; continuing without them", "bot_id", bot.GetConfig().ID, "error", err)
+		return
+	}
+	c.Tools.AddTools(tools)
+	c.Skills = catalog
 }
 
 func markSandboxFileAttachment(c *llm.Context, bot *bots.Bot) {

@@ -119,7 +119,7 @@ func (c *Conversations) runSearch(ctx context.Context, policy *turnPolicy, quest
 		}
 	}()
 
-	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for search", c.searchToolsContextOption(bot))
+	llmContext := policy.buildContext(ctx, "Failed to load user tool preferences for search", c.searchToolsContextOption(bot), c.contextBuilder.WithLLMContextSkills(false))
 	progress.Advance(responseProgressLoadingConversation)
 
 	if _, ok := llmContext.Tools.LookupTool("search_posts", mcp.EmbeddedClientKey); !ok {

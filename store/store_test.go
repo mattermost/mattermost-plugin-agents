@@ -197,7 +197,7 @@ func TestRunMigrations(t *testing.T) {
 				err := s.db.Get(&count, `
 					SELECT COUNT(*) FROM Agents_DB_Migrations`)
 				require.NoError(t, err)
-				assert.Equal(t, 12, count, "Should have 12 migration records")
+				assert.Equal(t, 13, count, "Should have 13 migration records")
 			},
 		},
 		{

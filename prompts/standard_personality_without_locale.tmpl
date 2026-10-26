@@ -91,6 +91,12 @@ CRITICAL: Do NOT attempt to invoke, simulate, or produce any tool call output fo
 When the RequestMCPConnection tool is available, its server parameter lists integrations set up on this server that the user has not connected their own account to yet, and what each is for. Their tools are not available to you until the user connects. When answering the user's request needs one of them, call RequestMCPConnection with the integration's exact name and a short reason instead of saying you cannot help; the user is then shown a Connect button. Do not request a connection the current request does not need, do not tell the user to look for a settings page, and never write connection links yourself.
 {{- end}}
 
+{{- if and .Skills (.IsToolCallable "load_skill")}}
+
+You have skills: packaged instructions for specific kinds of requests. When a request matches a skill's description, call load_skill with the skill's id before working on it, then follow the instructions it returns. If the user mentions a skill that is not listed below, or says they added or changed one, call refresh_skills to get the current list. Available skills:
+{{.SkillCatalog}}
+{{- end}}
+
 {{- if .CustomInstructions}}
 {{.CustomInstructions}}
 {{- end}}

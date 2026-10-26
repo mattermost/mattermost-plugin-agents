@@ -278,7 +278,8 @@ func (c *Conversations) checkSourceChannel(userID, channelID string) error {
 }
 
 // buildContext builds the turn's LLM context with the tools the policy
-// allows. extraOpts are applied after the policy's own options.
+// allows. Skills are offered only in ordinary conversations. extraOpts are
+// applied after the policy's own options.
 func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, extraOpts ...llm.ContextOption) *llm.Context {
 	builder := p.c.contextBuilder
 	opts := []llm.ContextOption{builder.WithLLMContextResponseFiles()}
@@ -290,6 +291,7 @@ func (p *turnPolicy) buildContext(ctx context.Context, prefsLogMessage string, e
 			return botChannelAutoEverywhereKeepTool(p.c.toolPolicyChecker, tool)
 		}))
 	}
+	opts = append(opts, builder.WithLLMContextSkills(p.conv == nil || p.conv.Operation == llm.OperationConversation))
 	opts = append(opts, p.c.conversationToolOptions(p.bot, p.conv)...)
 	opts = append(opts, extraOpts...)
 
