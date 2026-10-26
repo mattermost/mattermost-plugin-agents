@@ -137,13 +137,14 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 		}
 		// bot_id is validated by the auto-reply service (present, known, and
 		// allowed in this channel); its ErrValidation failures map to 400.
-		if _, err := a.autoReplyStore.Set(autoreply.Setting{
+		stored, err := a.autoReplyStore.Set(autoreply.Setting{
 			ChannelID:    channel.Id,
 			BotID:        req.BotID,
 			Mode:         mode,
 			UpdatedBy:    userID,
 			Instructions: req.Instructions,
-		}); err != nil {
+		})
+		if err != nil {
 			if errors.Is(err, autoreply.ErrValidation) {
 				c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid auto-reply setting: %w", err))
 				return
@@ -151,11 +152,7 @@ func (a *API) handlePutChannelAutoReply(c *gin.Context) {
 			c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to save channel auto-reply setting: %w", err))
 			return
 		}
-		saved = ChannelAutoReply{
-			BotID:        req.BotID,
-			Mode:         req.Mode,
-			Instructions: req.Instructions,
-		}
+		saved = channelAutoReplyFromSetting(stored)
 	default:
 		c.AbortWithError(http.StatusBadRequest, fmt.Errorf("invalid mode: %q", req.Mode))
 		return

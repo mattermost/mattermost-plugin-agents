@@ -898,6 +898,9 @@ func TestPutChannelAutoReplyRealService(t *testing.T) {
 			}
 			require.NotNil(t, stored)
 			require.Equal(t, tc.instructions, stored.Instructions)
+			var echoed ChannelAutoReply
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&echoed))
+			require.Equal(t, channelAutoReplyFromSetting(stored), echoed, "PUT must echo the stored setting")
 		})
 	}
 }
