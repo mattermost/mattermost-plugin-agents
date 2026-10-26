@@ -631,3 +631,55 @@ func TestAmbientClassifierSpan(t *testing.T) {
 		})
 	}
 }
+
+// TestAmbientTurnGatesRunBeforeClassifier pins that a turn the agent could
+// not run never reaches the classifier, so it spends no tokens.
+func TestAmbientTurnGatesRunBeforeClassifier(t *testing.T) {
+	restricted := func(mutate func(*llm.BotConfig)) llm.BotConfig {
+		cfg := autoReplyBotConfig()
+		mutate(&cfg)
+		return cfg
+	}
+
+	tests := []struct {
+		name      string
+		botConfig llm.BotConfig
+	}{
+		{
+			name: "posting user blocked from the agent",
+			botConfig: restricted(func(cfg *llm.BotConfig) {
+				cfg.UserAccessLevel = llm.UserAccessLevelBlock
+				cfg.UserIDs = []string{autoReplyUserID}
+			}),
+		},
+		{
+			name: "agent restricted from every channel",
+			botConfig: restricted(func(cfg *llm.BotConfig) {
+				cfg.ChannelAccessLevel = llm.ChannelAccessLevelNone
+			}),
+		},
+		{
+			name: "agent allowed only in another channel",
+			botConfig: restricted(func(cfg *llm.BotConfig) {
+				cfg.ChannelAccessLevel = llm.ChannelAccessLevelAllow
+				cfg.ChannelIDs = []string{"some-other-channel"}
+			}),
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			env := setupAutoReplyTestEnv(t, []llm.BotConfig{tc.botConfig}, dmMakeTextStream("canned reply"))
+			env.llm.noStreamResponseByOp = map[string]string{
+				llm.OperationAmbientClassification: `{"should_reply":true}`,
+			}
+			env.settings.set(autoreply.Setting{ChannelID: autoReplyChannelID, BotID: autoReplyBotUserID, Mode: autoreply.ModeAmbient})
+
+			env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "need help with billing"))
+
+			require.Zero(t, env.llm.classifierCalls, "a turn that cannot run must not reach the classifier")
+			require.Empty(t, env.mmClient.createdPosts)
+			require.Empty(t, env.mmClient.loggedErrors())
+		})
+	}
+}

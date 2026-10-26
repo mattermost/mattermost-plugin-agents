@@ -84,9 +84,14 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 	}
 
 	if setting.Mode.IsAmbient() {
-		// Gate the classifier call so restricted users never trigger LLM spend.
-		if restrictionErr := c.bots.CheckUsageRestrictions(ctx, post.UserId, bot, channel); restrictionErr != nil {
-			return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", restrictionErr, ErrNoResponse)
+		// Run the turn's own gates before the classifier so a turn that could
+		// not run never triggers LLM spend.
+		if _, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post}); policyErr != nil {
+			_, unlicensed := errors.AsType[*enterprise.LicenseError](policyErr)
+			if unlicensed || errors.Is(policyErr, bots.ErrUsageRestriction) {
+				return fmt.Errorf("auto-reply bot unavailable for user/channel: %v: %w", policyErr, ErrNoResponse)
+			}
+			return fmt.Errorf("ambient auto-reply turn policy failed: %w", policyErr)
 		}
 		thread, threadErr := c.ambientThreadPosts(post)
 		if threadErr != nil {
