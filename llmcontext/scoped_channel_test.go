@@ -289,6 +289,45 @@ func TestScopedChannelTurnSeesRevocation(t *testing.T) {
 	assert.True(t, llmContext.ScopedSessionReleased(), "a run revoked because its mode lapsed counts as released")
 }
 
+func TestScopedChannelTurnGrantWaitsForConversation(t *testing.T) {
+	conversationID := model.NewId()
+	tests := []struct {
+		name               string
+		conversationID     string
+		wantConversationID string
+	}{
+		{name: "conversation created after the context", conversationID: conversationID, wantConversationID: conversationID},
+		{name: "released before a conversation exists"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minter := &recordingScopedMinter{}
+			provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
+			builder, auditRecords := newScopedTestBuilder(t, defaultScopedTestEnv(), &emptyToolProvider{}, provider)
+			bot := newScopedTestBot(scopedTestBotConfig())
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen},
+				builder.WithLLMContextScopedChannelTurn(llm.ScopedTurn{TriggerPostID: model.NewId(), ConversationPending: true}),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+			require.True(t, llmContext.ToolsScoped)
+			assert.Empty(t, auditRecords(), "the grant waits for the conversation it belongs to")
+
+			if tt.conversationID != "" {
+				llmContext.SetScopedTurnConversation(tt.conversationID)
+			}
+			llmContext.ReleaseScopedSession()
+			llmContext.ReleaseScopedSession()
+
+			records := auditRecords()
+			require.Len(t, records, 1, "the grant is recorded exactly once")
+			assert.Equal(t, audit.EventAgentScopedSessionGrant, records[0].EventName)
+			assert.Equal(t, model.AuditStatusSuccess, records[0].Status)
+			assert.Equal(t, tt.wantConversationID, records[0].EventData.Parameters[audit.KeyConversationID])
+		})
+	}
+}
+
 func TestScopedChannelTurnFallsBackOnlyWithApproval(t *testing.T) {
 	publicChannel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
 	dm := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}

@@ -143,6 +143,10 @@ type ScopedTurn struct {
 	TriggerPostID  string
 	ThreadRootID   string
 	ConversationID string
+	// ConversationPending marks a turn whose conversation is created after
+	// its context is built. The session's grant audit record then waits for
+	// SetScopedTurnConversation, or for the session's release.
+	ConversationPending bool
 }
 
 // CreatedFile identifies a file created by a tool during this turn for
@@ -179,19 +183,45 @@ type ToolRuntimeContext struct {
 }
 
 type scopedSessionHandle struct {
-	once     sync.Once
-	release  func()
-	released func() bool
+	once        sync.Once
+	release     func()
+	released    func() bool
+	grantOnce   sync.Once
+	recordGrant func(conversationID string)
 }
 
 // SetScopedSession records how to end this turn's scoped session and how to
 // tell whether it has ended, including when something other than this turn
 // ended it. It is called while the context is built, before the turn runs.
-func (c *Context) SetScopedSession(release func(), released func() bool) {
+// A non-nil recordGrant emits the session's grant audit record once the
+// turn's conversation is known; see ScopedTurn.ConversationPending.
+func (c *Context) SetScopedSession(release func(), released func() bool, recordGrant func(conversationID string)) {
 	if c == nil || release == nil || released == nil {
 		return
 	}
-	c.ToolRuntime.scopedSession = &scopedSessionHandle{release: release, released: released}
+	c.ToolRuntime.scopedSession = &scopedSessionHandle{release: release, released: released, recordGrant: recordGrant}
+}
+
+// SetScopedTurnConversation supplies the conversation of a turn whose
+// context was built before the conversation existed.
+func (c *Context) SetScopedTurnConversation(conversationID string) {
+	if c == nil || c.ToolCatalog.ScopedTurn == nil {
+		return
+	}
+	c.ToolCatalog.ScopedTurn.ConversationID = conversationID
+	c.flushScopedGrant()
+}
+
+func (c *Context) flushScopedGrant() {
+	handle := c.ToolRuntime.scopedSession
+	if handle == nil || handle.recordGrant == nil {
+		return
+	}
+	conversationID := ""
+	if c.ToolCatalog.ScopedTurn != nil {
+		conversationID = c.ToolCatalog.ScopedTurn.ConversationID
+	}
+	handle.grantOnce.Do(func() { handle.recordGrant(conversationID) })
 }
 
 // ReleaseScopedSession ends this turn's scoped session, if it has one. Every
@@ -201,6 +231,7 @@ func (c *Context) ReleaseScopedSession() {
 	if c == nil || c.ToolRuntime.scopedSession == nil {
 		return
 	}
+	c.flushScopedGrant()
 	handle := c.ToolRuntime.scopedSession
 	handle.once.Do(handle.release)
 }
