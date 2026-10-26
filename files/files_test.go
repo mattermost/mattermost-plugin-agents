@@ -400,6 +400,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 		channel    *model.Channel
 		team       *model.Team
 		compliance bool
+		noJoin     bool
 		allowed    bool
 	}{
 		{name: "triggering private channel the bot is not in", channel: trigger, team: closedTeam, allowed: true},
@@ -408,6 +409,8 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 		{name: "private channel the bot was added to", channel: memberPrivate, team: openTeam},
 		{name: "the bot's DM with a user", channel: botDM},
 		{name: "open-team public channel with compliance mode on", channel: openPublic, team: openTeam, compliance: true},
+		{name: "open-team public channel when system_user cannot join public teams", channel: openPublic, team: openTeam, noJoin: true},
+		{name: "listed channel when system_user cannot join public teams", channel: trigger, team: closedTeam, noJoin: true, allowed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -423,6 +426,9 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 				m.EXPECT().GetTeam(tt.team.Id).Return(tt.team, nil)
 			}
 			m.EXPECT().GetConfig().Return(&model.Config{ComplianceSettings: model.ComplianceSettings{Enable: new(tt.compliance)}})
+			if !tt.compliance {
+				m.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
+			}
 
 			svc := New(m)
 			svc.SetScopeRegistry(registry)

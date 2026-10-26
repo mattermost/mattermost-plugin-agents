@@ -267,3 +267,39 @@ func TestPluginAPIMinter(t *testing.T) {
 		})
 	}
 }
+
+type fakeSettings struct {
+	cfg  *model.Config
+	join bool
+}
+
+func (f fakeSettings) GetConfig() *model.Config { return f.cfg }
+
+func (f fakeSettings) RolesGrantPermission(roles []string, permissionID string) bool {
+	return f.join && len(roles) == 1 && roles[0] == model.SystemUserRoleId && permissionID == model.PermissionJoinPublicTeams.Id
+}
+
+func TestOpenTeamGrantDisabled(t *testing.T) {
+	cfg := func(compliance *bool) *model.Config {
+		return &model.Config{ComplianceSettings: model.ComplianceSettings{Enable: compliance}}
+	}
+	off, on := false, true
+
+	tests := []struct {
+		name     string
+		settings ServerSettings
+		disabled bool
+	}{
+		{name: "open when compliance is off and system_user can join", settings: fakeSettings{cfg: cfg(&off), join: true}},
+		{name: "compliance mode", settings: fakeSettings{cfg: cfg(&on), join: true}, disabled: true},
+		{name: "system_user cannot join public teams", settings: fakeSettings{cfg: cfg(&off)}, disabled: true},
+		{name: "compliance setting missing", settings: fakeSettings{cfg: cfg(nil), join: true}, disabled: true},
+		{name: "config missing", settings: fakeSettings{join: true}, disabled: true},
+		{name: "no settings", disabled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.disabled, OpenTeamGrantDisabled(tt.settings))
+		})
+	}
+}
