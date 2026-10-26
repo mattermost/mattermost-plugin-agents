@@ -82,7 +82,7 @@ func TestCallRecordingPostsNotifications(t *testing.T) {
 			}
 			bot := bots.NewBot(llm.BotConfig{}, llm.ServiceConfig{}, &model.Bot{UserId: botID}, nil)
 
-			surePost, err := s.newCallRecordingThread(bot, &model.User{Id: requesterID}, &model.Post{Id: model.NewId()}, &model.Channel{Id: model.NewId()}, model.NewId(), nil)
+			surePost, err := s.newCallRecordingThread(t.Context(), bot, &model.User{Id: requesterID}, &model.Post{Id: model.NewId()}, &model.Channel{Id: model.NewId()}, model.NewId(), nil)
 			require.NoError(t, err)
 
 			// Transcribing fails at once because ffmpeg is not configured.

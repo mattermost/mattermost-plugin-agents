@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversation"
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
@@ -79,6 +80,13 @@ type postStreamContext struct {
 // errStoppedByUser is the cancellation cause of a stream the requester
 // stopped, distinguishing it from shutdown or a superseded run.
 var errStoppedByUser = errors.New("generation stopped by user")
+
+// errPluginShutdown is the cancellation cause of streams canceled because the
+// plugin is shutting down.
+var errPluginShutdown = errors.New("plugin shutting down")
+
+// ErrShuttingDown is returned for streams started once Shutdown has begun.
+var ErrShuttingDown = errors.New("streaming is shutting down")
 
 // TurnStore is the subset of store operations needed by the streaming layer.
 // Finalize either creates a fresh anchor (first stream / regen, with the caller
@@ -161,10 +169,13 @@ var ErrAlreadyStreamingToPost = fmt.Errorf("already streaming to post")
 type MMPostStreamService struct {
 	contexts      map[string]postStreamContext
 	contextsMutex sync.Mutex
-	mmClient      Client
-	i18n          *i18n.Bundle
-	turnStore     TurnStore
-	notifier      notifications.Notifier
+	shuttingDown  bool
+	// drained is closed when the last run finishes during Shutdown.
+	drained   chan struct{}
+	mmClient  Client
+	i18n      *i18n.Bundle
+	turnStore TurnStore
+	notifier  notifications.Notifier
 }
 
 func NewMMPostStreamService(mmClient Client, i18n *i18n.Bundle) *MMPostStreamService {
@@ -272,10 +283,43 @@ func (p *MMPostStreamService) StopStreaming(postID string) {
 	}
 }
 
+// Shutdown cancels every in-flight stream and waits up to timeout for their
+// runs to finish, so each run ends as a cancel the requester did not ask for
+// and notifies them. It refuses new streams from the start, and reports
+// whether every run finished in time.
+func (p *MMPostStreamService) Shutdown(timeout time.Duration) bool {
+	p.contextsMutex.Lock()
+	p.shuttingDown = true
+	if len(p.contexts) == 0 {
+		p.contextsMutex.Unlock()
+		return true
+	}
+	for _, streamContext := range p.contexts {
+		streamContext.cancel(errPluginShutdown)
+	}
+	if p.drained == nil {
+		p.drained = make(chan struct{})
+	}
+	drained := p.drained
+	p.contextsMutex.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-drained:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
 func (p *MMPostStreamService) GetStreamingContext(inCtx context.Context, postID string) (context.Context, error) {
 	p.contextsMutex.Lock()
 	defer p.contextsMutex.Unlock()
 
+	if p.shuttingDown {
+		return nil, ErrShuttingDown
+	}
 	if _, ok := p.contexts[postID]; ok {
 		return nil, ErrAlreadyStreamingToPost
 	}
@@ -300,6 +344,10 @@ func (p *MMPostStreamService) FinishStreaming(postID string) {
 		streamContext.cancel(nil)
 	}
 	delete(p.contexts, postID)
+	if p.drained != nil && len(p.contexts) == 0 {
+		close(p.drained)
+		p.drained = nil
+	}
 }
 
 // newTurnAccumulator constructs an in-memory accumulator. Nothing is persisted

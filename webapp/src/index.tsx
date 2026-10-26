@@ -387,7 +387,9 @@ export default class Plugin {
         const state = this.store?.getState();
         const parentPost = post?.root_id ? state?.entities.posts.posts[post.root_id] : null;
         const currentUserId = state?.entities.users.currentUserId;
-        const deferredNotifications = state ? getDeferredNotificationsSupported(state as any) : false;
+
+        // The server never defers posts in shared channels.
+        const deferredNotifications = Boolean(state && getDeferredNotificationsSupported(state as any) && !channel?.shared);
         const isPostViewed = (postId: string) => getViewingTracker().isViewed(postId);
 
         if (shouldSuppressBotNotification(post, {currentUserId, parentPost, now: Date.now(), deferredNotifications, isPostViewed})) {

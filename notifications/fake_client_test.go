@@ -4,6 +4,7 @@
 package notifications
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -34,8 +35,12 @@ type fakeClient struct {
 	status  map[string]*model.Status
 	chans   map[string]*model.Channel
 	members map[string]*model.ChannelMember
+	prefs   map[string]model.Preference
 	config  *model.Config
 
+	// onDeliver, when set, answers DeliverPostNotifications instead of
+	// deliverErr.
+	onDeliver  func(call deliverCall) error
 	deliverErr error
 	delivered  []deliverCall
 	pushes     []pushCall
@@ -44,6 +49,7 @@ type fakeClient struct {
 	onPush func(msg *model.PushNotification, userID string) bool
 
 	errorLogs []string
+	warnLogs  []string
 }
 
 func newFakeClient() *fakeClient {
@@ -57,6 +63,7 @@ func newFakeClient() *fakeClient {
 		status:  map[string]*model.Status{},
 		chans:   map[string]*model.Channel{},
 		members: map[string]*model.ChannelMember{},
+		prefs:   map[string]model.Preference{},
 		config:  cfg,
 	}
 }
@@ -69,6 +76,9 @@ func (f *fakeClient) DeliverPostNotifications(postID string, options *model.Deli
 		call.userIDs = options.UserIDs
 	}
 	f.delivered = append(f.delivered, call)
+	if f.onDeliver != nil {
+		return f.onDeliver(call)
+	}
 	return f.deliverErr
 }
 
@@ -82,7 +92,44 @@ func (f *fakeClient) KVGet(key string, value any) error {
 	if !ok {
 		return mmapi.ErrKVNotFound
 	}
+	if out, ok := value.(*[]byte); ok {
+		*out = raw
+		return nil
+	}
 	return json.Unmarshal(raw, value)
+}
+
+// KVCompareAndSet follows the server: a nil newValue deletes the key when its
+// value matches oldValue.
+func (f *fakeClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.kvErr != nil {
+		return false, f.kvErr
+	}
+	oldRaw, err := json.Marshal(oldValue)
+	if err != nil {
+		return false, err
+	}
+	current, ok := f.kv[key]
+	if oldValue == nil {
+		if ok {
+			return false, nil
+		}
+	} else if !ok || !bytes.Equal(current, oldRaw) {
+		return false, nil
+	}
+	if newValue == nil {
+		delete(f.kv, key)
+		delete(f.kvTTL, key)
+		return true, nil
+	}
+	newRaw, err := json.Marshal(newValue)
+	if err != nil {
+		return false, err
+	}
+	f.kv[key] = newRaw
+	return true, nil
 }
 
 func (f *fakeClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
@@ -100,15 +147,11 @@ func (f *fakeClient) KVSetWithExpiry(key string, value any, ttl time.Duration) e
 	return nil
 }
 
-func (f *fakeClient) KVDelete(key string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.kvErr != nil {
-		return f.kvErr
+func (f *fakeClient) GetPreferenceForUser(userID, category, name string) (model.Preference, error) {
+	if p, ok := f.prefs[userID+category+name]; ok {
+		return p, nil
 	}
-	delete(f.kv, key)
-	delete(f.kvTTL, key)
-	return nil
+	return model.Preference{}, errors.New("preference not found")
 }
 
 func (f *fakeClient) GetPost(postID string) (*model.Post, error) {
@@ -163,5 +206,9 @@ func (f *fakeClient) LogError(msg string, _ ...any) {
 	defer f.mu.Unlock()
 	f.errorLogs = append(f.errorLogs, msg)
 }
-func (f *fakeClient) LogWarn(string, ...any)  {}
+func (f *fakeClient) LogWarn(msg string, _ ...any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.warnLogs = append(f.warnLogs, msg)
+}
 func (f *fakeClient) LogDebug(string, ...any) {}

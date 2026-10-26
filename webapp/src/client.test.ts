@@ -257,16 +257,17 @@ describe('doLoopInAgent', () => {
 
 describe('doSetPostViewing', () => {
     test.each([
-        {name: 'viewing', viewing: true, keepalive: false},
-        {name: 'no longer viewing while the page unloads', viewing: false, keepalive: true},
-    ])('posts the viewing state: $name', async ({viewing, keepalive}) => {
-        await expect(doSetPostViewing(WELL_FORMED_ID, viewing, keepalive)).resolves.toBeUndefined();
+        {name: 'viewing', viewing: true, keepalive: false, tabId: 'tab-1', body: {viewing: true, tab_id: 'tab-1'}},
+        {name: 'no longer viewing while the page unloads', viewing: false, keepalive: true, tabId: 'tab-1', body: {viewing: false, tab_id: 'tab-1'}},
+        {name: 'without a tab', viewing: true, keepalive: false, tabId: '', body: {viewing: true}},
+    ])('posts the viewing state: $name', async ({viewing, keepalive, tabId, body}) => {
+        await expect(doSetPostViewing(WELL_FORMED_ID, viewing, keepalive, tabId)).resolves.toBeUndefined();
 
         expect(mockFetch).toHaveBeenCalledTimes(1);
         const [url, options] = mockFetch.mock.calls[0];
         expect(url).toBe(`${siteURL}/plugins/${manifest.id}/post/${WELL_FORMED_ID}/viewing`);
         expect(options).toEqual(expect.objectContaining({method: 'POST', keepalive}));
-        expect(JSON.parse(String(options.body))).toEqual({viewing});
+        expect(JSON.parse(String(options.body))).toEqual(body);
     });
 
     test('rejects when the server refuses the report', async () => {

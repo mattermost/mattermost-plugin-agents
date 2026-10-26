@@ -41,7 +41,31 @@ func (c *viewingKVClient) KVGet(key string, value any) error {
 	if !ok {
 		return mmapi.ErrKVNotFound
 	}
+	if out, ok := value.(*[]byte); ok {
+		*out = raw
+		return nil
+	}
 	return json.Unmarshal(raw, value)
+}
+
+func (c *viewingKVClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
+	oldRaw, err := json.Marshal(oldValue)
+	if err != nil {
+		return false, err
+	}
+	if current, ok := c.kv[key]; !ok || string(current) != string(oldRaw) {
+		return false, nil
+	}
+	if newValue == nil {
+		delete(c.kv, key)
+		delete(c.ttl, key)
+		return true, nil
+	}
+	return true, c.KVSetWithExpiry(key, newValue, 0)
+}
+
+func (c *viewingKVClient) GetPreferenceForUser(string, string, string) (model.Preference, error) {
+	return model.Preference{}, errors.New("not used")
 }
 
 func (c *viewingKVClient) KVSetWithExpiry(key string, value any, ttl time.Duration) error {
@@ -51,12 +75,6 @@ func (c *viewingKVClient) KVSetWithExpiry(key string, value any, ttl time.Durati
 	}
 	c.kv[key] = raw
 	c.ttl[key] = ttl
-	return nil
-}
-
-func (c *viewingKVClient) KVDelete(key string) error {
-	delete(c.kv, key)
-	delete(c.ttl, key)
 	return nil
 }
 
@@ -86,12 +104,19 @@ func TestHandleViewing(t *testing.T) {
 		postUserID    string
 		canRead       bool
 		alreadyViewed bool
+		viewedByTab   string
 		body          string
 		wantStatus    int
 		wantViewing   bool
 	}{
 		{name: "viewing true records the viewer", postUserID: testBotUserID, canRead: true, body: `{"viewing":true}`, wantStatus: http.StatusOK, wantViewing: true},
 		{name: "viewing false clears the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, body: `{"viewing":false}`, wantStatus: http.StatusOK},
+		{name: "viewing true from a tab records the viewer", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"tab-A_1"}`, wantStatus: http.StatusOK, wantViewing: true},
+		{name: "viewing false from the viewing tab clears the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, viewedByTab: "tabA", body: `{"viewing":false,"tab_id":"tabA"}`, wantStatus: http.StatusOK},
+		{name: "viewing false from another tab keeps the viewer", postUserID: testBotUserID, canRead: true, alreadyViewed: true, viewedByTab: "tabA", body: `{"viewing":false,"tab_id":"tabB"}`, wantStatus: http.StatusOK, wantViewing: true},
+		{name: "tab id with other characters is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"tab/../x"}`, wantStatus: http.StatusBadRequest},
+		{name: "overlong tab id is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":"` + strings.Repeat("a", 65) + `"}`, wantStatus: http.StatusBadRequest},
+		{name: "non-string tab id is rejected", postUserID: testBotUserID, canRead: true, body: `{"viewing":true,"tab_id":7}`, wantStatus: http.StatusBadRequest},
 		{name: "user who cannot read the channel is forbidden", postUserID: testBotUserID, body: `{"viewing":true}`, wantStatus: http.StatusForbidden},
 		{name: "non-agent post is rejected", postUserID: testOtherUserID, canRead: true, body: `{"viewing":true}`, wantStatus: http.StatusBadRequest},
 		{name: "missing viewing is rejected", postUserID: testBotUserID, canRead: true, alreadyViewed: true, body: `{}`, wantStatus: http.StatusBadRequest, wantViewing: true},
@@ -110,7 +135,7 @@ func TestHandleViewing(t *testing.T) {
 			service := notifications.NewService(kv, i18n.Init(), true)
 			e.api.SetNotifications(service)
 			if tc.alreadyViewed {
-				require.NoError(t, service.SetViewing(postID, testUserID, true))
+				require.NoError(t, service.SetViewing(postID, testUserID, tc.viewedByTab, true))
 			}
 
 			e.mockAPI.On("GetPost", postID).Return(&model.Post{Id: postID, UserId: tc.postUserID, ChannelId: channelID}, nil)

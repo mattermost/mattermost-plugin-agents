@@ -5,6 +5,7 @@ package conversations_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,10 @@ func (c *notificationsTestClient) GetConfig() *model.Config {
 	cfg.EmailSettings.SendPushNotifications = new(true)
 	cfg.EmailSettings.PushNotificationContents = new(model.FullNotification)
 	return cfg
+}
+
+func (c *notificationsTestClient) GetPreferenceForUser(string, string, string) (model.Preference, error) {
+	return model.Preference{}, errors.New("no preference")
 }
 
 func (c *notificationsTestClient) SendPushNotification(_ *model.PushNotification, userID string) error {

@@ -12,7 +12,7 @@ interface PluginState {
     pinnedPromptIds: string[] | null;
     showCustomPromptsModal: boolean;
     htmlArtifactsEnabled?: boolean;
-    deferredNotifications?: boolean;
+    deferredNotifications?: boolean | null;
 }
 
 type AppState = GlobalState & {
@@ -39,3 +39,7 @@ export const getHTMLArtifactsEnabled = (state: AppState): boolean =>
 // final, so the plugin no longer has to suppress them wholesale.
 export const getDeferredNotificationsSupported = (state: AppState): boolean =>
     Boolean(state[`plugins-${manifest.id}`]?.deferredNotifications);
+
+// Null until the server has answered.
+export const getDeferredNotificationsMode = (state: AppState): boolean | null =>
+    state[`plugins-${manifest.id}`]?.deferredNotifications ?? null;

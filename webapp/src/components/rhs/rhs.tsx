@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
@@ -18,7 +18,7 @@ import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 import {subscribeToPosted} from '@/posted_events';
-import {getDeferredNotificationsSupported} from '@/selectors';
+import {getDeferredNotificationsMode} from '@/selectors';
 import {getViewingTracker} from '@/viewing';
 
 import type {UserMCPServerInfo} from './tool_provider_popover';
@@ -74,13 +74,25 @@ export default function RHS() {
     const [disabledServers, setDisabledServers] = useState<string[]>([]);
     const [preloadedServers, setPreloadedServers] = useState<UserMCPServerInfo[]>([]);
 
-    const deferredNotifications = useSelector(getDeferredNotificationsSupported);
+    const deferredNotifications = useSelector(getDeferredNotificationsMode);
+    const deferredNotificationsKnown = deferredNotifications !== null;
+
+    // Read when the marker is written, including from an unmount cleanup that
+    // closed over an older render.
+    const deferredNotificationsRef = useRef(deferredNotifications);
+    deferredNotificationsRef.current = deferredNotifications;
 
     // Without deferred notifications the thread is marked read a day ahead so
     // agent replies streaming into it never show as unread. With them, a reply
     // only counts once delivered, and it should stay unread if the user left.
+    // Until the server says which applies, no marker is written: a day-ahead
+    // marker would hide every later delivery on a server that defers.
     const markSelectedThreadRead = useCallback((postId: string, readAt?: number) => {
-        const timestamp = deferredNotifications ? (readAt ?? Date.now()) : Date.now() + twentyFourHoursInMS;
+        const deferred = deferredNotificationsRef.current;
+        if (deferred === null) {
+            return;
+        }
+        const timestamp = deferred ? (readAt ?? Date.now()) : Date.now() + twentyFourHoursInMS;
         updateRead(currentUserId, currentTeamId, postId, timestamp).catch((error) => {
             if (isMissingThreadMembershipError(error)) {
                 console.warn('Skipping AI thread read marker because thread membership is missing.', error); // eslint-disable-line no-console
@@ -89,7 +101,7 @@ export default function RHS() {
 
             console.error('Failed to update AI thread read marker:', error); // eslint-disable-line no-console
         });
-    }, [currentTeamId, currentUserId, deferredNotifications]);
+    }, [currentTeamId, currentUserId]);
 
     // A delivered agent reply arrives as a repeated `posted` event; if it is on
     // screen here, the user has read it.
@@ -145,6 +157,18 @@ export default function RHS() {
             }
         };
     }, [currentTab, markSelectedThreadRead, selectedPostId]);
+
+    // The thread may have been opened before the server answered.
+    const wasKnownRef = useRef(deferredNotificationsKnown);
+    useEffect(() => {
+        if (wasKnownRef.current || !deferredNotificationsKnown) {
+            return;
+        }
+        wasKnownRef.current = true;
+        if (currentTab === 'thread' && selectedPostId) {
+            markSelectedThreadRead(selectedPostId);
+        }
+    }, [currentTab, deferredNotificationsKnown, markSelectedThreadRead, selectedPostId]);
 
     const selectPost = useCallback((postId: string) => {
         dispatch({type: 'SELECT_AI_POST', postId});

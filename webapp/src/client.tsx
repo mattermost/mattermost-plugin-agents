@@ -303,12 +303,14 @@ export async function doRegenerate(postid: string) {
 
 // Reports whether this user has the agent post on screen, so the server can
 // skip notifying them about it. keepalive lets the request outlive the page.
-export async function doSetPostViewing(postid: string, viewing: boolean, keepalive = false): Promise<void> {
+// tabId identifies the reporting tab, so its stop does not end another tab's
+// report; it must match [A-Za-z0-9_-]{1,64}.
+export async function doSetPostViewing(postid: string, viewing: boolean, keepalive = false, tabId = ''): Promise<void> {
     const url = `${postRoute(postid)}/viewing`;
     const response = await fetch(url, {
         ...Client4.getOptions({
             method: 'POST',
-            body: JSON.stringify({viewing}),
+            body: JSON.stringify(tabId ? {viewing, tab_id: tabId} : {viewing}),
         }),
         keepalive,
     });

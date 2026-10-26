@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -50,6 +49,10 @@ func (c *hookNotificationsClient) KVGet(key string, value any) error {
 	if !ok {
 		return mmapi.ErrKVNotFound
 	}
+	if out, ok := value.(*[]byte); ok {
+		*out = raw
+		return nil
+	}
 	return json.Unmarshal(raw, value)
 }
 
@@ -62,15 +65,31 @@ func (c *hookNotificationsClient) KVSetWithExpiry(key string, value any, _ time.
 	return nil
 }
 
-func (c *hookNotificationsClient) KVDelete(key string) error {
-	delete(c.kv, key)
-	return nil
+func (c *hookNotificationsClient) KVCompareAndSet(key string, oldValue, newValue any) (bool, error) {
+	oldRaw, err := json.Marshal(oldValue)
+	if err != nil {
+		return false, err
+	}
+	if current, ok := c.kv[key]; !ok || string(current) != string(oldRaw) {
+		return false, nil
+	}
+	if newValue == nil {
+		delete(c.kv, key)
+		return true, nil
+	}
+	return true, c.KVSetWithExpiry(key, newValue, 0)
 }
 
 func (c *hookNotificationsClient) GetPost(id string) (*model.Post, error) { return c.posts[id], nil }
 func (c *hookNotificationsClient) GetUser(id string) (*model.User, error) { return c.users[id], nil }
 func (c *hookNotificationsClient) GetChannel(id string) (*model.Channel, error) {
-	return c.chans[id], nil
+	if channel, ok := c.chans[id]; ok {
+		return channel, nil
+	}
+	return nil, errors.New("channel not found")
+}
+func (c *hookNotificationsClient) GetPreferenceForUser(string, string, string) (model.Preference, error) {
+	return model.Preference{}, errors.New("preference not found")
 }
 func (c *hookNotificationsClient) GetUserStatus(id string) (*model.Status, error) {
 	return &model.Status{UserId: id, Status: model.StatusOffline}, nil
@@ -247,13 +266,18 @@ func TestEmailNotificationWillBeSentLegacy(t *testing.T) {
 }
 
 // TestAgentNotificationHooks covers both hooks on servers with and without
-// deferred post notifications, with the recipient viewing the response or
-// not, for agent and non-agent senders.
+// deferred post notifications, in shared channels, which the server does not
+// defer, with the recipient viewing the response or not, for agent and
+// non-agent senders.
 func TestAgentNotificationHooks(t *testing.T) {
-	const postID = "post-1"
+	const (
+		postID    = "post-1"
+		channelID = "channel-1"
+	)
 	tests := []struct {
 		name        string
 		supported   bool
+		shared      bool
 		sender      string
 		viewing     bool
 		kvErr       error
@@ -261,6 +285,10 @@ func TestAgentNotificationHooks(t *testing.T) {
 		rootID      string
 		wantBlocked bool
 	}{
+		{name: "shared channel: agent reply the recipient is not viewing", supported: true, shared: true, sender: botUserID, rootID: "root", wantBlocked: true},
+		{name: "shared channel: agent DM post the recipient is not viewing", supported: true, shared: true, sender: botUserID, isDM: true, wantBlocked: true},
+		{name: "shared channel: agent channel root post the recipient is viewing", supported: true, shared: true, sender: botUserID, viewing: true},
+		{name: "shared channel: non-agent reply", supported: true, shared: true, sender: "regular-user", rootID: "root"},
 		{name: "supported: agent post the recipient is viewing", supported: true, sender: botUserID, viewing: true, isDM: true, wantBlocked: true},
 		{name: "supported: agent reply the recipient is viewing", supported: true, sender: botUserID, viewing: true, rootID: "root", wantBlocked: true},
 		{name: "supported: agent DM post the recipient is not viewing", supported: true, sender: botUserID, isDM: true},
@@ -278,9 +306,10 @@ func TestAgentNotificationHooks(t *testing.T) {
 		for _, kind := range []string{"push", "email"} {
 			t.Run(kind+" "+tt.name, func(t *testing.T) {
 				client := newHookNotificationsClient()
+				client.chans[channelID] = &model.Channel{Id: channelID, Shared: new(tt.shared)}
 				svc := notifications.NewService(client, i18n.Init(), tt.supported)
 				if tt.viewing {
-					require.NoError(t, svc.SetViewing(postID, recipientUserID, true))
+					require.NoError(t, svc.SetViewing(postID, recipientUserID, "tab", true))
 				}
 				client.kvErr = tt.kvErr
 				p := pluginWithAgentBot(svc)
@@ -294,6 +323,7 @@ func TestAgentNotificationHooks(t *testing.T) {
 					}
 					got, reason := p.NotificationWillBePushed(&model.PushNotification{
 						PostId:      postID,
+						ChannelId:   channelID,
 						SenderId:    tt.sender,
 						RootId:      tt.rootID,
 						ChannelType: channelType,
@@ -303,6 +333,7 @@ func TestAgentNotificationHooks(t *testing.T) {
 				case "email":
 					got, reason := p.EmailNotificationWillBeSent(&model.EmailNotification{
 						PostId:          postID,
+						ChannelId:       channelID,
 						SenderId:        tt.sender,
 						RecipientId:     recipientUserID,
 						RootId:          tt.rootID,
@@ -386,29 +417,4 @@ func TestEmailNotificationWillBeSent_BotsCacheUninitialized(t *testing.T) {
 	got, reason := p.EmailNotificationWillBeSent(notification)
 	require.NotNil(t, got, "must pass through when bots service is not initialized")
 	require.Empty(t, reason)
-}
-
-type probeAPI struct{ appErr *model.AppError }
-
-func (p probeAPI) DeliverPostNotifications(string, *model.DeliverPostNotificationsOptions) *model.AppError {
-	return p.appErr
-}
-
-// TestProbeSupportAgainstPluginAPI pins the OnActivate probe against the
-// replies the plugin API gives for a post that does not exist.
-func TestProbeSupportAgainstPluginAPI(t *testing.T) {
-	tests := []struct {
-		name   string
-		appErr *model.AppError
-		want   bool
-	}{
-		{"supporting server answers not found", model.NewAppError("DeliverPostNotifications", "app.post.get.app_error", nil, "", http.StatusNotFound), true},
-		{"old server RPC returns nil", nil, false},
-		{"other error", model.NewAppError("DeliverPostNotifications", "x", nil, "", http.StatusInternalServerError), false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, notifications.ProbeSupport(probeAPI{appErr: tt.appErr}))
-		})
-	}
 }

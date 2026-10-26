@@ -92,7 +92,7 @@ func TestHandleSummarizeTranscriptionDeniedByFilePolicy(t *testing.T) {
 		nil,
 	)
 
-	result, err := s.HandleSummarizeTranscription(userID, bot, post, &model.Channel{Id: "channel-id"}, sessionID)
+	result, err := s.HandleSummarizeTranscription(t.Context(), userID, bot, post, &model.Channel{Id: "channel-id"}, sessionID)
 	require.NoError(t, err)
 	require.NotEmpty(t, result["postid"])
 

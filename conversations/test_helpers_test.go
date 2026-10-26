@@ -69,6 +69,8 @@ type fakeMMClient struct {
 
 	deliveryMu sync.Mutex
 	deliveries []fakeDelivery
+	// deliveryErr, when set, answers each DeliverPostNotifications call.
+	deliveryErr func(fakeDelivery) error
 }
 
 type fakeDelivery struct {
@@ -84,6 +86,9 @@ func (c *fakeMMClient) DeliverPostNotifications(postID string, options *model.De
 		d.userIDs = options.UserIDs
 	}
 	c.deliveries = append(c.deliveries, d)
+	if c.deliveryErr != nil {
+		return c.deliveryErr(d)
+	}
 	return nil
 }
 
@@ -115,6 +120,11 @@ func (c *fakeMMClient) CreatePost(post *model.Post) error {
 	}
 	if post.Id == "" {
 		post.Id = model.NewId()
+	}
+	// Like the server, create posts in shared channels without deferring
+	// their notifications, and return the created post.
+	if channel := c.channels[post.ChannelId]; channel != nil && channel.IsShared() {
+		post.DelProp(model.PostPropsDeferredNotification)
 	}
 	c.createdPosts = append(c.createdPosts, post.Clone())
 	return nil

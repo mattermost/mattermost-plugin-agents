@@ -5,6 +5,7 @@ package notifications
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/i18n"
 	"github.com/mattermost/mattermost/server/public/model"
@@ -35,10 +36,12 @@ func (s *Service) ConsumeFallbackPush(postID, userID string) bool {
 	return true
 }
 
-// pushToRequester is the notification on servers without deferred
-// notifications, where agent posts notified nobody useful at creation: a
-// single push to the requester when the response ends, subject to the same
-// status, preference and mute checks the server applies to its own pushes.
+// pushToRequester is the notification for posts the server did not defer
+// (no server support, or a shared channel), which notified nobody useful at
+// creation: a single push to the requester when the response ends, subject
+// to the same status, preference and mute checks the server applies to its
+// own pushes. It is also the last resort when the server cannot notify the
+// requester about a deferred post.
 func (s *Service) pushToRequester(end StreamEnd) error {
 	if end.RequesterID == "" {
 		s.client.LogDebug("Agent post fallback push skipped: no requester", "post_id", end.PostID)
@@ -81,7 +84,8 @@ func (s *Service) pushToRequester(end StreamEnd) error {
 	if err != nil {
 		return fmt.Errorf("failed to get requester status: %w", err)
 	}
-	if !statusAllowsPush(recipient.NotifyProps, status, channel.Id, post.RootId != "") {
+	isCRTReply := post.RootId != "" && s.crtEnabled(cfg, end.RequesterID)
+	if !statusAllowsPush(recipient.NotifyProps, status, channel.Id, isCRTReply) {
 		s.client.LogDebug("Agent post fallback push skipped: requester status", "post_id", end.PostID)
 		return nil
 	}
@@ -110,17 +114,34 @@ func (s *Service) pushToRequester(end StreamEnd) error {
 	return nil
 }
 
+// crtEnabled mirrors the server's IsCRTEnabledForUser, including treating a
+// failed preference lookup (usually no preference saved) as the default.
+func (s *Service) crtEnabled(cfg *model.Config, userID string) bool {
+	switch setting := model.SafeDereference(cfg.ServiceSettings.CollapsedThreads); setting {
+	case model.CollapsedThreadsDisabled:
+		return false
+	case model.CollapsedThreadsAlwaysOn:
+		return true
+	default:
+		enabled := setting == model.CollapsedThreadsDefaultOn
+		if pref, err := s.client.GetPreferenceForUser(userID, model.PreferenceCategoryDisplaySettings, model.PreferenceNameCollapsedThreadsEnabled); err == nil {
+			enabled = pref.Value == "on"
+		}
+		return enabled
+	}
+}
+
 // statusAllowsPush mirrors the server's doesStatusAllowPushNotification.
-// Replies count as collapsed-thread activity, which is pushed even while the
-// user is active in the channel.
-func statusAllowsPush(userNotifyProps model.StringMap, status *model.Status, channelID string, isReply bool) bool {
+// Replies with collapsed threads on are pushed even while the user is active
+// in the channel, since being in the channel does not show the thread.
+func statusAllowsPush(userNotifyProps model.StringMap, status *model.Status, channelID string, isCRTReply bool) bool {
 	if status.Status == model.StatusDnd || status.Status == model.StatusOutOfOffice {
 		return false
 	}
 	pushStatus, ok := userNotifyProps[model.PushStatusNotifyProp]
 	sendOnline := status.ActiveChannel != channelID ||
 		model.GetMillis()-status.LastActivityAt > model.StatusChannelTimeout ||
-		isReply
+		isCRTReply
 	switch {
 	case (pushStatus == model.StatusOnline || !ok) && sendOnline:
 		return true
@@ -161,9 +182,10 @@ func (s *Service) buildFallbackPush(cfg *model.Config, post *model.Post, channel
 	}
 
 	T := i18n.LocalizerFunc(s.i18n, recipient.Locale)
+	// A post with only files, or paused on tool calls, has no text to show.
+	text := strings.TrimSpace(truncateRunes(model.ClearMentionTags(post.Message), maxFallbackPushMessageRunes))
 	switch {
-	case contents == model.FullNotification:
-		text := truncateRunes(model.ClearMentionTags(post.Message), maxFallbackPushMessageRunes)
+	case contents == model.FullNotification && text != "":
 		if isDM {
 			msg.Message = text
 		} else {

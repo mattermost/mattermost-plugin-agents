@@ -222,16 +222,18 @@ describe('deferred agent post notifications', () => {
     });
 
     test.each([
-        {name: 'a server that defers notifications lets an off-screen agent response notify', deferredNotifications: true, notify: true},
-        {name: 'an older server keeps agent responses from notifying', deferredNotifications: false, notify: false},
-    ])('$name', async ({deferredNotifications, notify}) => {
+        {name: 'a server that defers notifications lets an off-screen agent response notify', deferredNotifications: true, channel: {}, notify: true},
+        {name: 'an older server keeps agent responses from notifying', deferredNotifications: false, channel: {}, notify: false},
+        {name: 'a server that has not answered yet keeps agent responses from notifying', deferredNotifications: null, channel: {}, notify: false},
+        {name: 'a shared channel keeps agent responses from notifying, as the server does not defer them', deferredNotifications: true, channel: {shared: true}, notify: false},
+    ])('$name', async ({deferredNotifications, channel, notify}) => {
         mockGetAIBots.mockResolvedValue({bots: []});
 
         const {desktopHook} = await initializePlugin('http://localhost:8065', {pluginState: {deferredNotifications}});
         expect(desktopHook).not.toBeNull();
 
         const args = {title: 'Agents', body: 'answer', notify: true};
-        const result = await desktopHook!({id: 'agent-post', user_id: 'agent-bot', type: 'custom_llmbot'}, {}, {}, 'team', args);
+        const result = await desktopHook!({id: 'agent-post', user_id: 'agent-bot', type: 'custom_llmbot'}, {}, channel, 'team', args);
 
         expect(result.args?.notify).toBe(notify);
     });

@@ -113,6 +113,7 @@ const activeBot = {
 const baseState = {
     'plugins-mattermost-ai': {
         selectedPostId: 'post-id',
+        deferredNotifications: false as boolean | null,
     },
     entities: {
         users: {
@@ -217,7 +218,7 @@ describe('RHS', () => {
         const now = 1_000_000;
         const dayInMS = 24 * 60 * 60 * 1000;
 
-        function stateWith(deferredNotifications: boolean) {
+        function stateWith(deferredNotifications: boolean | null) {
             return {
                 ...baseState,
                 'plugins-mattermost-ai': {...baseState['plugins-mattermost-ai'], deferredNotifications},
@@ -278,6 +279,58 @@ describe('RHS', () => {
                 expect(mockUpdateRead).toHaveBeenLastCalledWith('user-id', 'team-id', 'post-id', readAt);
             }
             unmount();
+        });
+
+        test.each([
+            {name: 'an older server', deferredNotifications: false, readAt: now + dayInMS},
+            {name: 'a server that defers notifications', deferredNotifications: true, readAt: now},
+        ])('no marker is written until the server answers, then one for $name', async ({deferredNotifications, readAt}) => {
+            let state = stateWith(null);
+            mockUseSelector.mockImplementation((selector) => selector(state));
+
+            const {rerender, unmount} = renderRHS();
+            await act(async () => {
+                await Promise.resolve();
+            });
+            expect(mockUpdateRead).not.toHaveBeenCalled();
+
+            state = stateWith(deferredNotifications);
+            rerender(<Rhs/>);
+            await waitFor(() => {
+                expect(mockUpdateRead).toHaveBeenCalledWith('user-id', 'team-id', 'post-id', readAt);
+            });
+            expect(mockUpdateRead).toHaveBeenCalledTimes(1);
+            unmount();
+        });
+
+        test('closing the thread before the server answers writes no marker', async () => {
+            const state = stateWith(null);
+            mockUseSelector.mockImplementation((selector) => selector(state));
+
+            const {unmount} = renderRHS();
+            unmount();
+            await act(async () => {
+                await Promise.resolve();
+            });
+
+            expect(mockUpdateRead).not.toHaveBeenCalled();
+        });
+
+        test('closing the thread after the server answers marks it read as of now', async () => {
+            let state = stateWith(null);
+            mockUseSelector.mockImplementation((selector) => selector(state));
+
+            const {rerender, unmount} = renderRHS();
+            state = stateWith(true);
+            rerender(<Rhs/>);
+            await waitFor(() => {
+                expect(mockUpdateRead).toHaveBeenCalledTimes(1);
+            });
+
+            unmount();
+
+            expect(mockUpdateRead).toHaveBeenCalledTimes(2);
+            expect(mockUpdateRead).toHaveBeenLastCalledWith('user-id', 'team-id', 'post-id', now);
         });
 
         test('an older server ignores delivered replies', async () => {

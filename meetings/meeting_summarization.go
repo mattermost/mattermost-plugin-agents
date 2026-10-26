@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/prompts"
 	"github.com/mattermost/mattermost-plugin-agents/v2/streaming"
 	"github.com/mattermost/mattermost-plugin-agents/v2/subtitles"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -112,7 +113,7 @@ func (s *Service) createTranscription(mm mmapi.Client, recordingFileID string) (
 	return transcription, nil
 }
 
-func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string, mm mmapi.Client) (*model.Post, error) {
+func (s *Service) newCallRecordingThread(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, recordingPost *model.Post, channel *model.Channel, fileID string, mm mmapi.Client) (*model.Post, error) {
 	siteURL := s.pluginAPI.Configuration.GetConfig().ServiceSettings.SiteURL
 	T := i18n.LocalizerFunc(s.i18n, requestingUser.Locale)
 	surePost := &model.Post{
@@ -123,14 +124,14 @@ func (s *Service) newCallRecordingThread(bot *bots.Bot, requestingUser *model.Us
 		return nil, err
 	}
 
-	if err := s.summarizeCallRecording(bot, surePost.Id, requestingUser, fileID, channel, mm); err != nil {
+	if err := s.summarizeCallRecording(ctx, bot, surePost.Id, requestingUser, fileID, channel, mm); err != nil {
 		return nil, err
 	}
 
 	return surePost, nil
 }
 
-func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel, mm mmapi.Client) (*model.Post, error) {
+func (s *Service) newCallTranscriptionSummaryThread(ctx stdcontext.Context, bot *bots.Bot, requestingUser *model.User, transcriptionPost *model.Post, channel *model.Channel, mm mmapi.Client) (*model.Post, error) {
 	if len(transcriptionPost.FileIds) != 1 {
 		return nil, errors.New("unexpected number of files in calls post")
 	}
@@ -146,6 +147,8 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 		return nil, err
 	}
 
+	// The summary outlives the request; keep only its trace.
+	bgCtx := telemetry.DetachContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -155,7 +158,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 				if updateErr != nil {
 					s.pluginAPI.Log.Error("Failed to update post in error handling newCallTranscriptionSummaryThread", "error", updateErr)
 				}
-				s.notifyFailure(surePost, requestingUser.Id, updateErr)
+				s.notifyFailure(bgCtx, surePost, requestingUser.Id, updateErr)
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
@@ -204,7 +207,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, text, requestContext)
+		summaryStream, err := s.SummarizeTranscription(bgCtx, bot, text, requestContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -215,7 +218,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 			Message:   "",
 		}
 		summaryPost.AddProp(ReferencedTranscriptPostID, transcriptionPost.Id)
-		if err := s.streamingService.StreamToNewPost(stdcontext.Background(), bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
+		if err := s.streamingService.StreamToNewPost(bgCtx, bot.GetMMBot().UserId, requestingUser.Id, summaryStream, summaryPost, transcriptionPost.Id); err != nil {
 			return fmt.Errorf("unable to stream result to post: %w", err)
 		}
 
@@ -225,7 +228,7 @@ func (s *Service) newCallTranscriptionSummaryThread(bot *bots.Bot, requestingUse
 	return surePost, nil
 }
 
-func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client) error {
+func (s *Service) summarizeCallRecording(ctx stdcontext.Context, bot *bots.Bot, rootID string, requestingUser *model.User, recordingFileID string, channel *model.Channel, mm mmapi.Client) error {
 	if err := s.checkMeetingsLicense(); err != nil {
 		return err
 	}
@@ -241,6 +244,8 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 		return err
 	}
 
+	// The summary outlives the request; keep only its trace.
+	bgCtx := telemetry.DetachContext(ctx)
 	go func() (reterr error) {
 		// Update to an error if we return one.
 		defer func() {
@@ -250,7 +255,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 				if updateErr != nil {
 					s.pluginAPI.Log.Error("Failed to update post in error handling handleCallRecordingPost", "error", updateErr)
 				}
-				s.notifyFailure(transcriptPost, requestingUser.Id, updateErr)
+				s.notifyFailure(bgCtx, transcriptPost, requestingUser.Id, updateErr)
 				s.pluginAPI.Log.Error("Error in call recording post", "error", reterr)
 			}
 		}()
@@ -276,7 +281,7 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			channel,
 			s.contextBuilder.WithLLMContextNoTools(),
 		)
-		summaryStream, err := s.SummarizeTranscription(stdcontext.Background(), bot, transcription, llmContext)
+		summaryStream, err := s.SummarizeTranscription(bgCtx, bot, transcription, llmContext)
 		if err != nil {
 			return fmt.Errorf("unable to summarize transcription: %w", err)
 		}
@@ -285,13 +290,13 @@ func (s *Service) summarizeCallRecording(bot *bots.Bot, rootID string, requestin
 			return fmt.Errorf("unable to update transcript post: %w", err)
 		}
 
-		ctx, err := s.streamingService.GetStreamingContext(stdcontext.Background(), transcriptPost.Id)
+		streamCtx, err := s.streamingService.GetStreamingContext(bgCtx, transcriptPost.Id)
 		if err != nil {
 			return fmt.Errorf("unable to get post streaming context: %w", err)
 		}
 		defer s.streamingService.FinishStreaming(transcriptPost.Id)
 
-		s.streamingService.StreamToPost(ctx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
+		s.streamingService.StreamToPost(streamCtx, summaryStream, transcriptPost, requestingUser.Locale, requestingUser.Id)
 
 		return nil
 	}() //nolint:errcheck
@@ -423,11 +428,11 @@ func (s *Service) botDMNonResponse(botid string, userID string, post *model.Post
 
 // notifyFailure tells the requester that a meeting summary failed before
 // streaming, which would otherwise leave its post silent or deferred.
-func (s *Service) notifyFailure(post *model.Post, requesterID string, updateErr error) {
+func (s *Service) notifyFailure(ctx stdcontext.Context, post *model.Post, requesterID string, updateErr error) {
 	if s.notifier == nil {
 		return
 	}
-	s.notifier.Notify(stdcontext.Background(), notifications.StreamEnd{
+	s.notifier.Notify(ctx, notifications.StreamEnd{
 		PostID:       post.Id,
 		ChannelID:    post.ChannelId,
 		RequesterID:  requesterID,

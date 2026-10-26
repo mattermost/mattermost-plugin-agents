@@ -50,6 +50,10 @@ func main() {
 	plugin.ClientMain(&Plugin{})
 }
 
+// streamShutdownTimeout bounds how long deactivation waits for canceled
+// responses to save and notify.
+const streamShutdownTimeout = 5 * time.Second
+
 type Plugin struct {
 	plugin.MattermostPlugin
 
@@ -344,13 +348,12 @@ func (p *Plugin) OnActivate() error {
 		return promptManagerErr
 	}
 
-	deferredNotifications := notifications.ProbeSupport(p.API)
-	pluginAPI.Log.Info("Agent post notifications", "deferred_notifications_supported", deferredNotifications)
-	notificationsService := notifications.NewService(
+	notificationsService := notifications.NewProbedService(
 		notificationsClient{Client: mmClient, pluginAPI: pluginAPI, api: p.API},
 		i18nBundle,
-		deferredNotifications,
+		p.API,
 	)
+	pluginAPI.Log.Info("Agent post notifications", "deferred_notifications_supported", notificationsService.Supported())
 
 	streamingService := streaming.NewMMPostStreamService(mmClient, i18nBundle)
 	streamingService.SetNotifier(notificationsService)
@@ -668,6 +671,15 @@ func (p *Plugin) OnActivate() error {
 }
 
 func (p *Plugin) OnDeactivate() error {
+	// Cancel in-flight responses first, while the LLMs and telemetry they use
+	// are still up, so each run saves its post and notifies its requester
+	// instead of leaving the post unfinished and its notifications deferred.
+	if streams, ok := p.streamingService.(interface{ Shutdown(time.Duration) bool }); ok {
+		if !streams.Shutdown(streamShutdownTimeout) {
+			p.pluginAPI.Log.Warn("Some agent responses did not finish before the plugin stopped")
+		}
+	}
+
 	// Flush pending telemetry spans
 	p.telemetryMu.Lock()
 	if p.telemetryShutdown != nil {
@@ -868,6 +880,7 @@ func (p *Plugin) EmailNotificationWillBeSent(emailNotification *model.EmailNotif
 		senderID:    emailNotification.SenderId,
 		recipientID: emailNotification.RecipientId,
 		postID:      emailNotification.PostId,
+		channelID:   emailNotification.ChannelId,
 		rootID:      emailNotification.RootId,
 		isDM:        emailNotification.IsDirectMessage,
 	}) {
@@ -889,6 +902,7 @@ func (p *Plugin) NotificationWillBePushed(pushNotification *model.PushNotificati
 		senderID:    pushNotification.SenderId,
 		recipientID: userID,
 		postID:      pushNotification.PostId,
+		channelID:   pushNotification.ChannelId,
 		rootID:      pushNotification.RootId,
 		postType:    pushNotification.PostType,
 		isDM:        pushNotification.ChannelType == model.ChannelTypeDirect,
@@ -903,17 +917,19 @@ type agentNotification struct {
 	senderID    string
 	recipientID string
 	postID      string
+	channelID   string
 	rootID      string
 	postType    string
 	isDM        bool
 }
 
 // shouldBlockAgentNotification reports whether an AI agent notification is
-// redundant. On servers that defer agent post notifications until the
+// redundant. Where the server defers agent post notifications until the
 // response ends, that is only when the recipient has the response on screen.
-// Older servers notify at creation, before there is anything to read, so
-// agent notifications that typically answer the recipient are blocked, and
-// the requester gets the fallback push at the end instead.
+// Servers without support, and shared channels, notify at creation, before
+// there is anything to read, so agent notifications that typically answer
+// the recipient are blocked, and the requester gets the fallback push at the
+// end instead.
 func (p *Plugin) shouldBlockAgentNotification(n agentNotification) bool {
 	if p.bots == nil {
 		return false
@@ -924,7 +940,7 @@ func (p *Plugin) shouldBlockAgentNotification(n agentNotification) bool {
 		return false
 	}
 
-	if p.notifications.Supported() {
+	if !p.notifications.UsesLegacyNotifications(n.channelID) {
 		return p.notifications.RecipientIsViewing(n.postID, n.recipientID)
 	}
 
@@ -968,6 +984,14 @@ type notificationsClient struct {
 
 func (c notificationsClient) GetChannelMember(channelID, userID string) (*model.ChannelMember, error) {
 	return c.pluginAPI.Channel.GetMember(channelID, userID)
+}
+
+func (c notificationsClient) GetPreferenceForUser(userID, category, name string) (model.Preference, error) {
+	preference, appErr := c.api.GetPreferenceForUser(userID, category, name)
+	if appErr != nil {
+		return model.Preference{}, appErr
+	}
+	return preference, nil
 }
 
 func (c notificationsClient) SendPushNotification(notification *model.PushNotification, userID string) error {

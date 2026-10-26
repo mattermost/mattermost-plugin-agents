@@ -230,6 +230,80 @@ func TestStreamToPostNotifiesOnceAtRunEnd(t *testing.T) {
 	}
 }
 
+func TestShutdownCancelsStreamsAndNotifiesRequesters(t *testing.T) {
+	const channelID = "channel-id"
+	tests := []struct {
+		name         string
+		stopFirst    bool
+		wantOutcome  notifications.Outcome
+		wantDelivery notifications.Delivery
+	}{
+		{
+			name:         "in-flight stream ends as a cancel that notifies the requester",
+			wantOutcome:  notifications.OutcomeCancelled,
+			wantDelivery: notifications.DeliveryRequesterOnly,
+		},
+		{
+			name:         "stream the requester stopped stays stopped by the user",
+			stopFirst:    true,
+			wantOutcome:  notifications.OutcomeStoppedByUser,
+			wantDelivery: notifications.DeliveryNone,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeStreamingClient{channels: map[string]*model.Channel{channelID: {Id: channelID, Type: model.ChannelTypeOpen}}}
+			notifier := newRecordingNotifier(client, true)
+			service := NewMMPostStreamService(client, i18n.Init())
+			service.SetNotifier(notifier)
+
+			post := &model.Post{Id: model.NewId(), ChannelId: channelID}
+			stream := make(chan llm.TextStreamEvent)
+			require.NoError(t, service.StreamToNewPost(context.Background(), "bot-id", "user-id", &llm.TextStreamResult{Stream: stream}, post, ""))
+			if tc.stopFirst {
+				service.StopStreaming(post.Id)
+			}
+
+			require.True(t, service.Shutdown(5*time.Second), "the run finished before the timeout")
+
+			calls := notifier.snapshot()
+			require.Len(t, calls, 1, "the run notified once before shutdown returned")
+			assert.Equal(t, tc.wantOutcome, calls[0].end.Outcome)
+			assert.Equal(t, tc.wantDelivery, notifications.Decide(calls[0].end))
+
+			_, err := service.GetStreamingContext(context.Background(), model.NewId())
+			assert.ErrorIs(t, err, ErrShuttingDown, "no new streams start during shutdown")
+		})
+	}
+}
+
+func TestShutdownTimesOut(t *testing.T) {
+	tests := []struct {
+		name     string
+		inFlight bool
+		want     bool
+	}{
+		{name: "nothing in flight", want: true},
+		{name: "a run that never finishes", inFlight: true, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			service := NewMMPostStreamService(&fakeStreamingClient{}, i18n.Init())
+			var ctx context.Context
+			if tc.inFlight {
+				var err error
+				ctx, err = service.GetStreamingContext(context.Background(), "post-id")
+				require.NoError(t, err)
+			}
+
+			assert.Equal(t, tc.want, service.Shutdown(50*time.Millisecond))
+			if ctx != nil {
+				assert.ErrorIs(t, context.Cause(ctx), errPluginShutdown)
+			}
+		})
+	}
+}
+
 func TestStreamToNewPostMarksDeferred(t *testing.T) {
 	const channelID = "channel-id"
 	const botID = "bot-id"

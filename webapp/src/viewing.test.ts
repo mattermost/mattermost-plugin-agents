@@ -1,7 +1,16 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {VIEWING_HEARTBEAT_MS, ViewingEnvironment, ViewingTracker, VisibilityEntry} from './viewing';
+import {VIEWING_HEARTBEAT_MS, ViewingEnvironment, ViewingTracker, VisibilityEntry, getViewingTracker, newTabId} from './viewing';
+
+const mockSetPostViewing = jest.fn();
+
+jest.mock('./client', () => ({
+    doSetPostViewing: (...args: unknown[]) => mockSetPostViewing(...args),
+}));
+
+// The server accepts only these tab ids.
+const TAB_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 type Report = {postId: string; viewing: boolean; keepalive: boolean};
 
@@ -271,5 +280,42 @@ describe('ViewingTracker', () => {
 
         expect(() => registration.setActive(true)).not.toThrow();
         await Promise.resolve();
+    });
+});
+
+describe('tab id', () => {
+    test.each([
+        {name: 'with crypto.randomUUID', randomUUID: true},
+        {name: 'without crypto.randomUUID', randomUUID: false},
+    ])('is accepted by the server and differs between tabs: $name', ({randomUUID}) => {
+        const original = crypto.randomUUID;
+        Object.defineProperty(crypto, 'randomUUID', {configurable: true, writable: true, value: randomUUID ? () => '0b6f3a52-61c4-4c7c-9b55-2f8a1d0f7e11' : undefined}); // eslint-disable-line no-undefined
+        try {
+            const first = newTabId();
+            expect(first).toMatch(TAB_ID_PATTERN);
+            if (!randomUUID) {
+                expect(newTabId()).not.toBe(first);
+            }
+        } finally {
+            Object.defineProperty(crypto, 'randomUUID', {configurable: true, writable: true, value: original});
+        }
+    });
+
+    test('every report from this tab carries the same tab id', async () => {
+        mockSetPostViewing.mockResolvedValue(undefined); // eslint-disable-line no-undefined
+        const hasFocus = jest.spyOn(document, 'hasFocus').mockReturnValue(true);
+        const tracker = getViewingTracker();
+
+        const registration = tracker.register('post', document.createElement('div'));
+        registration.setActive(true);
+        tracker.handlePageHide();
+        registration.dispose();
+        tracker.handlePageShow();
+        hasFocus.mockRestore();
+
+        expect(mockSetPostViewing.mock.calls.map(([postId, viewing]) => [postId, viewing])).toEqual([['post', true], ['post', false]]);
+        const tabIds = new Set(mockSetPostViewing.mock.calls.map((call) => call[3]));
+        expect(tabIds.size).toBe(1);
+        expect([...tabIds][0]).toMatch(TAB_ID_PATTERN);
     });
 });

@@ -257,9 +257,18 @@ export class ViewingTracker {
     }
 }
 
+// A token for this tab, so the server can tell its reports from another tab's.
+export function newTabId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 14);
+}
+
 function browserEnvironment(): ViewingEnvironment {
+    const tabId = newTabId();
     return {
-        send: doSetPostViewing,
+        send: (postId, viewing, keepalive) => doSetPostViewing(postId, viewing, keepalive, tabId),
         isWindowActive: () => document.visibilityState === 'visible' && document.hasFocus(),
         now: () => Date.now(),
         setInterval: (handler, ms) => window.setInterval(handler, ms),

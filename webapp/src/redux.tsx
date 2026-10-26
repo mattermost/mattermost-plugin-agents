@@ -96,7 +96,8 @@ function htmlArtifactsEnabled(state = false, action: any) {
     }
 }
 
-function deferredNotifications(state = false, action: any) {
+// Null until the server has said whether it defers agent post notifications.
+function deferredNotifications(state: boolean | null = null, action: any) {
     switch (action.type) {
     case SetDeferredNotificationsHandler:
         return action.deferredNotifications;

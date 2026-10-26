@@ -252,7 +252,7 @@ func (a *API) handleTranscribeFile(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleTranscribeFile(userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
+	result, err := a.meetingsService.HandleTranscribeFile(c.Request.Context(), userID, bot, post, channel, fileID, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {
@@ -281,7 +281,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 		return
 	}
 
-	result, err := a.meetingsService.HandleSummarizeTranscription(userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
+	result, err := a.meetingsService.HandleSummarizeTranscription(c.Request.Context(), userID, bot, post, channel, auth.SessionIDFromContext(c.Request.Context()))
 	if err != nil {
 		var licErr *enterprise.LicenseError
 		if errors.As(err, &licErr) {

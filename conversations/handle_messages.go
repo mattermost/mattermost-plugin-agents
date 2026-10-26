@@ -247,7 +247,7 @@ func (c *Conversations) handleMentions(ctx context.Context, bot *bots.Bot, post 
 	policy, policyErr := c.resolveTurnPolicy(ctx, turnRequest{bot: bot, user: postingUser, channel: channel, trigger: post})
 	if policyErr != nil {
 		if _, ok := errors.AsType[*enterprise.LicenseError](policyErr); ok {
-			c.postMultiplayerChannelsUnavailable(bot, channel, post)
+			c.postMultiplayerChannelsUnavailable(ctx, bot, channel, post, postingUser.Id)
 			return fmt.Errorf("%w: %w", policyErr, ErrNoResponse)
 		}
 		return policyErr
@@ -694,8 +694,9 @@ func (c *Conversations) responseLocale(postingUser *model.User, channel *model.C
 
 // postMultiplayerChannelsUnavailable replies in the thread as the agent so
 // everyone in the channel sees why it did not answer. The reply uses the
-// server locale because it is visible to the whole channel.
-func (c *Conversations) postMultiplayerChannelsUnavailable(bot *bots.Bot, channel *model.Channel, post *model.Post) {
+// server locale because it is visible to the whole channel. Like any run
+// that fails before streaming, it notifies only the requester.
+func (c *Conversations) postMultiplayerChannelsUnavailable(ctx context.Context, bot *bots.Bot, channel *model.Channel, post *model.Post, requesterID string) {
 	if c.mmClient == nil || bot == nil || channel == nil || post == nil {
 		return
 	}
@@ -717,9 +718,14 @@ func (c *Conversations) postMultiplayerChannelsUnavailable(bot *bots.Bot, channe
 		RootId:    rootID,
 		Message:   message,
 	}
+	if c.notifier != nil {
+		c.notifier.MarkDeferred(reply)
+	}
 	if err := c.mmClient.CreatePost(reply); err != nil {
 		c.mmClient.LogError("Failed to post multiplayer availability reply", "error", err.Error())
+		return
 	}
+	c.notifyRunEnd(ctx, reply, requesterID, notifications.StreamEnd{Outcome: notifications.OutcomeErrored})
 }
 
 func (c *Conversations) fallbackLocale(userLocale string) string {
