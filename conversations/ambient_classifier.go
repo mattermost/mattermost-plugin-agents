@@ -31,9 +31,8 @@ const (
 	ambientClassifierMaxPosts       = 20
 	ambientClassifierMaxThreadRunes = 16000
 	ambientClassifierMaxTokens      = 128
+	ambientClassifierTimeout        = 8 * time.Second
 )
-
-var ambientClassifierTimeout = 8 * time.Second
 
 // errAmbientDeclined marks the classifier deciding not to reply. Unlike other
 // auto-reply no-ops it is a deliberate answer, so it must not trigger the
