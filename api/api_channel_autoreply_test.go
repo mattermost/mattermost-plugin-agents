@@ -733,7 +733,7 @@ func TestPutChannelAutoReplyPersistsAndPublishes(t *testing.T) {
 		require.Len(t, events, 4)
 		require.Equal(t, WebsocketEventChannelAutoReplyUpdated, events[3].name)
 		require.Equal(t, "channelid", events[3].payload["channel_id"])
-		require.Equal(t, "", events[3].payload["bot_id"])
+		require.Equal(t, "", events[3].payload["bot_id"]) //nolint:testifylint // payload values are any; Empty would also accept a missing key
 		require.Equal(t, "off", events[3].payload["mode"])
 		require.NotNil(t, events[3].broadcast)
 		require.Equal(t, "channelid", events[3].broadcast.ChannelId)

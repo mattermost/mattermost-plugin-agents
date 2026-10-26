@@ -755,7 +755,7 @@ func TestServiceStalledDBWriteDoesNotBlockGetCached(t *testing.T) {
 	select {
 	case <-readDone:
 	case <-time.After(5 * time.Second):
-		t.Fatal("GetCached blocked behind a stalled DB write; readers must never wait on the database")
+		require.FailNow(t, "GetCached blocked behind a stalled DB write; readers must never wait on the database")
 	}
 
 	// Unblock the writer and confirm the write completes and converges.

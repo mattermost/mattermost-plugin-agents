@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -226,12 +227,7 @@ func extractFileNameForLocal(filespec string, accessMode AccessMode) string {
 func isValidImageFile(filename string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
 	validExts := []string{".jpeg", ".jpg", ".png", ".gif"}
-	for _, validExt := range validExts {
-		if ext == validExt {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(validExts, ext)
 }
 
 // uploadFilesForLocal uploads multiple files from URLs or file paths (local access only) and returns their file IDs

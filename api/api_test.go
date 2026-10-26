@@ -566,8 +566,11 @@ func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.Agen
 	history := m.versions[cfg.ID]
 	if len(history) == 0 && prev != nil {
 		history = append(history, store.AgentVersionDetail{
-			AgentVersion: store.AgentVersion{Version: 1, Source: store.AgentVersionSourceInitial, CreateAt: prev.UpdateAt, ChangedFields: []string{}},
-			Config:       mockVersionSnapshot(prev),
+			Version:       1,
+			Source:        store.AgentVersionSourceInitial,
+			CreateAt:      prev.UpdateAt,
+			ChangedFields: []string{},
+			Config:        mockVersionSnapshot(prev),
 		})
 	}
 	snap := mockVersionSnapshot(cfg)
@@ -576,15 +579,13 @@ func (m *mockAgentStore) recordVersion(cfg, prev *llm.BotConfig, meta store.Agen
 		changed = audit.ChangedJSONKeys(history[len(history)-1].Config, snap)
 	}
 	history = append(history, store.AgentVersionDetail{
-		AgentVersion: store.AgentVersion{
-			Version:             mockLatestVersion(history) + 1,
-			CreatedBy:           meta.ActorID,
-			CreateAt:            cfg.UpdateAt,
-			Source:              meta.Source,
-			RestoredFromVersion: meta.RestoredFromVersion,
-			ChangedFields:       changed,
-		},
-		Config: snap,
+		Version:             mockLatestVersion(history) + 1,
+		CreatedBy:           meta.ActorID,
+		CreateAt:            cfg.UpdateAt,
+		Source:              meta.Source,
+		RestoredFromVersion: meta.RestoredFromVersion,
+		ChangedFields:       changed,
+		Config:              snap,
 	})
 	m.versions[cfg.ID] = history
 }
@@ -595,15 +596,15 @@ func (m *mockAgentStore) ListAgentVersions(agentID string, before, limit int) (s
 	}
 	history := m.versions[agentID]
 	page := store.AgentVersionPage{CurrentVersion: mockLatestVersion(history), Versions: []store.AgentVersion{}}
-	for i := len(history) - 1; i >= 0; i-- {
-		if before > 0 && history[i].Version >= before {
+	for _, h := range slices.Backward(history) {
+		if before > 0 && h.Version >= before {
 			continue
 		}
 		if len(page.Versions) == limit {
 			page.HasMore = true
 			break
 		}
-		page.Versions = append(page.Versions, history[i].AgentVersion)
+		page.Versions = append(page.Versions, h.AgentVersion)
 	}
 	return page, nil
 }

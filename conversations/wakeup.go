@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -138,7 +139,7 @@ func (c *Conversations) ScheduleWake(postID, userID string, wait time.Duration) 
 	}
 
 	now := time.Now()
-	job := WakeJob{PostID: postID, UserID: userID, wakeMarker: wakeMarker{ConversationID: convID, ScheduledAt: now.UnixMilli()}}
+	job := WakeJob{PostID: postID, UserID: userID, ConversationID: convID, ScheduledAt: now.UnixMilli()}
 	markerKey := responsePostMarkerKey(post)
 	claimed, err := c.mmClient.KVCompareAndSetWithExpiry(markerKey, nil, job.wakeMarker, wakeMarkerTTL)
 	if err != nil {
@@ -382,8 +383,7 @@ func (c *Conversations) dropWake(reason string, cause error, keyValues ...any) e
 // (post-linked) user turn.
 func countConsecutiveWakes(turns []store.Turn) int {
 	count := 0
-	for i := len(turns) - 1; i >= 0; i-- {
-		turn := turns[i]
+	for _, turn := range slices.Backward(turns) {
 		if turn.Role != "user" {
 			continue
 		}

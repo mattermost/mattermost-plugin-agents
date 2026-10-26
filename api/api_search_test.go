@@ -200,7 +200,7 @@ func TestHandleRunSearchWithoutEmbeddingSearch(t *testing.T) {
 			select {
 			case <-backgroundDone:
 			case <-time.After(10 * time.Second):
-				t.Fatal("background search never ran")
+				require.FailNow(t, "background search never ran")
 			}
 		})
 	}

@@ -19,11 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// boolPtr returns a pointer to b for use in optional *bool args.
-func boolPtr(b bool) *bool {
-	return &b
-}
-
 func TestStampAIGenerated(t *testing.T) {
 	botID := model.NewId()
 	fallbackID := model.NewId()
@@ -183,13 +178,13 @@ func TestReadPostIncludeThread(t *testing.T) {
 		},
 		{
 			name:          "true includes the thread",
-			includeThread: boolPtr(true),
+			includeThread: new(true),
 			wantThreadHit: true,
 			wantSingleHit: false,
 		},
 		{
 			name:          "false fetches only the single post",
-			includeThread: boolPtr(false),
+			includeThread: new(false),
 			wantThreadHit: false,
 			wantSingleHit: true,
 		},

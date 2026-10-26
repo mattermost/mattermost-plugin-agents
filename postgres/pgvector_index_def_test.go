@@ -150,5 +150,5 @@ func TestPGVectorConfigVectorElementTypeNotUnmarshaledFromParameters(t *testing.
 	err := json.Unmarshal([]byte(`{"dimensions": 768, "vectorElementType": "halfvec", "VectorElementType": "halfvec"}`), &cfg)
 	require.NoError(t, err)
 	assert.Equal(t, 768, cfg.Dimensions)
-	assert.Equal(t, "", cfg.VectorElementType, "VectorElementType must not be taken from vectorStore.parameters")
+	assert.Empty(t, cfg.VectorElementType, "VectorElementType must not be taken from vectorStore.parameters")
 }

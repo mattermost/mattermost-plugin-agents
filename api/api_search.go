@@ -198,8 +198,7 @@ func (a *API) handleRawSearch(c *gin.Context) {
 		UserID:    userID,
 	})
 	if err != nil {
-		var licErr *enterprise.LicenseError
-		if errors.As(err, &licErr) {
+		if _, ok := errors.AsType[*enterprise.LicenseError](err); ok {
 			abortNotLicensed(c, err)
 			return
 		}

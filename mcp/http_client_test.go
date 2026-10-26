@@ -80,7 +80,7 @@ func TestHeaderTransportOriginPinning(t *testing.T) {
 	// The cross-origin redirect is refused, surfacing as an error.
 	require.Error(t, err)
 	require.Equal(t, "secret-key", gotOnPinned.Load(), "header must be sent to the pinned origin")
-	require.Equal(t, "", gotOnOther.Load(), "custom header must not be replayed to another host")
+	require.Empty(t, gotOnOther.Load(), "custom header must not be replayed to another host")
 }
 
 // TestOAuthRoundTripperDoesNotLeakTokenOnCrossHostRedirect is the regression
@@ -125,7 +125,7 @@ func TestOAuthRoundTripperDoesNotLeakTokenOnCrossHostRedirect(t *testing.T) {
 	_, err = client.Do(req)
 	require.Error(t, err, "cross-origin redirect must be refused")
 	require.Equal(t, "Bearer super-secret-access", gotOnPinned.Load(), "token must be sent to the pinned server")
-	require.Equal(t, "", gotOnOther.Load(), "bearer token must never reach the redirect target host")
+	require.Empty(t, gotOnOther.Load(), "bearer token must never reach the redirect target host")
 }
 
 // TestOAuthRoundTripperOriginPinSkipsTokenForOtherHost is a direct unit check
@@ -160,7 +160,7 @@ func TestOAuthRoundTripperOriginPinSkipsTokenForOtherHost(t *testing.T) {
 	resp, err := rt.RoundTrip(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	require.Equal(t, "", gotAuth.Load(), "token must not be attached for a non-pinned origin")
+	require.Empty(t, gotAuth.Load(), "token must not be attached for a non-pinned origin")
 }
 
 // TestHTTPClientForMCPServiceAccountRedirectPolicy ensures service-account

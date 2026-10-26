@@ -475,7 +475,7 @@ func TestUnregister_WaitsForInFlightRegister(t *testing.T) {
 	case err := <-unregDone:
 		require.NoError(t, err)
 	case <-time.After(5 * time.Second):
-		t.Fatal("Unregister did not return after register goroutine drained")
+		require.FailNow(t, "Unregister did not return after register goroutine drained")
 	}
 
 	var sawRegister, sawUnregister bool

@@ -63,7 +63,7 @@ func TestMentionKeywords(t *testing.T) {
 	assert.Contains(t, got, "john")
 	assert.Contains(t, got, "jb")
 	for _, k := range got {
-		assert.NotEqual(t, "", k)
+		assert.NotEmpty(t, k)
 	}
 }
 
