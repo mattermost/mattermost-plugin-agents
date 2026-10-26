@@ -16,6 +16,8 @@ import {useBotlist} from '@/bots';
 
 import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
 
+import type {AIThread} from '@/types/ai_thread';
+
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 
 import type {UserMCPServerInfo} from './tool_provider_popover';
@@ -46,16 +48,6 @@ const RhsContainer = styled.div`
     display: flex;
     flex-direction: column;
 `;
-
-export interface AIThread {
-    id: string;
-    channel_id: string | null;
-    bot_id: string;
-    root_post_id: string | null;
-    title: string;
-    turn_count: number;
-    update_at: number;
-}
 
 const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 
