@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-import { test, expect, Page } from '@playwright/test';
+import { expect, Page } from '@playwright/test';
+import { containerTest } from 'helpers/container-fixture';
 import MattermostContainer from 'helpers/mmcontainer';
 import { MattermostPage } from 'helpers/mm';
 import { OpenAIMockContainer, RunOpenAIMocks, responseTest } from 'helpers/openai-mock';
@@ -121,23 +122,22 @@ async function captureDownload(page: Page, trigger: () => Promise<void>): Promis
     return { filename: download.suggestedFilename(), filePath, doc };
 }
 
-test.describe('Agent versioning, export and import', () => {
-    test.beforeAll(async () => {
-        test.setTimeout(180000);
-        mattermost = await RunAgentContainer({
-            mcpServers: [
-                { name: jiraServerName, enabled: false, baseURL: jiraOrigin },
-                { name: trackerServerName, enabled: true, baseURL: trackerOrigin },
-            ],
-        });
-        openAIMock = await RunOpenAIMocks(mattermost.network);
-        await openAIMock.addCompletionMock(responseTest);
-        await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
-    });
+const test = containerTest(async (own) => {
+    const mattermost = own(await RunAgentContainer({
+        mcpServers: [
+            { name: jiraServerName, enabled: false, baseURL: jiraOrigin },
+            { name: trackerServerName, enabled: true, baseURL: trackerOrigin },
+        ],
+    }));
+    const openAIMock = own(await RunOpenAIMocks(mattermost.network));
+    await openAIMock.addCompletionMock(responseTest);
+    await registerMCPToolsServerMocks(openAIMock, trackerMockPath, trackerTools);
+    return { mattermost, openAIMock };
+});
 
-    test.afterAll(async () => {
-        await openAIMock?.stop();
-        await mattermost?.stop();
+test.describe('Agent versioning, export and import', () => {
+    test.beforeAll(async ({ containers }) => {
+        ({ mattermost, openAIMock } = containers);
     });
 
     test('the version history modal lists every save and shows an old version read-only', async ({ page }) => {
