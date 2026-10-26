@@ -325,6 +325,7 @@ const ThreadItem = ({thread, active, placeholder, onSelect, onArchive}: ThreadIt
 
     return (
         <ThreadListItem
+            $active={active}
             data-thread-item={true}
             {...(menuOpen && {'data-menu-open': true})}
         >
@@ -553,12 +554,14 @@ const ThreadActionsSlot = styled.span`
     }
 `;
 
-const ThreadListItem = styled.li`
+const ThreadListItem = styled.li<{$active: boolean}>`
     position: relative;
 
-    /* Nests each chat under its agent; both the resting and active states of the item. */
+    /* Nests each chat under its agent. The active item adds a 2px border element before the
+       control and compass takes that 2px back from the control's padding; do the same so the
+       icon and label do not shift when the row becomes active. */
     && [class*='__left'] {
-        padding-left: var(--spacing-xxxxl);
+        padding-left: ${(p) => (p.$active ? 'calc(var(--spacing-xxxxl) - var(--spacing-xxxxs))' : 'var(--spacing-xxxxl)')};
     }
 
     &:hover ${ThreadActionsSlot},
