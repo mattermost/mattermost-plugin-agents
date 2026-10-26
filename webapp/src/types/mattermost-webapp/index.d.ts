@@ -22,6 +22,9 @@ declare global {
             browserHistory?: {
                 push: (path: string) => void;
             };
+
+            // Published host API; absent on older hosts.
+            openUserSettings?: (dialogProps: {isContentProductSettings: boolean}) => void;
         };
     }
 }

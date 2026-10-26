@@ -54,6 +54,7 @@ import {botsFromState, makeChannelAutoReplySchema} from './components/channel_se
 import {handleChannelAutoReplyUpdated, ChannelAutoReplyUpdatedEvent} from './components/channel_settings/autoreply_state';
 import {shouldSuppressBotNotification} from './notifications';
 import AgentsTour from './components/tutorial/agents_tour';
+import AgentsHeaderSettings from './components/agents/agents_header_settings';
 import AgentsPage, {AGENTS_ROUTE} from './components/agents/agents_page';
 import IconAI from './components/assets/icon_ai';
 import {licenseAllows} from './license';
@@ -328,6 +329,8 @@ export default class Plugin {
                 agentsProductLabel,
                 AGENTS_ROUTE,
                 AgentsPage,
+                () => null,
+                AgentsHeaderSettings,
             );
         }
 
