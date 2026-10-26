@@ -79,8 +79,8 @@ func threadHasReplyFrom(thread []*model.Post, userID string) bool {
 //
 // TODO(ambient-poc): other native provider tools (web fetch, code interpreter)
 // stay attached and rely on tool_choice "none". Structured-output capability
-// detection, dedupe, concurrency control, rate/cost
-// caps, and deleted-post recheck are deferred.
+// detection, dedupe, cluster-wide rate limits, token cost caps, and
+// deleted-post recheck are deferred.
 func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot, setting *autoreply.Setting, trigger *model.Post, postingUser *model.User, channel *model.Channel, thread []*model.Post) error {
 	ctx, span := telemetry.Tracer().Start(ctx, "ambient classifier", trace.WithAttributes(
 		telemetry.AgentID.String(bot.GetMMBot().UserId),

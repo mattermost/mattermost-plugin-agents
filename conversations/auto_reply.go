@@ -101,7 +101,13 @@ func (c *Conversations) handleAutoReply(ctx context.Context, setting *autoreply.
 		if setting.Mode == autoreply.ModeAmbientThreads && !threadHasReplyFrom(thread, bot.GetMMBot().UserId) {
 			return fmt.Errorf("auto-reply mode ambient_threads ignores threads the agent has not replied in: %w", ErrNoResponse)
 		}
-		if classErr := c.classifyAmbientReply(ctx, bot, setting, post, postingUser, channel, thread); classErr != nil {
+		release, acquired := c.ambientLimiter.tryAcquire(channel.Id)
+		if !acquired {
+			return fmt.Errorf("ambient classifier is over its rate or concurrency limit: %w", ErrNoResponse)
+		}
+		classErr := c.classifyAmbientReply(ctx, bot, setting, post, postingUser, channel, thread)
+		release()
+		if classErr != nil {
 			return classErr
 		}
 	}

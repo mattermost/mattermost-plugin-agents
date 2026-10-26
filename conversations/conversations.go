@@ -58,6 +58,7 @@ type Conversations struct {
 	mutexAPI          cluster.MutexPluginAPI
 	convService       *conversation.Service
 	autoReplySettings AutoReplySettings
+	ambientLimiter    *ambientLimiter
 }
 
 // MeetingsService defines the interface for meetings functionality needed by conversations
@@ -93,6 +94,7 @@ func New(
 		meetingsService:   meetingsService,
 		configProvider:    configProvider,
 		toolPolicyChecker: toolPolicyChecker,
+		ambientLimiter:    newAmbientLimiter(),
 	}
 }
 

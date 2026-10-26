@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/conversations"
@@ -682,4 +684,28 @@ func TestAmbientTurnGatesRunBeforeClassifier(t *testing.T) {
 			require.Empty(t, env.mmClient.loggedErrors())
 		})
 	}
+}
+
+// TestAmbientClassifierChannelRateLimit pins that a busy ambient channel stops
+// classifying once it exhausts its per-channel budget.
+func TestAmbientClassifierChannelRateLimit(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		env := setupAutoReplyTestEnv(t, []llm.BotConfig{autoReplyBotConfig()}, dmMakeTextStream("canned reply"))
+		env.llm.noStreamResponseByOp = map[string]string{
+			llm.OperationAmbientClassification: `{"should_reply":false}`,
+		}
+		env.settings.set(autoreply.Setting{ChannelID: autoReplyChannelID, BotID: autoReplyBotUserID, Mode: autoreply.ModeAmbient})
+
+		const posts = 10
+		for i := range posts {
+			env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, fmt.Sprintf("message %d", i)))
+		}
+		require.Equal(t, conversations.AmbientChannelBurst, env.llm.classifierCalls, "the channel must stop classifying once over its rate")
+
+		time.Sleep(time.Minute)
+		env.conversations.MessageHasBeenPosted(nil, env.rootPost(autoReplyUserID, "after a quiet minute"))
+		require.Equal(t, conversations.AmbientChannelBurst+1, env.llm.classifierCalls, "the budget refills over time")
+		require.Empty(t, env.mmClient.createdPosts)
+		require.Empty(t, env.mmClient.loggedErrors())
+	})
 }
