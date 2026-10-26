@@ -4,8 +4,8 @@
 import React from 'react';
 import {act, fireEvent, render, screen} from '@testing-library/react';
 
-import {AutoReplyAnalysisModelField, AutoReplyInstructionsField} from './autoreply_ambient_fields';
-import {setChannelAutoReplyDraft} from './autoreply_state';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
+import {MAX_INSTRUCTIONS_RUNES, getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
 // in jsdom. Stub it so importing the bots chain from the draft store doesn't throw.
@@ -33,7 +33,9 @@ jest.mock('react-intl', () => {
     return {
         ...actual,
         useIntl: () => intl,
-        FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+        FormattedMessage: ({defaultMessage, values = {}}: {defaultMessage: string; values?: Record<string, unknown>}) => (
+            defaultMessage.replace(/\{(\w+)\}/g, (_, key) => String(values[key]))
+        ),
     };
 });
 
@@ -43,14 +45,13 @@ jest.mock('@/client', () => ({
 
 const CHANNEL_ID = 'chan1';
 
-function seedDraft(overrides: {instructions?: string; analysis_model?: string} = {}) {
+function seedDraft(overrides: {instructions?: string} = {}) {
     setChannelAutoReplyDraft({
         channelId: CHANNEL_ID,
         saved: {
             bot_id: 'alpha',
             mode: 'ambient',
             instructions: overrides.instructions ?? 'saved instructions',
-            analysis_model: overrides.analysis_model ?? 'saved-model',
         },
         saveError: null,
     });
@@ -96,7 +97,7 @@ describe('AutoReplyInstructionsField', () => {
         render(<AutoReplyInstructionsField informChange={jest.fn()}/>);
 
         act(() => {
-            seedDraft({instructions: 'remote instructions', analysis_model: 'saved-model'});
+            seedDraft({instructions: 'remote instructions'});
         });
 
         expect((screen.getByTestId('autoreply-instructions') as HTMLTextAreaElement).value).toBe('remote instructions');
@@ -109,7 +110,7 @@ describe('AutoReplyInstructionsField', () => {
         fireEvent.change(screen.getByTestId('autoreply-instructions'), {target: {value: 'local instructions'}});
 
         act(() => {
-            seedDraft({instructions: 'remote instructions', analysis_model: 'saved-model'});
+            seedDraft({instructions: 'remote instructions'});
         });
 
         expect((screen.getByTestId('autoreply-instructions') as HTMLTextAreaElement).value).toBe('local instructions');
@@ -124,70 +125,48 @@ describe('AutoReplyInstructionsField', () => {
         expect(screen.queryByTestId('autoreply-instructions')).toBeNull();
         expect(informChange).not.toHaveBeenCalled();
     });
-});
 
-describe('AutoReplyAnalysisModelField', () => {
-    test('shows the draft-saved model on mount without calling informChange', () => {
-        seedDraft();
-        const informChange = jest.fn();
+    test('clears a displayed save error when the user edits', () => {
+        setChannelAutoReplyDraft({
+            channelId: CHANNEL_ID,
+            saved: {bot_id: 'alpha', mode: 'ambient', instructions: ''},
+            saveError: 'invalid',
+        });
+        render(<AutoReplyInstructionsField informChange={jest.fn()}/>);
 
-        render(<AutoReplyAnalysisModelField informChange={informChange}/>);
+        fireEvent.change(screen.getByTestId('autoreply-instructions'), {target: {value: 'x'}});
 
-        expect((screen.getByTestId('autoreply-analysis-model') as HTMLInputElement).value).toBe('saved-model');
-        expect(informChange).not.toHaveBeenCalled();
+        expect(getChannelAutoReplyDraft()?.saveError).toBeNull();
     });
 
-    test('associates the input with its label', () => {
-        seedDraft();
+    describe('length limit', () => {
+        const tooLongMessage = `Instructions are too long. Shorten them to ${MAX_INSTRUCTIONS_RUNES} characters or fewer to save.`;
 
-        render(<AutoReplyAnalysisModelField informChange={jest.fn()}/>);
+        test.each([
+            {name: 'the exact limit of ASCII characters', value: 'a'.repeat(MAX_INSTRUCTIONS_RUNES), over: false, count: MAX_INSTRUCTIONS_RUNES},
+            {name: 'one ASCII character over the limit', value: 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1), over: true, count: MAX_INSTRUCTIONS_RUNES + 1},
+            {name: 'astral characters at the limit (counted as runes, not UTF-16 units)', value: '😀'.repeat(MAX_INSTRUCTIONS_RUNES), over: false, count: MAX_INSTRUCTIONS_RUNES},
+            {name: 'astral characters one over the limit', value: '😀'.repeat(MAX_INSTRUCTIONS_RUNES + 1), over: true, count: MAX_INSTRUCTIONS_RUNES + 1},
+        ])('with $name', ({value, over, count}) => {
+            seedDraft({instructions: value});
 
-        expect(screen.getByLabelText('Analysis model')).toBe(screen.getByTestId('autoreply-analysis-model'));
-    });
+            render(<AutoReplyInstructionsField informChange={jest.fn()}/>);
 
-    test('typing reports the value via informChange and updates the display', () => {
-        seedDraft();
-        const informChange = jest.fn();
-        render(<AutoReplyAnalysisModelField informChange={informChange}/>);
-
-        fireEvent.change(screen.getByTestId('autoreply-analysis-model'), {target: {value: 'gpt-4.1'}});
-
-        expect(informChange).toHaveBeenCalledTimes(1);
-        expect(informChange).toHaveBeenCalledWith('analysis_model', 'gpt-4.1');
-        expect((screen.getByTestId('autoreply-analysis-model') as HTMLInputElement).value).toBe('gpt-4.1');
-    });
-
-    test('a remote draft update refreshes the display when the user has not edited locally', () => {
-        seedDraft();
-        render(<AutoReplyAnalysisModelField informChange={jest.fn()}/>);
-
-        act(() => {
-            seedDraft({instructions: 'saved instructions', analysis_model: 'remote-model'});
+            expect(screen.getByTestId('autoreply-instructions-counter').textContent).toBe(`${count} / ${MAX_INSTRUCTIONS_RUNES}`);
+            expect(screen.queryByText(tooLongMessage) !== null).toBe(over);
+            expect(screen.getByTestId('autoreply-instructions').getAttribute('aria-invalid')).toBe(String(over));
         });
 
-        expect((screen.getByTestId('autoreply-analysis-model') as HTMLInputElement).value).toBe('remote-model');
-    });
+        test('typing past the limit shows the error and still reports the value', () => {
+            seedDraft();
+            const informChange = jest.fn();
+            render(<AutoReplyInstructionsField informChange={informChange}/>);
+            const value = 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1);
 
-    test('a remote draft update does not override a local edit', () => {
-        seedDraft();
-        render(<AutoReplyAnalysisModelField informChange={jest.fn()}/>);
+            fireEvent.change(screen.getByTestId('autoreply-instructions'), {target: {value}});
 
-        fireEvent.change(screen.getByTestId('autoreply-analysis-model'), {target: {value: 'local-model'}});
-
-        act(() => {
-            seedDraft({instructions: 'saved instructions', analysis_model: 'remote-model'});
+            expect(screen.getByText(tooLongMessage)).not.toBeNull();
+            expect(informChange).toHaveBeenCalledWith('instructions', value);
         });
-
-        expect((screen.getByTestId('autoreply-analysis-model') as HTMLInputElement).value).toBe('local-model');
-    });
-
-    test('renders nothing when no draft is hydrated', () => {
-        const informChange = jest.fn();
-
-        const {container} = render(<AutoReplyAnalysisModelField informChange={informChange}/>);
-
-        expect(container.firstChild).toBeNull();
-        expect(screen.queryByTestId('autoreply-analysis-model')).toBeNull();
-        expect(informChange).not.toHaveBeenCalled();
     });
 });

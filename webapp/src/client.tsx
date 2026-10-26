@@ -944,7 +944,6 @@ export type ChannelAutoReplySettings = {
     bot_id: string;
     mode: ChannelAutoReplyMode;
     instructions: string;
-    analysis_model: string;
 };
 
 export async function getChannelAutoReply(channelId: string): Promise<ChannelAutoReplySettings> {

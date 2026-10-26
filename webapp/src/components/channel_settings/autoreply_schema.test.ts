@@ -25,9 +25,9 @@ import {
     makeOnSave,
     shouldRenderChannelAutoReplyTab,
 } from './autoreply_schema';
-import {getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
+import {MAX_INSTRUCTIONS_RUNES, getChannelAutoReplyDraft, setChannelAutoReplyDraft} from './autoreply_state';
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
-import {AutoReplyAnalysisModelField, AutoReplyInstructionsField} from './autoreply_ambient_fields';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
 
 // mm_webapp reads window.Components/ProductApi at module load, which are absent
 // in jsdom. Stub it so importing the bots/picker chain doesn't throw.
@@ -74,7 +74,7 @@ const intl = {
 const botsKey = `plugins-${manifest.id}`;
 const TEAM_ID = 'team1';
 const CHANNEL_ID = 'chan1';
-const emptyExtras = {instructions: '', analysis_model: ''};
+const emptyExtras = {instructions: ''};
 
 function makeBot(id: string, overrides: Partial<LLMBot> = {}): LLMBot {
     return {
@@ -227,7 +227,6 @@ describe('makeLoadValues', () => {
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
         const store = makeTestStore(makeState({bots: [other]}));
 
@@ -237,13 +236,11 @@ describe('makeLoadValues', () => {
             mode: 'ambient',
             bot_id: 'other',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
         expect(getChannelAutoReplyDraft()?.saved).toEqual({
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
     });
 
@@ -281,9 +278,9 @@ describe('makeOnSave', () => {
     });
 
     test.each([
-        {name: 'off', values: {mode: 'off', bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
-        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
-        {name: 'a missing mode', values: {bot_id: 'other', instructions: 'stale', analysis_model: 'stale-model'}},
+        {name: 'off', values: {mode: 'off', bot_id: 'other', instructions: 'stale'}},
+        {name: 'an unknown mode', values: {mode: 'banana', bot_id: 'other', instructions: 'stale'}},
+        {name: 'a missing mode', values: {bot_id: 'other', instructions: 'stale'}},
     ])('PUTs an empty bot_id, empty extras, and mode off for $name', async ({values}) => {
         seedDraft();
         mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
@@ -302,20 +299,17 @@ describe('makeOnSave', () => {
             mode: 'ambient',
             bot_id: 'other',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }, makeChannel('O'));
 
         expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
         expect(getChannelAutoReplyDraft()?.saved).toEqual({
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
     });
 
@@ -327,14 +321,12 @@ describe('makeOnSave', () => {
             mode: 'ambient_threads',
             bot_id: 'other',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }, makeChannel('O'));
 
         expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
             bot_id: 'other',
             mode: 'ambient_threads',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
     });
 
@@ -346,21 +338,19 @@ describe('makeOnSave', () => {
             mode: 'threads',
             bot_id: 'other',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }, makeChannel('O'));
 
         expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {
             bot_id: 'other',
             mode: 'threads',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
     });
 
     test.each([
         {name: 'an empty bot_id', values: {mode: 'root_posts', bot_id: ''}},
         {name: 'a bot_id absent from the values', values: {mode: 'threads'}},
-        {name: 'ambient with an empty bot_id', values: {mode: 'ambient', bot_id: '', instructions: 'x', analysis_model: 'y'}},
+        {name: 'ambient with an empty bot_id', values: {mode: 'ambient', bot_id: '', instructions: 'x'}},
     ])('rejects with no_agent and performs no PUT for $name', async ({values}) => {
         seedDraft();
 
@@ -368,6 +358,45 @@ describe('makeOnSave', () => {
 
         expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
         expect(getChannelAutoReplyDraft()?.saveError).toBe('no_agent');
+    });
+
+    test.each([
+        {name: 'ASCII at the limit', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES), accepted: true},
+        {name: 'ASCII over the limit', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1), accepted: false},
+        {name: 'astral characters at the limit', instructions: '😀'.repeat(MAX_INSTRUCTIONS_RUNES), accepted: true},
+        {name: 'astral characters over the limit', instructions: '😀'.repeat(MAX_INSTRUCTIONS_RUNES + 1), accepted: false},
+    ])('enforces the instructions length limit for $name', async ({instructions, accepted}) => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        const result = onSave({mode: 'ambient', bot_id: 'other', instructions}, makeChannel('O'));
+
+        if (accepted) {
+            await expect(result).resolves.toBeUndefined();
+            expect(mockedUpdateChannelAutoReply).toHaveBeenCalledTimes(1);
+        } else {
+            await expect(result).rejects.toThrow();
+            expect(mockedUpdateChannelAutoReply).not.toHaveBeenCalled();
+        }
+    });
+
+    test('does not block turning auto-reply off when stale instructions are over the limit', async () => {
+        seedDraft();
+        mockedUpdateChannelAutoReply.mockImplementation(() => Promise.resolve());
+
+        await onSave({mode: 'off', instructions: 'a'.repeat(MAX_INSTRUCTIONS_RUNES + 1)}, makeChannel('O'));
+
+        expect(mockedUpdateChannelAutoReply).toHaveBeenCalledWith(CHANNEL_ID, {bot_id: '', mode: 'off', ...emptyExtras});
+    });
+
+    test('records invalid and re-throws when the PUT fails with a 400', async () => {
+        seedDraft();
+        const error = new ClientError('http://localhost', {message: '', status_code: 400, url: 'u'});
+        mockedUpdateChannelAutoReply.mockRejectedValue(error);
+
+        await expect(onSave({mode: 'ambient', bot_id: 'other', instructions: 'x'}, makeChannel('O'))).rejects.toBe(error);
+
+        expect(getChannelAutoReplyDraft()?.saveError).toBe('invalid');
     });
 
     test('records forbidden and re-throws when the PUT fails with a 403', async () => {
@@ -430,10 +459,10 @@ describe('makeChannelAutoReplySchema shape', () => {
         expect(typeof schema.onSave).toBe('function');
     });
 
-    test('has exactly one section with a non-empty title and settings named mode, bot_id, instructions, and analysis_model', () => {
+    test('has exactly one section with a non-empty title and settings named mode, bot_id, and instructions', () => {
         expect(schema.sections).toHaveLength(1);
         expect(schema.sections[0].title.length).toBeGreaterThan(0);
-        expect(schema.sections[0].settings.map((s) => s.name)).toEqual(['mode', 'bot_id', 'instructions', 'analysis_model']);
+        expect(schema.sections[0].settings.map((s) => s.name)).toEqual(['mode', 'bot_id', 'instructions']);
     });
 
     test('radio setting has default off matching one of five non-empty options', () => {
@@ -450,11 +479,10 @@ describe('makeChannelAutoReplySchema shape', () => {
         }
     });
 
-    test('custom settings provide picker, instructions, and analysis-model components with no title/helpText/default', () => {
+    test('custom settings provide picker and instructions components with no title/helpText/default', () => {
         const expected = [
             {name: 'bot_id', component: AutoReplyAgentPicker},
             {name: 'instructions', component: AutoReplyInstructionsField},
-            {name: 'analysis_model', component: AutoReplyAnalysisModelField},
         ];
         const customs = schema.sections[0].settings.slice(1);
         expect(customs).toHaveLength(expected.length);

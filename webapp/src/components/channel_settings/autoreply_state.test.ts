@@ -67,7 +67,6 @@ function settings(overrides: Partial<ChannelAutoReplySettings> = {}): ChannelAut
         bot_id: 'alpha',
         mode: 'root_posts',
         instructions: '',
-        analysis_model: '',
         ...overrides,
     };
 }
@@ -231,30 +230,28 @@ describe('normalizeChannelAutoReply', () => {
             bot_id: 'other',
             mode: 'threads',
             instructions: 'keep me',
-            analysis_model: 'gpt-4.1',
         }), [], CHANNEL_ID);
         expect(normalized).toEqual({
             bot_id: '',
             mode: 'threads',
             instructions: 'keep me',
-            analysis_model: 'gpt-4.1',
         });
     });
 
     test('preserves the saved bot (while still validating the mode) when the bot list is unknown', () => {
         const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'banana'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: 'other', mode: 'off', instructions: '', analysis_model: ''});
+        expect(normalized).toEqual({bot_id: 'other', mode: 'off', instructions: ''});
     });
 
     test('tolerates a missing bot_id when the bot list is unknown', () => {
         // eslint-disable-next-line no-undefined
         const normalized = normalizeChannelAutoReply({bot_id: undefined, mode: 'threads'} as unknown as ChannelAutoReplySettings, null, CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: '', mode: 'threads', instructions: '', analysis_model: ''});
+        expect(normalized).toEqual({bot_id: '', mode: 'threads', instructions: ''});
     });
 
-    test('fills empty extras when instructions and analysis_model are missing', () => {
+    test('fills empty extras when instructions are missing', () => {
         const normalized = normalizeChannelAutoReply({bot_id: 'other', mode: 'ambient'} as unknown as ChannelAutoReplySettings, bots, CHANNEL_ID);
-        expect(normalized).toEqual({bot_id: 'other', mode: 'ambient', instructions: '', analysis_model: ''});
+        expect(normalized).toEqual({bot_id: 'other', mode: 'ambient', instructions: ''});
     });
 
     test('keeps ambient extras when they are present', () => {
@@ -262,13 +259,11 @@ describe('normalizeChannelAutoReply', () => {
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }), bots, CHANNEL_ID);
         expect(normalized).toEqual({
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         });
     });
 });
@@ -316,7 +311,6 @@ describe('handleChannelAutoReplyUpdated', () => {
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }));
 
         await handleChannelAutoReplyUpdated(getBots, {channel_id: CHANNEL_ID});
@@ -325,7 +319,6 @@ describe('handleChannelAutoReplyUpdated', () => {
             bot_id: 'other',
             mode: 'ambient',
             instructions: 'only if asked',
-            analysis_model: 'gpt-4.1',
         }));
     });
 

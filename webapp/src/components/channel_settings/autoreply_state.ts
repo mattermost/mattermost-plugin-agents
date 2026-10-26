@@ -8,10 +8,17 @@ import {LLMBot, filterBotsByChannelAccess, resolveActiveBot} from '@/bots';
 
 // Save failures are stored as machine-readable kinds; the picker maps them to
 // localized messages inside React so they follow the live locale.
-export type ChannelAutoReplySaveErrorKind = 'forbidden' | 'no_agent' | 'ambient_disabled' | 'generic';
+export type ChannelAutoReplySaveErrorKind = 'forbidden' | 'no_agent' | 'ambient_disabled' | 'invalid' | 'generic';
+
+// Mirrors the server cap, which counts runes (Unicode code points).
+export const MAX_INSTRUCTIONS_RUNES = 8000;
+
+export function countRunes(value: string): number {
+    return [...value].length;
+}
 
 // Module-level draft bridging the host's schema callbacks (loadValues/onSave)
-// and custom settings (agent picker, ambient instructions, analysis model),
+// and custom settings (agent picker, ambient instructions),
 // which receive nothing but informChange from the host. Safe because only one
 // Channel Settings modal exists at a time and loadValues resolves before
 // custom settings mount (except the loadValues-failure path, which they
@@ -101,15 +108,12 @@ function asString(value: unknown): string {
  */
 export function normalizeChannelAutoReply(raw: ChannelAutoReplySettings, bots: LLMBot[] | null, channelId: string): ChannelAutoReplySettings {
     const mode = parseChannelAutoReplyMode(raw.mode);
-    const extras = {
-        instructions: asString(raw.instructions),
-        analysis_model: asString(raw.analysis_model),
-    };
+    const instructions = asString(raw.instructions);
     if (bots === null) {
-        return {mode, bot_id: raw.bot_id ?? '', ...extras};
+        return {mode, bot_id: raw.bot_id ?? '', instructions};
     }
     const resolved = resolveActiveBot(filterBotsByChannelAccess(bots, channelId), raw.bot_id ?? '');
-    return {mode, bot_id: resolved?.id ?? '', ...extras};
+    return {mode, bot_id: resolved?.id ?? '', instructions};
 }
 
 // Websocket payload for custom_mattermost-ai_channel_autoreply_updated; only

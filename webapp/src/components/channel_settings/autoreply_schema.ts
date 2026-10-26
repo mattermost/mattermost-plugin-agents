@@ -20,9 +20,11 @@ import manifest from '@/manifest';
 import {licenseAllows} from '@/license';
 
 import {AutoReplyAgentPicker} from './autoreply_agent_picker';
-import {AutoReplyAnalysisModelField, AutoReplyInstructionsField} from './autoreply_ambient_fields';
+import {AutoReplyInstructionsField} from './autoreply_ambient_fields';
 import {
     ChannelAutoReplySaveErrorKind,
+    MAX_INSTRUCTIONS_RUNES,
+    countRunes,
     normalizeChannelAutoReply,
     parseChannelAutoReplyMode,
     setChannelAutoReplyDraft,
@@ -113,7 +115,6 @@ export const makeLoadValues = (store: WebappStore) => async (channel: Channel): 
         mode: saved.mode,
         bot_id: saved.bot_id,
         instructions: saved.instructions,
-        analysis_model: saved.analysis_model,
     };
 };
 
@@ -123,6 +124,8 @@ function saveErrorKindForStatus(status: number): ChannelAutoReplySaveErrorKind {
         return 'forbidden';
     case 409:
         return 'ambient_disabled';
+    case 400:
+        return 'invalid';
     default:
         return 'generic';
     }
@@ -132,12 +135,10 @@ export const makeOnSave = () => async (values: ChannelSettingsValues, channel: C
     const mode = parseChannelAutoReplyMode(values.mode);
     let botId: string;
     let instructions: string;
-    let analysisModel: string;
     switch (mode) {
     case 'off':
         botId = '';
         instructions = '';
-        analysisModel = '';
         break;
     case 'root_posts':
     case 'threads':
@@ -145,7 +146,6 @@ export const makeOnSave = () => async (values: ChannelSettingsValues, channel: C
     case 'ambient_threads':
         botId = values.bot_id ?? '';
         instructions = values.instructions ?? '';
-        analysisModel = values.analysis_model ?? '';
         break;
     default: {
         const exhaustive: never = mode;
@@ -156,11 +156,13 @@ export const makeOnSave = () => async (values: ChannelSettingsValues, channel: C
         setChannelAutoReplySaveError('no_agent');
         throw new Error('no agent selected for channel auto-reply');
     }
+    if (countRunes(instructions) > MAX_INSTRUCTIONS_RUNES) {
+        throw new Error('auto-reply instructions exceed the maximum length');
+    }
     const saved: ChannelAutoReplySettings = {
         bot_id: botId,
         mode,
         instructions,
-        analysis_model: analysisModel,
     };
     try {
         await updateChannelAutoReply(channel.id, saved);
@@ -240,11 +242,6 @@ export function makeChannelAutoReplySchema(store: WebappStore, intl: IntlShape):
                     name: 'instructions',
                     type: 'custom',
                     component: AutoReplyInstructionsField,
-                },
-                {
-                    name: 'analysis_model',
-                    type: 'custom',
-                    component: AutoReplyAnalysisModelField,
                 },
             ],
         }],

@@ -105,6 +105,9 @@ export const AutoReplyAgentPicker = ({informChange}: Props) => {
             {draft.saveError === 'ambient_disabled' && (
                 <ErrorMessage message={<FormattedMessage defaultMessage='Ambient auto-replies are turned off by your system admin. Choose another mode.'/>}/>
             )}
+            {draft.saveError === 'invalid' && (
+                <ErrorMessage message={<FormattedMessage defaultMessage='The server rejected these auto-reply settings. Check the agent and instructions, then try again.'/>}/>
+            )}
             {draft.saveError === 'generic' && (
                 <ErrorMessage message={<FormattedMessage defaultMessage='Failed to save auto-reply settings. Please try again.'/>}/>
             )}
