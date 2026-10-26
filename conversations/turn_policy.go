@@ -362,6 +362,11 @@ func (p *turnPolicy) autoExecute(llmCtx *llm.Context) func(llm.ToolCall) bool {
 			return false
 		}
 		if llmCtx.ToolsScoped {
+			// Once the run's session has ended, because the run finished or
+			// its agent's scoped mode lapsed, nothing runs unasked.
+			if llmCtx.ScopedSessionReleased() {
+				return false
+			}
 			// Everything a scoped catalog reads is within the scope, but an
 			// interaction tool needs the user's answer.
 			return lookup.Tool.UserInteraction == ""
