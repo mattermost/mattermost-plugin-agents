@@ -149,6 +149,20 @@ describe('CustomPromptsPage', () => {
         expect(mockGetCustomPromptPins).toHaveBeenCalledTimes(1);
     });
 
+    test('list view shows the description and Create new in the header; forms drop both', async () => {
+        await renderPage();
+        const description = 'Reusable prompts you can run from the message composer in any channel.';
+        expect(screen.getByText(description)).not.toBeNull();
+        expect(screen.getByRole('tab', {name: 'All Prompts', selected: true})).not.toBeNull();
+        fireEvent.click(screen.getByRole('tab', {name: 'Your Prompts'}));
+        expect(rowNames()).toEqual(['Open prompt My Own Prompt']);
+        expect(screen.getByPlaceholderText('Search prompts')).not.toBeNull();
+
+        fireEvent.click(screen.getByRole('button', {name: 'Create new'}));
+        expect(screen.queryByText(description)).toBeNull();
+        expect(screen.queryByRole('button', {name: 'Create new'})).toBeNull();
+    });
+
     test.each([
         {
             name: 'create form',

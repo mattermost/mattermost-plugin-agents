@@ -32,11 +32,11 @@ const FormLayout = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormBody = styled.div<{$stickyFooter?: boolean}>`
+const FormBody = styled.div<{$stickyFooter?: boolean; $flush?: boolean}>`
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xxl);
-    padding: var(--spacing-xl) var(--spacing-xxxl) 0;
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0 0' : 'var(--spacing-xl) var(--spacing-xxxl) 0')};
 
     ${({$stickyFooter}) =>
         $stickyFooter && `
@@ -46,22 +46,22 @@ const FormBody = styled.div<{$stickyFooter?: boolean}>`
     `}
 `;
 
-const FormFooter = styled.div`
+const FormFooter = styled.div<{$flush?: boolean}>`
     display: flex;
     justify-content: flex-end;
     align-items: center;
     gap: var(--spacing-xs);
     flex-shrink: 0;
-    padding: var(--spacing-l) var(--spacing-xxxl) var(--spacing-xxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-l) 0 var(--spacing-xxl)' : 'var(--spacing-l) var(--spacing-xxxl) var(--spacing-xxl)')};
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
 /** Read-only and legacy single-block layout */
-const FormContainer = styled.div`
+const FormContainer = styled.div<{$flush?: boolean}>`
     display: flex;
     flex-direction: column;
     gap: var(--spacing-xxl);
-    padding: var(--spacing-xl) var(--spacing-xxxl);
+    padding: ${({$flush}) => ($flush ? 'var(--spacing-xl) 0' : 'var(--spacing-xl) var(--spacing-xxxl)')};
     background-color: var(--center-channel-bg);
 `;
 
@@ -136,9 +136,12 @@ interface CustomPromptFormProps {
 
     /** When true, actions sit in a footer bar and the body scrolls (new prompt modal). */
     stickyFooter?: boolean;
+
+    /** Drop the horizontal inset when the host column already provides it (page layout). */
+    flush?: boolean;
 }
 
-const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter}: CustomPromptFormProps) => {
+const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, stickyFooter, flush}: CustomPromptFormProps) => {
     const intl = useIntl();
     const [name, setName] = useState(prompt?.name ?? '');
     const [description, setDescription] = useState(prompt?.description ?? '');
@@ -198,7 +201,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
 
     if (readOnly) {
         return (
-            <FormContainer>
+            <FormContainer $flush={flush}>
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
@@ -266,7 +269,10 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
 
     return (
         <FormLayout $stickyFooter={stickyFooter}>
-            <FormBody $stickyFooter={stickyFooter}>
+            <FormBody
+                $stickyFooter={stickyFooter}
+                $flush={flush}
+            >
                 <FieldGroup>
                     <VisibilityLabel>
                         <FormattedMessage defaultMessage='Visibility'/>
@@ -369,7 +375,7 @@ const CustomPromptForm = ({prompt, onSave, onDiscard, onDelete, readOnly, sticky
                     )}
                 </FieldGroup>
             </FormBody>
-            <FormFooter>{actions}</FormFooter>
+            <FormFooter $flush={flush}>{actions}</FormFooter>
         </FormLayout>
     );
 };

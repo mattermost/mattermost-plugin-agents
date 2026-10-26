@@ -3,7 +3,7 @@
 
 import React from 'react';
 import styled from 'styled-components';
-import {useIntl} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 
 import {ArrowLeftIcon} from '@mattermost/compass-icons/components';
 
@@ -28,27 +28,43 @@ const CustomPromptsPage = () => {
     return (
         <CustomPromptsContent
             active={true}
+            layout='page'
             confirmZIndex={CONFIRM_Z_INDEX}
         >
-            {({title, showBack, onBack, body}) => (
+            {({title, showBack, onBack, createAction, body}) => (
                 <PageContainer>
-                    <PageHeader>
-                        {showBack && (
-                            <BackButton
-                                icon={<Icon glyph={<ArrowLeftIcon/>}/>}
-                                size='medium'
-                                onClick={onBack}
-                                aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
-                            />
-                        )}
-                        <PageTitle>{title}</PageTitle>
-                    </PageHeader>
-                    <PageBody>{body}</PageBody>
+                    <ContentColumn>
+                        <PageHeader>
+                            <HeaderLeading>
+                                {showBack && (
+                                    <BackButton
+                                        icon={<Icon glyph={<ArrowLeftIcon/>}/>}
+                                        size='medium'
+                                        onClick={onBack}
+                                        aria-label={intl.formatMessage({defaultMessage: 'Back to prompts'})}
+                                    />
+                                )}
+                                <TitleBlock>
+                                    <PageTitle>{title}</PageTitle>
+                                    {!showBack && (
+                                        <Subtitle>
+                                            <FormattedMessage defaultMessage='Reusable prompts you can run from the message composer in any channel.'/>
+                                        </Subtitle>
+                                    )}
+                                </TitleBlock>
+                            </HeaderLeading>
+                            {createAction && <HeaderActions>{createAction}</HeaderActions>}
+                        </PageHeader>
+                        <PageBody>{body}</PageBody>
+                    </ContentColumn>
                 </PageContainer>
             )}
         </CustomPromptsContent>
     );
 };
+
+// Same column as the All agents view: 960px max, centered, xxxl side padding.
+const CONTENT_MAX_WIDTH = '960px';
 
 const PageContainer = styled.div`
     display: flex;
@@ -58,25 +74,70 @@ const PageContainer = styled.div`
     width: 100%;
 `;
 
+const ContentColumn = styled.div`
+    display: flex;
+    flex: 1 1 0;
+    flex-direction: column;
+    min-height: 0;
+    width: 100%;
+    max-width: ${CONTENT_MAX_WIDTH};
+    margin: 0 auto;
+    padding: 0 var(--spacing-xxxl);
+`;
+
 const PageHeader = styled.div`
     display: flex;
     flex: 0 0 auto;
     align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-l);
+    min-width: 0;
+    padding: var(--spacing-xxxxxl) 0 var(--spacing-xxl);
+`;
+
+const HeaderLeading = styled.div`
+    display: flex;
+    flex: 1;
+    align-items: center;
     gap: var(--spacing-xs);
     min-width: 0;
-    padding: var(--spacing-xxxl) var(--spacing-xxxl) var(--spacing-l);
+`;
+
+const TitleBlock = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacing-xxxs);
+    min-width: 0;
+`;
+
+const HeaderActions = styled.div`
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: var(--spacing-xs);
 `;
 
 const PageTitle = styled.h1`
     margin: 0;
+    max-width: 100%;
     overflow: hidden;
-    font-family: var(--font-family-heading);
+    font-family: var(--font-family-heading, 'Metropolis', sans-serif);
     font-size: var(--font-size-500);
     font-weight: var(--font-weight-semibold);
     line-height: var(--line-height-500);
     color: var(--center-channel-color);
     text-overflow: ellipsis;
     white-space: nowrap;
+`;
+
+const Subtitle = styled.p`
+    margin: 0;
+    font-family: var(--font-family-body, 'Open Sans', sans-serif);
+    font-size: var(--font-size-75);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-75);
+    color: rgba(var(--center-channel-color-rgb), 0.75);
 `;
 
 const BackButton = styled(IconButton)`

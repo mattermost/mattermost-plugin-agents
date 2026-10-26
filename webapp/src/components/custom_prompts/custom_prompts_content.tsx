@@ -14,6 +14,7 @@ import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 import {SearchInput} from '@mattermost/compass-ui/components/search-input';
 import {SectionNotice} from '@mattermost/compass-ui/components/section-notice';
+import {Tabs} from '@mattermost/compass-ui/components/tabs';
 import {WithTooltip} from '@mattermost/shared/components/tooltip';
 
 import {getCustomPrompts, getPinnedPromptIds} from '@/selectors';
@@ -43,6 +44,22 @@ const TabBar = styled(UnderlineTabs)`
     padding: 0 var(--spacing-xxxl);
 `;
 
+// Page layout mirrors the All agents list: the host column owns the horizontal
+// padding, tabs sit above a full-width search, and the list has no side margins.
+const PageTabs = styled(Tabs)`
+    margin-bottom: var(--spacing-l);
+    flex-shrink: 0;
+`;
+
+const PageSearchRow = styled.div`
+    padding: 0 0 var(--spacing-l);
+    flex-shrink: 0;
+`;
+
+const PagePromptEmptyState = styled(EmptyState)`
+    padding-top: var(--spacing-xxl);
+`;
+
 const ToolbarRow = styled.div`
     display: flex;
     align-items: center;
@@ -61,10 +78,10 @@ const SearchContainer = styled.div`
     }
 `;
 
-const PromptList = styled.div`
+const PromptList = styled.div<{$page?: boolean}>`
     display: flex;
     flex-direction: column;
-    margin: 0 var(--spacing-xxxl) var(--spacing-l);
+    margin: ${({$page}) => ($page ? '0' : '0 var(--spacing-xxxl) var(--spacing-l)')};
     border-top: 1px solid rgba(var(--center-channel-color-rgb), 0.08);
 `;
 
@@ -124,9 +141,9 @@ const PinButton = styled(IconButton)`
     flex-shrink: 0;
 `;
 
-const ErrorBanner = styled(SectionNotice)`
+const ErrorBanner = styled(SectionNotice)<{$page?: boolean}>`
     flex-shrink: 0;
-    margin: var(--spacing-xs) var(--spacing-xxxl) 0;
+    margin: ${({$page}) => ($page ? '0 0 var(--spacing-xs)' : 'var(--spacing-xs) var(--spacing-xxxl) 0')};
 `;
 
 export interface CustomPromptsContentRenderProps {
@@ -139,6 +156,12 @@ export interface CustomPromptsContentRenderProps {
 
     /** Returns from the create/edit form to the list. */
     onBack: () => void;
+
+    /**
+     * Page layout only, list view only: the "Create new" action, for the host to
+     * place in its header. Null in the modal layout and while a form is showing.
+     */
+    createAction: React.ReactNode;
 
     /** The view itself; the host places it under its own chrome. */
     body: React.ReactNode;
@@ -156,11 +179,19 @@ interface CustomPromptsContentProps {
     /** z-index of the delete confirmation, which must sit above the host's own layer. */
     confirmZIndex?: number;
 
+    /**
+     * 'modal' (default) keeps the modal's inset tabs/toolbar. 'page' drops the
+     * inset padding (the host column provides it), uses compass Tabs, and hands
+     * the Create action to the host via `createAction`.
+     */
+    layout?: 'modal' | 'page';
+
     /** Presentation contract: the host renders its own title/back chrome around `body`. */
     children: (props: CustomPromptsContentRenderProps) => React.ReactNode;
 }
 
-const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPromptsContentProps) => {
+const CustomPromptsContent = ({active, confirmZIndex = 3000, layout = 'modal', children}: CustomPromptsContentProps) => {
+    const isPage = layout === 'page';
     const intl = useIntl();
     const dispatch = useDispatch();
     const prompts = useSelector(getCustomPrompts);
@@ -263,6 +294,34 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
         return true;
     });
 
+    const openCreateForm = () => {
+        setShowCreateForm(true);
+        setEditingPromptId(null);
+    };
+
+    const createButton = (
+        <Button
+            emphasis={isPage ? 'primary' : 'tertiary'}
+            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
+            onClick={openCreateForm}
+        >
+            <FormattedMessage defaultMessage='Create new'/>
+        </Button>
+    );
+
+    const searchInput = (
+        <SearchContainer>
+            <SearchInput
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onClear={() => setSearchQuery('')}
+                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
+                placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
+            />
+        </SearchContainer>
+    );
+
     const title = (() => {
         if (showCreateForm) {
             return <FormattedMessage defaultMessage='New Prompt'/>;
@@ -284,12 +343,14 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
                 >
                     {error && (
                         <ErrorBanner
+                            $page={isPage}
                             type='danger'
                             title={error}
                         />
                     )}
                     {showCreateForm ? (
                         <CustomPromptForm
+                            flush={isPage}
                             stickyFooter={true}
                             onSave={handleCreate}
                             onDiscard={handleFormBack}
@@ -297,6 +358,7 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
                     ) : (
                         editingPrompt && (
                             <CustomPromptForm
+                                flush={isPage}
                                 stickyFooter={editingPrompt.creator_id === currentUserId}
                                 prompt={editingPrompt}
                                 readOnly={editingPrompt.creator_id !== currentUserId}
@@ -309,58 +371,57 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
                 </ModalBody>
             ) : (
                 <>
-                    <TabBar role='tablist'>
-                        <UnderlineTab
-                            type='button'
-                            role='tab'
-                            $active={activeTab === 'all'}
-                            aria-selected={activeTab === 'all'}
-                            tabIndex={activeTab === 'all' ? 0 : -1}
-                            onClick={() => setActiveTab('all')}
-                        >
-                            <FormattedMessage defaultMessage='All Prompts'/>
-                        </UnderlineTab>
-                        <UnderlineTab
-                            type='button'
-                            role='tab'
-                            $active={activeTab === 'yours'}
-                            aria-selected={activeTab === 'yours'}
-                            tabIndex={activeTab === 'yours' ? 0 : -1}
-                            onClick={() => setActiveTab('yours')}
-                        >
-                            <FormattedMessage defaultMessage='Your Prompts'/>
-                        </UnderlineTab>
-                    </TabBar>
-                    <ToolbarRow>
-                        <SearchContainer>
-                            <SearchInput
-                                value={searchQuery}
-                                onChange={(e) => setSearchQuery(e.target.value)}
-                                onClear={() => setSearchQuery('')}
-                                clearLabel={intl.formatMessage({defaultMessage: 'Clear search'})}
-                                placeholder={intl.formatMessage({defaultMessage: 'Search prompts'})}
-                                aria-label={intl.formatMessage({defaultMessage: 'Search prompts'})}
+                    {isPage ? (
+                        <>
+                            <PageTabs
+                                tabs={[
+                                    {key: 'all', label: <FormattedMessage defaultMessage='All Prompts'/>},
+                                    {key: 'yours', label: <FormattedMessage defaultMessage='Your Prompts'/>},
+                                ]}
+                                activeKey={activeTab}
+                                onChange={(key) => setActiveTab(key as 'all' | 'yours')}
                             />
-                        </SearchContainer>
-                        <Button
-                            emphasis='tertiary'
-                            leadingIcon={<Icon glyph={<PlusIcon/>}/>}
-                            onClick={() => {
-                                setShowCreateForm(true);
-                                setEditingPromptId(null);
-                            }}
-                        >
-                            <FormattedMessage defaultMessage='Create new'/>
-                        </Button>
-                    </ToolbarRow>
+                            <PageSearchRow>{searchInput}</PageSearchRow>
+                        </>
+                    ) : (
+                        <>
+                            <TabBar role='tablist'>
+                                <UnderlineTab
+                                    type='button'
+                                    role='tab'
+                                    $active={activeTab === 'all'}
+                                    aria-selected={activeTab === 'all'}
+                                    tabIndex={activeTab === 'all' ? 0 : -1}
+                                    onClick={() => setActiveTab('all')}
+                                >
+                                    <FormattedMessage defaultMessage='All Prompts'/>
+                                </UnderlineTab>
+                                <UnderlineTab
+                                    type='button'
+                                    role='tab'
+                                    $active={activeTab === 'yours'}
+                                    aria-selected={activeTab === 'yours'}
+                                    tabIndex={activeTab === 'yours' ? 0 : -1}
+                                    onClick={() => setActiveTab('yours')}
+                                >
+                                    <FormattedMessage defaultMessage='Your Prompts'/>
+                                </UnderlineTab>
+                            </TabBar>
+                            <ToolbarRow>
+                                {searchInput}
+                                {createButton}
+                            </ToolbarRow>
+                        </>
+                    )}
                     <ModalBody>
                         {error && (
                             <ErrorBanner
+                                $page={isPage}
                                 type='danger'
                                 title={error}
                             />
                         )}
-                        <PromptList>
+                        <PromptList $page={isPage}>
                             {filteredPrompts.map((prompt) => {
                                 const isPinned = pinnedIds.includes(prompt.id);
                                 let pinLabel = intl.formatMessage({defaultMessage: 'Pin prompt'});
@@ -412,7 +473,11 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
                                 );
                             })}
                             {filteredPrompts.length === 0 && (
-                                <EmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                isPage ? (
+                                    <PagePromptEmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                ) : (
+                                    <EmptyState title={<FormattedMessage defaultMessage='No prompts found'/>}/>
+                                )
                             )}
                         </PromptList>
                     </ModalBody>
@@ -427,6 +492,7 @@ const CustomPromptsContent = ({active, confirmZIndex = 3000, children}: CustomPr
                 title,
                 showBack: Boolean(showCreateForm || editingPrompt),
                 onBack: handleFormBack,
+                createAction: isPage && !showCreateForm && !editingPrompt ? createButton : null,
                 body,
             })}
             <ConfirmationDialog
