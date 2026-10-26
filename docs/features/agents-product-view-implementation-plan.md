@@ -24,6 +24,12 @@ upstream tracking of `master`. Never push to `master`; open a PR.
 
 From `/AGENTS.md` and `webapp/AGENTS.md`:
 
+- **Use Node 24.11 for every `make`/`npm`/`node` command** (`.nvmrc`; the shell
+  default here is Node 20, which makes `make check-style` fail on the e2e
+  glob and makes `npm install` rewrite `webapp/package-lock.json` and
+  `e2e/package-lock.json`). Prefix commands with
+  `PATH=$HOME/.nvm/versions/node/v24.11.1/bin:$PATH`. Never commit a lockfile
+  change you did not intend; revert stray ones with `git checkout -- <file>`.
 - **A fresh checkout does not compile.** Run `make apply` first (generates
   `server/manifest.go`).
 - **compass-ui for components, styled-components for styling.** Use
@@ -277,6 +283,34 @@ Routes are the preferred design because they give deep links. **They depend on
 `registerProduct` passing sub-paths to the main component — verify in Phase 0.**
 If it doesn't, fall back to local state in `AgentsPage` and lose deep links.
 
+**Default landing:** opening the Agents product (`/plug/mattermost-ai/agents`)
+lands the user in a **new chat with the workspace default agent**, not the agents
+list. "All agents" stays a sidebar destination (the existing `AgentsList` is
+unchanged).
+- Resolve the default agent by **ID** from the plugin config
+  (`DefaultBotUserID`, `config/config.go:29`; confirm how the webapp receives it
+  and expose it as an explicit field if it doesn't). Never hardcode "Matty" or
+  match by name; Matty is just the usual default agent.
+- Fail closed: if the default ID is unset, or no longer resolves to an agent the
+  user can access, do not pick the first bot; land on All agents with a clear
+  message, and note it in the report.
+- Landing is the new-chat state: the agent's avatar and a **randomized
+  greeting/title** chosen from the prototype's list (`EMPTY_CHAT_TITLES` in
+  `MattyPanel.tsx` on the prototype ref `origin/cursor/agents-vision-prototype-c820`;
+  chat view in `.../agents-app/AgentChat.tsx`). Strings go through i18n, so port
+  the list as message descriptors and pick one per mount (not re-randomized on
+  re-render). Prototype source: six titles ("How can I help today?", "Let's get
+  some work done", "What should we tackle?", "Ready when you are", "Where should
+  we start?", "Got something on your mind?"; `EMPTY_CHAT_TITLES`,
+  `agentsData.ts:2975` on the prototype ref), optional subtitle below. It uses
+  no compass components: heading/body font tokens, `--spacing-*`, host
+  `--center-channel-color`; the composer is nudged up by
+  `calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l)))`.
+- The composer is **auto-focused and vertically centered** until the first post
+  exists; after `afterSubmit` the view becomes the normal thread (messages above,
+  composer pinned to the bottom). Respect `prefers-reduced-motion` for the
+  transition.
+
 LHS layout, following the prototype:
 
 ```
@@ -381,13 +415,13 @@ Answer, with evidence from running the plugin where possible (`make deploy` agai
 5. Refresh strategy: confirm no event fires; try `postupdate`-driven refetch and refetch-after-submit + delayed title refetch; recommend one.
 6. Does the 60-row cap matter in practice? Recommend accept vs. `limit`/`offset`.
 7. `bot.dmChannelID` absence handling.
-8. **Compass-ui parity audit (Sonnet, read-only):** list every compass-ui component and prop, plus every token (spacing, radius, font, line-height, elevation, animation), icon and illustration, the prototype's sidebar, chat header, composer, empty state and Custom Prompts page use, and mark each as present or missing in the installed `alpha.14`. Output a table (component, props, prototype file, installed? yes/no). Missing items go to the user before Phase 1.
+8. **Compass-ui parity audit (Sonnet, read-only):** list every compass-ui component and prop, plus every token (spacing, radius, font, line-height, elevation, animation), icon and illustration, that the prototype's sidebar, chat header, composer, empty state (including the randomized greeting) and Custom Prompts page use, and mark each as present or missing in the installed `alpha.14`. Output a table (component, props, prototype file, installed? yes/no). Missing items go to the user before Phase 1.
 9. Can a plugin show the agent chat in the Channels center pane when an agent is clicked (override component, history redirect, or neither)? See Phase 5.
 
 Output: a findings note and decisions for routing, refresh, limit. **Pause for user approval before Wave 1.**
 
 ### Phase 1 — shell and LHS (Sonnet A)
-`agents_page.tsx` becomes a two-pane shell (keep `channel-view` effect; rework overflow pinning for a separate chat scroller). New `product_sidebar.tsx` (+ item component): All agents, Custom Prompts. Existing `AgentsList` stays the default destination. Jest tests for sidebar navigation and a11y labels.
+`agents_page.tsx` becomes a two-pane shell (keep `channel-view` effect; rework overflow pinning for a separate chat scroller). New `product_sidebar.tsx` (+ item component): All agents, Custom Prompts. Existing `AgentsList` moves under the All agents destination; the default landing is a new chat with the workspace default agent (see Target shape), which depends on Phase 3's chat page, so until then the shell lands on All agents. Jest tests for sidebar navigation and a11y labels.
 
 ### Phase 2 — Custom Prompts page (Sonnet B, B2)
 1. Tests for `custom_prompts_management` first (list, tab filter, search, pin, create, edit, read-only non-owner, delete confirm, error banner) with a Redux store. Existing e2e must stay green.
