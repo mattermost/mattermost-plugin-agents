@@ -78,6 +78,7 @@ type RenderOpts = {
     enabledTools?: Array<{server_origin: string; tool_name: string}>;
     autoEnableNewMCPTools?: boolean;
     useServiceAccountAuth?: boolean;
+    scopedChannelMode?: boolean;
     serviceAccountFieldsLocked?: boolean;
     canEditServiceAccountAuth?: boolean;
 };
@@ -87,6 +88,7 @@ function renderTab({
     enabledTools = [],
     autoEnableNewMCPTools = true,
     useServiceAccountAuth = false,
+    scopedChannelMode = false,
     serviceAccountFieldsLocked = false,
     canEditServiceAccountAuth = true,
 }: RenderOpts = {}) {
@@ -100,7 +102,7 @@ function renderTab({
                     enabledTools={enabledTools}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
                     useServiceAccountAuth={useServiceAccountAuth}
-                    scopedChannelMode={false}
+                    scopedChannelMode={scopedChannelMode}
                     scopedExtraChannelIds={[]}
                     serviceAccountFieldsLocked={serviceAccountFieldsLocked}
                     canEditServiceAccountAuth={canEditServiceAccountAuth}
@@ -425,6 +427,33 @@ describe('McpsTab', () => {
 
         fireEvent.click(toolToggle);
         expect(onChange).not.toHaveBeenCalled();
+    });
+
+    test.each([
+        {name: 'grants every tool of a server that lists none yet', scopedChannelMode: false, expected: [{server_origin: 'https://jira.example.com/mcp', tool_name: '*'}]},
+        {name: 'grants nothing for such a server to a scoped agent', scopedChannelMode: true, expected: null},
+    ])('$name', async ({scopedChannelMode, expected}) => {
+        mockedGetUserMCPTools.mockResolvedValue({
+            servers: [{
+                name: 'Jira',
+                serverOrigin: 'https://jira.example.com/mcp',
+                kind: 'remote',
+                authenticated: true,
+                needsOAuth: false,
+                serviceAccountConfigured: true,
+                tools: [],
+            }],
+        });
+
+        const {onChange} = renderTab({useServiceAccountAuth: true, autoEnableNewMCPTools: false, scopedChannelMode});
+
+        await screen.findByText('Jira');
+        fireEvent.click(screen.getByRole('switch', {name: serverToggleName}));
+        if (expected) {
+            expect(onChange).toHaveBeenCalledWith({enabledTools: expected});
+        } else {
+            expect(onChange).not.toHaveBeenCalled();
+        }
     });
 
     test('does not strip saved grants when an unavailable server lists no tools', async () => {

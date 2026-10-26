@@ -253,6 +253,10 @@ const McpsTab = (props: Props) => {
 
         const existing = enabledTools.filter((t) => t.server_origin !== server.serverOrigin);
         if (serverTools.length === 0) {
+            // Scoped agents must name every tool; there is nothing to name yet.
+            if (scopedChannelMode) {
+                return;
+            }
             onChange({enabledTools: [...existing, {server_origin: server.serverOrigin, tool_name: MCPServerToolWildcard}]});
             return;
         }
@@ -261,7 +265,7 @@ const McpsTab = (props: Props) => {
             tool_name: t.name,
         }));
         onChange({enabledTools: [...existing, ...newTools]});
-    }, [enabledTools, hasServerWildcard, onChange]);
+    }, [enabledTools, hasServerWildcard, onChange, scopedChannelMode]);
 
     const isEntryAvailable = useCallback((et: EnabledTool) => {
         return servers.some((s) => {
@@ -361,6 +365,7 @@ const McpsTab = (props: Props) => {
                     scopedChannelMode={scopedChannelMode}
                     scopedExtraChannelIds={scopedExtraChannelIds}
                     autoEnableNewMCPTools={autoEnableNewMCPTools}
+                    hasAllToolsGrants={enabledTools.some((t) => t.tool_name === MCPServerToolWildcard)}
                     editable={canEditServiceAccountAuth}
                     onChange={onChange}
                 />
