@@ -46,23 +46,17 @@ type Search struct {
 	getSearch      func() embeddings.EmbeddingSearch
 	mmclient       mmapi.Client
 	licenseChecker *enterprise.LicenseChecker
-	scopes         *scopedsession.Registry
 }
 
-// New creates the search service. scopes makes searches under a scoped
-// session read exactly that session's scope instead of the user's channel
-// memberships; without it, searches under any session fail.
 func New(
 	getSearch func() embeddings.EmbeddingSearch,
 	mmclient mmapi.Client,
 	licenseChecker *enterprise.LicenseChecker,
-	scopes *scopedsession.Registry,
 ) *Search {
 	return &Search{
 		getSearch:      getSearch,
 		mmclient:       mmclient,
 		licenseChecker: licenseChecker,
-		scopes:         scopes,
 	}
 }
 
@@ -189,7 +183,7 @@ func (s *Search) Search(ctx context.Context, query string, opts Options) ([]RAGR
 		UserID:    opts.UserID,
 	}
 
-	scope, err := s.scopes.ScopeFromContext(ctx)
+	scope, err := scopedsession.ScopeFromContext(ctx)
 	if err != nil {
 		return nil, err
 	}

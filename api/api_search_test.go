@@ -36,7 +36,7 @@ const (
 )
 
 func licensedSearchService(getSearch func() embeddings.EmbeddingSearch, client mmapi.Client) *search.Search {
-	return search.New(getSearch, client, enterprisetest.CheckerAt(enterprise.LevelEnterprise), unscopedSessions())
+	return search.New(getSearch, client, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
 }
 
 func enabledSearchService(t *testing.T) *search.Search {
@@ -159,7 +159,7 @@ func TestHandleRunSearchWithoutEmbeddingSearch(t *testing.T) {
 		name          string
 		searchService *search.Search
 	}{
-		{name: "embedding search not configured", searchService: search.New(nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), unscopedSessions())},
+		{name: "embedding search not configured", searchService: search.New(nil, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise))},
 		{name: "no search service", searchService: nil},
 	}
 

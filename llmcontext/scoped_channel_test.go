@@ -198,7 +198,7 @@ func newScopedCatalogProvider(t *testing.T, minter scopedsession.Minter, tools [
 	client := pluginapi.NewClient(mockAPI, nil)
 	manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, client.Log, client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
 	t.Cleanup(manager.Close)
-	manager.SetScopedSessions(minter, scopedsession.NewRegistry(nil))
+	manager.SetScopedSessions(minter)
 	return &scopedCatalogProvider{ClientManager: manager, tools: tools}
 }
 

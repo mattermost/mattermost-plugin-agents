@@ -56,16 +56,12 @@ type Content struct {
 // Service is the shared plugin-side file reader behind both the embedded
 // read_file tool and the /files/content HTTP endpoint.
 type Service struct {
-	mm     mmapi.Client
-	scopes *scopedsession.Registry
+	mm mmapi.Client
 }
 
 // New creates a file content service backed by the given Mattermost client.
-// scopes makes reads under a scoped session check the file's channel against
-// that session's scope instead of the user's membership; without it, reads
-// under any session fail.
-func New(mm mmapi.Client, scopes *scopedsession.Registry) *Service {
-	return &Service{mm: mm, scopes: scopes}
+func New(mm mmapi.Client) *Service {
+	return &Service{mm: mm}
 }
 
 // GetContent returns the [offset, offset+limit) rune window of a file's text for
@@ -77,7 +73,7 @@ func (s *Service) GetContent(ctx context.Context, userID, fileID string, offset,
 		return Content{}, fmt.Errorf("invalid file id")
 	}
 
-	scope, err := s.scopes.ScopeFromContext(ctx)
+	scope, err := scopedsession.ScopeFromContext(ctx)
 	if err != nil {
 		return Content{}, err
 	}

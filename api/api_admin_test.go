@@ -5,6 +5,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -61,7 +62,7 @@ func setupAdminTestEnvironment(t *testing.T) (*API, *plugintest.API, *adminTestS
 		clusterNotifier: &testClusterNotifier{},
 	}
 
-	api := New(nil, nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil, nil, newPassthroughAccessChecker())
+	api := New(nil, nil, nil, nil, nil, client, noopMetrics, nil, cfg, nil, nil, nil, nil, nil, nil, &mockMCPClientManager{}, nil, nil, stores.configStore, nil, stores.configUpdater, stores.clusterNotifier, nil, nil, nil, nil, nil, nil, nil, newPassthroughAccessChecker())
 
 	// Admin routes are exercised at Enterprise; license gating has its own tests.
 	api.licenseChecker = enterprisetest.CheckerAt(enterprise.LevelEnterprise)
@@ -594,7 +595,7 @@ func TestHandleGetMCPTools_OmitsOrphanPluginServers(t *testing.T) {
 
 type stubAdminEmbeddedServer struct{}
 
-func (s *stubAdminEmbeddedServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubAdminEmbeddedServer) CreateClientTransport(context.Context, string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, errors.New("stub: discovery not needed for ID assertions")
 }
 

@@ -32,7 +32,7 @@ import (
 
 type stubEmbeddedServer struct{}
 
-func (s *stubEmbeddedServer) CreateClientTransport(string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
+func (s *stubEmbeddedServer) CreateClientTransport(context.Context, string, string, string, *pluginapi.Client) (*gomcp.InMemoryTransport, error) {
 	return nil, nil
 }
 

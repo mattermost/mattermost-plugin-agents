@@ -64,6 +64,11 @@ type UserClients struct {
 	// admission is the manager-wide network-connection gate. Nil in tests that
 	// construct a UserClients directly, which then skip the aggregate cap.
 	admission *connectionAdmission
+
+	// connCtx is the context embedded server connections run under for their
+	// whole life; its values reach every tool call on them. Nil means
+	// context.Background().
+	connCtx context.Context
 }
 
 // originAttempt is one user's connect attempt against a single MCP server
@@ -503,9 +508,9 @@ func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string,
 			var client *Client
 			var err error
 			if session != nil {
-				client, err = embeddedClient.CreateClientForSession(dialCtx, c.userID, session)
+				client, err = embeddedClient.createClientForSession(dialCtx, c.connectionContext(), c.userID, session)
 			} else {
-				client, err = embeddedClient.CreateClient(dialCtx, c.userID, sessionID)
+				client, err = embeddedClient.createClient(dialCtx, c.connectionContext(), c.userID, sessionID)
 			}
 			if err != nil {
 				return nil, fmt.Errorf("failed to connect to embedded server: %w", err)
@@ -513,6 +518,13 @@ func (c *UserClients) embeddedConnectTask(ctx context.Context, sessionID string,
 			return client, nil
 		},
 	}
+}
+
+func (c *UserClients) connectionContext() context.Context {
+	if c.connCtx == nil {
+		return context.Background()
+	}
+	return c.connCtx
 }
 
 // pluginConnectTask builds the task for a plugin-registered MCP server.

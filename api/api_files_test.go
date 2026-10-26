@@ -21,7 +21,6 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/auth"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcpserver/tools"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
-	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
 	"github.com/mattermost/mattermost-plugin-agents/v2/search"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -113,7 +112,7 @@ func TestHandleRawFileContent(t *testing.T) {
 				if tt.setup != nil {
 					tt.setup(m)
 				}
-				a.fileService = files.New(m, unscopedSessions())
+				a.fileService = files.New(m)
 			}
 
 			body, err := json.Marshal(tt.request)
@@ -168,7 +167,7 @@ func TestRawFileContentPreservesPluginSession(t *testing.T) {
 		Run(func(string) { adminContentReadCalled = true }).
 		Return(io.NopCloser(strings.NewReader("sensitive contents")), nil).
 		Maybe()
-	e.api.fileService = files.New(m, unscopedSessions())
+	e.api.fileService = files.New(m)
 
 	body, err := json.Marshal(RawFileContentRequest{FileID: fileID})
 	require.NoError(t, err)
@@ -204,7 +203,7 @@ func TestPluginCallbackClientsReachRoutes(t *testing.T) {
 		Id: fileID, ChannelId: channelID, Name: "notes.txt", MimeType: "text/plain", Content: "hello world",
 	}, nil)
 	m.EXPECT().HasPermissionToChannel(userID, channelID, model.PermissionReadChannel).Return(true)
-	e.api.fileService = files.New(m, unscopedSessions())
+	e.api.fileService = files.New(m)
 
 	const pluginPrefix = "/plugins/mattermost-ai"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -230,11 +229,4 @@ func TestPluginCallbackClientsReachRoutes(t *testing.T) {
 	_, err = tools.NewHTTPSemanticSearchService(server.URL+pluginPrefix).Search(ctx, "query", search.Options{UserID: userID})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "semantic search is not available")
-}
-
-// unscopedSessions resolves every session as a regular, unscoped one.
-func unscopedSessions() *scopedsession.Registry {
-	return scopedsession.NewRegistry(func(id string) (*model.Session, error) {
-		return &model.Session{Id: id}, nil
-	})
 }
