@@ -318,7 +318,7 @@ func (a *API) prepareAgentBridgeCompletion(
 	}
 
 	toolsRequested := allowedToolNames != nil
-	scopedChannel, statusCode, err := a.bridgeScopedChannel(bot, req.ChannelID, toolsRequested)
+	scopedChannel, statusCode, err := a.bridgeScopedChannel(bot, req.UserID, req.ChannelID, toolsRequested)
 	if err != nil {
 		return nil, statusCode, err
 	}
@@ -416,7 +416,7 @@ func (a *API) prepareAgentBridgeCompletion(
 // unscoped, as they do in conversations. When the mode is configured but
 // cannot take effect, tool requests are refused rather than run with the
 // requester's credentials.
-func (a *API) bridgeScopedChannel(bot *bots.Bot, channelID string, toolsRequested bool) (*model.Channel, int, error) {
+func (a *API) bridgeScopedChannel(bot *bots.Bot, userID, channelID string, toolsRequested bool) (*model.Channel, int, error) {
 	if !llmcontext.ScopedChannelModeConfigured(bot) {
 		return nil, 0, nil
 	}
@@ -432,6 +432,11 @@ func (a *API) bridgeScopedChannel(bot *bots.Bot, channelID string, toolsRequeste
 	}
 	if channel.Type == model.ChannelTypeDirect || channel.Type == model.ChannelTypeGroup {
 		return nil, 0, nil
+	}
+	// The scope grants the channel regardless of membership, so the caller's
+	// user must be able to read it.
+	if !a.pluginAPI.User.HasPermissionToChannel(userID, channel.Id, model.PermissionReadChannel) {
+		return nil, http.StatusForbidden, errors.New("user_id cannot read channel_id")
 	}
 	if a.contextBuilder == nil || !a.contextBuilder.ScopedChannelModeActive(bot, channel) {
 		return nil, http.StatusForbidden, errors.New("this agent's scoped channel mode is not available, so it cannot run tools")

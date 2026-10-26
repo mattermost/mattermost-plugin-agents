@@ -74,6 +74,7 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 	gin.DefaultWriter = io.Discard
 
 	publicChannel := &model.Channel{Id: model.NewId(), TeamId: model.NewId(), Type: model.ChannelTypeOpen}
+	unreadableChannel := &model.Channel{Id: model.NewId(), TeamId: publicChannel.TeamId, Type: model.ChannelTypePrivate}
 	dmChannel := &model.Channel{Id: model.NewId(), Type: model.ChannelTypeDirect}
 
 	tests := []struct {
@@ -118,6 +119,13 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			wantErr:       "scoped channel mode is not available",
 		},
 		{
+			name:         "private channel the user cannot read",
+			channelID:    unreadableChannel.Id,
+			allowedTools: []string{"jira__get_issue"},
+			wantStatus:   http.StatusForbidden,
+			wantErr:      "user_id cannot read channel_id",
+		},
+		{
 			name:      "channel request without tools mints nothing",
 			channelID: publicChannel.Id,
 		},
@@ -134,6 +142,8 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 			e.mockAPI.On("GetServerVersion").Return(serverVersion).Maybe()
 			e.mockAPI.On("GetChannel", publicChannel.Id).Return(publicChannel, nil).Maybe()
 			e.mockAPI.On("GetChannel", dmChannel.Id).Return(dmChannel, nil).Maybe()
+			e.mockAPI.On("GetChannel", unreadableChannel.Id).Return(unreadableChannel, nil).Maybe()
+			e.mockAPI.On("HasPermissionToChannel", testUserID, unreadableChannel.Id, model.PermissionReadChannel).Return(false).Maybe()
 			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: publicChannel.TeamId}, nil).Maybe()
 			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
 			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
