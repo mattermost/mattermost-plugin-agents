@@ -66,8 +66,6 @@ export default class PostEventListener {
         this.lifecycleUpdates.set(postID, update);
     };
 
-    public subscribeAll = (callback: WebsocketListener): (() => void) => subscribeToAllPostUpdates(callback);
-
     public registerPostUpdateListener = (postID: string, listenerID: string, listener: WebsocketListener) => {
         this.postUpdateWebsocketListeners.push({postID, listenerID, listener});
         const lifecycle = this.lifecycleUpdates.get(postID);

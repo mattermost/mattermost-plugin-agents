@@ -37,11 +37,37 @@ export function groupDMThreadsByBot(threads: AIThread[], bots: LLMBot[]): AgentT
     return grouped;
 }
 
+// Refreshes that different hook instances request in the same synchronous turn
+// (the header and the sidebar both react to the same websocket event) share one
+// request. An instance never joins its own earlier request, and the share ends
+// at the next microtask, so a refresh requested later, e.g. after a rename,
+// always fetches fresh data. Each instance still applies its own
+// superseded-response guard to the result.
+let sharedThreadsRequest: {promise: Promise<AIThread[]>; owners: Set<symbol>} | null = null;
+
+const fetchThreadsCoalesced = (owner: symbol): Promise<AIThread[]> => {
+    if (sharedThreadsRequest && !sharedThreadsRequest.owners.has(owner)) {
+        sharedThreadsRequest.owners.add(owner);
+        return sharedThreadsRequest.promise;
+    }
+    const shared = {promise: getAIThreads() as Promise<AIThread[]>, owners: new Set([owner])};
+    sharedThreadsRequest = shared;
+
+    // Not queueMicrotask: fake timers in a consumer's tests can swallow it and strand the share.
+    Promise.resolve().then(() => {
+        if (sharedThreadsRequest === shared) {
+            sharedThreadsRequest = null;
+        }
+    });
+    return shared.promise;
+};
+
 export function useAgentThreads(bots: LLMBot[] | null) {
     const [allThreads, setAllThreads] = useState<AIThread[] | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);
 
+    const instanceKey = useRef(Symbol('agent-threads'));
     const requestCounter = useRef(0);
     const mounted = useRef(true);
     const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -67,7 +93,7 @@ export function useAgentThreads(bots: LLMBot[] | null) {
         const requestID = ++requestCounter.current;
         setLoading(true);
         try {
-            const result = await getAIThreads();
+            const result = await fetchThreadsCoalesced(instanceKey.current);
             if (!mounted.current || requestID !== requestCounter.current) {
                 return;
             }

@@ -28,6 +28,7 @@ import {useAgentThreads} from '@/hooks/use_agent_threads';
 import {useConversation} from '@/hooks/use_conversation';
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 import {useMenuTransition} from '@/hooks/use_menu_transition';
+import {isValidId} from '@/utils/ids';
 import {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from '@/websocket';
 
 import AgentChatRenameDialog from './agent_chat_rename_dialog';
@@ -71,11 +72,6 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
     const [archiveFailed, setArchiveFailed] = useState(false);
     const [renamedTitle, setRenamedTitle] = useState<string | null>(null);
 
-    // The conversation id is only known once a bot post (carrying it) is in the store.
-    const conversationId = useConversationIdForThread(rootId);
-    const {conversation} = useConversation(conversationId);
-    const currentTitle = renamedTitle ?? conversation?.title ?? '';
-
     // This agent's DM chats, the same data the sidebar lists.
     const botList = useMemo(() => [bot], [bot]);
     const {threadsByBot, refresh, refreshWithTitleRetry} = useAgentThreads(botList);
@@ -86,6 +82,14 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
         }
     }), [refresh]);
     useEffect(() => onAgentThreadsRefreshRequested(refreshWithTitleRetry), [refreshWithTitleRetry]);
+
+    // The conversation id comes from a bot post in the store; until one is there (a reply that
+    // failed or has not loaded) the open chat's row in this agent's DM list carries it too.
+    const openThread = rootId ? chats.find((t) => t.root_post_id === rootId) : null;
+    const postConversationId = useConversationIdForThread(rootId);
+    const conversationId = postConversationId || (isValidId(openThread?.id) ? openThread.id : '');
+    const {conversation} = useConversation(conversationId);
+    const currentTitle = renamedTitle ?? conversation?.title ?? '';
 
     // Tool providers: fed exactly as the RHS feeds its popover.
     const [disabledServers, setDisabledServers] = useState<string[]>([]);
@@ -146,7 +150,6 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
     };
 
     // An open chat is named by its title; the agent's name labels the new-chat state.
-    const openThread = rootId ? chats.find((t) => t.root_post_id === rootId) : null;
     const chatTitle = rootId ? ((renamedTitle ?? conversation?.title ?? openThread?.title ?? '').trim() || intl.formatMessage({defaultMessage: 'New chat'})) : '';
     const nameLabel = rootId ? chatTitle : bot.displayName;
     const nameMenuLabel = rootId ? intl.formatMessage({defaultMessage: '{title}, {name} options'}, {title: chatTitle, name: bot.displayName}) : intl.formatMessage({defaultMessage: '{name} options'}, {name: bot.displayName});

@@ -3,7 +3,7 @@
 
 import {PostUpdateWebsocketMessage} from './components/llmbot_post/llmbot_post';
 import {PluginWebSocketMessage} from './types';
-import PostEventListener, {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh} from './websocket';
+import PostEventListener, {onAgentThreadsRefreshRequested, requestAgentThreadsRefresh, subscribeToAllPostUpdates} from './websocket';
 
 function message(data: PostUpdateWebsocketMessage): PluginWebSocketMessage<PostUpdateWebsocketMessage> {
     return {data} as PluginWebSocketMessage<PostUpdateWebsocketMessage>;
@@ -74,7 +74,7 @@ describe('PostEventListener progress buffering', () => {
     });
 });
 
-describe('PostEventListener subscribeAll', () => {
+describe('subscribeToAllPostUpdates', () => {
     const msg = (postID: string, control?: string) => ({data: {post_id: postID, control}} as PluginWebSocketMessage<PostUpdateWebsocketMessage>);
 
     test('notifies subscribers for every post, after per-post listeners, until unsubscribed', () => {
@@ -82,7 +82,7 @@ describe('PostEventListener subscribeAll', () => {
         const order: string[] = [];
         events.registerPostUpdateListener('p1', 'l1', () => order.push('post'));
         const all = jest.fn(() => order.push('all'));
-        const unsubscribe = events.subscribeAll(all);
+        const unsubscribe = subscribeToAllPostUpdates(all);
 
         events.handlePostUpdateWebsockets(msg('p1', 'end'));
         events.handlePostUpdateWebsockets(msg('p2', 'end'));
@@ -96,7 +96,7 @@ describe('PostEventListener subscribeAll', () => {
 
     test('subscribers see events handled by a different instance', () => {
         const all = jest.fn();
-        const unsubscribe = new PostEventListener().subscribeAll(all);
+        const unsubscribe = subscribeToAllPostUpdates(all);
         new PostEventListener().handlePostUpdateWebsockets(msg('p9', 'end'));
         unsubscribe();
         expect(all).toHaveBeenCalledTimes(1);

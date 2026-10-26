@@ -29,7 +29,9 @@ import {
     searchAllChannels,
     setSiteURL,
     updateChannelAutoReply,
+    UPLOAD_TIMEOUT_MS,
     updateRead,
+    uploadFile,
 } from './client';
 
 type SearchAllChannelsOpts = Omit<ChannelSearchOpts, 'page' | 'per_page'> & OptsSignalExt;
@@ -51,6 +53,10 @@ jest.mock('@mattermost/client', () => {
 
             setUrl(url: string) {
                 this.url = url;
+            }
+
+            getFilesRoute() {
+                return '/api/v4/files';
             }
 
             getOptions(options: Record<string, unknown>) {
@@ -489,5 +495,50 @@ describe('agent versioning client', () => {
             status_code: 400,
             message: 'the current version of an agent cannot be deleted',
         });
+    });
+});
+
+describe('uploadFile', () => {
+    const created: Array<{timeout: number; ontimeout?: () => void; onerror?: () => void}> = [];
+    const lastXHR = () => created[created.length - 1];
+    class FakeXHR {
+        timeout = 0;
+        status = 0;
+        responseText = '';
+        upload = {} as {onprogress?: unknown};
+        onload?: () => void;
+        onerror?: () => void;
+        ontimeout?: () => void;
+        onabort?: () => void;
+        open = jest.fn();
+        setRequestHeader = jest.fn();
+        send = jest.fn();
+        abort = jest.fn();
+        constructor() {
+            created.push(this);
+        }
+    }
+    const realXHR = global.XMLHttpRequest;
+
+    beforeEach(() => {
+        (global as unknown as {XMLHttpRequest: unknown}).XMLHttpRequest = FakeXHR;
+    });
+    afterEach(() => {
+        global.XMLHttpRequest = realXHR;
+    });
+
+    test('sets a generous timeout and fails with a clear error when it fires', async () => {
+        const upload = uploadFile(new File(['x'], 'a.txt'), 'dm1', 'client1');
+        expect(lastXHR().timeout).toBe(UPLOAD_TIMEOUT_MS);
+        expect(UPLOAD_TIMEOUT_MS).toBeGreaterThanOrEqual(60 * 1000);
+
+        lastXHR().ontimeout?.();
+        await expect(upload.promise).rejects.toThrow('File upload failed: timed out');
+    });
+
+    test('a network error still fails through the same path', async () => {
+        const upload = uploadFile(new File(['x'], 'a.txt'), 'dm1', 'client1');
+        lastXHR().onerror?.();
+        await expect(upload.promise).rejects.toThrow('File upload failed: network error');
     });
 });

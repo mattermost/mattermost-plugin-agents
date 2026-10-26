@@ -117,6 +117,28 @@ describe('useAgentThreads', () => {
         expect(result.current.error).toBeNull();
     });
 
+    test('simultaneous refreshes from two instances issue one request and both update', async () => {
+        const pending = deferred<AIThread[]>();
+        mockGetAIThreads.mockReturnValue(pending.promise);
+        const a = renderHook(() => useAgentThreads(bots));
+        const b = renderHook(() => useAgentThreads(bots));
+        await act(async () => null);
+        mockGetAIThreads.mockClear();
+
+        // Same synchronous turn, as one websocket event notifying both subscribers.
+        act(() => {
+            a.result.current.refresh();
+            b.result.current.refresh();
+        });
+        expect(mockGetAIThreads).toHaveBeenCalledTimes(1);
+
+        await act(async () => {
+            pending.resolve([makeThread({id: 'shared'})]);
+        });
+        expect(a.result.current.threadsByBot.a.map((t) => t.id)).toEqual(['shared']);
+        expect(b.result.current.threadsByBot.a.map((t) => t.id)).toEqual(['shared']);
+    });
+
     test('propagates errors instead of returning an empty list', async () => {
         mockGetAIThreads.mockRejectedValue(new Error('boom'));
         const {result} = renderHook(() => useAgentThreads(bots));

@@ -49,6 +49,7 @@ jest.mock('react-intl', () => {
 });
 
 const CONVERSATION_ID = 'c'.repeat(26);
+const LISTED_CONVERSATION_ID = 'e'.repeat(26);
 const bot = {id: 'bot1', displayName: 'Matty', lastIconUpdate: 0, dmChannelID: 'dm1', autoEnableNewMCPTools: true} as LLMBot;
 const thread = (id: string, root: string, title: string, update: number, channel = 'dm1', botId = 'bot1') => ({id, channel_id: channel, bot_id: botId, root_post_id: root, title, turn_count: 1, update_at: update});
 
@@ -104,6 +105,8 @@ describe('AgentChatHeader', () => {
             thread('t3', 'blank', '  ', 2),
             thread('t4', 'other-dm', 'Not in the DM', 9, 'elsewhere'),
             thread('t5', 'other-bot', 'Other bot', 9, 'dm1', 'bot2'),
+            thread(LISTED_CONVERSATION_ID, 'listed-root', 'Listed chat', 4),
+            thread('d'.repeat(26), 'foreign-root', 'Not in the DM', 5, 'elsewhere'),
         ]);
         mockGetTools.mockResolvedValue({servers: []});
         (window as any).WebappUtils = {browserHistory: {push: mockPush}};
@@ -176,6 +179,21 @@ describe('AgentChatHeader', () => {
         }
     });
 
+    test.each([
+        {name: 'listed in this agent\'s DM, no bot post in the store', rootId: 'listed-root', disabled: false},
+        {name: 'listed only outside this agent\'s DM', rootId: 'foreign-root', disabled: true},
+        {name: 'not listed at all', rootId: 'unlisted-root', disabled: true},
+    ])('Rename and Archive fall back to the thread list id: $name', async ({rootId, disabled}) => {
+        renderHeader({rootId}, false);
+        await waitFor(() => expect(mockGetThreads).toHaveBeenCalled());
+        await waitFor(() => {
+            openMenu();
+            const item = screen.getByRole('menuitem', {name: 'Rename chat'}) as HTMLButtonElement;
+            expect(item.disabled).toBe(disabled);
+        });
+        expect((screen.getByRole('menuitem', {name: 'Archive chat'}) as HTMLButtonElement).disabled).toBe(disabled);
+    });
+
     test('name menu New chat calls onNewChat; Rename and Archive open their dialogs', async () => {
         const {onNewChat} = renderHeader({rootId: 'root1'});
         openMenu();
@@ -207,7 +225,7 @@ describe('AgentChatHeader', () => {
         await waitFor(() => expect(menuItems()).toContain('Quarterly plan'));
         expect(menuItems()).toEqual([
             'New chat', 'View all agents',
-            'Quarterly plan', 'New chat', 'Older chat',
+            'Listed chat', 'Quarterly plan', 'New chat', 'Older chat',
             'Rename chat', 'Archive chat',
         ]);
         const active = screen.getAllByRole('menuitem').filter((item) => item.getAttribute('aria-current') === 'true');

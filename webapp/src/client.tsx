@@ -571,11 +571,15 @@ export class FileUploadAbortedError extends Error {
 // channel_id, client_ids and the file as multipart form data), but over XHR so
 // the caller gets upload progress and can cancel. The returned FileInfo's id
 // goes into the post's file_ids.
+// A stalled upload fails instead of staying "uploading" forever.
+export const UPLOAD_TIMEOUT_MS = 5 * 60 * 1000;
+
 export function uploadFile(file: File, channelId: string, clientId: string, onProgress?: (percent: number) => void): FileUpload {
     const url = Client4.getFilesRoute();
     const xhr = new XMLHttpRequest();
     const promise = new Promise<FileInfo>((resolve, reject) => {
         xhr.open('POST', url, true);
+        xhr.timeout = UPLOAD_TIMEOUT_MS;
         const headers = Client4.getOptions({method: 'POST'}).headers as Record<string, string | undefined>;
         Object.entries(headers).forEach(([name, value]) => {
             if (value) {
@@ -613,6 +617,7 @@ export function uploadFile(file: File, channelId: string, clientId: string, onPr
             fail(body?.message || `File upload failed with status ${xhr.status}`);
         };
         xhr.onerror = () => fail('File upload failed: network error');
+        xhr.ontimeout = () => fail('File upload failed: timed out');
         xhr.onabort = () => reject(new FileUploadAbortedError());
 
         const formData = new FormData();
