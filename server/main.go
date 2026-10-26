@@ -418,10 +418,14 @@ func (p *Plugin) OnActivate() error {
 
 	// Create search service. It uses QuerySearch, which returns nil when the
 	// configured model and existing index are incompatible.
+	// One registry for every plugin-side reader, so semantic search and file
+	// content honor the scope of the sessions this node mints.
+	scopedSessions := scopedsession.NewRegistry(pluginAPI.Session.Get)
 	searchService := search.New(
 		searchAvailability.QuerySearch,
 		mmClient,
 		licenseChecker,
+		scopedSessions,
 	)
 
 	// Reinitialize embedding search on config changes and license changes.
@@ -469,7 +473,7 @@ func (p *Plugin) OnActivate() error {
 
 	// Embedded MCP is always available after PR #617, even if older configs still
 	// have the legacy toggle stored as false.
-	fileContentService := files.New(mmClient)
+	fileContentService := files.New(mmClient, scopedSessions)
 	var (
 		embeddedMu     sync.Mutex
 		embeddedServer *EmbeddedMCPServer
@@ -510,12 +514,7 @@ func (p *Plugin) OnActivate() error {
 	// embedded Mattermost server is connected at every level.
 	remoteMCPAllowed := func() bool { return licenseChecker.Allows(enterprise.CapRemoteMCP) }
 	mcpClientManager := mcp.NewClientManager(p.configuration.MCP(), pluginAPI.Log, pluginAPI, mcp.NewOAuthManager(mmClient, oauthCallbackURL, untrustedHTTPClient, serverConfigLookup), ensureEmbeddedMCPServer(), untrustedHTTPClient, mmClient, remoteMCPAllowed, accessChecker)
-	// One registry for every plugin-side reader, so semantic search and file
-	// content honor the scope of the sessions this node mints.
-	scopedSessions := scopedsession.NewRegistry(pluginAPI.Session.Get)
 	mcpClientManager.SetScopedSessions(scopedsession.NewPluginAPIMinter(p.API), scopedSessions)
-	searchService.SetScopeRegistry(scopedSessions)
-	fileContentService.SetScopeRegistry(scopedSessions)
 	reinitMCP := func() {
 		mcpClientManager.ReInit(p.configuration.MCP(), ensureEmbeddedMCPServer())
 	}
@@ -614,6 +613,7 @@ func (p *Plugin) OnActivate() error {
 		meetingsService,
 		indexerService,
 		searchService,
+		fileContentService,
 		pluginAPI,
 		metricsService,
 		contextBuilder,

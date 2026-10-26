@@ -31,6 +31,7 @@ type fixedPluginAPI struct {
 	kvGet       func(string) ([]byte, *model.AppError)
 	sessionByID map[string]*model.Session
 	userByID    map[string]*model.User
+	channelErrs map[string]*model.AppError
 }
 
 func (f *fixedPluginAPI) LogDebug(string, ...any) {}
@@ -65,6 +66,13 @@ func (f *fixedPluginAPI) GetSession(sessionID string) (*model.Session, *model.Ap
 		return nil, nil
 	}
 	return f.sessionByID[sessionID], nil
+}
+
+func (f *fixedPluginAPI) GetChannel(channelID string) (*model.Channel, *model.AppError) {
+	if appErr := f.channelErrs[channelID]; appErr != nil {
+		return nil, appErr
+	}
+	return &model.Channel{Id: channelID, Type: model.ChannelTypeOpen}, nil
 }
 
 func (f *fixedPluginAPI) GetUser(userID string) (*model.User, *model.AppError) {

@@ -274,7 +274,7 @@ func TestGetContent(t *testing.T) {
 				).Return(true)
 			}
 			tt.setup(m)
-			svc := New(m)
+			svc := New(m, unscopedSessions())
 
 			ctx := auth.WithSessionID(t.Context(), sessionID)
 			c, err := svc.GetContent(ctx, userID, tt.fileID, tt.offset, tt.limit)
@@ -326,7 +326,7 @@ func TestGetContentDeniedByFilePolicy(t *testing.T) {
 				Maybe()
 
 			ctx := auth.WithSessionID(t.Context(), tt.sessionID)
-			_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+			_, err := New(m, unscopedSessions()).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
 
 			assert.ErrorIs(t, err, ErrForbidden)
 			assert.False(t, adminReadCalled, "admin GetFile must not run after the file-action policy denies access")
@@ -369,7 +369,7 @@ func TestGetContentDeniedOnContentRead(t *testing.T) {
 		Maybe()
 
 	ctx := auth.WithSessionID(t.Context(), sessionID)
-	_, err := New(m).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
+	_, err := New(m, unscopedSessions()).GetContent(ctx, userID, fileID, 0, DefaultReadRunes)
 
 	require.ErrorIs(t, err, ErrForbidden)
 	require.False(t, adminContentRead, "admin GetFile must not run after the content-read policy check denies access")
@@ -430,8 +430,7 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 				m.EXPECT().RolesGrantPermission([]string{model.SystemUserRoleId}, model.PermissionJoinPublicTeams.Id).Return(!tt.noJoin)
 			}
 
-			svc := New(m)
-			svc.SetScopeRegistry(registry)
+			svc := New(m, registry)
 			content, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
 			if !tt.allowed {
 				require.ErrorIs(t, err, ErrForbidden)
@@ -448,9 +447,15 @@ func TestGetContentUnderScopedSession(t *testing.T) {
 		registry.Register(session, scope)
 		registry.Revoke(session.Id)
 
-		svc := New(mocks.NewMockClient(t))
-		svc.SetScopeRegistry(registry)
+		svc := New(mocks.NewMockClient(t), registry)
 		_, err := svc.GetContent(auth.WithSessionID(t.Context(), session.Id), botID, fileID, 0, DefaultReadRunes)
 		require.ErrorIs(t, err, scopedsession.ErrRevoked)
+	})
+}
+
+// unscopedSessions resolves every session as a regular, unscoped one.
+func unscopedSessions() *scopedsession.Registry {
+	return scopedsession.NewRegistry(func(id string) (*model.Session, error) {
+		return &model.Session{Id: id}, nil
 	})
 }

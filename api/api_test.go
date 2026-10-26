@@ -947,6 +947,7 @@ func SetupTestEnvironment(t *testing.T) *TestEnvironment {
 		nil,
 		nil,
 		nil,
+		nil,
 		client,
 		noopMetrics,
 		contextBuilder,
@@ -1581,7 +1582,7 @@ func TestHandleGetAIBots(t *testing.T) {
 			name: "search enabled - non-nil service with non-nil embedding search",
 			searchService: func() *search.Search {
 				me := mocks.NewMockEmbeddingSearch(t)
-				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise))
+				return search.New(func() embeddings.EmbeddingSearch { return me }, nil, enterprisetest.CheckerAt(enterprise.LevelEnterprise), unscopedSessions())
 			}(),
 			expectedSearchEnabled:    true,
 			expectedAllowUnsafeLinks: false,
@@ -1592,7 +1593,7 @@ func TestHandleGetAIBots(t *testing.T) {
 		},
 		{
 			name:                     "search disabled - non-nil service with nil embedding search",
-			searchService:            search.New(nil, nil, nil),
+			searchService:            search.New(nil, nil, nil, unscopedSessions()),
 			expectedSearchEnabled:    false,
 			expectedAllowUnsafeLinks: false,
 			expectedStatus:           http.StatusOK,

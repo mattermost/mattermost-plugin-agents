@@ -15,125 +15,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestAllowsChannelContent covers what the plugin adds on top of
+// model.SessionScopeAllowsChannel, which the server tests: the content
+// permission, and passing the open-team switch through.
 func TestAllowsChannelContent(t *testing.T) {
 	triggerID := model.NewId()
 	openTeam := &model.Team{Id: model.NewId(), AllowOpenInvite: true}
+	openPublic := &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen}
+	listed := &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate}
 	scope := &model.SessionScope{
 		Permissions: model.ScopeReadPermissions,
 		Resources:   model.SessionScopeResources{ChannelIDs: []string{triggerID}, OpenTeamPublicChannels: true},
 	}
 
 	tests := []struct {
-		name       string
-		scope      *model.SessionScope
-		channel    *model.Channel
-		team       *model.Team
-		compliance bool
-		allowed    bool
+		name                  string
+		scope                 *model.SessionScope
+		channel               *model.Channel
+		team                  *model.Team
+		openTeamGrantDisabled bool
+		allowed               bool
 	}{
-		{
-			name:    "listed private channel the bot is not in",
-			scope:   scope,
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
-			allowed: true,
-		},
-		{
-			name:    "public channel on an open team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen},
-			team:    openTeam,
-			allowed: true,
-		},
-		{
-			name:    "private channel on an open team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypePrivate},
-			team:    openTeam,
-		},
-		{
-			name:    "public channel on an invite-only team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "closed", Type: model.ChannelTypeOpen},
-			team:    &model.Team{Id: "closed"},
-		},
-		{
-			name:    "public channel on a team restricted to email domains",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "domains", Type: model.ChannelTypeOpen},
-			team:    &model.Team{Id: "domains", AllowOpenInvite: true, AllowedDomains: "example.com"},
-		},
-		{
-			name:    "public channel on a group-constrained team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "groups", Type: model.ChannelTypeOpen},
-			team:    &model.Team{Id: "groups", AllowOpenInvite: true, GroupConstrained: new(true)},
-		},
-		{
-			name:    "public channel on a policy-enforced team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "policy", Type: model.ChannelTypeOpen},
-			team:    &model.Team{Id: "policy", AllowOpenInvite: true, PolicyEnforced: true},
-		},
-		{
-			name:    "public channel on a deleted team",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "gone", Type: model.ChannelTypeOpen},
-			team:    &model.Team{Id: "gone", AllowOpenInvite: true, DeleteAt: 1},
-		},
-		{
-			name:       "open-team public channel with compliance mode on",
-			scope:      scope,
-			channel:    &model.Channel{Id: model.NewId(), TeamId: openTeam.Id, Type: model.ChannelTypeOpen},
-			team:       openTeam,
-			compliance: true,
-		},
-		{
-			name:       "listed channel with compliance mode on",
-			scope:      scope,
-			channel:    &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
-			compliance: true,
-			allowed:    true,
-		},
-		{
-			name:    "listed DM",
-			scope:   &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{triggerID}}},
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypeDirect},
-		},
-		{
-			name:    "listed group message",
-			scope:   &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: model.SessionScopeResources{ChannelIDs: []string{triggerID}}},
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypeGroup},
-		},
-		{
-			name:    "listed channel under an access policy",
-			scope:   scope,
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate, PolicyEnforced: true},
-		},
-		{
-			name:    "listed deleted channel",
-			scope:   scope,
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate, DeleteAt: 1},
-		},
-		{
-			name:    "team that does not own the channel",
-			scope:   scope,
-			channel: &model.Channel{Id: model.NewId(), TeamId: "other", Type: model.ChannelTypeOpen},
-			team:    openTeam,
-		},
-		{
-			name:    "scope without the content permission",
-			scope:   &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources},
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
-		},
-		{
-			name:    "empty scope from a malformed prop",
-			scope:   &model.SessionScope{},
-			channel: &model.Channel{Id: triggerID, Type: model.ChannelTypePrivate},
-		},
+		{name: "listed private channel the bot is not in", scope: scope, channel: listed, allowed: true},
+		{name: "public channel on an open team", scope: scope, channel: openPublic, team: openTeam, allowed: true},
+		{name: "public channel on an open team with the grant off", scope: scope, channel: openPublic, team: openTeam, openTeamGrantDisabled: true},
+		{name: "listed channel with the open-team grant off", scope: scope, channel: listed, openTeamGrantDisabled: true, allowed: true},
+		{name: "scope without the content permission", scope: &model.SessionScope{Permissions: []string{model.PermissionViewTeam.Id}, Resources: scope.Resources}, channel: listed},
+		{name: "empty scope from a malformed prop", scope: &model.SessionScope{}, channel: listed},
+		{name: "no scope", channel: listed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.allowed, AllowsChannelContent(tt.scope, tt.channel, tt.team, tt.compliance))
+			assert.Equal(t, tt.allowed, AllowsChannelContent(tt.scope, tt.channel, tt.team, tt.openTeamGrantDisabled))
 		})
 	}
 }
@@ -141,18 +54,18 @@ func TestAllowsChannelContent(t *testing.T) {
 func TestContentChannels(t *testing.T) {
 	resources := model.SessionScopeResources{ChannelIDs: []string{"a", "b"}, OpenTeamPublicChannels: true}
 	tests := []struct {
-		name       string
-		scope      *model.SessionScope
-		compliance bool
-		expected   model.SessionScopeResources
+		name                  string
+		scope                 *model.SessionScope
+		openTeamGrantDisabled bool
+		expected              model.SessionScopeResources
 	}{
 		{name: "full scope", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, expected: resources},
-		{name: "compliance drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, compliance: true, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
+		{name: "open-team grant off drops open teams", scope: &model.SessionScope{Permissions: model.ScopeReadPermissions, Resources: resources}, openTeamGrantDisabled: true, expected: model.SessionScopeResources{ChannelIDs: []string{"a", "b"}}},
 		{name: "no content permission reads nothing", scope: &model.SessionScope{Resources: resources}, expected: model.SessionScopeResources{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, ContentChannels(tt.scope, tt.compliance))
+			assert.Equal(t, tt.expected, ContentChannels(tt.scope, tt.openTeamGrantDisabled))
 		})
 	}
 }
@@ -200,9 +113,12 @@ func TestRegistryScopeForSession(t *testing.T) {
 	revoked := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
 	registry.Register(revoked, mintedScope)
 	registry.Revoke(revoked.Id)
+	created := &model.Session{Id: model.NewId(), ExpiresAt: model.GetMillis() + 60_000}
+	registry.Register(created, nil)
 
 	tests := []struct {
 		name      string
+		registry  *Registry
 		sessionID string
 		expected  *model.SessionScope
 		wantErr   error
@@ -213,10 +129,16 @@ func TestRegistryScopeForSession(t *testing.T) {
 		{name: "unscoped session", sessionID: normal.Id},
 		{name: "no session", sessionID: ""},
 		{name: "failed lookup is an error, not unscoped", sessionID: model.NewId(), wantErr: lookupErr},
+		{name: "unscoped session registered on this node needs no lookup", sessionID: created.Id},
+		{name: "no registry fails a read under a session", registry: (*Registry)(nil), sessionID: normal.Id, wantErr: ErrNoRegistry},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scope, scopeErr := registry.ScopeFromContext(auth.WithSessionID(context.Background(), tt.sessionID))
+			r := registry
+			if tt.registry != nil || tt.wantErr == ErrNoRegistry {
+				r = tt.registry
+			}
+			scope, scopeErr := r.ScopeFromContext(auth.WithSessionID(context.Background(), tt.sessionID))
 			if tt.wantErr != nil {
 				require.ErrorIs(t, scopeErr, tt.wantErr)
 				assert.Nil(t, scope)

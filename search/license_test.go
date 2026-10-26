@@ -20,7 +20,7 @@ func TestSearchServiceLicenseGate(t *testing.T) {
 
 	for _, level := range enterprisetest.AllLevels {
 		t.Run(level.String(), func(t *testing.T) {
-			s := New(getSearch, nil, enterprisetest.CheckerAt(level))
+			s := New(getSearch, nil, enterprisetest.CheckerAt(level), unscopedSessions())
 			licensed := level >= enterprise.LevelEnterprise
 			require.Equal(t, licensed, s.Enabled())
 
@@ -37,7 +37,7 @@ func TestSearchServiceLicenseGate(t *testing.T) {
 	}
 
 	t.Run("nil checker fails closed", func(t *testing.T) {
-		s := New(getSearch, nil, nil)
+		s := New(getSearch, nil, nil, unscopedSessions())
 		require.False(t, s.Enabled())
 		_, err := s.Search(t.Context(), "hello", Options{Limit: 5})
 		var licErr *enterprise.LicenseError

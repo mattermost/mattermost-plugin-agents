@@ -70,6 +70,7 @@ func (m *ClientManager) ensureEmbeddedSession(userID string) (*model.Session, bo
 		return nil, false, reuseErr
 	}
 	if reused != nil {
+		m.registerEmbeddedSession(reused)
 		return reused, renewed, nil
 	}
 
@@ -77,7 +78,19 @@ func (m *ClientManager) ensureEmbeddedSession(userID string) (*model.Session, bo
 	if err != nil {
 		return nil, false, err
 	}
+	m.registerEmbeddedSession(session)
 	return session, true, nil
+}
+
+// registerEmbeddedSession tells the scope registry about a per-user embedded
+// session, so plugin-side reads under it don't look the session up on the
+// server, where a just-created session can be missing from the read replica.
+func (m *ClientManager) registerEmbeddedSession(session *model.Session) {
+	m.scopedMu.Lock()
+	registry := m.scopedRegistry
+	m.scopedMu.Unlock()
+	scope, _ := session.Scope()
+	registry.Register(session, scope)
 }
 
 // tryReuseEmbeddedSession returns the stored session when still usable. The
@@ -110,6 +123,7 @@ func (m *ClientManager) tryReuseEmbeddedSession(userID string) (*model.Session, 
 	newExpiry := time.Now().Add(m.sessionLengthDuration()).UnixMilli()
 	if err := m.pluginAPI.Session.ExtendExpiry(stored, newExpiry); err == nil {
 		m.log.Debug("Extended embedded session expiry", "userID", userID)
+		sess.ExpiresAt = newExpiry
 		return sess, true, nil
 	}
 

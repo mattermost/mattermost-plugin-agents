@@ -43,7 +43,8 @@ func NewRegistry(getSession SessionGetter) *Registry {
 	return &Registry{getSession: getSession, sessions: make(map[string]registered)}
 }
 
-// Register records a session this node minted with scope.
+// Register records a session this node minted or created with its scope; a
+// nil scope records an unscoped session.
 func (r *Registry) Register(session *model.Session, scope *model.SessionScope) {
 	if r == nil || session == nil || session.Id == "" {
 		return
@@ -77,12 +78,20 @@ func (r *Registry) sweepLocked(now int64) {
 	}
 }
 
+// ErrNoRegistry is returned when a read under a session has no registry to
+// resolve that session's scope.
+var ErrNoRegistry = errors.New("no scoped session registry configured")
+
 // ScopeForSession returns the session's scope, or nil for an unscoped
 // session. An empty sessionID is unscoped: scoped sessions always reach
-// plugin services with their session ID.
+// plugin services with their session ID. A nil registry cannot tell, so it
+// fails every read under a session.
 func (r *Registry) ScopeForSession(sessionID string) (*model.SessionScope, error) {
-	if r == nil || sessionID == "" {
+	if sessionID == "" {
 		return nil, nil
+	}
+	if r == nil {
+		return nil, ErrNoRegistry
 	}
 
 	r.mu.Lock()

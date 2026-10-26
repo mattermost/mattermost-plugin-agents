@@ -4,15 +4,20 @@
 package mcp
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/scopedsession"
+	"github.com/mattermost/mattermost-plugin-agents/v2/telemetry"
 	"github.com/mattermost/mattermost/server/public/model"
+	"github.com/mattermost/mattermost/server/public/pluginapi"
+	"go.opentelemetry.io/otel/codes"
 )
 
 // ErrScopedSessionsUnavailable is returned when this plugin instance has no
@@ -44,6 +49,7 @@ type ScopedRun struct {
 	registry *scopedsession.Registry
 	closeErr error
 	once     sync.Once
+	closed   atomic.Bool
 }
 
 // Session returns the run's scoped session.
@@ -62,6 +68,20 @@ func (r *ScopedRun) Scope() *model.SessionScope {
 	return r.scope
 }
 
+// ExtraChannelIDs returns the admin-picked channels in the run's scope,
+// besides the channel the run was triggered in.
+func (r *ScopedRun) ExtraChannelIDs() []string {
+	if r == nil || r.scope == nil || len(r.scope.Resources.ChannelIDs) < 2 {
+		return nil
+	}
+	return slices.Clone(r.scope.Resources.ChannelIDs[1:])
+}
+
+// Closed reports whether the run has ended, by its owner or by revocation.
+func (r *ScopedRun) Closed() bool {
+	return r == nil || r.closed.Load()
+}
+
 // BotUserID returns the bot the run's session belongs to.
 func (r *ScopedRun) BotUserID() string {
 	if r == nil || r.session == nil {
@@ -77,6 +97,7 @@ func (r *ScopedRun) Close() error {
 		return nil
 	}
 	r.once.Do(func() {
+		r.closed.Store(true)
 		r.registry.Revoke(r.session.Id)
 		r.manager.forgetScopedRun(r)
 		r.clients.Close()
@@ -102,7 +123,18 @@ func (m *ClientManager) SetScopedSessions(minter scopedsession.Minter, registry 
 // read req's channel, its extra channels, and every public channel on an open
 // team, and nothing else. The caller owns the run and must Close it when the
 // run ends.
-func (m *ClientManager) MintScopedSession(req ScopedSessionRequest) (*ScopedRun, error) {
+func (m *ClientManager) MintScopedSession(ctx context.Context, req ScopedSessionRequest) (*ScopedRun, error) {
+	_, span := telemetry.Tracer().Start(ctx, "mcp mint scoped session")
+	defer span.End()
+	run, err := m.mintScopedSession(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "scoped session mint failed")
+	}
+	return run, err
+}
+
+func (m *ClientManager) mintScopedSession(req ScopedSessionRequest) (*ScopedRun, error) {
 	for name, id := range map[string]string{"bot user": req.BotUserID, "requester": req.RequesterID, "channel": req.ChannelID} {
 		if !model.IsValidId(id) {
 			return nil, fmt.Errorf("scoped session %s ID is invalid", name)
@@ -131,7 +163,22 @@ func (m *ClientManager) MintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 		OnBehalfOfUserID: req.RequesterID,
 	}
 
-	session, err := minter.CreateScopedSession(req.BotUserID, scope, time.Now().Add(scopedsession.RunTTL).UnixMilli())
+	expiresAt := time.Now().Add(scopedsession.RunTTL).UnixMilli()
+	session, err := minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
+	if err != nil && len(channelIDs) > 1 {
+		// The server refuses the whole scope when a listed channel no longer
+		// exists, so a deleted extra channel would end every run of the agent.
+		existing, lookupErr := m.dropMissingExtraChannels(channelIDs)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("failed to create scoped session: %w", errors.Join(err, lookupErr))
+		}
+		if len(existing) < len(channelIDs) {
+			m.log.Warn("Scoped channel mode lists channels that no longer exist; leaving them out of the run's scope",
+				"botUserID", req.BotUserID, "missingChannelCount", len(channelIDs)-len(existing))
+			scope.Resources.ChannelIDs = existing
+			session, err = minter.CreateScopedSession(req.BotUserID, scope, expiresAt)
+		}
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create scoped session: %w", err)
 	}
@@ -165,17 +212,36 @@ func (m *ClientManager) MintScopedSession(req ScopedSessionRequest) (*ScopedRun,
 	return run, nil
 }
 
+// dropMissingExtraChannels returns channelIDs without the extra channels that
+// no longer exist. The triggering channel, first, is always kept. A lookup
+// that fails for any other reason is an error.
+func (m *ClientManager) dropMissingExtraChannels(channelIDs []string) ([]string, error) {
+	existing := []string{channelIDs[0]}
+	for _, id := range channelIDs[1:] {
+		_, err := m.pluginAPI.Channel.Get(id)
+		switch {
+		case errors.Is(err, pluginapi.ErrNotFound):
+			continue
+		case err != nil:
+			return nil, fmt.Errorf("failed to look up scoped extra channel: %w", err)
+		}
+		existing = append(existing, id)
+	}
+	return existing, nil
+}
+
 func (m *ClientManager) forgetScopedRun(run *ScopedRun) {
 	m.scopedMu.Lock()
 	defer m.scopedMu.Unlock()
 	delete(m.scopedRuns, run)
 }
 
-// RevokeScopedSessionsForBot ends every live scoped run of botUserID on this
-// node, for when the agent's scoped mode is turned off or its bot goes away.
-func (m *ClientManager) RevokeScopedSessionsForBot(botUserID string) {
+// RevokeScopedSessionsWhere ends every live scoped run on this node that
+// lapsed reports true for, for when an agent's scoped mode is turned off or
+// narrowed, or its bot goes away.
+func (m *ClientManager) RevokeScopedSessionsWhere(lapsed func(run *ScopedRun) bool) {
 	for _, run := range m.liveScopedRuns() {
-		if run.BotUserID() == botUserID {
+		if lapsed(run) {
 			_ = run.Close()
 		}
 	}
