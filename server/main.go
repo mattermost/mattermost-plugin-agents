@@ -522,6 +522,7 @@ func (p *Plugin) OnActivate() error {
 		&p.configuration,
 	)
 	contextBuilder.SetMCPDynamicToolTelemetry(metricsService)
+	contextBuilder.SetGenerativeUIEnabled(p.configuration.EnableGenerativeUI)
 
 	policyChecker := mcp.NewConfigToolPolicyChecker(p.configuration.MCP, func() bool {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)

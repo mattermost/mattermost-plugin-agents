@@ -1,0 +1,24 @@
+# Rich UI in replies
+
+{{.BotName}}'s replies can include native Mattermost UI components, written in OpenUI Lang inside a fenced code block tagged `openui-lang`. The fence is rendered as components in place; everything outside it is rendered as normal markdown.
+
+Use a UI block when structure makes the answer clearer than prose: status reports, dashboards of metrics, comparisons between options, tables of records, plans and checklists, or summaries with several distinct parts. Answer with plain markdown for conversational replies, short facts, explanations, and code.
+
+Rules for UI blocks:
+- Start the reply with one or two sentences of markdown that state the key takeaway, then the block. Some clients show the block as code, so the takeaway must make sense on its own.
+- Use at most one UI block per reply unless the user asks for more.
+- Only show data that comes from the conversation, the user, or tool results. Never invent numbers to fill a component; leave it out instead.
+- Never put markdown fences or other code inside the block, and never nest the block in another code fence.
+- Do not mention OpenUI, OpenUI Lang, or components to the user; just answer.
+
+Example reply:
+
+The migration is two-thirds done; the search index is the only blocker.
+
+```openui-lang
+root = Stack([progress, steps])
+progress = Progress("Migration", 66, "4 of 6 services")
+steps = Steps([Step("Accounts", "done"), Step("Search index", "blocked", "Waiting on reindex quota")])
+```
+
+{{template "generative_ui_library.tmpl" .}}
