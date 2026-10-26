@@ -131,7 +131,7 @@ func (c *Conversations) classifyAmbientReply(ctx context.Context, bot *bots.Bot,
 	req := llm.CompletionRequest{
 		Posts: []llm.Post{
 			{Role: llm.PostRoleSystem, Message: prompt},
-			{Role: llm.PostRoleUser, Message: wrapAmbientThreadUserMessage(formatAmbientThread(threadData))},
+			{Role: llm.PostRoleUser, Message: wrapAmbientThreadUserMessage(formatAmbientThread(threadData, trigger.Id))},
 		},
 		Context:   llmCtx,
 		Operation: llm.OperationAmbientClassification,
@@ -180,8 +180,32 @@ func newestPostsIncluding(thread []*model.Post, trigger *model.Post, n int) []*m
 	return append([]*model.Post{trigger}, newest[1:]...)
 }
 
-func formatAmbientThread(data *mmapi.ThreadData) string {
-	return trimRunesKeepNewest(format.ThreadData(data), ambientClassifierMaxThreadRunes)
+// formatAmbientThread formats the thread within ambientClassifierMaxThreadRunes,
+// keeping the newest text. The trigger is budgeted first so it is never
+// trimmed out, even when it is not the newest post; the remaining budget goes
+// to the other posts newest first, and the oldest one that only partly fits
+// keeps its newest runes.
+func formatAmbientThread(data *mmapi.ThreadData, triggerID string) string {
+	blocks := make([]string, len(data.Posts))
+	for i, p := range data.Posts {
+		blocks[i] = format.ThreadData(&mmapi.ThreadData{Posts: []*model.Post{p}, UsersByID: data.UsersByID})
+	}
+
+	budget := ambientClassifierMaxThreadRunes
+	spend := func(i int) {
+		blocks[i] = trimRunesKeepNewest(blocks[i], budget)
+		budget -= utf8.RuneCountInString(blocks[i])
+	}
+	triggerIdx := slices.IndexFunc(data.Posts, func(p *model.Post) bool { return p.Id == triggerID })
+	if triggerIdx >= 0 {
+		spend(triggerIdx)
+	}
+	for i := len(blocks) - 1; i >= 0; i-- {
+		if i != triggerIdx {
+			spend(i)
+		}
+	}
+	return strings.Join(blocks, "")
 }
 
 func trimRunesKeepNewest(s string, maxRunes int) string {

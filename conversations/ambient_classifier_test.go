@@ -14,6 +14,7 @@ import (
 
 	"github.com/mattermost/mattermost-plugin-agents/v2/autoreply"
 	"github.com/mattermost/mattermost-plugin-agents/v2/bots"
+	"github.com/mattermost/mattermost-plugin-agents/v2/format"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llmcontext"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
@@ -82,16 +83,72 @@ func TestNewestPostsIncluding(t *testing.T) {
 	}
 }
 
-func TestFormatAmbientThreadKeepsNewestRunes(t *testing.T) {
+func TestFormatAmbientThread(t *testing.T) {
 	users := map[string]*model.User{"u": {Id: "u", Username: "alice"}}
-	old := &model.Post{Id: "old", UserId: "u", Message: strings.Repeat("Ö", ambientClassifierMaxThreadRunes), CreateAt: 1}
-	newest := &model.Post{Id: "new", UserId: "u", Message: "NEWEST-TAIL", CreateAt: 2}
+	post := func(id, msg string, createAt int64) *model.Post {
+		return &model.Post{Id: id, UserId: "u", Message: msg, CreateAt: createAt}
+	}
+	filler := strings.Repeat("Ö", ambientClassifierMaxThreadRunes)
 
-	formatted := formatAmbientThread(&mmapi.ThreadData{Posts: []*model.Post{old, newest}, UsersByID: users})
+	tests := []struct {
+		name      string
+		posts     []*model.Post
+		triggerID string
+		// wantFrontTrim asserts the output equals the whole thread with its
+		// oldest runes trimmed.
+		wantFrontTrim bool
+		wantContains  []string
+		wantOmits     []string
+	}{
+		{
+			name:          "short thread is kept whole",
+			posts:         []*model.Post{post("a", "FIRST", 1), post("b", "SECOND", 2)},
+			triggerID:     "b",
+			wantFrontTrim: true,
+			wantContains:  []string{"FIRST", "SECOND"},
+		},
+		{
+			name:          "newest trigger keeps the newest runes of the thread",
+			posts:         []*model.Post{post("old", "OLDEST-HEAD"+filler, 1), post("new", "NEWEST-TAIL", 2)},
+			triggerID:     "new",
+			wantFrontTrim: true,
+			wantContains:  []string{"NEWEST-TAIL"},
+			wantOmits:     []string{"OLDEST-HEAD"},
+		},
+		{
+			name:         "an older trigger is kept ahead of newer posts that fill the budget",
+			posts:        []*model.Post{post("trigger", "TRIGGER-MARKER", 1), post("mid", "MIDDLE-HEAD"+filler, 2), post("new", "NEWEST-TAIL", 3)},
+			triggerID:    "trigger",
+			wantContains: []string{"TRIGGER-MARKER", "NEWEST-TAIL"},
+			wantOmits:    []string{"MIDDLE-HEAD"},
+		},
+		{
+			name:         "a trigger over the budget keeps its newest runes and crowds out the rest",
+			posts:        []*model.Post{post("old", "OTHER-POST", 1), post("trigger", "TRIGGER-HEAD"+filler+"TRIGGER-TAIL", 2)},
+			triggerID:    "trigger",
+			wantContains: []string{"TRIGGER-TAIL"},
+			wantOmits:    []string{"TRIGGER-HEAD", "OTHER-POST"},
+		},
+	}
 
-	require.Equal(t, ambientClassifierMaxThreadRunes, utf8.RuneCountInString(formatted))
-	require.True(t, utf8.ValidString(formatted))
-	require.Contains(t, formatted, "NEWEST-TAIL")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := &mmapi.ThreadData{Posts: tc.posts, UsersByID: users}
+			formatted := formatAmbientThread(data, tc.triggerID)
+
+			require.LessOrEqual(t, utf8.RuneCountInString(formatted), ambientClassifierMaxThreadRunes)
+			require.True(t, utf8.ValidString(formatted))
+			if tc.wantFrontTrim {
+				require.Equal(t, trimRunesKeepNewest(format.ThreadData(data), ambientClassifierMaxThreadRunes), formatted)
+			}
+			for _, needle := range tc.wantContains {
+				require.Contains(t, formatted, needle)
+			}
+			for _, needle := range tc.wantOmits {
+				require.NotContains(t, formatted, needle)
+			}
+		})
+	}
 }
 
 func TestAmbientThreadPosts(t *testing.T) {

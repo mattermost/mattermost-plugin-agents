@@ -291,6 +291,39 @@ func TestAmbientAutoReply(t *testing.T) {
 			promptContains: []string{"NEWEST-AMBIENT-MARKER"},
 			promptOmits:    []string{"OLDEST-AMBIENT-MARKER"},
 		},
+		{
+			name:           "a trigger older than the newest posts is never trimmed out",
+			mode:           autoreply.ModeAmbient,
+			classifierJSON: falseJSON,
+			setup: func(env *autoReplyTestEnv) {
+				posts := make([]*model.Post, 0, 25)
+				for i := range 25 {
+					msg := fmt.Sprintf("ambient-post-%d %s", i, strings.Repeat("x", 1000))
+					switch i {
+					case 1:
+						msg = "TRIGGER-AMBIENT-MARKER"
+					case 24:
+						msg = "NEWEST-AMBIENT-MARKER"
+					}
+					posts = append(posts, &model.Post{
+						Id:        fmt.Sprintf("amb-%d", i),
+						ChannelId: autoReplyChannelID,
+						UserId:    autoReplyUserID,
+						CreateAt:  int64(1000 + i),
+						Message:   msg,
+						RootId:    "amb-0",
+					})
+				}
+				posts[0].RootId = ""
+				env.setThread("amb-0", posts...)
+			},
+			buildPost: func(env *autoReplyTestEnv) *model.Post {
+				return env.mmClient.postThreads["amb-0"].Posts["amb-1"]
+			},
+			expectClassify: true,
+			promptContains: []string{"TRIGGER-AMBIENT-MARKER", "NEWEST-AMBIENT-MARKER"},
+			promptOmits:    []string{"ambient-post-6 "},
+		},
 	}
 
 	for _, tc := range tests {
