@@ -141,6 +141,8 @@ func (env *scopedTestEnv) auditRecords(event string) []*model.AuditRecord {
 // its session is minted and before streaming starts.
 type scopedEnvOpts struct {
 	streamingErr error
+	// onToolRun runs inside the tool, while the turn is in flight.
+	onToolRun func(env *scopedTestEnv)
 }
 
 func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts, llmResponses ...*llm.TextStreamResult) *scopedTestEnv {
@@ -181,8 +183,11 @@ func setupScopedTestEnv(t *testing.T, channel *model.Channel, opts scopedEnvOpts
 		Schema:       llm.NewJSONSchemaFromStruct[struct{}](),
 		Resolver: func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
 			env.runsMu.Lock()
-			defer env.runsMu.Unlock()
 			env.toolRuns++
+			env.runsMu.Unlock()
+			if opts.onToolRun != nil {
+				opts.onToolRun(env)
+			}
 			return "JIRA-1 is the evidence", nil
 		},
 	}
@@ -388,6 +393,26 @@ func TestScopedChannelTurnResumes(t *testing.T) {
 		assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 3)
 		assert.Equal(t, 0, env.catalog.unscoped)
 	})
+}
+
+// When the agent's scoped mode lapses mid-run, the run's remaining tool calls
+// wait for approval instead of running.
+func TestScopedChannelTurnStopsAutoRunningWhenRevoked(t *testing.T) {
+	first := []llm.ToolCall{{ID: "call-1", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	second := []llm.ToolCall{{ID: "call-2", Name: scopedToolName, ServerOrigin: scopedRemote, Arguments: json.RawMessage(`{}`)}}
+	channel := &model.Channel{Id: scopedChannelID, TeamId: scopedTeamID, Type: model.ChannelTypeOpen, Name: "town-square"}
+	revokeAll := func(env *scopedTestEnv) {
+		env.catalog.RevokeScopedSessionsWhere(func(*mcp.ScopedRun) bool { return true })
+	}
+
+	env := setupScopedTestEnv(t, channel, scopedEnvOpts{onToolRun: revokeAll},
+		dmMakeToolCallStream(first), dmMakeToolCallStream(second), dmMakeTextStream("done"))
+
+	assert.Equal(t, 1, env.runs(), "only the call made before the revocation runs")
+	assert.Len(t, env.auditRecords(audit.EventAgentScopedToolCall), 1)
+	toolUse, _ := scopedToolBlocks(t, env)
+	require.Len(t, toolUse, 1, "the call after the revocation waits for approval")
+	assert.Equal(t, "call-1", toolUse[0].ID)
 }
 
 // A run that fails after its session was minted still revokes it.
