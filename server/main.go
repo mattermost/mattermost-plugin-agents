@@ -528,13 +528,13 @@ func (p *Plugin) OnActivate() error {
 		return licenseChecker.Allows(enterprise.CapToolApprovalPolicies)
 	})
 
-	// End live scoped runs as soon as their agent can no longer run scoped:
-	// the setting was turned off, the bot went away, or a prerequisite lapsed.
+	// End live scoped runs as soon as their agent can no longer run scoped
+	// (the setting was turned off, the bot went away, or a prerequisite
+	// lapsed) or no longer lists an extra channel the run can read.
 	// Every node reloads its registry and config, so this runs on each one.
 	revokeLapsedScopedRuns := func() {
 		mcpClientManager.RevokeScopedSessionsWhere(func(run *mcp.ScopedRun) bool {
-			bot := bots.GetBotByID(run.BotUserID())
-			return bot == nil || !contextBuilder.ScopedChannelModeAvailable(bot)
+			return contextBuilder.ScopedRunLapsed(bots.GetBotByID(run.BotUserID()), run)
 		})
 	}
 	bots.AddRegistryListener(revokeLapsedScopedRuns)

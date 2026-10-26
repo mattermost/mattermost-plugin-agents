@@ -345,6 +345,19 @@ func (b *Builder) ScopedChannelModeAvailable(bot *bots.Bot) bool {
 		b.ServerSupportsScopedSessions()
 }
 
+// ScopedRunLapsed reports whether a live scoped run of bot must end: the agent
+// can no longer run scoped, or the run can read an extra channel the agent no
+// longer lists.
+func (b *Builder) ScopedRunLapsed(bot *bots.Bot, run *mcp.ScopedRun) bool {
+	if bot == nil || !b.ScopedChannelModeAvailable(bot) {
+		return true
+	}
+	extras := bot.GetConfig().ScopedExtraChannelIDs
+	return slices.ContainsFunc(run.ExtraChannelIDs(), func(id string) bool {
+		return !slices.Contains(extras, id)
+	})
+}
+
 // ServerSupportsScopedSessions reports whether the Mattermost server can mint
 // scoped sessions, as probed when the plugin started on this node.
 func (b *Builder) ServerSupportsScopedSessions() bool {
