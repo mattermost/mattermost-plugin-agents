@@ -177,3 +177,69 @@ describe('FindAgentsButton and modal', () => {
         expect(push).not.toHaveBeenCalled();
     });
 });
+
+describe('Find agents keyboard shortcut', () => {
+    const setPlatform = (platform: string) => jest.spyOn(window.navigator, 'platform', 'get').mockReturnValue(platform);
+
+    beforeEach(() => {
+        mockGetThreads.mockResolvedValue([]);
+        window.WebappUtils = {browserHistory: {location: {pathname: '/plug/mattermost-ai/agents'}, push}} as any;
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    const cases: Array<{name: string; platform: string; init: KeyboardEventInit; opens: boolean; hint: string}> = [
+        {name: 'Cmd+K on Mac', platform: 'MacIntel', init: {key: 'k', metaKey: true}, opens: true, hint: '\u2318K'},
+        {name: 'Ctrl+K on Mac is left alone', platform: 'MacIntel', init: {key: 'k', ctrlKey: true}, opens: false, hint: '\u2318K'},
+        {name: 'Ctrl+K on Windows', platform: 'Win32', init: {key: 'k', ctrlKey: true}, opens: true, hint: 'Ctrl+K'},
+        {name: 'Ctrl+K on Linux', platform: 'Linux x86_64', init: {key: 'K', code: 'KeyK', ctrlKey: true}, opens: true, hint: 'Ctrl+K'},
+        {name: 'Win+K on Windows is left alone', platform: 'Win32', init: {key: 'k', metaKey: true}, opens: false, hint: 'Ctrl+K'},
+        {name: 'Ctrl+Shift+K does not open', platform: 'Win32', init: {key: 'K', ctrlKey: true, shiftKey: true}, opens: false, hint: 'Ctrl+K'},
+        {name: 'Ctrl+Alt+K does not open', platform: 'Win32', init: {key: 'k', ctrlKey: true, altKey: true}, opens: false, hint: 'Ctrl+K'},
+        {name: 'plain K does not open', platform: 'Win32', init: {key: 'k'}, opens: false, hint: 'Ctrl+K'},
+    ];
+
+    test.each(cases)('$name', async ({platform, init, opens, hint}) => {
+        setPlatform(platform);
+        render(<FindAgentsButton/>);
+
+        expect(screen.getByRole('button', {name: 'Find agents'}).textContent).toContain(hint);
+
+        const event = new KeyboardEvent('keydown', {...init, bubbles: true, cancelable: true});
+        document.dispatchEvent(event);
+
+        if (opens) {
+            expect(await screen.findByRole('combobox')).not.toBeNull();
+            expect(event.defaultPrevented).toBe(true);
+        } else {
+            expect(screen.queryByRole('combobox')).toBeNull();
+            expect(event.defaultPrevented).toBe(false);
+        }
+    });
+
+    test('the shortcut toggles the modal closed and returns focus to the button', async () => {
+        setPlatform('Win32');
+        render(<FindAgentsButton/>);
+
+        fireEvent.keyDown(document, {key: 'k', ctrlKey: true});
+        await screen.findByRole('combobox');
+        fireEvent.keyDown(document, {key: 'k', ctrlKey: true});
+
+        await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull());
+    });
+
+    test('advertises the shortcut to assistive technology and stops listening on unmount', () => {
+        setPlatform('MacIntel');
+        const {unmount} = render(<FindAgentsButton/>);
+        expect(screen.getByRole('button', {name: 'Find agents'}).getAttribute('aria-keyshortcuts')).toBe('Meta+K');
+
+        unmount();
+        const event = new KeyboardEvent('keydown', {key: 'k', metaKey: true, bubbles: true, cancelable: true});
+        document.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(screen.queryByRole('combobox')).toBeNull();
+    });
+});
