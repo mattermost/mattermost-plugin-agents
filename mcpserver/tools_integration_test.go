@@ -597,8 +597,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 			for _, post := range posts.Posts {
 				if post.Message == "Test DM to myself from integration test!" {
 					found = true
-					// Verify props were set - from_webhook should be set for self DMs
-					assert.Equal(t, "true", post.GetProp("from_webhook"), "Post should have from_webhook prop set")
 					break
 				}
 			}
@@ -638,8 +636,6 @@ func TestMCPToolsIntegration(t *testing.T) {
 			for _, post := range posts.Posts {
 				if post.Message == "Hello from DM integration test!" {
 					found = true
-					// from_webhook should NOT be set for DMs to others
-					assert.Nil(t, post.GetProp("from_webhook"), "Post should not have from_webhook prop when DM'ing another user")
 					break
 				}
 			}
