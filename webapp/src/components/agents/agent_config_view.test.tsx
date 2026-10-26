@@ -524,19 +524,21 @@ describe('AgentConfigView', () => {
         },
         {
             name: 'cancelling a nested confirmation dialog',
-            dismissChild: () => {
+            dismissChild: async () => {
                 fireEvent.click(screen.getByRole('button', {name: 'Open nested dialog'}));
                 expect(screen.getByRole('dialog', {name: 'Remove access policy?'})).not.toBeNull();
 
                 fireEvent.keyDown(document, {key: 'Escape'});
-                expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull();
+
+                // The overlay stays mounted for its exit fade before unmounting.
+                await waitFor(() => expect(screen.queryByRole('dialog', {name: 'Remove access policy?'})).toBeNull());
             },
         },
-    ])('Escape used for $name stays on the page; a plain Escape still goes back', ({dismissChild}) => {
+    ])('Escape used for $name stays on the page; a plain Escape still goes back', async ({dismissChild}) => {
         const {onBack} = renderView();
         fireEvent.click(screen.getByRole('tab', {name: 'Access'}));
 
-        dismissChild();
+        await dismissChild();
 
         expect(onBack).not.toHaveBeenCalled();
 
