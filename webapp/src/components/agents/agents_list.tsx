@@ -24,6 +24,7 @@ import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
+import {canManageAgent} from './agent_access';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
@@ -172,15 +173,9 @@ const AgentsList = () => {
     }, [fetchAgents]);
 
     // Filter agents based on active tab and search query
-    const userCanManageAgent = useCallback((a: UserAgent) => {
-        const isOwner = a.creatorID === currentUserId || (a.adminUserIDs?.includes(currentUserId) ?? false);
-        if (isOwner || hasManageOthersAgent) {
-            return true;
-        }
-
-        // Migrated legacy bots have no creator; system admins had full control via System Console.
-        return Boolean(!a.creatorID && hasManageSystem);
-    }, [currentUserId, hasManageOthersAgent, hasManageSystem]);
+    const userCanManageAgent = useCallback((a: UserAgent) => (
+        canManageAgent(a, currentUserId, {hasManageOthersAgent, hasManageSystem})
+    ), [currentUserId, hasManageOthersAgent, hasManageSystem]);
 
     const handleExportAgent = useCallback(async (agent: UserAgent) => {
         setActionError('');
