@@ -361,7 +361,7 @@ func TestAmbientClassifierEval(t *testing.T) {
 			classifyErr := c.classifyAmbientReply(context.Background(), bot, setting, trigger, postingUser, channel, thread)
 			shouldReply := classifyErr == nil
 			if !shouldReply && !errors.Is(classifyErr, errAmbientDeclined) {
-				require.NoError(e, classifyErr, "the classifier failed instead of deciding")
+				require.NoError(e, classifyErr, "the classifier failed instead of deciding; raw output %q", classifierLLM.raw)
 			}
 
 			result := &evals.EvalResult{
