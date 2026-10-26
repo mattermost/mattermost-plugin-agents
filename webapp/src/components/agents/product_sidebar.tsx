@@ -18,6 +18,7 @@ import type {AIThread} from '@/types/ai_thread';
 import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/websocket';
 
 import AgentThreadsList from './agent_threads_list';
+import FindAgentsButton from './find_agents_button';
 import {useAgentsRoute, type AgentsView} from './use_agents_route';
 
 interface ProductSidebarProps {
@@ -109,6 +110,11 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: Pr
             <Header>
                 <ProductName>{title}</ProductName>
             </Header>
+            {hasStore && (
+                <FindAgentsRow>
+                    <FindAgentsButton/>
+                </FindAgentsRow>
+            )}
             <ScrollArea color='--sidebar-text-rgb'>
                 <nav aria-label={title}>
                     <NavGroup>
@@ -142,6 +148,12 @@ const Aside = styled.aside`
     min-height: 0;
     background: var(--sidebar-bg);
     color: var(--sidebar-text);
+`;
+
+// The button's modal reads agents and chats from the plugin's redux store.
+const FindAgentsRow = styled.div`
+    flex: 0 0 auto;
+    padding: 0 var(--spacing-l) var(--spacing-m);
 `;
 
 const Header = styled.div`
