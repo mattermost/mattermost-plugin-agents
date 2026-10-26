@@ -198,18 +198,19 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 	// Create thread analyzer with conversation service
 	botUserID := bot.GetMMBot().UserId
 	analyzer := threads.New(bot.LLM(), a.prompts, a.mmClient, a.convService)
+	runCtx := detachedRequestContext(c)
 	var analyzeResult *threads.AnalyzeResult
 	var title string
 	switch data.AnalysisType {
 	case "summarize_thread":
 		title = TitleThreadSummary
-		analyzeResult, err = analyzer.Summarize(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.Summarize(runCtx, post.Id, llmContext, botUserID, userID)
 	case "action_items":
 		title = TitleFindActionItems
-		analyzeResult, err = analyzer.FindActionItems(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindActionItems(runCtx, post.Id, llmContext, botUserID, userID)
 	case "open_questions":
 		title = TitleFindOpenQuestions
-		analyzeResult, err = analyzer.FindOpenQuestions(c.Request.Context(), post.Id, llmContext, botUserID, userID)
+		analyzeResult, err = analyzer.FindOpenQuestions(runCtx, post.Id, llmContext, botUserID, userID)
 	}
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, fmt.Errorf("failed to analyze thread: %w", err))
@@ -218,7 +219,7 @@ func (a *API) handleThreadAnalysis(c *gin.Context) {
 
 	// Create analysis post with conversation ID
 	analysisPost := makeAnalysisPost(post.Id, data.AnalysisType, analyzeResult.ConversationID)
-	if err := a.streamingService.StreamToNewDM(telemetry.DetachContext(c.Request.Context()), botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
+	if err := a.streamingService.StreamToNewDM(runCtx, botUserID, analyzeResult.Stream, user.Id, analysisPost, post.Id); err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
@@ -301,7 +302,7 @@ func (a *API) handleSummarizeTranscription(c *gin.Context) {
 }
 
 // detachedRequestContext returns a context for a run that starts in this
-// request but must outlive it: the continuation streams in a goroutine, and
+// request but must outlive it: the response streams in a goroutine, and
 // core cancels the request context once the handler returns. Only the active
 // span, the authenticated session ID, and the request's audit record carry
 // over (telemetry.DetachContext keeps only the span, and the services read
