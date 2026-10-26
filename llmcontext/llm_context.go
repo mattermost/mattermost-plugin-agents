@@ -352,7 +352,12 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 	audit.AddParam(rec, audit.KeyConversationID, c.ToolCatalog.ScopedTurn.ConversationID)
 	audit.AddParam(rec, audit.KeyScopeExtraChannelCount, len(cfg.ScopedExtraChannelIDs))
 	audit.AddParam(rec, audit.KeyScopeOpenTeamPublicChannels, true)
-	defer b.pluginAPI.Audit.Record(rec)
+	grantDeferred := false
+	defer func() {
+		if !grantDeferred {
+			b.pluginAPI.Audit.Record(rec)
+		}
+	}()
 
 	// The scope grants its channel regardless of membership, so the requester
 	// must be able to read it; otherwise a caller-supplied channel (the LLM
@@ -375,7 +380,15 @@ func (b *Builder) mintScopedRun(ctx stdcontext.Context, c *llm.Context, bot *bot
 		return nil, err
 	}
 	rec.Success()
-	c.SetScopedSession(func() { _ = run.Close() }, run.Closed)
+	var recordGrant func(conversationID string)
+	if c.ToolCatalog.ScopedTurn.ConversationPending {
+		grantDeferred = true
+		recordGrant = func(conversationID string) {
+			audit.AddParam(rec, audit.KeyConversationID, conversationID)
+			b.pluginAPI.Audit.Record(rec)
+		}
+	}
+	c.SetScopedSession(func() { _ = run.Close() }, run.Closed, recordGrant)
 	return run, nil
 }
 
