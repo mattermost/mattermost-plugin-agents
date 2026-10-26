@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/lib/pq v1.12.3
-	github.com/mattermost/mattermost/server/public v0.4.5-0.20260911134158-fa302bf9e623
+	github.com/mattermost/mattermost/server/public v0.6.1-0.20261026155022-35ea392a8933
 	github.com/mattermost/mattermost/tools/mattermost-govet v0.0.0-20261001132814-e49664194608
 	github.com/mattermost/morph v1.1.0
 	github.com/maximhq/bifrost/core v1.7.15
@@ -238,6 +238,3 @@ require (
 )
 
 replace github.com/antchfx/xpath => github.com/antchfx/xpath v1.3.8
-
-// TEMPORARY: local server/public with DeliverPostNotifications until a pseudo-version is published.
-replace github.com/mattermost/mattermost/server/public => ../mattermost/server/public
