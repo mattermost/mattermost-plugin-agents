@@ -31,7 +31,10 @@ import (
 
 var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
-func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+// setupTestDBClient creates a scratch database from PG_ROOT_DSN (skipping
+// when postgres is unreachable), runs the real migrations against it, and
+// returns a DBClient connected to it. The database is dropped on cleanup.
+func setupTestDBClient(t *testing.T, namePrefix string) *mmapi.DBClient {
 	t.Helper()
 
 	if dsn := os.Getenv("PG_ROOT_DSN"); dsn != "" {
@@ -44,7 +47,7 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	}
 	defer rootDB.Close()
 
-	dbName := fmt.Sprintf("customprompts_api_test_%d", model.GetMillis())
+	dbName := fmt.Sprintf("%s_%d", namePrefix, model.GetMillis())
 	_, err = rootDB.Exec("CREATE DATABASE " + dbName)
 	require.NoError(t, err)
 
@@ -66,8 +69,13 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	err = s.RunMigrations()
 	require.NoError(t, err)
 
-	dbClient := mmapi.NewTestDBClient(db)
-	cpStore := customprompts.NewStore(dbClient)
+	return mmapi.NewTestDBClient(db)
+}
+
+func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+	t.Helper()
+
+	cpStore := customprompts.NewStore(setupTestDBClient(t, "customprompts_api_test"))
 
 	env := SetupTestEnvironment(t)
 	env.api.customPromptsStore = cpStore

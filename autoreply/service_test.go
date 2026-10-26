@@ -383,6 +383,11 @@ func TestServiceSetAmbientFields(t *testing.T) {
 			instructions: strings.Repeat("界", MaxInstructionsRunes+1),
 			wantErr:      true,
 		},
+		{
+			name:         "rejects instructions containing a NUL character",
+			instructions: "billing\x00questions",
+			wantErr:      true,
+		},
 	}
 
 	for _, tc := range tests {

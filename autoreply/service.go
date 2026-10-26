@@ -10,6 +10,7 @@ package autoreply
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -19,7 +20,8 @@ import (
 )
 
 // ErrValidation marks a Set rejection caused by invalid input (unknown mode,
-// missing bot, DM/GM channel, or the bot's channel restrictions). API handlers
+// missing bot, invalid instructions, DM/GM channel, or the bot's channel
+// restrictions). API handlers
 // use errors.Is(err, ErrValidation) to map failures to HTTP 400.
 var ErrValidation = errors.New("invalid channel auto-reply setting")
 
@@ -131,6 +133,10 @@ func (s *Service) Set(setting Setting) (*Setting, error) {
 	}
 	if utf8.RuneCountInString(setting.Instructions) > MaxInstructionsRunes {
 		return nil, fmt.Errorf("instructions exceed %d runes: %w", MaxInstructionsRunes, ErrValidation)
+	}
+	// PostgreSQL TEXT cannot store NUL.
+	if strings.ContainsRune(setting.Instructions, 0) {
+		return nil, fmt.Errorf("instructions must not contain NUL characters: %w", ErrValidation)
 	}
 
 	bot := s.bots.GetBotByID(setting.BotID)

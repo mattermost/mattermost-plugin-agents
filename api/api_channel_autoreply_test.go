@@ -20,6 +20,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise/enterprisetest"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmapi"
 	mmapimocks "github.com/mattermost/mattermost-plugin-agents/v2/mmapi/mocks"
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/mattermost/mattermost/server/public/plugin"
@@ -856,4 +857,47 @@ func TestChannelAutoReplyAuditOmitsAmbientConfig(t *testing.T) {
 	raw, err := json.Marshal(rec)
 	require.NoError(t, err)
 	require.NotContains(t, string(raw), plantedInstructions)
+}
+
+// TestPutChannelAutoReplyRealService drives the PUT route through the real
+// auto-reply service and store, so database-level rejections surface as they
+// do in production.
+func TestPutChannelAutoReplyRealService(t *testing.T) {
+	dbClient := setupTestDBClient(t, "autoreply_api_test")
+
+	tests := []struct {
+		name           string
+		instructions   string
+		expectedStatus int
+	}{
+		{name: "valid instructions are stored", instructions: "only billing questions", expectedStatus: http.StatusOK},
+		{name: "instructions with a NUL character are rejected", instructions: "billing\x00questions", expectedStatus: http.StatusBadRequest},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setupChannelAutoReplyTest(t, model.ChannelTypeOpen)
+			defer e.Cleanup(t)
+			e.config.enableAmbientAutoReply = true
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionReadChannel).Return(true)
+			e.mockAPI.On("HasPermissionToChannel", "userid", "channelid", model.PermissionManagePublicChannelProperties).Return(true)
+			autoReplyStore := autoreply.NewStore(dbClient)
+			require.NoError(t, autoReplyStore.Delete("channelid"))
+			e.api.autoReplyStore = autoreply.NewService(autoReplyStore, e.bots, mmapi.NewClient(e.client), nil)
+
+			body, err := json.Marshal(ChannelAutoReply{BotID: testBotUserID, Mode: string(autoreply.ModeAmbient), Instructions: tc.instructions})
+			require.NoError(t, err)
+			resp := e.doChannelAutoReplyRequest(t, http.MethodPut, string(body))
+			require.Equal(t, tc.expectedStatus, resp.StatusCode)
+
+			stored, err := autoReplyStore.Get("channelid")
+			require.NoError(t, err)
+			if tc.expectedStatus != http.StatusOK {
+				require.Nil(t, stored)
+				return
+			}
+			require.NotNil(t, stored)
+			require.Equal(t, tc.instructions, stored.Instructions)
+		})
+	}
 }
