@@ -277,6 +277,7 @@ const CustomPromptsManagement = () => {
                     onClick={handleModalClick}
                 >
                     <PromptsModal
+                        closeOnEscape={false}
                         size='medium'
                         title={title}
                         onClose={handleClose}

@@ -53,7 +53,7 @@ func TestAgentCreateAndGet(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := testAgent("creator-1", "my-agent", "My Agent")
-	err = s.CreateAgent(agent)
+	err = s.CreateAgent(agent, SystemAgentVersionMeta())
 	require.NoError(t, err)
 
 	// ID should be populated (26 chars)
@@ -157,9 +157,9 @@ func TestAgentListReturnsOnlyActive(t *testing.T) {
 	a1 := testAgent("creator-1", "agent-1", "Agent 1")
 	a2 := testAgent("creator-1", "agent-2", "Agent 2")
 	a3 := testAgent("creator-2", "agent-3", "Agent 3")
-	require.NoError(t, s.CreateAgent(a1))
-	require.NoError(t, s.CreateAgent(a2))
-	require.NoError(t, s.CreateAgent(a3))
+	require.NoError(t, s.CreateAgent(a1, SystemAgentVersionMeta()))
+	require.NoError(t, s.CreateAgent(a2, SystemAgentVersionMeta()))
+	require.NoError(t, s.CreateAgent(a3, SystemAgentVersionMeta()))
 
 	// Delete one
 	require.NoError(t, s.DeleteAgent(a2.ID))
@@ -185,9 +185,9 @@ func TestAgentListByCreator(t *testing.T) {
 	a1 := testAgent("creator-1", "agent-1", "Agent 1")
 	a2 := testAgent("creator-1", "agent-2", "Agent 2")
 	a3 := testAgent("creator-2", "agent-3", "Agent 3")
-	require.NoError(t, s.CreateAgent(a1))
-	require.NoError(t, s.CreateAgent(a2))
-	require.NoError(t, s.CreateAgent(a3))
+	require.NoError(t, s.CreateAgent(a1, SystemAgentVersionMeta()))
+	require.NoError(t, s.CreateAgent(a2, SystemAgentVersionMeta()))
+	require.NoError(t, s.CreateAgent(a3, SystemAgentVersionMeta()))
 
 	// List by creator-1
 	agents, err := s.ListAgentsByCreator("creator-1")
@@ -215,7 +215,7 @@ func TestAgentUpdate(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := testAgent("creator-1", "agent-1", "Agent 1")
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 	originalUpdateAt := agent.UpdateAt
 
 	// Modify fields
@@ -226,7 +226,7 @@ func TestAgentUpdate(t *testing.T) {
 	agent.ServiceID = "svc-2"
 	agent.UseServiceAccountAuth = false
 
-	require.NoError(t, s.UpdateAgent(agent))
+	require.NoError(t, s.UpdateAgent(agent, SystemAgentVersionMeta()))
 
 	// UpdateAt should be bumped
 	assert.Greater(t, agent.UpdateAt, originalUpdateAt)
@@ -260,7 +260,7 @@ func TestAgentUpdateNonexistent(t *testing.T) {
 		Name:        "ghost",
 		ServiceID:   "svc-1",
 	}
-	err = s.UpdateAgent(agent)
+	err = s.UpdateAgent(agent, SystemAgentVersionMeta())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found or already deleted")
 }
@@ -271,7 +271,7 @@ func TestAgentSoftDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := testAgent("creator-1", "agent-1", "Agent 1")
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	// Delete
 	require.NoError(t, s.DeleteAgent(agent.ID))
@@ -304,7 +304,7 @@ func TestAgentDoubleDelete(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := testAgent("creator-1", "agent-1", "Agent 1")
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	// First delete succeeds
 	require.NoError(t, s.DeleteAgent(agent.ID))
@@ -321,12 +321,12 @@ func TestAgentUpdateDeletedAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := testAgent("creator-1", "agent-1", "Agent 1")
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 	require.NoError(t, s.DeleteAgent(agent.ID))
 
 	// Update should fail (WHERE DeleteAt = 0 clause)
 	agent.DisplayName = "Should Fail"
-	err = s.UpdateAgent(agent)
+	err = s.UpdateAgent(agent, SystemAgentVersionMeta())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found or already deleted")
 }
@@ -345,7 +345,7 @@ func TestAgentEmptySliceFields(t *testing.T) {
 		ServiceID:   "svc-1",
 		// All slice fields intentionally left nil
 	}
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -367,7 +367,7 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 	agent := testAgent("creator-1", "auto-mcp", "Auto MCP Agent")
 	agent.AutoEnableNewMCPTools = true
 	agent.EnabledMCPTools = nil // allowlist is ignored when auto-enable is on
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestAgentAutoEnableNewMCPToolsRoundTrip(t *testing.T) {
 
 	// Flip it off and verify the flag updates cleanly.
 	fetched.AutoEnableNewMCPTools = false
-	require.NoError(t, s.UpdateAgent(fetched))
+	require.NoError(t, s.UpdateAgent(fetched, SystemAgentVersionMeta()))
 
 	again, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 
 	agent := testAgent("creator-1", "dynamic-off", "Dynamic Off Agent")
 	agent.MCPDynamicToolLoading = false
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -400,7 +400,7 @@ func TestAgentMCPDynamicToolLoadingRoundTrip(t *testing.T) {
 	assert.False(t, fetched.MCPDynamicToolLoading)
 
 	fetched.MCPDynamicToolLoading = true
-	require.NoError(t, s.UpdateAgent(fetched))
+	require.NoError(t, s.UpdateAgent(fetched, SystemAgentVersionMeta()))
 
 	again, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -419,7 +419,7 @@ func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {
 		{ServerOrigin: "https://mcp.example.com", ToolName: "read_post"},
 		{ServerOrigin: "embedded://mattermost", ToolName: "mattermost__search_users"},
 	}
-	require.NoError(t, s.CreateAgent(agent))
+	require.NoError(t, s.CreateAgent(agent, SystemAgentVersionMeta()))
 
 	fetched, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -430,7 +430,7 @@ func TestAgentEnabledMCPToolsBareAndNamespacedRoundTrip(t *testing.T) {
 		{ServerOrigin: "https://mcp.atlassian.com", ToolName: "get_issue"},
 		{ServerOrigin: "https://api.githubcopilot.com", ToolName: "github__search"},
 	}
-	require.NoError(t, s.UpdateAgent(fetched))
+	require.NoError(t, s.UpdateAgent(fetched, SystemAgentVersionMeta()))
 
 	again, err := s.GetAgent(agent.ID)
 	require.NoError(t, err)
@@ -449,7 +449,7 @@ func TestAgentConcurrentCreates(t *testing.T) {
 	for i := range count {
 		go func(idx int) {
 			a := testAgent("creator-1", fmt.Sprintf("agent-%d", idx), fmt.Sprintf("Agent %d", idx))
-			errCh <- s.CreateAgent(a)
+			errCh <- s.CreateAgent(a, SystemAgentVersionMeta())
 		}(i)
 	}
 
@@ -474,7 +474,7 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 		ServiceID:    "svc-1",
 		AdminUserIDs: []string{"admin-a", "admin-b", "admin-c"},
 	}
-	require.NoError(t, s.CreateAgent(cfg))
+	require.NoError(t, s.CreateAgent(cfg, SystemAgentVersionMeta()))
 	assert.NotZero(t, cfg.CreateAt)
 	assert.Equal(t, cfg.CreateAt, cfg.UpdateAt)
 	assert.Zero(t, cfg.DeleteAt)
@@ -489,7 +489,7 @@ func TestAgentAdminLifecycleRoundTrip(t *testing.T) {
 
 	originalCreateAt := cfg.CreateAt
 	cfg.AdminUserIDs = []string{"admin-a"} // shrink
-	require.NoError(t, s.UpdateAgent(cfg))
+	require.NoError(t, s.UpdateAgent(cfg, SystemAgentVersionMeta()))
 	fetched, err = s.GetAgent(cfg.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"admin-a"}, fetched.AdminUserIDs)

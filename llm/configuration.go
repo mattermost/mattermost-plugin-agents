@@ -258,6 +258,11 @@ type BotConfig struct {
 	DeleteAt     int64    `json:"deleteAt,omitempty"`
 }
 
+// UnmarshalJSON defaults fields whose zero value is not their behavior from
+// before the field existed. Stored agent versions and configs written before
+// a field was added omit its key and are never rewritten, so a new field whose
+// zero value changes behavior must get its default here (as
+// MCPDynamicToolLoading does).
 func (c *BotConfig) UnmarshalJSON(data []byte) error {
 	type botConfigAlias BotConfig
 	defaults := botConfigAlias{

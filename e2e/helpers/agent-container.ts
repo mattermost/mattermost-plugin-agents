@@ -1,5 +1,5 @@
 import { withDeadline } from './deadline';
-import { RunSystemConsoleContainer } from './system-console-container';
+import { MCPServerConfig, RunSystemConsoleContainer } from './system-console-container';
 import MattermostContainer from './mmcontainer';
 
 export const agentAdminUsername = 'sysadmin';
@@ -17,8 +17,12 @@ export const secondServiceId = 'second-service';
  * - Two mock LLM services (for service switching tests)
  * - MCP enabled with embedded server (for tool selection tests)
  * - Three users: admin (sysadmin), regularuser, unprivileged (self-service agent perms come from RunSystemConsoleContainer)
+ *
+ * @param options.mcpServers external MCP servers to add to the plugin config (none by default)
  */
-export async function RunAgentContainer(): Promise<MattermostContainer> {
+export async function RunAgentContainer(
+    options: { mcpServers?: MCPServerConfig[] } = {},
+): Promise<MattermostContainer> {
     const mattermost = await RunSystemConsoleContainer({
         services: [
             {
@@ -55,7 +59,7 @@ export async function RunAgentContainer(): Promise<MattermostContainer> {
             enablePluginServer: true,
             embeddedServer: { enabled: true },
             idleTimeoutMinutes: 30,
-            servers: [],
+            servers: options.mcpServers ?? [],
         },
     });
 

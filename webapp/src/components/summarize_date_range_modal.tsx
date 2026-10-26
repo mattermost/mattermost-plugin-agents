@@ -223,6 +223,7 @@ export const SummarizeDateRangeModal = ({show, onClose, onSummarize, channelName
                 onClick={handleModalClick}
             >
                 <SummarizeModal
+                    closeOnEscape={false}
                     size='small'
                     title={<FormattedMessage defaultMessage='Summarize channel'/>}
                     subtitle={channelName}

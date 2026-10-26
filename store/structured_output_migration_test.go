@@ -56,8 +56,8 @@ func TestMigrateStructuredOutputPolicies(t *testing.T) {
 			name: "stored agent with the deprecated flag pins its service",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{Services: services("")}, true)
-				require.NoError(t, s.CreateAgent(agent("a1", svcNative, true)))
-				require.NoError(t, s.CreateAgent(agent("a2", svcPlain, false)))
+				require.NoError(t, s.CreateAgent(agent("a1", svcNative, true), SystemAgentVersionMeta()))
+				require.NoError(t, s.CreateAgent(agent("a2", svcPlain, false), SystemAgentVersionMeta()))
 			},
 			wantMigrated:  []string{svcNative},
 			wantPolicies:  map[string]llm.StructuredOutputPolicy{svcNative: llm.StructuredOutputPolicyNative, svcLegacy: "", svcPlain: ""},
@@ -91,7 +91,7 @@ func TestMigrateStructuredOutputPolicies(t *testing.T) {
 			name: "no flagged agents writes nothing",
 			seed: func(t *testing.T, s *Store) {
 				seedConfigRow(t, s, config.Config{Services: services("")}, true)
-				require.NoError(t, s.CreateAgent(agent("a1", svcNative, false)))
+				require.NoError(t, s.CreateAgent(agent("a1", svcNative, false), SystemAgentVersionMeta()))
 			},
 			wantMigrated:  nil,
 			wantPolicies:  map[string]llm.StructuredOutputPolicy{svcNative: "", svcLegacy: "", svcPlain: ""},
@@ -100,7 +100,7 @@ func TestMigrateStructuredOutputPolicies(t *testing.T) {
 		{
 			name: "no active config is a no-op",
 			seed: func(t *testing.T, s *Store) {
-				require.NoError(t, s.CreateAgent(agent("a1", svcNative, true)))
+				require.NoError(t, s.CreateAgent(agent("a1", svcNative, true), SystemAgentVersionMeta()))
 			},
 			wantMigrated:  nil,
 			wantPolicies:  nil,

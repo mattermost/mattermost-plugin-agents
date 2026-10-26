@@ -59,6 +59,16 @@ When this setting is set to **True**, AI-generated links may be rendered as clic
 
 Enable this setting only in trusted or otherwise mitigated environments, such as where users are trained to validate links and your organization has endpoint protections and URL controls in place.
 
+### Agent version history limit
+
+Every save of an agent records a version in its history. By default every version is kept.
+
+- **System Console labels**: **Limit agent version history** and **Versions to keep per agent**
+- **Configuration key**: `agentVersionsToKeep` (`0` keeps every version)
+- **Default value**: `0`
+
+When a limit is set, each agent keeps only its most recent versions, including the current one. Saving the setting deletes older versions of every agent, and each later save of an agent deletes the versions that fall outside the limit. Deleted versions can't be recovered. Agent managers can also delete versions themselves; see [Deleting versions](features/managing_agents.md#deleting-versions).
+
 ### Service configuration
 
 Configure an LLM provider (Service) for your Agents integration. Services manage the connection to the LLM provider, including authentication, model defaults, and optional fallback behavior. You can create multiple services for different providers or configurations, and share them across multiple agents.
