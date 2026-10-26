@@ -1,28 +1,42 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useId, useRef, useState} from 'react';
 import {useIntl} from 'react-intl';
+import {useSelector} from 'react-redux';
 import styled from 'styled-components';
 import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
+import {GlobalState} from '@mattermost/types/store';
+
 import {createPost} from '@/client';
 
-interface AgentNewChatComposerProps {
+interface AgentChatComposerProps {
     channelId: string;
+
+    // Names the textbox; a reply composer falls back to "Reply" when unknown.
     agentName: string;
-    onCreated: (rootId: string) => void;
+
+    // Reply mode: the thread root. Omitted, the composer starts a new chat (a root post).
+    rootId?: string;
+    onCreated?: (postId: string) => void;
+
+    // Optional control at the start of the pill (e.g. a future attach button).
+    leadingAction?: React.ReactNode;
 }
 
-// Pill composer for the new-chat state, ported from the prototype's ComposerShell.
-// It creates the root post itself (same Client4.createPost path the RHS uses for
-// prompts), so the agent answers exactly as it does for any root post in its DM.
-// The prototype's attach (+) button is omitted: this composer does not upload files.
-const AgentNewChatComposer = ({channelId, agentName, onCreated}: AgentNewChatComposerProps) => {
+// Pill composer for the agent chat (Agents product view and Agents RHS), ported
+// from the prototype's ComposerShell. Without `rootId` it starts a chat with a
+// root post in the agent's DM; with `rootId` it replies in that thread. Either
+// way it posts itself (the same Client4.createPost path the RHS uses for
+// prompts), so the agent answers exactly as it does for any post in its DM.
+// It does not upload files.
+const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, leadingAction}: AgentChatComposerProps) => {
     const intl = useIntl();
+    const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const [message, setMessage] = useState('');
     const [sending, setSending] = useState(false);
@@ -30,6 +44,10 @@ const AgentNewChatComposer = ({channelId, agentName, onCreated}: AgentNewChatCom
 
     // A ref, not state, so a second Enter in the same tick cannot slip past it.
     const inFlight = useRef(false);
+
+    // Kept across a retry of the same text so the server can dedupe a post
+    // that did land before the request failed (as the host composer does).
+    const pendingPostId = useRef('');
     const mounted = useRef(true);
     useEffect(() => {
         mounted.current = true;
@@ -52,18 +70,29 @@ const AgentNewChatComposer = ({channelId, agentName, onCreated}: AgentNewChatCom
         inFlight.current = true;
         setSending(true);
         setFailed(false);
+        if (!pendingPostId.current) {
+            pendingPostId.current = `${currentUserId}:${Date.now()}`;
+        }
         try {
-            const created = await createPost({channel_id: channelId, root_id: '', message: text, props: {}, file_ids: []});
+            const created = await createPost({
+                channel_id: channelId,
+                root_id: rootId,
+                message: text,
+                pending_post_id: pendingPostId.current,
+                props: {},
+                file_ids: [],
+            });
             if (!mounted.current) {
                 return;
             }
             if (!created?.id) {
                 throw new Error('createPost returned no post id');
             }
+            pendingPostId.current = '';
             setMessage('');
-            onCreated(created.id);
+            onCreated?.(created.id);
         } catch (e) {
-            console.error('Failed to start agent chat:', e); // eslint-disable-line no-console
+            console.error(rootId ? 'Failed to send agent chat reply:' : 'Failed to start agent chat:', e); // eslint-disable-line no-console
             if (mounted.current) {
                 setFailed(true);
             }
@@ -74,7 +103,7 @@ const AgentNewChatComposer = ({channelId, agentName, onCreated}: AgentNewChatCom
                 textareaRef.current?.focus();
             }
         }
-    }, [channelId, message, onCreated]);
+    }, [channelId, rootId, currentUserId, message, onCreated]);
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
         // keyCode 229 covers browsers that end IME composition before isComposing flips.
@@ -85,24 +114,37 @@ const AgentNewChatComposer = ({channelId, agentName, onCreated}: AgentNewChatCom
         send();
     };
 
-    const label = intl.formatMessage({defaultMessage: 'Message {name}'}, {name: agentName});
-    const errorId = `agent-new-chat-error-${channelId}`;
+    // Unique per instance: the product view and the RHS can show this for the same DM.
+    const errorId = useId();
+
+    const isReply = Boolean(rootId);
+    let label;
+    if (!isReply) {
+        label = intl.formatMessage({defaultMessage: 'Message {name}'}, {name: agentName});
+    } else if (agentName) {
+        label = intl.formatMessage({defaultMessage: 'Reply to {name}'}, {name: agentName});
+    } else {
+        label = intl.formatMessage({defaultMessage: 'Reply'});
+    }
+    const placeholder = isReply ? intl.formatMessage({defaultMessage: 'Reply…'}) : label;
 
     return (
-        <ComposerColumn data-testid='agent-chat-new-composer'>
-            <Shell>
+        <ComposerColumn data-testid={isReply ? 'agent-chat-reply-composer' : 'agent-chat-new-composer'}>
+            <Shell $hasLeadingAction={Boolean(leadingAction)}>
+                {leadingAction}
                 <GrowWrap data-value={message}>
                     <Textarea
                         ref={textareaRef}
                         rows={1}
                         value={message}
-                        placeholder={label}
+                        placeholder={placeholder}
                         aria-label={label}
                         aria-invalid={failed}
                         {...(failed ? {'aria-describedby': errorId} : {})}
                         onChange={(e) => {
                             setMessage(e.target.value);
                             setFailed(false);
+                            pendingPostId.current = '';
                         }}
                         onKeyDown={handleKeyDown}
                     />
@@ -138,12 +180,13 @@ const ComposerColumn = styled.div`
     width: 100%;
 `;
 
-const Shell = styled.div`
+// A leading action sits in the pill's end padding, like the send button.
+const Shell = styled.div<{$hasLeadingAction: boolean}>`
     display: flex;
     flex-direction: row;
     align-items: flex-end;
     gap: var(--spacing-xs);
-    padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) var(--spacing-l);
+    padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-xs) ${({$hasLeadingAction}) => ($hasLeadingAction ? 'var(--spacing-xs)' : 'var(--spacing-l)')};
     border: var(--border-dark);
     border-radius: var(--radius-pill);
     background: var(--center-channel-bg);
@@ -233,4 +276,4 @@ const ErrorText = styled.p`
     color: var(--error-text);
 `;
 
-export default AgentNewChatComposer;
+export default AgentChatComposer;

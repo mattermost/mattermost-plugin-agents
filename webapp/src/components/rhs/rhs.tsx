@@ -2,7 +2,6 @@
 // See LICENSE.txt for license information.
 
 import React, {useState, useEffect, useCallback} from 'react';
-import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
@@ -14,21 +13,17 @@ import {getAIThreads, getUserMCPTools, getUserToolPreferences, updateRead} from 
 
 import {useBotlist} from '@/bots';
 
-import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
-
 import type {AIThread} from '@/types/ai_thread';
 
 import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
 
+import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
+
 import type {UserMCPServerInfo} from './tool_provider_popover';
 import ThreadItem from './thread_item';
 import RHSHeader from './rhs_header';
-import RHSNewTab from './rhs_new_tab';
-import RhsFileDropZone from './rhs_file_drop_zone';
 
-const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
-    height: 100%;
-`;
+import RHSNewTab from './rhs_new_tab';
 
 const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
 
@@ -47,15 +42,20 @@ const RhsContainer = styled.div`
     height: 100%;
     display: flex;
     flex-direction: column;
+    min-height: 0;
 `;
 
 const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 
 export default function RHS() {
     const dispatch = useDispatch();
-    const intl = useIntl();
     const [currentTab, setCurrentTab] = useState('new');
     const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
+
+    // The selected thread's root, once the store has it (the ThreadViewer loads it).
+    const selectedRoot = useSelector<GlobalState, {channel_id: string; user_id: string} | null>((state) => (
+        (selectedPostId && state.entities.posts.posts[selectedPostId]) || null
+    ));
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const currentTeamId = useSelector<GlobalState, string>((state) => state.entities.teams.currentTeamId);
 
@@ -127,18 +127,23 @@ export default function RHS() {
     }
 
     let content = null;
-    let wrapInDropZone = false;
     if (selectedPostId) {
         if (currentTab !== 'thread') {
             setCurrentTab('thread');
         }
-        wrapInDropZone = true;
+        const channelId = selectedRoot?.channel_id ?? '';
+
+        // The agent of the thread: the DM partner, or the root's author for
+        // bot-started threads (e.g. channel analysis).
+        const threadBot = bots?.find((b) => (channelId && b.dmChannelID === channelId) || b.id === selectedRoot?.user_id);
         content = (
-            <ThreadViewer
-                data-testid='rhs-thread-viewer'
-                inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply...'})}
-                rootPostId={selectedPostId}
-                useRelativeTimestamp={false}
+            <AgentChatThreadView
+                layout='panel'
+                testId='rhs-thread'
+                viewerTestId='rhs-thread-viewer'
+                channelId={channelId}
+                rootId={selectedPostId}
+                agentName={threadBot?.displayName ?? ''}
                 isThreadView={false}
             />
         );
@@ -167,10 +172,8 @@ export default function RHS() {
             content = null;
         }
     } else if (currentTab === 'new') {
-        wrapInDropZone = true;
         content = (
             <RHSNewTab
-                data-testid='rhs-new-tab'
                 setCurrentTab={setCurrentTab}
                 selectPost={selectPost}
                 activeBot={activeBot}
@@ -193,9 +196,7 @@ export default function RHS() {
                 preloadedServers={preloadedServers}
                 activeConversationId={activeConversationId}
             />
-            {wrapInDropZone ? (
-                <RhsFileDropZone>{content}</RhsFileDropZone>
-            ) : content}
+            {content}
         </RhsContainer>
     );
 }

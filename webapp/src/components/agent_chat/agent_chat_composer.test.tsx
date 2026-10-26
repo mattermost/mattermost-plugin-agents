@@ -2,9 +2,11 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {Provider} from 'react-redux';
+import {createStore} from 'redux';
 import {act, fireEvent, render, screen} from '@testing-library/react';
 
-import AgentNewChatComposer from './agent_new_chat_composer';
+import AgentChatComposer from './agent_chat_composer';
 
 const mockCreatePost = jest.fn();
 jest.mock('@/client', () => ({
@@ -31,21 +33,42 @@ const deferred = <T, >() => {
     return {promise, resolve, reject};
 };
 
-const setup = () => {
+const store = createStore(() => ({entities: {users: {currentUserId: 'me'}}}));
+
+// New-chat mode posts a root; reply mode posts into the thread.
+const modes = [
+    {mode: 'new chat', rootId: '', agentName: 'Matty', label: 'Message Matty', placeholder: 'Message Matty', testId: 'agent-chat-new-composer'},
+    {mode: 'reply', rootId: 'root0', agentName: 'Matty', label: 'Reply to Matty', placeholder: 'Reply…', testId: 'agent-chat-reply-composer'},
+    {mode: 'reply, agent unknown', rootId: 'root0', agentName: '', label: 'Reply', placeholder: 'Reply…', testId: 'agent-chat-reply-composer'},
+];
+
+const setup = ({rootId, agentName = 'Matty', label = 'Message Matty'}: {rootId?: string; agentName?: string; label?: string} = {}) => {
     const onCreated = jest.fn();
     render(
-        <AgentNewChatComposer
-            channelId='dm1'
-            agentName='Matty'
-            onCreated={onCreated}
-        />,
+        <Provider store={store}>
+            <AgentChatComposer
+                channelId='dm1'
+                agentName={agentName}
+                onCreated={onCreated}
+                {...(rootId ? {rootId} : {})}
+            />
+        </Provider>,
     );
-    const textbox = screen.getByRole('textbox', {name: 'Message Matty'}) as HTMLTextAreaElement;
+    const textbox = screen.getByRole('textbox', {name: label}) as HTMLTextAreaElement;
     const send = screen.getByRole('button', {name: 'Send message'});
     return {onCreated, textbox, send};
 };
 
-describe('AgentNewChatComposer', () => {
+const expectedPost = (message: string, rootId = '') => ({
+    channel_id: 'dm1',
+    root_id: rootId,
+    message,
+    pending_post_id: expect.stringMatching(/^me:\d+$/),
+    props: {},
+    file_ids: [],
+});
+
+describe('AgentChatComposer', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         jest.spyOn(console, 'error').mockImplementation(() => null);
@@ -58,6 +81,48 @@ describe('AgentNewChatComposer', () => {
     test('is focused on mount', () => {
         const {textbox} = setup();
         expect(document.activeElement).toBe(textbox);
+    });
+
+    test.each(modes)('$mode: names the textbox and posts with the right root, then clears and keeps focus', async ({rootId, agentName, label, placeholder, testId}) => {
+        mockCreatePost.mockResolvedValue({id: 'post1'});
+        const {textbox, onCreated} = setup({rootId, agentName, label});
+        expect(textbox.placeholder).toBe(placeholder);
+        expect(screen.getByTestId(testId)).toBeTruthy();
+
+        fireEvent.change(textbox, {target: {value: 'hi'}});
+        await act(async () => {
+            fireEvent.keyDown(textbox, {key: 'Enter'});
+        });
+        expect(mockCreatePost).toHaveBeenCalledWith(expectedPost('hi', rootId));
+        expect(onCreated).toHaveBeenCalledWith('post1');
+        expect(textbox.value).toBe('');
+        expect(document.activeElement).toBe(textbox);
+    });
+
+    test('a retry of the same text reuses the pending post id; new text gets a new one', async () => {
+        let now = 1000;
+        jest.spyOn(Date, 'now').mockImplementation(() => now++);
+        mockCreatePost.mockRejectedValueOnce(new Error('timeout'));
+        const {textbox} = setup({rootId: 'root0', label: 'Reply to Matty'});
+        fireEvent.change(textbox, {target: {value: 'hi'}});
+        await act(async () => {
+            fireEvent.keyDown(textbox, {key: 'Enter'});
+        });
+        mockCreatePost.mockRejectedValueOnce(new Error('timeout'));
+        await act(async () => {
+            fireEvent.keyDown(textbox, {key: 'Enter'});
+        });
+        const [first, retry] = mockCreatePost.mock.calls.map(([post]) => post.pending_post_id);
+        expect(retry).toBe(first);
+
+        mockCreatePost.mockResolvedValueOnce({id: 'r1'});
+        await act(async () => {
+            fireEvent.change(textbox, {target: {value: 'hi again'}});
+        });
+        await act(async () => {
+            fireEvent.keyDown(textbox, {key: 'Enter'});
+        });
+        expect(mockCreatePost.mock.calls[2][0].pending_post_id).not.toBe(first);
     });
 
     test.each([
@@ -87,7 +152,7 @@ describe('AgentNewChatComposer', () => {
             fireEvent.keyDown(textbox, event);
         });
         if (sends) {
-            expect(mockCreatePost).toHaveBeenCalledWith({channel_id: 'dm1', root_id: '', message: 'hello agent', props: {}, file_ids: []});
+            expect(mockCreatePost).toHaveBeenCalledWith(expectedPost('hello agent'));
             expect(onCreated).toHaveBeenCalledWith('root1');
             expect(textbox.value).toBe('');
         } else {

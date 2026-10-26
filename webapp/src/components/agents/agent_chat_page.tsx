@@ -2,38 +2,26 @@
 // See LICENSE.txt for license information.
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {defineMessages, useIntl} from 'react-intl';
+import {useIntl} from 'react-intl';
 import {useDispatch, useSelector, useStore} from 'react-redux';
-import styled, {keyframes} from 'styled-components';
+import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
 import {Button} from '@mattermost/compass-ui/components/button';
 import {EmptyState} from '@mattermost/compass-ui/components/empty-state';
 import {Spinner} from '@mattermost/compass-ui/components/spinner';
-import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
-import {getPost, getProfilePictureUrl, updateRead} from '@/client';
-import {LLMBot, fetchAndStoreBots, useBotlist} from '@/bots';
-import {ThreadViewer as UnstyledThreadViewer} from '@/mm_webapp';
+import {getPost, updateRead} from '@/client';
+import {fetchAndStoreBots, useBotlist} from '@/bots';
 import {requestAgentThreadsRefresh} from '@/websocket';
 
+import AgentChatThreadView, {isThreadViewerAvailable} from '../agent_chat/agent_chat_thread_view';
+import AgentNewChat from '../agent_chat/agent_new_chat';
+
 import AgentChatHeader from './agent_chat_header';
-import {CHAT_CONTENT_MAX_WIDTH, hostThreadChatStyles} from './agent_chat_host_styles';
 import AgentConfigView from './agent_config_view';
-import AgentNewChatComposer from './agent_new_chat_composer';
 import {useAgentDMChannel} from './use_agent_dm_channel';
 import {useAgentEditAccess} from './use_agent_edit_access';
-
-// Empty-chat titles ported from the prototype's EMPTY_CHAT_TITLES.
-export const emptyChatTitles = defineMessages({
-    helpToday: {defaultMessage: 'How can I help today?'},
-    getWorkDone: {defaultMessage: 'Let\'s get some work done'},
-    tackle: {defaultMessage: 'What should we tackle?'},
-    ready: {defaultMessage: 'Ready when you are'},
-    start: {defaultMessage: 'Where should we start?'},
-    onYourMind: {defaultMessage: 'Got something on your mind?'},
-});
-const EMPTY_CHAT_TITLE_LIST = Object.values(emptyChatTitles);
 
 const READ_AHEAD_MS = 24 * 60 * 60 * 1000;
 const missingThreadMembershipMessage = 'User thread membership doesn\'t exist';
@@ -160,6 +148,7 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
                 key={rootId}
                 channelId={dm.channelId}
                 rootId={rootId}
+                agentName={bot.displayName}
                 onNewChat={newChat}
                 toAll={toAll}
                 onValidated={setValidRootId}
@@ -167,8 +156,9 @@ const AgentChatPage = ({botId, rootId, toChat, toAll}: AgentChatPageProps) => {
         );
     } else {
         body = (
-            <NewChat
+            <AgentNewChat
                 key={bot.id}
+                layout='page'
                 bot={bot}
                 channelId={dm.channelId}
                 onCreated={(newRootId) => {
@@ -206,43 +196,12 @@ const LoadingState = ({label}: {label?: string}) => (
     </CenteredState>
 );
 
-interface NewChatProps {
-    bot: LLMBot;
-    channelId: string;
-    onCreated: (rootId: string) => void;
-}
-
-const NewChat = ({bot, channelId, onCreated}: NewChatProps) => {
-    const intl = useIntl();
-
-    // Picked once per mount so re-renders don't change the greeting.
-    const [title] = useState(() => EMPTY_CHAT_TITLE_LIST[Math.floor(Math.random() * EMPTY_CHAT_TITLE_LIST.length)]);
-
-    return (
-        <EmptyChat>
-            <EmptyIntro>
-                <UserAvatar
-                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
-                    alt={bot.displayName}
-                    name={bot.displayName}
-                    size='48'
-                />
-                <EmptyTitle>{intl.formatMessage(title)}</EmptyTitle>
-            </EmptyIntro>
-            <AgentNewChatComposer
-                channelId={channelId}
-                agentName={bot.displayName}
-                onCreated={onCreated}
-            />
-        </EmptyChat>
-    );
-};
-
 type ThreadCheck = 'loading' | 'valid' | 'invalid' | 'error';
 
 interface AgentThreadProps {
     channelId: string;
     rootId: string;
+    agentName: string;
     onNewChat: () => void;
     toAll: () => void;
     onValidated: (rootId: string | null) => void;
@@ -250,7 +209,7 @@ interface AgentThreadProps {
 
 // Renders one thread, but only after confirming the root post is a root post in
 // this agent's DM channel. Fails closed on mismatch and on lookup errors.
-const AgentThread = ({channelId, rootId, onNewChat, toAll, onValidated}: AgentThreadProps) => {
+const AgentThread = ({channelId, rootId, agentName, onNewChat, toAll, onValidated}: AgentThreadProps) => {
     const intl = useIntl();
     const store = useStore<GlobalState>();
     const markRead = useMarkThreadRead();
@@ -315,7 +274,7 @@ const AgentThread = ({channelId, rootId, onNewChat, toAll, onValidated}: AgentTh
     if (check === 'loading') {
         return <LoadingState/>;
     }
-    if (check !== 'valid' || !ThreadViewer) {
+    if (check !== 'valid' || !isThreadViewerAvailable) {
         return (
             <CenteredState>
                 <EmptyState
@@ -335,25 +294,16 @@ const AgentThread = ({channelId, rootId, onNewChat, toAll, onValidated}: AgentTh
     }
 
     return (
-        <ThreadPane data-testid='agent-chat-thread'>
-            <ThreadViewer
-                rootPostId={rootId}
-                isThreadView={true}
-                useRelativeTimestamp={false}
-                inputPlaceholder={intl.formatMessage({defaultMessage: 'Reply…'})}
-            />
-        </ThreadPane>
+        <AgentChatThreadView
+            layout='page'
+            testId='agent-chat-thread'
+            channelId={channelId}
+            rootId={rootId}
+            agentName={agentName}
+            isThreadView={true}
+        />
     );
 };
-
-const fadeIn = keyframes`
-    from { opacity: 0; }
-    to { opacity: 1; }
-`;
-
-const ThreadViewer = UnstyledThreadViewer && styled(UnstyledThreadViewer)`
-    height: 100%;
-`;
 
 // Definite height, no own scroll: the host ThreadViewer brings its own scroller.
 const ChatPane = styled.section`
@@ -376,55 +326,6 @@ const CenteredState = styled.div`
     gap: var(--spacing-s);
     min-height: 0;
     padding: var(--spacing-xxxxl);
-`;
-
-const EmptyChat = styled.div`
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--spacing-xxl);
-    width: 100%;
-    max-width: ${CHAT_CONTENT_MAX_WIDTH};
-    min-height: 0;
-    margin-inline: auto;
-    padding: var(--spacing-xxxxl);
-
-    /* Sit slightly above true center, as in the prototype. */
-    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l))));
-`;
-
-const EmptyIntro = styled.div`
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--spacing-m);
-    text-align: center;
-`;
-
-const EmptyTitle = styled.h2`
-    margin: 0;
-    font-family: var(--font-family-heading);
-    font-size: var(--font-size-600);
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-600);
-    color: var(--center-channel-color);
-`;
-
-const ThreadPane = styled.div`
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
-    animation: ${fadeIn} var(--duration-moderate) var(--ease-entrance);
-
-    @media (prefers-reduced-motion: reduce) {
-        animation: none;
-    }
-
-    ${hostThreadChatStyles}
 `;
 
 // Same column as the All agents editor (agents_list.tsx ContentColumn); no

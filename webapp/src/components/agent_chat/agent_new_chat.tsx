@@ -1,0 +1,160 @@
+// Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
+// See LICENSE.txt for license information.
+
+import React, {useState} from 'react';
+import {defineMessages, useIntl, type MessageDescriptor} from 'react-intl';
+import styled, {css} from 'styled-components';
+
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
+
+import {getProfilePictureUrl} from '@/client';
+import type {LLMBot} from '@/bots';
+
+import {CHAT_CONTENT_MAX_WIDTH} from './agent_chat_host_styles';
+import AgentChatComposer from './agent_chat_composer';
+
+// Greeting pairs for the new-chat state. The titles are the prototype's
+// EMPTY_CHAT_TITLES; each subtitle belongs to its title, so both are picked
+// together by one index.
+const greetingMessages = defineMessages({
+    helpTodayTitle: {defaultMessage: 'How can I help today?'},
+    helpTodaySubtitle: {defaultMessage: 'Ask a question, draft something, or hand off a task.'},
+    getWorkDoneTitle: {defaultMessage: 'Let\'s get some work done'},
+    getWorkDoneSubtitle: {defaultMessage: 'Tell me what you\'re working on and we\'ll start there.'},
+    tackleTitle: {defaultMessage: 'What should we tackle?'},
+    tackleSubtitle: {defaultMessage: 'Pick a project, a problem, or just a rough idea.'},
+    readyTitle: {defaultMessage: 'Ready when you are'},
+    readySubtitle: {defaultMessage: 'Start with a question or describe what you need.'},
+    startTitle: {defaultMessage: 'Where should we start?'},
+    startSubtitle: {defaultMessage: 'Describe the goal and we\'ll work through it together.'},
+    onYourMindTitle: {defaultMessage: 'Got something on your mind?'},
+    onYourMindSubtitle: {defaultMessage: 'Share a thought, a question, or something you\'re stuck on.'},
+});
+
+export const NEW_CHAT_GREETINGS: ReadonlyArray<{title: MessageDescriptor; subtitle: MessageDescriptor}> = [
+    {title: greetingMessages.helpTodayTitle, subtitle: greetingMessages.helpTodaySubtitle},
+    {title: greetingMessages.getWorkDoneTitle, subtitle: greetingMessages.getWorkDoneSubtitle},
+    {title: greetingMessages.tackleTitle, subtitle: greetingMessages.tackleSubtitle},
+    {title: greetingMessages.readyTitle, subtitle: greetingMessages.readySubtitle},
+    {title: greetingMessages.startTitle, subtitle: greetingMessages.startSubtitle},
+    {title: greetingMessages.onYourMindTitle, subtitle: greetingMessages.onYourMindSubtitle},
+];
+
+// Secondary text emphasis, as in the prototype (0.72 opacity over the text
+// color). No compass token covers text emphasis levels.
+const SUBTITLE_EMPHASIS = '72%';
+
+// 'page': the product view's centered 800px column.
+// 'panel': fills a narrow container (the RHS).
+export type AgentNewChatLayout = 'page' | 'panel';
+
+interface AgentNewChatProps {
+    bot: LLMBot;
+    channelId: string;
+    onCreated: (rootId: string) => void;
+    layout: AgentNewChatLayout;
+
+    // Extra content under the composer (e.g. the RHS pinned prompt buttons).
+    children?: React.ReactNode;
+}
+
+// The new-chat state: the agent's avatar, a greeting, and the pill composer,
+// centered until the first post creates the thread.
+const AgentNewChat = ({bot, channelId, onCreated, layout, children}: AgentNewChatProps) => {
+    const intl = useIntl();
+
+    // One index per mount picks title and subtitle together, so they always
+    // match and re-renders don't change them.
+    const [greeting] = useState(() => NEW_CHAT_GREETINGS[Math.floor(Math.random() * NEW_CHAT_GREETINGS.length)]);
+
+    return (
+        <EmptyChat
+            $layout={layout}
+            data-testid='agent-chat-new-chat'
+        >
+            <EmptyIntro>
+                <UserAvatar
+                    src={getProfilePictureUrl(bot.id, bot.lastIconUpdate)}
+                    alt={bot.displayName}
+                    name={bot.displayName}
+                    size='48'
+                />
+                <Greeting>
+                    <EmptyTitle>{intl.formatMessage(greeting.title)}</EmptyTitle>
+                    <EmptySubtitle>{intl.formatMessage(greeting.subtitle)}</EmptySubtitle>
+                </Greeting>
+            </EmptyIntro>
+            <AgentChatComposer
+                channelId={channelId}
+                agentName={bot.displayName}
+                onCreated={onCreated}
+            />
+            {children}
+        </EmptyChat>
+    );
+};
+
+const pageLayout = css`
+    gap: var(--spacing-xxl);
+    max-width: ${CHAT_CONTENT_MAX_WIDTH};
+    margin-inline: auto;
+    padding: var(--spacing-xxxxl);
+
+    /* Sit slightly above true center, as in the prototype. */
+    transform: translateY(calc(-1 * (var(--spacing-xxxxxl) + var(--spacing-l))));
+`;
+
+// The RHS is short as well as narrow: a smaller lift, and 24px padding on all
+// sides (the RHS thread composer uses the same side padding, so they line up).
+const panelLayout = css`
+    gap: var(--spacing-xl);
+    padding: var(--spacing-xxl);
+    transform: translateY(calc(-1 * var(--spacing-xxl)));
+`;
+
+const EmptyChat = styled.div<{$layout: AgentNewChatLayout}>`
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
+
+    ${({$layout}) => ($layout === 'page' ? pageLayout : panelLayout)}
+`;
+
+const EmptyIntro = styled.div`
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-m);
+    text-align: center;
+`;
+
+const Greeting = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+`;
+
+const EmptyTitle = styled.h2`
+    margin: 0;
+    font-family: var(--font-family-heading);
+    font-size: var(--font-size-600);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-600);
+    color: var(--center-channel-color);
+`;
+
+const EmptySubtitle = styled.p`
+    margin: 0;
+    font-family: var(--font-family-body);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-200);
+    color: color-mix(in srgb, var(--center-channel-color) ${SUBTITLE_EMPHASIS}, transparent);
+    text-wrap: balance;
+`;
+
+export default AgentNewChat;

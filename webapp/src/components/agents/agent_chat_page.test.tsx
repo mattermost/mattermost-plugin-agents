@@ -9,7 +9,9 @@ import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {BotsHandler} from '@/redux';
 import manifest from '@/manifest';
 
-import AgentChatPage, {emptyChatTitles} from './agent_chat_page';
+import {NEW_CHAT_GREETINGS} from '../agent_chat/agent_new_chat';
+
+import AgentChatPage from './agent_chat_page';
 
 const mockGetBotDirectChannel = jest.fn();
 const mockGetPost = jest.fn();
@@ -33,6 +35,9 @@ jest.mock('@/client', () => ({
     renameConversation: jest.fn(),
     archiveConversation: jest.fn(),
     getAIBots: jest.fn(),
+    getAIThreads: jest.fn(() => Promise.resolve([])),
+    getUserMCPTools: jest.fn(() => Promise.resolve({servers: []})),
+    getUserToolPreferences: jest.fn(() => Promise.resolve({disabled_servers: []})),
     savePreferences: jest.fn(),
     Client4: {
         getChannel: (...args: unknown[]) => mockGetChannel(...args),
@@ -43,6 +48,8 @@ jest.mock('@/client', () => ({
 
 const mockRequestRefresh = jest.fn();
 jest.mock('@/websocket', () => ({
+    onAgentThreadsRefreshRequested: () => () => null,
+    subscribeToAllPostUpdates: () => () => null,
     requestAgentThreadsRefresh: () => mockRequestRefresh(),
 }));
 
@@ -130,6 +137,9 @@ const makeStore = ({bots, systemPermissions = [], loadedChannels = [], currentTe
             roles: {roles: {channel_user: {name: 'channel_user'}, system_user: {name: 'system_user', permissions: systemPermissions}}},
             posts: {posts, postsInThread: {}},
             preferences: {myPreferences: {}},
+
+            // The header gates some actions on the license.
+            general: {config: {}, license: {}},
         },
     };
     const reducer = (state: any = initial, action: any) => {
@@ -183,7 +193,7 @@ const renderPage = (store: ReturnType<typeof makeStore>, props: Partial<React.Co
     return {...utils, rerender, toChat, toAll};
 };
 
-const titles = Object.values(emptyChatTitles).map((d) => d.defaultMessage as string);
+const titles = NEW_CHAT_GREETINGS.map((g) => g.title.defaultMessage as string);
 
 describe('AgentChatPage', () => {
     beforeEach(() => {
@@ -429,10 +439,10 @@ describe('AgentChatPage', () => {
         await act(async () => {
             await Promise.resolve();
         });
-        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1 options'}));
         const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
         expect(items.includes('Agent settings')).toBe(allowed);
-        expect(items).toContain('New chat');
+        expect(items).toContain('View all agents');
         error.mockRestore();
     });
 
@@ -445,7 +455,7 @@ describe('AgentChatPage', () => {
             await Promise.resolve();
         });
 
-        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1'}));
+        fireEvent.click(screen.getByRole('button', {name: 'Agent bot1 options'}));
         fireEvent.click(screen.getByRole('menuitem', {name: 'Agent settings'}));
         expect(await screen.findByText('config for agent1')).toBeTruthy();
         expect(mockConfigViewProps).toHaveBeenLastCalledWith(expect.objectContaining({mode: 'edit', services: [{id: 'svc1'}]}));

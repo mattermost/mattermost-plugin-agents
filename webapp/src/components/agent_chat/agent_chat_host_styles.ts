@@ -4,7 +4,8 @@
 import {css} from 'styled-components';
 
 // Every selector that reaches into host (Mattermost webapp) DOM for the agent
-// chat lives in this file, so a host markup change has one place to fix.
+// chat (Agents product view and Agents RHS) lives in this file, so a host
+// markup change has one place to fix.
 //
 // Host dependencies (webapp/channels/src in mattermost/mattermost):
 // - components/post/post_component.tsx
@@ -15,9 +16,16 @@ import {css} from 'styled-components';
 //                         (the body column is its unnamed sibling `div`)
 //     `.post__header`, `.post__time`, `.user-popover`, `.post-message__text`
 //                         header and text inside the body column
-// - components/root_post_divider/root_post_divider.tsx: `.root-post__divider`
+// - components/root_post_divider/root_post_divider.tsx: `.root-post__divider`,
+//     the "N replies" line rendered in the root post's row (thread_viewer_row.tsx)
+// - components/post_view/date_separator/date_separator.tsx renders
+//     widgets/separator/basic-separator.tsx `.Separator.BasicSeparator` (the
+//     new-messages line is `.Separator.NotificationSeparator`); separator.scss
+//     draws the line (`.separator__hr`) and label (`.separator__text`)
 // - components/threading/virtualized_thread_viewer/create_comment.tsx:
-//     [data-testid="comment-create"] (`.post-create__container`), the reply composer
+//     [data-testid="comment-create"] (`.post-create__container`), the host reply
+//     composer, hidden here; virtualized_thread_viewer.tsx renders it after the
+//     list inside `.virtual-list__ctr` (flex column, virtualized_thread_viewer.scss)
 // - sass/components/_post.scss lays `.post__content` out as a table; we switch it
 //   to flex inside the chat only.
 // - Row backgrounds the host paints on `.post` (all neutralized here, so only the
@@ -58,14 +66,61 @@ const activeBubble = (post: string) => [
     `${post} ${BUBBLE}:has(.post-menu__item--active, .post-menu [aria-expanded='true'])`,
 ].join(',\n    ');
 
-// Scoped under the plugin's thread wrapper; never applied globally.
-export const hostThreadChatStyles = css`
-    /* Center the column the prototype uses; the scroller stays full width. */
+interface HostThreadChatStylesOptions {
+
+    // Caps and centers the message column (the product view's 800px column).
+    // Omit it where the container is already narrow (the RHS), so rows fill it.
+    columnMaxWidth?: string;
+}
+
+// The host's own `.post` side padding (sass/components/_post.scss
+// `padding: 8px 0.5em 0 1.5em`), mirrored so separators line up with the posts.
+// Not a compass value: it matches host markup the plugin does not own.
+const HOST_POST_INLINE_PADDING = '1.5em 0.5em';
+
+// Center the column the prototype uses; the scroller stays full width.
+const centeredColumn = (maxWidth: string) => css`
     .post,
-    .root-post__divider,
-    [data-testid='comment-create'] {
-        max-width: ${CHAT_CONTENT_MAX_WIDTH};
+    .Separator {
+        max-width: ${maxWidth};
         margin-inline: auto;
+    }
+`;
+
+// Chat-bubble restyle of the host ThreadViewer. Interpolate it into the styled
+// wrapper that contains the ThreadViewer (the product view's thread pane, the
+// RHS thread pane); it is scoped under that wrapper and never applied globally.
+export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptions = {}) => css`
+    ${columnMaxWidth ? centeredColumn(columnMaxWidth) : ''}
+
+    /*
+     * The plugin's pill composer replaces the host reply box. The host renders it
+     * as the last child of the flex column \`.virtual-list__ctr\`, after the
+     * list (\`.post-right__content\`, height 100% around an AutoSizer), so with it
+     * removed the list's AutoSizer simply takes the freed height. The archived /
+     * deactivated-user notices the host renders instead are not hidden.
+     */
+    [data-testid='comment-create'] {
+        display: none;
+    }
+
+    /*
+     * No "N replies" divider under the root post: a chat has no root/replies
+     * split. It renders inside the root post's list row, which the virtualized
+     * list re-measures, so removing it only shortens that row.
+     */
+    .root-post__divider {
+        display: none;
+    }
+
+    /*
+     * Date (and new-messages) separators span the post column, not the whole
+     * scroller: capped with the posts where there is a column (above), and
+     * inset like the posts' content everywhere. The line and label keep the
+     * host styling.
+     */
+    .Separator {
+        padding-inline: ${HOST_POST_INLINE_PADDING};
     }
 
     .post .post__content {

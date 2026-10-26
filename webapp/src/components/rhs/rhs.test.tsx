@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {act, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 
 import Rhs from './rhs';
 
@@ -10,11 +10,13 @@ const mockGetAIThreads = jest.fn();
 const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
+const mockCreatePost = jest.fn();
 
 jest.mock('@/client', () => ({
     getAIThreads: () => mockGetAIThreads(),
     getUserMCPTools: () => mockGetUserMCPTools(),
     getUserToolPreferences: () => mockGetUserToolPreferences(),
+    createPost: (...args: unknown[]) => mockCreatePost(...args),
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
     ),
@@ -42,7 +44,9 @@ jest.mock('react-intl', () => {
         IntlProvider: ({children}: {children: React.ReactNode}) => ReactActual.createElement(ReactActual.Fragment, null, children),
         FormattedMessage: ({defaultMessage}: {defaultMessage: string}) => ReactActual.createElement(ReactActual.Fragment, null, defaultMessage),
         useIntl: () => ({
-            formatMessage: ({defaultMessage}: {defaultMessage: string}) => defaultMessage,
+            formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: Record<string, string>) => (
+                defaultMessage.replace(/\{(\w+)\}/g, (_m, k) => values?.[k] ?? '')
+            ),
         }),
     };
 });
@@ -117,6 +121,8 @@ const baseState = {
             posts: {
                 'post-id': {
                     id: 'post-id',
+                    channel_id: 'dm-channel-id',
+                    user_id: 'user-id',
                     props: {
                         conversation_id: 'conversation-id',
                     },
@@ -203,5 +209,42 @@ describe('RHS', () => {
             await Promise.resolve();
         });
         errorLog.mockRestore();
+    });
+
+    test.each([
+        {name: 'the thread is in the agent\'s DM', post: {channel_id: 'dm-channel-id', user_id: 'user-id'}, label: 'Reply to Agents'},
+        {name: 'the agent started the thread', post: {channel_id: 'other-dm', user_id: 'bot-id'}, label: 'Reply to Agents'},
+        {name: 'the agent is unknown', post: {channel_id: 'other-dm', user_id: 'user-id'}, label: 'Reply'},
+    ])('replies from the pill composer into the selected thread when $name', async ({post, label}) => {
+        mockCreatePost.mockResolvedValue({id: 'reply-id'});
+        const state = {
+            ...baseState,
+            entities: {...baseState.entities, posts: {...baseState.entities.posts, posts: {'post-id': {...baseState.entities.posts.posts['post-id'], ...post}}}},
+        };
+        mockUseSelector.mockImplementation((selector) => selector(state));
+
+        const {unmount} = renderRHS();
+        const reply = screen.getByRole('textbox', {name: label});
+        fireEvent.change(reply, {target: {value: 'follow up'}});
+        await act(async () => {
+            fireEvent.keyDown(reply, {key: 'Enter'});
+        });
+        expect(mockCreatePost).toHaveBeenCalledWith(expect.objectContaining({channel_id: post.channel_id, root_id: 'post-id', message: 'follow up'}));
+
+        await act(async () => {
+            unmount();
+        });
+    });
+
+    test('offers no reply composer until the thread root is loaded', async () => {
+        const state = {...baseState, entities: {...baseState.entities, posts: {posts: {}, postsInThread: {}}}};
+        mockUseSelector.mockImplementation((selector) => selector(state));
+
+        const {unmount} = renderRHS();
+        expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();
+        expect(screen.queryByRole('textbox')).toBeNull();
+        await act(async () => {
+            unmount();
+        });
     });
 });
