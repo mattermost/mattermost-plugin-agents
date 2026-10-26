@@ -113,9 +113,11 @@ func buildSearchTermWithChannel(query, channelName string) string {
 // applySearchModifiers prepends Mattermost keyword-search modifiers (from:, in:,
 // before:, after:) derived from the structured filter args. The in: filter accepts
 // either a channel name or a channel ID; an ID is resolved to its URL name so the
-// modifier matches. Modifiers only affect the keyword search leg.
-func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, client *model.Client4, term string, args CombinedSearchArgs) string {
+// modifier matches, and the channel's team ID is returned so the search can be
+// scoped to it. Modifiers only affect the keyword search leg.
+func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, client *model.Client4, term string, args CombinedSearchArgs) (string, string) {
 	var modifiers []string
+	inChannelTeamID := ""
 
 	if from := strings.TrimPrefix(strings.TrimSpace(args.From), "@"); from != "" {
 		modifiers = append(modifiers, "from:"+from)
@@ -127,6 +129,7 @@ func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, clien
 		if model.IsValidId(in) {
 			if channel, _, err := client.GetChannel(ctx, in); err == nil {
 				channelName = channel.Name
+				inChannelTeamID = channel.TeamId
 			} else {
 				// A raw ID never matches the in: name filter, so skip the
 				// modifier rather than silently returning zero results.
@@ -147,9 +150,42 @@ func (p *MattermostToolProvider) applySearchModifiers(ctx context.Context, clien
 	}
 
 	if len(modifiers) == 0 {
-		return term
+		return term, inChannelTeamID
 	}
-	return strings.Join(modifiers, " ") + " " + term
+	return strings.Join(modifiers, " ") + " " + term, inChannelTeamID
+}
+
+// resolveInChannelName finds the requesting user's channel named name.
+// Without a team, Mattermost resolves in: names only against DMs and group
+// messages, so a team channel name must be turned into an ID first. When
+// several teams have a channel with that name, the returned guidance lists them
+// for the model to pick one.
+func resolveInChannelName(ctx context.Context, client *model.Client4, name string) (*model.Channel, string, error) {
+	channels, _, err := client.GetChannelsForUserWithLastDeleteAt(ctx, "me", 0)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to resolve channel %q: %w", name, err)
+	}
+
+	var matches []*model.Channel
+	for _, channel := range channels {
+		if channel.DeleteAt == 0 && channel.Name == name {
+			matches = append(matches, channel)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, "", fmt.Errorf("no channel named %q found among your channels; pass channel_id or team_id", name)
+	case 1:
+		return matches[0], "", nil
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Channel name %q matches %d channels in different teams. Retry search_posts with channel_id set to one of these:\n\n", name, len(matches))
+	for _, channel := range matches {
+		format.WriteChannel(&sb, format.ChannelEntry{Channel: channel, TeamID: channel.TeamId, MemberCount: -1})
+	}
+	return nil, sb.String(), nil
 }
 
 // searchPostResult holds a post result with metadata for deduplication and formatting.
@@ -196,6 +232,18 @@ func (p *MattermostToolProvider) toolCombinedSearch(mcpContext *MCPToolContext, 
 
 	client := mcpContext.Client
 	ctx := mcpContext.Ctx
+
+	if in := strings.TrimPrefix(strings.TrimSpace(args.In), "~"); in != "" && args.TeamID == "" && args.ChannelID == "" &&
+		!model.IsValidId(in) && !strings.HasPrefix(in, "@") {
+		channel, guidance, err := resolveInChannelName(ctx, client, in)
+		if err != nil {
+			return "", err
+		}
+		if guidance != "" {
+			return guidance, nil
+		}
+		args.In = channel.Id
+	}
 
 	semanticEnabled := p.searchService != nil && p.searchService.Enabled()
 	userID := ""
@@ -324,7 +372,10 @@ func (p *MattermostToolProvider) executeKeywordSearch(ctx context.Context, clien
 
 	// Prepend structured search modifiers (Mattermost search grammar). These
 	// constrain the keyword leg only; semantic search ignores them.
-	searchTerm = p.applySearchModifiers(ctx, client, searchTerm, args)
+	searchTerm, inChannelTeamID := p.applySearchModifiers(ctx, client, searchTerm, args)
+	if teamID == "" {
+		teamID = inChannelTeamID
+	}
 
 	searchResults, _, err := client.SearchPosts(ctx, teamID, searchTerm, false)
 	if err != nil {

@@ -410,11 +410,6 @@ func (p *MattermostToolProvider) toolDM(mcpContext *MCPToolContext, args DMArgs)
 		FileIds:   fileIDs,
 	}
 
-	// Set from_webhook only when DM'ing yourself (prevents AI auto-response loop)
-	if dmSelf {
-		post.AddProp("from_webhook", "true")
-	}
-
 	p.stampAIGenerated(post, mcpContext, currentUser.Id)
 
 	createdPost, _, err := client.CreatePost(ctx, post)
