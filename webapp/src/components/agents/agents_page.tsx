@@ -1,19 +1,34 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useEffect, useRef} from 'react';
+import React, {ReactNode, useEffect, useRef} from 'react';
 import styled from 'styled-components';
 
-import manifest from '@/manifest';
-
 import AgentsList from './agents_list';
+import ProductSidebar from './product_sidebar';
+import {AGENTS_ROUTE, AgentsRoute, AgentsView, useAgentsRoute} from './use_agents_route';
 
-export const AGENTS_ROUTE = `/plug/${manifest.id}/agents`;
+export {AGENTS_ROUTE};
+
+// Seam for the center pane: each view maps to its content. Later steps replace the
+// null entries with CustomPromptsPage and AgentChatPage (one line each).
+export type ContentRenderers = Record<AgentsView, (route: AgentsRoute) => ReactNode>;
+
+export const defaultContentRenderers: ContentRenderers = {
+    all: () => <AgentsList/>,
+    prompts: () => null,
+    chat: () => null,
+};
+
+interface AgentsPageProps {
+    renderers?: ContentRenderers;
+}
 
 // Product mainComponent — rendered by registerProduct when the route matches.
-// No URL-matching or overlay needed; Mattermost's product routing handles it.
-const AgentsPage = () => {
+const AgentsPage = ({renderers = defaultContentRenderers}: AgentsPageProps) => {
     const pageRef = useRef<HTMLDivElement>(null);
+    const route = useAgentsRoute();
+    const {toAll, toPrompts} = route;
 
     useEffect(() => {
         // The host webapp owns `app__body` on document.body (see MM-67913 / Boards #188).
@@ -31,7 +46,7 @@ const AgentsPage = () => {
 
         if (wrapper) {
             // Mattermost's product shell may scroll when our page grows taller than the viewport.
-            // Pin overflow on those ancestors so only the agents list viewport scrolls.
+            // Pin overflow on those ancestors so only the content outlet scrolls.
             let node: HTMLElement | null = wrapper.parentElement;
             while (node) {
                 const {overflowY} = window.getComputedStyle(node);
@@ -52,9 +67,14 @@ const AgentsPage = () => {
 
     return (
         <PageWrapper ref={pageRef}>
-            <PageLayout>
-                <AgentsList/>
-            </PageLayout>
+            <ProductSidebar
+                activeView={route.view}
+                onSelectAll={toAll}
+                onSelectPrompts={toPrompts}
+            />
+            <ContentOutlet>
+                {renderers[route.view](route)}
+            </ContentOutlet>
         </PageWrapper>
     );
 };
@@ -66,19 +86,22 @@ const PageWrapper = styled.div`
     bottom: 0;
     left: 0;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     width: 100%;
-    background: var(--center-channel-bg, #fff);
+    background: var(--center-channel-bg);
     overflow: hidden;
 `;
 
-const PageLayout = styled.div`
+// The outlet owns the definite height (min-height: 0) and its own scroll region.
+// Chat content (host ThreadViewer) must fill it and must not scroll itself.
+const ContentOutlet = styled.main`
     display: flex;
+    flex: 1 1 0;
     flex-direction: column;
-    flex: 1;
+    min-width: 0;
     min-height: 0;
-    width: 100%;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
 `;
 
 export default AgentsPage;
