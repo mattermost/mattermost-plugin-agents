@@ -855,13 +855,13 @@ Requirements, checked when the setting is saved and again on every turn:
 - **Use service accounts for authentication** is on. Turning it off also turns this setting off and clears the additional channels.
 - **Automatically enable all MCP tools** is off, and every MCP tool is picked by name: a server cannot be granted with all of its tools. A legacy all-tools grant gives the agent none of that server's tools in channel turns.
 - **Enable Channel Mention Tool Calling** is on in the plugin settings.
-- A Mattermost server version that can create scoped sessions, and an Enterprise license. The plugin checks this on each server node when it starts; on a server that cannot, the setting cannot be turned on and agents that have it run with the usual approval flow.
+- A Mattermost server version that can create scoped sessions, and an Enterprise license. The plugin checks this on each server node when it starts; on a server that cannot, the setting cannot be turned on and channel turns of agents that have it run with the usual approval flow.
 
 When a requirement stops holding, channel turns fall back to the requesting user's permissions with the usual approval flow, and live scoped sessions for that agent are revoked on every node. The same happens when you remove an additional channel or a tool from the agent, so a removed tool stops running at once. If the server cannot create a session, the turn runs without MCP tools rather than with anyone else's credentials.
 
 > **Warning:** Content from the additional channels can appear in any channel where the agent is used, including to people who are not members of them. Pick them deliberately.
 
-For LLM Bridge calls to an agent in scoped channel mode, `channel_id` is required (requests without it return `400`). Allowlisted tools then run on a scoped session for that channel. Requests in a DM channel run as `user_id`, as before.
+For LLM Bridge calls to an agent in scoped channel mode, `channel_id` is required (requests without it return `400`). Allowlisted tools then run on a scoped session for that channel, which `user_id` must be able to read (otherwise the request returns `403`). Unlike channel turns, Bridge requests with `allowed_tools` do not fall back to the requesting user's permissions when a requirement above does not hold: they return `403`. Requests in a DM channel run as `user_id`, as before.
 
 Audit records: each scoped session grant is recorded as `agentScopedSessionGrant`, and each tool call it runs as `agentScopedToolCall`. Both name the user who triggered the run as the actor and carry only IDs (agent, channel, conversation, post, tool name, server kind) and the outcome, never prompts, arguments, results, or the session itself.
 
