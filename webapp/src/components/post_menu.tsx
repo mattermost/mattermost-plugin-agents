@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useContext} from 'react';
+import React from 'react';
 import {FormattedMessage, useIntl} from 'react-intl';
 
 import {Post} from '@mattermost/types/posts';
@@ -24,7 +24,6 @@ import DotMenu, {DropdownMenu, DropdownMenuItem} from './dot_menu';
 import IconThreadSummarization from './assets/icon_thread_summarization';
 import {Divider, DropdownInfoOnlyVisibleToYou} from './dropdown_info';
 import {DropdownBotSelector} from './bot_selector';
-import {AgentChatSurfaceContext} from './agent_chat/agent_chat_surface_context';
 
 type Props = {
     post: Post,
@@ -34,7 +33,6 @@ type Props = {
 const PostMenu = (props: Props) => {
     const selectPost = useSelectPost();
     const intl = useIntl();
-    const {focusedAIActions} = useContext(AgentChatSurfaceContext);
     const {bots, activeBot, setActiveBot} = useBotlistForChannel(props.post.channel_id);
     const post = props.post;
     const threadSummarizationLicensed = useIsLicensedFor('thread_summarization');
@@ -59,21 +57,17 @@ const PostMenu = (props: Props) => {
             padding='compact'
             onOpenChange={props.handleDropdownOpened}
         >
-            {!focusedAIActions && (
-                <>
-                    <DropdownBotSelector
-                        bots={bots ?? []}
-                        activeBot={activeBot}
-                        setActiveBot={setActiveBot}
-                    />
-                    <Divider/>
-                </>
-            )}
+            <DropdownBotSelector
+                bots={bots ?? []}
+                activeBot={activeBot}
+                setActiveBot={setActiveBot}
+            />
+            <Divider/>
             {threadSummarizationLicensed && (
                 <>
                     <DropdownMenuItem
                         icon={<IconThreadSummarization/>}
-                        label={focusedAIActions ? <FormattedMessage defaultMessage='Summarize'/> : <FormattedMessage defaultMessage='Summarize Thread'/>}
+                        label={<FormattedMessage defaultMessage='Summarize Thread'/>}
                         onClick={() => analyzeThread(post.id, 'summarize_thread')}
                     />
                     <DropdownMenuItem
@@ -81,26 +75,20 @@ const PostMenu = (props: Props) => {
                         label={<FormattedMessage defaultMessage='Find action items'/>}
                         onClick={() => analyzeThread(post.id, 'action_items')}
                     />
-                    {!focusedAIActions && (
-                        <DropdownMenuItem
-                            icon={<IconSparkleQuestion/>}
-                            label={<FormattedMessage defaultMessage='Find open questions'/>}
-                            onClick={() => analyzeThread(post.id, 'open_questions')}
-                        />
-                    )}
-                </>
-            )}
-            {!focusedAIActions && (
-                <>
                     <DropdownMenuItem
-                        icon={<IconReactForMe/>}
-                        label={<FormattedMessage defaultMessage='React for me'/>}
-                        onClick={() => doReaction(post.id)}
+                        icon={<IconSparkleQuestion/>}
+                        label={<FormattedMessage defaultMessage='Find open questions'/>}
+                        onClick={() => analyzeThread(post.id, 'open_questions')}
                     />
-                    <Divider/>
-                    <DropdownInfoOnlyVisibleToYou/>
                 </>
             )}
+            <DropdownMenuItem
+                icon={<IconReactForMe/>}
+                label={<FormattedMessage defaultMessage='React for me'/>}
+                onClick={() => doReaction(post.id)}
+            />
+            <Divider/>
+            <DropdownInfoOnlyVisibleToYou/>
         </DotMenu>
     );
 };

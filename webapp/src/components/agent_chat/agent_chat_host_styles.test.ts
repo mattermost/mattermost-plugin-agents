@@ -157,12 +157,16 @@ describe('hostThreadChatStyles message look', () => {
         expect(ruleFor(text, '.post .post__content > .post__img')).toContain('display: none');
     });
 
-    test('the agent\'s reply keeps the bubble shape, tinted only on hover, and hides its header except the toolbar', () => {
+    test('the agent\'s reply keeps the bubble shape, tinted only on hover, and hides its header', () => {
         const rule = ruleFor(text, '.post .post__content > .post__img + div');
         expect(rule).toContain('padding: var(--spacing-xs) var(--spacing-l)');
         expect(rule).toContain('background: transparent');
         expect(ruleFor(text, '.post .post__content > .post__img + div:hover')).toContain('background: rgba(var(--center-channel-color-rgb), 0.08)');
         expect(ruleFor(text, '.post:not(.current--user) .post__header > :not(.post-menu)')).toContain('display: none !important');
+    });
+
+    test('the host hover toolbar is hidden for every post', () => {
+        expect(ruleFor(text, '.post .post-menu')).toContain('display: none !important');
     });
 
     test('both bubbles round all four corners the same, as a squircle', () => {

@@ -46,9 +46,7 @@ import {css} from 'styled-components';
 //   bubble. sass/components/_post-menu.scss positions it absolute (top -12px,
 //   right 0) against the nearest positioned ancestor (host: `.post__content`) and
 //   shows its `.post-menu__item`s on `.post:hover/.post--hovered/.a11y--active`.
-//   An open toolbar menu marks its trigger `.post-menu__item--active` and/or
-//   `aria-expanded="true"`. The host only renders the items while the row is
-//   hovered (React state), which bubble hover implies.
+//   The plugin hides it entirely in the chat.
 // - Bubble fit (read-only measurement by llmbot_post/use_bubble_width.ts):
 //     `.post__header` inside the bubble (its children's natural widths; the
 //     absolute `.post-menu` is skipped), fenced code as formatted by the host
@@ -98,14 +96,12 @@ export const CONTROLS_BAR_HEIGHT = '28px';
 // One-line tweak; the reserved margin follows it.
 const CONTROLS_BAR_GAP = 'var(--spacing-xxxxs)';
 
-// The bubble the user is on: pointer over it (the toolbar is its descendant, so
-// moving onto the toolbar keeps it), keyboard focus inside it, the row's a11y
-// focus, or one of its toolbar menus open.
+// The bubble the user is on: pointer over it, keyboard focus inside it, or the
+// row's a11y focus.
 const activeBubble = (post: string) => [
     `${post} ${BUBBLE}:hover`,
     `${post} ${BUBBLE}:focus-within`,
     `${post}.a11y--active ${BUBBLE}`,
-    `${post} ${BUBBLE}:has(.post-menu__item--active, .post-menu [aria-expanded='true'])`,
 ].join(',\n    ');
 
 interface HostThreadChatStylesOptions {
@@ -272,20 +268,12 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     }
 
     /*
-     * Toolbar: hidden (and not hit-testable) unless its bubble is active, even
-     * though the host reveals it for the whole row. Opacity rather than
-     * visibility, because the host sets visibility on the items themselves.
+     * The host's hover toolbar (reply, follow, pin, forward, ...) is built for channels and mostly
+     * means nothing in a one-to-one agent chat, so it is hidden. The plugin's controls bar under
+     * each post carries the actions that matter here.
      */
     .post .post-menu {
-        opacity: 0;
-        pointer-events: none;
-    }
-
-    ${activeBubble('.post')} {
-        .post-menu {
-            opacity: 1;
-            pointer-events: auto;
-        }
+        display: none !important;
     }
 
     /* Keyboard focus inside a row must not clip the toolbar (the host only unclips on hover). */

@@ -35,12 +35,6 @@ export interface AgentChatSurface {
     // controls bar. Only the agent chat views opt in; widening it is a
     // one-line change to the default context value below.
     showCopyButton: boolean;
-
-    // The post toolbar's AI Actions menu drops what only makes sense in a
-    // channel: the agent picker (the chat already has its agent), React for me,
-    // the "only visible to you" note and Find open questions. Only the agent chat views opt in;
-    // widening it is a one-line change to the default context value below.
-    focusedAIActions: boolean;
 }
 
 // Provided by the agent chat views (Agents product view, Agents RHS) around
@@ -53,7 +47,6 @@ export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
     hugShortBubbles: false,
     controlsBelowBubble: false,
     showCopyButton: false,
-    focusedAIActions: false,
 });
 
 export const AGENT_CHAT_SURFACE: AgentChatSurface = {
@@ -63,5 +56,4 @@ export const AGENT_CHAT_SURFACE: AgentChatSurface = {
     hugShortBubbles: true,
     controlsBelowBubble: true,
     showCopyButton: true,
-    focusedAIActions: true,
 };
