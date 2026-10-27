@@ -99,11 +99,11 @@ describe('hostThreadChatStyles bubble fit', () => {
         expect(rule).toContain(`max-width: calc(${HUG_MAX_FRACTION} * (100% - var(--icon-size-32) - var(--spacing-xs)))`);
     });
 
-    test('width changes animate only once a post opts into motion, with compass motion tokens', () => {
-        const rule = ruleFor(text, `${bubble}:has([data-bubble-motion='on'])`);
-        expect(rule).toContain('interpolate-size: allow-keywords');
-        expect(rule).toContain('flex-grow var(--duration-moderate) var(--ease-transition)');
-        expect(rule).toContain('width var(--duration-moderate) var(--ease-transition)');
+    // The fit is decided from the bubble's measured width: a width mid-transition
+    // reads as pinned at the cap, and hug and full flip every frame.
+    test('bubble width changes never transition', () => {
+        expect(text).not.toMatch(/transition:[^;]*\b(width|max-width|flex-grow|min-width)\b/);
+        expect(text).not.toContain('interpolate-size');
     });
 
     test('agent bubbles default to the full row, own bubbles are unchanged', () => {

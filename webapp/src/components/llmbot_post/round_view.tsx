@@ -37,7 +37,7 @@ interface RoundViewProps {
  */
 export const RoundView = React.memo((props: RoundViewProps) => {
     const {round} = props;
-    const wide = hasWideContent(round) ? true : undefined; // eslint-disable-line no-undefined
+    const wide = hasWideContent(round, props.reasoningCollapsed) ? true : undefined; // eslint-disable-line no-undefined
     return (
         <RoundContainer data-bubble-wide={wide}>
             {round.reasoning.summary !== '' && (
@@ -77,8 +77,10 @@ export const RoundView = React.memo((props: RoundViewProps) => {
 RoundView.displayName = 'RoundView';
 
 // Reasoning and tool UI need the full bubble width (use_bubble_width.ts).
-function hasWideContent(round: Round): boolean {
-    return round.reasoning.summary !== '' || round.serverTools.length > 0 || round.toolCalls.length > 0;
+// Collapsed reasoning is one short "Thinking" line, which the bubble measures
+// like text; expanded, its panel needs the row.
+function hasWideContent(round: Round, reasoningCollapsed: boolean): boolean {
+    return (round.reasoning.summary !== '' && !reasoningCollapsed) || round.serverTools.length > 0 || round.toolCalls.length > 0;
 }
 
 const RoundContainer = styled.div`

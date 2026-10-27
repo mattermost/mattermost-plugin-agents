@@ -27,7 +27,7 @@ export type ChannelNamesMap = {
 /** Streaming reveal: the message renders block by block, fresh text fading in. */
 export interface TextReveal {
     fresh: readonly FreshRange[];
-    onFreshEnd: (id: number) => void;
+    fadeAfter: number;
 }
 
 interface Props {
@@ -91,11 +91,13 @@ const handleInternalLinkClick = (e: React.MouseEvent<HTMLDivElement>) => {
     history.push(path);
 };
 
-// Blocks appended after mount fade in; those present at mount do not.
+// Blocks appended after mount fade in; those present at mount do not. A block
+// whose text arrives in fading spans is not faded again as a whole (only
+// blocks without spans, such as code, fade as one).
 const RevealTextContainer = styled(TextContainer)<{$enterFrom: number | null}>`
 	${(props) => props.$enterFrom !== null && css`
-		> :nth-child(n + ${props.$enterFrom}) {
-			animation: ${fadeOnAnimation} var(--duration-moderate) var(--ease-entrance) both;
+		> :nth-child(n + ${props.$enterFrom}):not(:has([data-fresh-text])) {
+			animation: ${fadeOnAnimation} var(--duration-moderate) var(--ease-entrance) backwards;
 			${noMotionWhenReduced}
 		}
 	`}
@@ -139,7 +141,7 @@ const RevealText = (props: RevealTextProps) => {
             <StreamingMarkdown
                 message={props.message}
                 fresh={props.reveal.fresh}
-                onFreshEnd={props.reveal.onFreshEnd}
+                fadeAfter={props.reveal.fadeAfter}
                 formatText={formatText}
                 messageHtmlToComponent={messageHtmlToComponent}
                 markdownOptions={markdownOptions}

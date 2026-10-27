@@ -90,7 +90,7 @@ describe('PostText streaming reveal', () => {
                     channelID='channel'
                     postID='post'
                     annotations={annotations}
-                    reveal={reveal ? {fresh: [{id: 1, start: 5, end: 14}], onFreshEnd: jest.fn()} : undefined} // eslint-disable-line no-undefined
+                    reveal={reveal ? {fresh: [{id: 1, start: 5, end: 14, at: 0}], fadeAfter: -1} : undefined} // eslint-disable-line no-undefined
                 />
             </IntlProvider>,
         );

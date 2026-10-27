@@ -2,7 +2,7 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {fireEvent, render} from '@testing-library/react';
+import {render} from '@testing-library/react';
 
 import {StreamingMarkdown, markFreshText, splitMarkdownBlocks} from './streaming_markdown';
 import type {FreshRange} from './use_smooth_text';
@@ -17,12 +17,12 @@ const messageHtmlToComponent = (html: string) => {
 const markdownOptions = {};
 const htmlOptions = {};
 
-function renderMarkdown(message: string, fresh: readonly FreshRange[] = [], onFreshEnd = jest.fn()) {
+function renderMarkdown(message: string, fresh: readonly FreshRange[] = [], fadeAfter?: number) {
     const element = (msg: string, f: readonly FreshRange[]) => (
         <StreamingMarkdown
             message={msg}
             fresh={f}
-            onFreshEnd={onFreshEnd}
+            fadeAfter={fadeAfter}
             formatText={formatText}
             messageHtmlToComponent={messageHtmlToComponent}
             markdownOptions={markdownOptions}
@@ -59,7 +59,7 @@ describe('splitMarkdownBlocks', () => {
 });
 
 describe('markFreshText', () => {
-    const range = (start: number, end: number, id = 1): FreshRange => ({id, start, end});
+    const range = (start: number, end: number, id = 1): FreshRange => ({id, start, end, at: 0});
     const strip = (text: string) => text.replace(/[-]/g, '');
 
     test.each([
@@ -100,7 +100,7 @@ describe('StreamingMarkdown', () => {
 
     test('wraps only fresh text, across inline elements, without marker characters', () => {
         const message = 'Settled text **bold words** after';
-        const {getByTestId, container} = renderMarkdown(message, [{id: 7, start: 13, end: message.length}]);
+        const {getByTestId, container} = renderMarkdown(message, [{id: 7, start: 13, end: message.length, at: 0}]);
         const fresh = Array.from(container.querySelectorAll('[data-fresh-text]'));
         expect(fresh.map((node) => node.textContent)).toEqual(['bold words', ' after']);
         expect(fresh.every((node) => node.getAttribute('data-fresh-text') === '7')).toBe(true);
@@ -108,24 +108,46 @@ describe('StreamingMarkdown', () => {
         expect(getByTestId('root').querySelector('strong')?.textContent).toBe('bold words');
     });
 
-    test('reports the end of the fade and renders plain text once retired', () => {
-        const onFreshEnd = jest.fn();
-        const {container, update, getByTestId} = renderMarkdown('Hello world', [{id: 3, start: 6, end: 11}], onFreshEnd);
-        const fresh = container.querySelector('[data-fresh-text]')!;
-        expect(fresh.textContent).toBe('world');
+    // Each span's fade plays once, on mount: a span that is re-created (a key
+    // that depends on the spans before it) replays its fade, which flickers.
+    test('every revealed span keeps its DOM node while later text streams in', () => {
+        const steps = ['One ', 'One **two', 'One **two three** ', 'One **two three** four ', 'One **two three** four five'];
+        const ranges: FreshRange[] = [];
+        let start = 0;
+        const {container, update} = renderMarkdown('', []);
+        const seen = new Map<string, Element>();
+        steps.forEach((message, index) => {
+            ranges.push({id: index + 1, start, end: message.length, at: 0});
+            start = message.length;
+            update(message, [...ranges]);
+            for (const [key, node] of seen) {
+                expect(node.isConnected).toBe(true);
+                expect(container.contains(node)).toBe(true);
+                seen.set(key, node);
+            }
+            container.querySelectorAll('[data-fresh-text]').forEach((node, position) => {
+                const key = `${node.getAttribute('data-fresh-text')}:${position}`;
+                if (!seen.has(key) && !Array.from(seen.values()).includes(node)) {
+                    seen.set(key, node);
+                }
+            });
+        });
+        expect(container.textContent).toBe('One two three four five');
+    });
 
-        fireEvent.animationEnd(fresh);
-        expect(onFreshEnd).toHaveBeenCalledWith(3);
-
-        update('Hello world', []);
-        expect(container.querySelector('[data-fresh-text]')).toBeNull();
-        expect(getByTestId('root').textContent).toBe('Hello world');
+    // Markdown re-parsing can re-create an element (a list turning loose): text
+    // that already faded in must not fade in again.
+    test('only ranges still fading in are marked to fade', () => {
+        const message = 'Older words then newer';
+        const {container} = renderMarkdown(message, [{id: 1, start: 0, end: 12, at: 100}, {id: 2, start: 12, end: message.length, at: 900}], 500);
+        expect(container.querySelector('[data-fresh-text="1"]')?.hasAttribute('data-fade')).toBe(false);
+        expect(container.querySelector('[data-fresh-text="2"]')?.hasAttribute('data-fade')).toBe(true);
     });
 
     test('settled text keeps its DOM when later text arrives', () => {
-        const {container, update} = renderMarkdown('Hello ', [{id: 1, start: 0, end: 6}]);
+        const {container, update} = renderMarkdown('Hello ', [{id: 1, start: 0, end: 6, at: 0}]);
         const first = container.querySelector('[data-fresh-text="1"]');
-        update('Hello world', [{id: 1, start: 0, end: 6}, {id: 2, start: 6, end: 11}]);
+        update('Hello world', [{id: 1, start: 0, end: 6, at: 0}, {id: 2, start: 6, end: 11, at: 0}]);
         expect(container.querySelector('[data-fresh-text="1"]')).toBe(first);
         expect(container.querySelector('[data-fresh-text="2"]')?.textContent).toBe('world');
     });

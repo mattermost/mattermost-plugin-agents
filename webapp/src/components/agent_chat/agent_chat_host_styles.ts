@@ -47,7 +47,8 @@ import {css} from 'styled-components';
 //   hovered (React state), which bubble hover implies.
 // - Bubble fit (read-only measurement by llmbot_post/use_bubble_width.ts):
 //     `.post__header` inside the bubble (its children's natural widths; the
-//     absolute `.post-menu` is skipped), and host attachments the bubble may
+//     absolute `.post-menu` is skipped), fenced code as formatted by the host
+//     (utils/markdown renderer: `.post-code`, not a `<pre>`), and host attachments the bubble may
 //     hold below the message: components/file_attachment_list
 //     (`.post-image__columns`, single image `.file-view--single`),
 //     post_view/message_attachments (`.attachment`), and post_view/post_body_additional_content
@@ -67,7 +68,7 @@ const BUBBLE = '.post__content > .post__img + div';
 export const BUBBLE_SELECTOR = BUBBLE;
 export const BUBBLE_HEADER_SELECTOR = '.post__header';
 export const BUBBLE_TOOLBAR_SELECTOR = '.post-menu';
-export const BUBBLE_WIDE_HOST_CONTENT_SELECTOR = '.post-image__columns, .file-view--single, .attachment, .post__embed-container, .PostAttachmentOpenGraph';
+export const BUBBLE_WIDE_HOST_CONTENT_SELECTOR = '.post-code, .post-image__columns, .file-view--single, .attachment, .post__embed-container, .PostAttachmentOpenGraph';
 
 // An agent bubble hugs its content when its natural width is under this share
 // of the row (the row minus the avatar slot), and spans the row otherwise.
@@ -75,7 +76,6 @@ export const HUG_MAX_FRACTION = 0.75;
 
 // Set by LLMBotPost on its own wrapper inside the bubble.
 export const BUBBLE_FIT_ATTRIBUTE = 'data-bubble-fit';
-export const BUBBLE_MOTION_ATTRIBUTE = 'data-bubble-motion';
 
 // Set by the plugin's controls bar when it should sit under the bubble.
 export const BUBBLE_CONTROLS_ATTRIBUTE = 'data-bubble-controls';
@@ -231,7 +231,10 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     /*
      * Short agent replies hug their content: LLMBotPost marks its wrapper
      * hug or full (use_bubble_width.ts) and the bubble follows. Without :has()
-     * support the rule never matches and every bubble stays full width.
+     * support the rule never matches and every bubble stays full width. The
+     * width never transitions: the decision measures the bubble, and a width
+     * caught mid-transition reads as pinned at the cap (hug and full would
+     * then flip every frame).
      */
     .post ${BUBBLE}:has([${BUBBLE_FIT_ATTRIBUTE}='hug']) {
         flex: 0 1 auto;
@@ -257,20 +260,6 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         top: calc(100% + ${CONTROLS_BAR_GAP});
         left: var(--spacing-s);
         margin-top: 0;
-    }
-
-    /* Width changes animate only for posts that streamed here, never on load. */
-    .post ${BUBBLE}:has([${BUBBLE_MOTION_ATTRIBUTE}='on']) {
-        interpolate-size: allow-keywords;
-        transition:
-            background var(--duration-quick) var(--ease-transition),
-            flex-grow var(--duration-moderate) var(--ease-transition),
-            width var(--duration-moderate) var(--ease-transition),
-            max-width var(--duration-moderate) var(--ease-transition);
-
-        @media (prefers-reduced-motion: reduce) {
-            transition: none;
-        }
     }
 
     /* Own messages: right-aligned, primary-colored bubble. */

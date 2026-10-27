@@ -21,15 +21,35 @@ export const FLUSH_MAX_MS = 280;
 /** A run without whitespace longer than this is revealed mid-word. */
 export const MAX_WORD_HOLD_CHARS = 24;
 
-/** Fresh ranges whose fade never reported its end are settled after this. */
-export const FRESH_MAX_AGE_MS = 1000;
+/**
+ * The reveal advances in steps at most this often (every few frames), so the
+ * growing block is re-formatted and re-laid out a few times less per second,
+ * and each step fades in a small chunk (a word or a few) instead of one word
+ * per frame. Fades overlap, so the growth still reads as continuous.
+ */
+export const REVEAL_TICK_MS = 50;
 
-/** A just-revealed slice of the displayed text, faded in by the renderer. */
+/**
+ * A revealed slice of the displayed text, faded in by the renderer. Ranges
+ * stay for the life of the reveal: the renderer keeps each one's element (its
+ * fade plays once, on mount), so settled text is never re-created mid-stream.
+ */
 export interface FreshRange {
     id: number;
     start: number;
     end: number;
+
+    /** When it was revealed, on the hook's clock. */
+    at: number;
 }
+
+/**
+ * A range revealed this long ago has finished fading in (compass
+ * --duration-moderate, 300ms, plus a margin). Its text is not faded again if
+ * markdown re-parsing (a list turning loose, an emphasis closing) re-creates
+ * its element.
+ */
+export const FADE_SETTLED_MS = 400;
 
 export interface FrameScheduler {
     request: (callback: () => void) => number;
@@ -54,12 +74,8 @@ export interface SmoothText {
     text: string;
     fresh: readonly FreshRange[];
 
-    /** Settles a fresh range, once its fade has finished. */
-    retire: (id: number) => void;
-}
-
-interface TimedFreshRange extends FreshRange {
-    at: number;
+    /** Fresh ranges revealed at or before this time have finished fading. */
+    fadeAfter: number;
 }
 
 interface RevealState {
@@ -70,9 +86,10 @@ interface RevealState {
     deadline: number;
     arrivals: Array<{end: number; at: number}>;
     flush: {start: number; from: number} | null;
-    fresh: TimedFreshRange[];
+    fresh: FreshRange[];
     nextId: number;
     lastFrame: number | null;
+    lastReveal: number | null;
     handle: number | null;
 }
 
@@ -93,6 +110,44 @@ function isHighSurrogate(code: number): boolean {
     return code >= 0xD800 && code <= 0xDBFF;
 }
 
+// Only a list, heading or quote marker so far on the line ("## ", "- ", "1. ").
+const LINE_MARKUP_ONLY = /^[ \t]*(?:(?:[-*+>]|\d{1,9}[.)]|#{1,6})[ \t]+)+$/;
+
+function count(text: string, token: string): number {
+    return text.split(token).length - 1;
+}
+
+/**
+ * Stopping at `at` would show markdown syntax as literal text for a moment
+ * (a bare "##" or "-" before its first word, or an unclosed "**", "`", link
+ * text or link target on the line), which re-renders into another element
+ * once the next word arrives.
+ */
+function opensMarkup(text: string, at: number): boolean {
+    const lineStart = text.lastIndexOf('\n', at - 1) + 1;
+    const head = text.slice(lineStart, at);
+    if (head.trim() === '') {
+        return false;
+    }
+    return LINE_MARKUP_ONLY.test(head) ||
+        count(head, '**') % 2 === 1 ||
+        count(head, '`') % 2 === 1 ||
+        head.lastIndexOf('[') > head.lastIndexOf(']') ||
+        head.lastIndexOf('](') > head.lastIndexOf(')');
+}
+
+/**
+ * The reveal may stop at `at`: after a space within a line, where the shown
+ * text parses the same as it will once more arrives. Not after a line break:
+ * text ending in a blank line can change how the block above it parses (a
+ * list turns loose, its items re-wrapped in paragraphs), so the last word of
+ * a line shows together with the first word of the next.
+ */
+function isRevealBoundary(text: string, at: number): boolean {
+    const code = text.charCodeAt(at - 1);
+    return isWhitespace(code) && code !== 10 && code !== 13 && !opensMarkup(text, at);
+}
+
 /**
  * Where the reveal may stop: after the last whitespace the cursor passed, so
  * words appear whole; mid-word only for very long runs or a lag floor. Never
@@ -107,12 +162,12 @@ export function revealBoundary(text: string, from: number, cursor: number, floor
 
     let candidate = from;
     for (let i = pos - 1; i >= from; i--) {
-        if (isWhitespace(text.charCodeAt(i))) {
+        if (isRevealBoundary(text, i + 1)) {
             candidate = i + 1;
             break;
         }
     }
-    if (candidate === from && pos - from >= MAX_WORD_HOLD_CHARS) {
+    if (candidate === from && pos - from >= MAX_WORD_HOLD_CHARS && !opensMarkup(text, pos)) {
         candidate = pos;
     }
     candidate = Math.max(candidate, Math.min(floor, len));
@@ -141,7 +196,7 @@ function revealFirstWord(state: RevealState, now: number) {
     const text = state.target;
     let end = Math.min(text.length, MAX_WORD_HOLD_CHARS);
     for (let i = 0; i < end; i++) {
-        if (isWhitespace(text.charCodeAt(i))) {
+        if (isRevealBoundary(text, i + 1)) {
             end = i + 1;
             break;
         }
@@ -153,6 +208,7 @@ function revealFirstWord(state: RevealState, now: number) {
     state.nextId += 1;
     state.shown = end;
     state.cursor = Math.max(state.cursor, end);
+    state.lastReveal = now;
 }
 
 // Runs during render so a replaced or reset text never paints stale for a frame.
@@ -222,9 +278,11 @@ function step(state: RevealState, now: number): boolean {
         const catchUpRate = remaining > 0 ? backlog / remaining : Infinity;
         const rate = Math.max(MIN_REVEAL_CHARS_PER_SECOND / 1000, catchUpRate);
         let cursor = Number.isFinite(rate) ? state.cursor + (rate * Math.max(dt, 1)) : len;
+        let flushDone = false;
 
         if (state.flush) {
             const progress = Math.min(1, (now - state.flush.start) / FLUSH_MAX_MS);
+            flushDone = progress >= 1;
 
             // Ease-in: the flush accelerates into its end.
             cursor = Math.max(cursor, state.flush.from + ((len - state.flush.from) * progress * progress));
@@ -237,11 +295,14 @@ function step(state: RevealState, now: number): boolean {
         cursor = Math.min(len, Math.max(cursor, floor));
         state.cursor = cursor;
 
-        const next = revealBoundary(state.target, state.shown, cursor, floor);
+        // The cursor moves every frame; the displayed text only on a tick.
+        const due = state.lastReveal === null || now - state.lastReveal >= REVEAL_TICK_MS || flushDone;
+        const next = due ? revealBoundary(state.target, state.shown, cursor, floor) : state.shown;
         if (next > state.shown) {
             state.fresh = [...state.fresh, {id: state.nextId, start: state.shown, end: next, at: now}];
             state.nextId += 1;
             state.shown = next;
+            state.lastReveal = now;
             changed = true;
         }
         while (state.arrivals.length > 0 && state.arrivals[0].end <= state.shown) {
@@ -251,17 +312,11 @@ function step(state: RevealState, now: number): boolean {
             state.flush = null;
         }
     }
-
-    const live = state.fresh.filter((range) => range.at > now - FRESH_MAX_AGE_MS);
-    if (live.length !== state.fresh.length) {
-        state.fresh = live;
-        changed = true;
-    }
     return changed;
 }
 
 function needsFrames(state: RevealState): boolean {
-    return state.shown < state.target.length || state.fresh.length > 0;
+    return state.shown < state.target.length;
 }
 
 /**
@@ -288,6 +343,7 @@ export function useSmoothText(target: string, options: SmoothTextOptions): Smoot
             fresh: [],
             nextId: 1,
             lastFrame: null,
+            lastReveal: null,
             handle: null,
         };
     }
@@ -328,17 +384,16 @@ export function useSmoothText(target: string, options: SmoothTextOptions): Smoot
         }
     }, []);
 
-    const retire = useCallback((id: number) => {
-        const current = stateRef.current!;
-        if (current.fresh.some((range) => range.id === id)) {
-            current.fresh = current.fresh.filter((range) => range.id !== id);
-            forceRender();
-        }
-    }, []);
+    // Taken when the ranges change: that is when the renderer re-renders the
+    // growing block (and may re-create elements), so it is current there.
+    const fadeRef = useRef<{fresh: readonly FreshRange[]; after: number} | null>(null);
+    if (fadeRef.current === null || fadeRef.current.fresh !== state.fresh) {
+        fadeRef.current = {fresh: state.fresh, after: now() - FADE_SETTLED_MS};
+    }
 
     return {
         text: state.shown === state.target.length ? state.target : state.target.slice(0, state.shown),
         fresh: state.fresh.length === 0 ? NO_FRESH : state.fresh,
-        retire,
+        fadeAfter: fadeRef.current.after,
     };
 }

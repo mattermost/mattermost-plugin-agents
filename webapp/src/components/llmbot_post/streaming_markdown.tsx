@@ -166,21 +166,34 @@ const fadeOn = keyframes`
 /** Shared by fresh text and newly appended blocks. */
 export const fadeOnAnimation = fadeOn;
 
+// Opacity only (composited, no layout), played once when the span mounts.
+// No forwards fill: a finished fade leaves no animation behind. Only text
+// revealed moments ago fades; a span re-created later shows at once.
 const FreshText = styled.span`
-    animation: ${fadeOn} var(--duration-moderate) var(--ease-entrance) both;
-    ${noMotionWhenReduced}
+    &[data-fade] {
+        animation: ${fadeOn} var(--duration-moderate) var(--ease-entrance) backwards;
+        ${noMotionWhenReduced}
+    }
 `;
 
 interface WalkState {
     open: number | null;
-    segment: number;
+
+    /** Marker ids of ranges still fading in. */
+    fading: ReadonlySet<number>;
+
+    /** Spans emitted so far per range: a range split by inline markup has several. */
+    segments: Map<number, number>;
 }
 
 function freshIdFromMarker(marker: string): number {
     return marker.charCodeAt(1) - FRESH_ID_BASE;
 }
 
-function wrapFreshText(node: React.ReactNode, state: WalkState, idsById: Map<number, number>, onFreshEnd: (id: number) => void): React.ReactNode {
+// Each span's key depends only on its own range (never on how many spans come
+// before it), so a span keeps its DOM node, and its fade is not replayed, while
+// the text around it grows.
+function wrapFreshText(node: React.ReactNode, state: WalkState): React.ReactNode {
     if (typeof node === 'string') {
         if (state.open === null && node.indexOf(FRESH_START) === -1 && node.indexOf(FRESH_END) === -1) {
             return node;
@@ -196,17 +209,14 @@ function wrapFreshText(node: React.ReactNode, state: WalkState, idsById: Map<num
                 if (state.open === null) {
                     out.push(part);
                 } else {
-                    const id = idsById.get(state.open) ?? state.open;
-                    state.segment += 1;
+                    const id = state.open;
+                    const segment = (state.segments.get(id) ?? 0) + 1;
+                    state.segments.set(id, segment);
                     out.push(
                         <FreshText
-                            key={`fresh-${id}-${state.segment}`}
+                            key={`fresh-${id}-${segment}`}
                             data-fresh-text={id}
-                            onAnimationEnd={(e: React.AnimationEvent) => {
-                                if (e.target === e.currentTarget) {
-                                    onFreshEnd(id);
-                                }
-                            }}
+                            data-fade={state.fading.has(id) ? true : undefined} // eslint-disable-line no-undefined
                         >
                             {part}
                         </FreshText>,
@@ -223,7 +233,7 @@ function wrapFreshText(node: React.ReactNode, state: WalkState, idsById: Map<num
     if (Array.isArray(node)) {
         let changedAny = false;
         const mapped = node.map((child) => {
-            const result = wrapFreshText(child, state, idsById, onFreshEnd);
+            const result = wrapFreshText(child, state);
             changedAny = changedAny || result !== child;
             return result;
         });
@@ -235,14 +245,25 @@ function wrapFreshText(node: React.ReactNode, state: WalkState, idsById: Map<num
         if (children === undefined || children === null) { // eslint-disable-line no-undefined
             return node;
         }
-        const result = wrapFreshText(children, state, idsById, onFreshEnd);
+        const result = wrapFreshText(children, state);
         if (result === children) {
             return node;
         }
-        return Array.isArray(result) ? React.cloneElement(node, undefined, ...result) : React.cloneElement(node, undefined, result); // eslint-disable-line no-undefined
+
+        // Children are passed flat: a text run that gains a span would otherwise
+        // turn from one child into a nested array, which React treats as a new
+        // child and re-creates (its earlier spans with it).
+        return React.cloneElement(node, undefined, ...flattenNodes(result)); // eslint-disable-line no-undefined
     }
 
     return node;
+}
+
+function flattenNodes(node: React.ReactNode): React.ReactNode[] {
+    if (!Array.isArray(node)) {
+        return [node];
+    }
+    return node.flatMap((child) => flattenNodes(child));
 }
 
 type FormatText = (text: string, options: unknown) => string;
@@ -250,35 +271,34 @@ type HtmlToComponent = (html: string, options: unknown) => React.ReactNode;
 
 interface BlockProps {
     source: string;
-    fresh: readonly FreshRange[];
+    fading: ReadonlySet<number>;
     formatText: FormatText;
     messageHtmlToComponent: HtmlToComponent;
     markdownOptions: unknown;
     htmlOptions: unknown;
-    onFreshEnd: (id: number) => void;
 }
 
-// Memoized on the marked source: a settled block keeps its rendered tree while
-// the block after it grows.
-const MarkdownBlockView = React.memo(({source, fresh, formatText, messageHtmlToComponent, markdownOptions, htmlOptions, onFreshEnd}: BlockProps) => {
+// Memoized on the marked source (not on which ranges are still fading): a
+// settled block is not formatted again while the block after it grows.
+const MarkdownBlockView = React.memo(({source, fading, formatText, messageHtmlToComponent, markdownOptions, htmlOptions}: BlockProps) => {
     const rendered = messageHtmlToComponent(formatText(source, markdownOptions), htmlOptions);
     if (source.indexOf(FRESH_START) === -1 && source.indexOf(FRESH_END) === -1) {
         return <>{rendered}</>;
     }
-    const idsById = new Map(fresh.map((range) => [range.id % FRESH_ID_SPAN, range.id]));
-    return <>{wrapFreshText(rendered, {open: null, segment: 0}, idsById, onFreshEnd)}</>;
+    return <>{wrapFreshText(rendered, {open: null, fading, segments: new Map()})}</>;
 }, (prev, next) => prev.source === next.source &&
     prev.formatText === next.formatText &&
     prev.messageHtmlToComponent === next.messageHtmlToComponent &&
     prev.markdownOptions === next.markdownOptions &&
-    prev.htmlOptions === next.htmlOptions &&
-    prev.onFreshEnd === next.onFreshEnd);
+    prev.htmlOptions === next.htmlOptions);
 MarkdownBlockView.displayName = 'MarkdownBlockView';
 
 interface StreamingMarkdownProps {
     message: string;
     fresh: readonly FreshRange[];
-    onFreshEnd: (id: number) => void;
+
+    /** Ranges revealed at or before this have finished fading; all fade when omitted. */
+    fadeAfter?: number;
     formatText: FormatText;
     messageHtmlToComponent: HtmlToComponent;
     markdownOptions: unknown;
@@ -287,23 +307,28 @@ interface StreamingMarkdownProps {
 
 /**
  * Renders streaming markdown block by block, so only the still-growing block
- * re-renders per frame, with freshly revealed text wrapped to fade in.
+ * re-renders per reveal step, with revealed text wrapped in spans that fade in
+ * once and then keep their DOM nodes for the rest of the stream.
  * Renders fragments only: the blocks stay direct children of the container.
  */
 export const StreamingMarkdown = (props: StreamingMarkdownProps) => {
     const blocks = useMemo(() => splitMarkdownBlocks(props.message), [props.message]);
+    const fadeAfter = props.fadeAfter ?? -Infinity;
+    const fading = useMemo(
+        () => new Set(props.fresh.filter((range) => range.at > fadeAfter).map((range) => range.id % FRESH_ID_SPAN)),
+        [props.fresh, fadeAfter],
+    );
     return (
         <>
             {blocks.map((block, index) => (
                 <MarkdownBlockView
                     key={index} // eslint-disable-line react/no-array-index-key
                     source={markFreshText(block, props.fresh)}
-                    fresh={props.fresh}
+                    fading={fading}
                     formatText={props.formatText}
                     messageHtmlToComponent={props.messageHtmlToComponent}
                     markdownOptions={props.markdownOptions}
                     htmlOptions={props.htmlOptions}
-                    onFreshEnd={props.onFreshEnd}
                 />
             ))}
         </>

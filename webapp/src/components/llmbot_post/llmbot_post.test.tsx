@@ -1679,7 +1679,7 @@ describe('LLMBotPost thinking indicator', () => {
     });
 });
 
-// Smooth streaming is off by default in the agent chat surface; these tests opt in.
+// The agent chat surface smooths streaming; spelled out so these tests keep it on if that default changes.
 const SMOOTH_SURFACE = {...AGENT_CHAT_SURFACE, smoothStreaming: true};
 
 describe('LLMBotPost smooth streaming', () => {

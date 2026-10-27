@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import {RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
+import {RefObject, useCallback, useLayoutEffect, useRef, useState} from 'react';
 
 import {
     BUBBLE_HEADER_SELECTOR,
@@ -16,14 +16,16 @@ export {HUG_MAX_FRACTION};
 export type BubbleFit = 'hug' | 'full';
 
 // Plugin content that always needs the full row: code, tables, media, tool
-// and reasoning UI, artifacts, permalink previews, notices.
+// and reasoning UI, artifacts, permalink previews, notices. A collapsed
+// activity line ("Thinking", "Used 2 tools") is short text and is measured
+// like text; its expanded panel needs the row.
 const WIDE_CONTENT_SELECTOR = [
     'pre',
     'table',
     'img',
     'video',
     'iframe',
-    '[data-testid=\'llm-bot-tool-activity\']',
+    '[data-testid=\'llm-bot-tool-activity-rounds\']',
     '[data-testid=\'html-artifact-card\']',
     '[data-testid=\'html-artifact-wrapper\']',
     '[data-testid=\'llm-bot-permalink\']',
@@ -34,6 +36,11 @@ const WIDE_CONTENT_SELECTOR = [
 // A hugging bubble this close to its cap is pinned there: its content wants
 // more room, so it goes full width. Absorbs subpixel rounding; not a design value.
 const PINNED_TOLERANCE_PX = 1;
+
+// A full bubble hugs again only once its natural width is this far under the
+// cap, so content right at the cap (pinned while hugging, short of it at full
+// width) settles instead of flipping between the two; not a design value.
+const HUG_HYSTERESIS_PX = 8;
 
 // The streaming min-width ratchet rounds up to this step, so it does not
 // generate a new class for every pixel the text grows; not a design value.
@@ -69,7 +76,8 @@ export function decideBubbleFit(metrics: BubbleMetrics, current: BubbleFit | nul
     if (current === 'hug' && metrics.width >= cap - PINNED_TOLERANCE_PX) {
         return 'full';
     }
-    return Math.max(metrics.content, metrics.header) + metrics.padding < cap ? 'hug' : 'full';
+    const limit = current === 'full' ? cap - HUG_HYSTERESIS_PX : cap;
+    return Math.max(metrics.content, metrics.header) + metrics.padding < limit ? 'hug' : 'full';
 }
 
 export interface BubbleFitState {
@@ -170,16 +178,13 @@ export interface BubbleWidthOptions {
 export interface BubbleWidth {
     fit: BubbleFit | null;
     minWidth: number;
-
-    /** Width changes may animate: this post streamed here and has a first decision. */
-    motion: boolean;
 }
 
 const INITIAL: BubbleFitState = {fit: null, minWidth: 0};
 
 /**
  * Decides whether the host bubble around `ref` hugs its content. Measures in
- * a layout effect on mount (so a historic post never animates on load), on a
+ * a layout effect on mount (so a post never paints at the wrong width), on a
  * reply ending, and from ResizeObserver callbacks, which arrive at most once
  * per frame after layout, so there is no layout read in a loop.
  */
@@ -192,7 +197,6 @@ export function useBubbleWidth(ref: RefObject<HTMLElement | null>, options: Bubb
     streamingRef.current = streaming;
     const measureRef = useRef(measure);
     measureRef.current = measure;
-    const [streamedHere, setStreamedHere] = useState(streaming);
 
     const run = useCallback(() => {
         const wrapper = ref.current;
@@ -236,25 +240,13 @@ export function useBubbleWidth(ref: RefObject<HTMLElement | null>, options: Bubb
     // A reply starting or ending: when it ends, drop the ratchet and decide
     // from the final content.
     useLayoutEffect(() => {
-        if (streaming) {
-            setStreamedHere(true);
-        }
         if (enabled) {
             run();
         }
     }, [streaming, enabled, run]);
 
-    // Motion turns on only after the first decision has painted, so the
-    // first decision itself never animates.
-    const [decisionPainted, setDecisionPainted] = useState(false);
-    useEffect(() => {
-        if (state.fit !== null && !decisionPainted) {
-            setDecisionPainted(true);
-        }
-    }, [state.fit, decisionPainted]);
-
     if (!enabled) {
-        return {fit: null, minWidth: 0, motion: false};
+        return {fit: null, minWidth: 0};
     }
-    return {fit: state.fit, minWidth: state.minWidth, motion: streamedHere && decisionPainted};
+    return {fit: state.fit, minWidth: state.minWidth};
 }

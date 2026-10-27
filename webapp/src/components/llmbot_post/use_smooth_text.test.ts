@@ -6,10 +6,10 @@ import {act, renderHook} from '@testing-library/react';
 import {
     BACKLOG_DRAIN_MS,
     FLUSH_MAX_MS,
-    FRESH_MAX_AGE_MS,
     FrameScheduler,
     MAX_REVEAL_LAG_MS,
     MIN_REVEAL_CHARS_PER_SECOND,
+    REVEAL_TICK_MS,
     SmoothTextOptions,
     revealBoundary,
     useSmoothText,
@@ -88,6 +88,18 @@ describe('revealBoundary', () => {
         {name: 'cuts a very long run mid-word', text: 'x'.repeat(60), from: 0, cursor: 30, floor: 0, expected: 30},
         {name: 'honors the lag floor mid-word', text: 'hello brave', from: 6, cursor: 7, floor: 9, expected: 9},
         {name: 'never splits a surrogate pair', text: 'ab' + '\u{1F600}'.repeat(20), from: 2, cursor: 2 + 25, floor: 0, expected: 2 + 26},
+
+        // Stopping there would show the syntax as text until the next word re-renders it.
+        {name: 'holds a heading marker until its first word', text: 'Intro\n## Overview of it', from: 6, cursor: 12, floor: 0, expected: 6},
+        {name: 'holds a list marker until its first word', text: 'Intro\n- item one', from: 6, cursor: 10, floor: 0, expected: 6},
+        {name: 'reveals a heading with its first word', text: '## Overview of it', from: 0, cursor: 13, floor: 0, expected: 12},
+        {name: 'holds inside unclosed bold', text: 'a **bold text** b', from: 0, cursor: 12, floor: 0, expected: 2},
+        {name: 'holds inside unclosed inline code', text: 'a `x y` b', from: 0, cursor: 6, floor: 0, expected: 2},
+        {name: 'holds inside link text', text: 'see [a link](u) ok', from: 0, cursor: 10, floor: 0, expected: 4},
+        {name: 'holds inside a long link target', text: 'x [a](' + 'h'.repeat(40) + ') y', from: 2, cursor: 35, floor: 0, expected: 2},
+        {name: 'does not stop after a line break', text: 'one\n\ntwo three', from: 0, cursor: 7, floor: 0, expected: 0},
+        {name: 'shows a line\'s last word with the next line\'s first', text: 'one\n\ntwo three', from: 0, cursor: 10, floor: 0, expected: 9},
+        {name: 'moves on once the markup closes', text: 'a **bold text** b', from: 0, cursor: 16, floor: 0, expected: 16},
     ])('$name', ({text, from, cursor, floor, expected}) => {
         expect(revealBoundary(text, from, cursor, floor)).toBe(expected);
     });
@@ -126,7 +138,7 @@ describe('useSmoothText', () => {
         const text = words(size);
         t.update({text});
         const minDrain = (text.length / MIN_REVEAL_CHARS_PER_SECOND) * 1000;
-        t.advance(Math.min(minDrain, BACKLOG_DRAIN_MS) + (2 * FRAME_MS));
+        t.advance(Math.min(minDrain, BACKLOG_DRAIN_MS) + REVEAL_TICK_MS + FRAME_MS);
         expect(t.shown()).toBe(text);
     });
 
@@ -234,11 +246,11 @@ describe('useSmoothText', () => {
         expect(t.shown()).toBe('New ');
     });
 
-    test('fresh ranges cover only newly revealed text and retire', () => {
+    test('fresh ranges cover only newly revealed text and stay for the whole reveal', () => {
         const t = startStream();
         t.update({text: 'alpha beta gamma delta '});
-        t.advance(FRAME_MS * 6);
-        const {fresh, text, retire} = t.hook.result.current;
+        t.advance(BACKLOG_DRAIN_MS);
+        const {fresh, text} = t.hook.result.current;
         expect(fresh.length).toBeGreaterThan(1);
 
         // Contiguous, in order, inside the shown text.
@@ -248,17 +260,30 @@ describe('useSmoothText', () => {
         }
         expect(fresh[fresh.length - 1].end).toBe(text.length);
 
-        act(() => retire(fresh[0].id));
-        expect(t.hook.result.current.fresh.map((range) => range.id)).not.toContain(fresh[0].id);
+        // Dropping a range would re-render its text without its span (new DOM
+        // nodes); ranges only go away when a new text snaps in.
+        t.advance(5000);
+        t.update({text: 'alpha beta gamma delta epsilon '});
+        t.advance(BACKLOG_DRAIN_MS);
+        expect(t.hook.result.current.fresh.slice(0, fresh.length)).toEqual(fresh);
+        expect(t.pending()).toBe(0);
     });
 
-    test('fresh ranges whose fade never ends are settled after the max age', () => {
+    test('the shown text advances at most once per reveal tick', () => {
         const t = startStream();
-        t.update({text: 'alpha beta '});
-        t.advance(BACKLOG_DRAIN_MS);
-        expect(t.hook.result.current.fresh.length).toBeGreaterThan(0);
-        t.advance(FRESH_MAX_AGE_MS + FRAME_MS);
-        expect(t.hook.result.current.fresh).toHaveLength(0);
-        expect(t.pending()).toBe(0);
+        t.update({text: words(400)});
+        const changes: number[] = [];
+        let last = t.shown();
+        for (let i = 0; i < 40; i++) {
+            t.advance(FRAME_MS);
+            if (t.shown() !== last) {
+                changes.push(t.now());
+                last = t.shown();
+            }
+        }
+        expect(changes.length).toBeGreaterThan(3);
+        for (let i = 1; i < changes.length; i++) {
+            expect(changes[i] - changes[i - 1]).toBeGreaterThanOrEqual(REVEAL_TICK_MS);
+        }
     });
 });

@@ -45,7 +45,7 @@ import {FoldingText, useFoldingText} from './folding_text';
 import {RoundView} from './round_view';
 import {ThinkingDots} from './thinking_dots';
 import ToolActivityDisplay from './tool_activity_display';
-import {noMotionWhenReduced, prefersReducedMotion} from './motion';
+import {prefersReducedMotion} from './motion';
 import {useBubbleWidth} from './use_bubble_width';
 import {useSmoothText} from './use_smooth_text';
 
@@ -748,8 +748,8 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
     }, [anchorRoundId, anchorStage, onlookerWaitRoundId, onlookerWaitStage]);
 
     const liveReveal = useMemo(
-        () => (smoothReveal ? {fresh: revealed.fresh, onFreshEnd: revealed.retire} : undefined), // eslint-disable-line no-undefined
-        [smoothReveal, revealed.fresh, revealed.retire],
+        () => (smoothReveal ? {fresh: revealed.fresh, fadeAfter: revealed.fadeAfter} : undefined), // eslint-disable-line no-undefined
+        [smoothReveal, revealed.fresh, revealed.fadeAfter],
     );
 
     const renderRound = useCallback((round: Round) => {
@@ -823,7 +823,6 @@ export const LLMBotPost = (props: LLMBotPostProps) => {
             ref={postBodyRef}
             data-testid='llm-bot-post'
             data-bubble-fit={bubble.fit ?? undefined} // eslint-disable-line no-undefined
-            data-bubble-motion={bubble.motion ? 'on' : undefined} // eslint-disable-line no-undefined
             $hugMinWidth={bubble.minWidth}
         >
             {error && <ErrorMessage message={error}/>}
@@ -904,11 +903,6 @@ const PostBody = styled.div<{$hugMinWidth: number}>`
     ${(props) => props.$hugMinWidth > 0 && css`
         min-width: ${props.$hugMinWidth}px;
     `}
-
-    &[data-bubble-motion='on'] {
-        transition: min-width var(--duration-moderate) var(--ease-transition);
-        ${noMotionWhenReduced}
-    }
 `;
 
 // Same gap as between stacked rounds, so a round moving from here into the
