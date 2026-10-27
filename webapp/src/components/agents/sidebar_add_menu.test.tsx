@@ -130,8 +130,8 @@ describe('SidebarAddMenu', () => {
         await openMenu();
         expect(screen.queryByRole('menuitem', {name: 'Create new agent'}) !== null).toBe(shown);
 
-        // The menu still opens with its single item.
-        expect(newChatRow()).toBeTruthy();
+        // New chat comes first; Create new agent, when allowed, is second.
+        expect(screen.getAllByRole('menuitem').map((el) => el.textContent)).toEqual(shown ? ['New chat', 'Create new agent'] : ['New chat']);
     });
 
     test('Create new agent navigates to the create route and closes the menu', async () => {

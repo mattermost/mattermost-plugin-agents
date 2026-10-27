@@ -410,15 +410,17 @@ test.describe('Agents product view', () => {
         await trigger.click();
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
         const nameMenu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
-        // The menu lists this agent's chats first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
-        await expect(nameMenu.getByRole('menuitem')).toHaveText([THREAD_TITLE, 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        // The menu has a Recent chats submenu first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
+        await expect(nameMenu.getByRole('menuitem')).toHaveText(['Recent chats', 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
         await page.keyboard.press('Escape');
         await expect(nameMenu).toHaveCount(0);
 
-        // The same menu lists this agent's chats (the open one marked) above the chat actions.
+        // The Recent chats submenu lists this agent's chats, the open one marked.
         await trigger.click();
         const menu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
-        await expect(menu.getByRole('menuitem', {name: THREAD_TITLE, exact: true})).toHaveAttribute('aria-current', 'true');
+        await menu.getByRole('menuitem', {name: 'Recent chats'}).click();
+        const recent = page.getByRole('menu', {name: 'Recent chats'});
+        await expect(recent.getByRole('menuitem', {name: THREAD_TITLE, exact: true})).toHaveAttribute('aria-current', 'true');
         await expect(menu.getByRole('menuitem', {name: 'Rename chat'})).toBeEnabled();
 
         // Rename updates the sidebar title.
@@ -869,5 +871,87 @@ test.describe('Agents product view', () => {
         // The draft is cleared, so going back to a new chat starts empty.
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
         await expect(newChatComposer(page).getByRole('textbox')).toHaveValue('', {timeout: 30000});
+    });
+
+    test.describe('sidebar "+" menu', () => {
+        const addButton = (page: Page) => sidebar(page).getByRole('button', {name: 'Add agent or chat'});
+        const addMenu = (page: Page) => page.getByRole('menu', {name: 'Add agent or chat'});
+
+        test('"Create new agent" opens the create form; Back and Escape return to the list', async ({page}) => {
+            await new MattermostPage(page).login(mattermost.url(), 'admin', 'admin');
+            await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`, {waitUntil: 'domcontentloaded'});
+
+            await addButton(page).click();
+            await expect(addMenu(page).getByRole('menuitem')).toHaveText(['New chat', 'Create new agent']);
+            await page.keyboard.press('Escape');
+
+            for (const leave of ['back', 'escape'] as const) {
+                await addButton(page).click();
+                await addMenu(page).getByRole('menuitem', {name: 'Create new agent'}).click();
+                await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents\/all\/new$/);
+                const back = page.getByRole('button', {name: /Back/});
+                await expect(back).toBeVisible({timeout: 15000});
+
+                if (leave === 'back') {
+                    await back.click();
+                } else {
+                    await page.keyboard.press('Escape');
+                }
+                await expect(page).toHaveURL(/\/plug\/mattermost-ai\/agents\/all$/);
+                await expect(page.getByPlaceholder('Search agents...')).toBeVisible();
+            }
+        });
+
+        test('"Create new agent" is hidden for a user who cannot create agents', async ({page}) => {
+            // Regular users can create agents by default; take that away for this test only.
+            await mattermost.revokeManageOwnAgentFromSystemUser();
+            try {
+                await login(page);
+                await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`, {waitUntil: 'domcontentloaded'});
+                await addButton(page).click();
+                const menu = addMenu(page);
+                await expect(menu.getByRole('menuitem', {name: 'New chat'})).toBeVisible();
+                await expect(menu.getByRole('menuitem', {name: 'Create new agent'})).toHaveCount(0);
+            } finally {
+                await mattermost.grantSelfServiceAgentPermissions();
+            }
+        });
+
+        test('"New chat" lists the agents and choosing one opens its new-chat composer', async ({page}) => {
+            await login(page);
+            await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`, {waitUntil: 'domcontentloaded'});
+            await addButton(page).click();
+            await addMenu(page).getByRole('menuitem', {name: 'New chat'}).click();
+            const agents = page.getByRole('menu', {name: 'Choose an agent'});
+            await agents.getByRole('menuitem', {name: botDisplayName}).click();
+            await expect(page).toHaveURL(new RegExp(`/plug/mattermost-ai/agents/chat/${botUserId}$`));
+            await expect(newChatComposer(page).getByRole('textbox')).toBeEnabled({timeout: 30000});
+            await expect(addMenu(page)).toHaveCount(0);
+        });
+
+        test('the agents submenu shows loading and empty states', async ({page}) => {
+            let release: () => void = () => undefined;
+            const gate = new Promise<void>((resolve) => {
+                release = resolve;
+            });
+            let emptyList = false;
+            await page.route('**/plugins/mattermost-ai/ai_bots', async (route) => {
+                await gate;
+                const response = await route.fetch();
+                const body = await response.json();
+                await route.fulfill({response, json: emptyList ? {...body, bots: []} : body});
+            });
+
+            await login(page);
+            await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`, {waitUntil: 'domcontentloaded'});
+            await addButton(page).click();
+            await addMenu(page).getByRole('menuitem', {name: 'New chat'}).click();
+            const agents = page.getByRole('menu', {name: 'Choose an agent'});
+            await expect(agents.getByText('Loading agents…')).toBeVisible();
+
+            emptyList = true;
+            release();
+            await expect(agents.getByRole('menuitem', {name: 'No agents available'})).toBeDisabled({timeout: 15000});
+        });
     });
 });

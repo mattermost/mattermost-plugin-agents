@@ -176,20 +176,6 @@ const SidebarAddMenu = () => {
                 onKeyDown={handleMenuNavigation}
             >
                 <PopoverMenuGroup>
-                    {mayCreate && (
-                        <MenuItem
-                            role='menuitem'
-                            label={intl.formatMessage({defaultMessage: 'Create new agent'})}
-                            leadingElement={true}
-                            leadingVisual={menuIcon(<PlusIcon/>)}
-                            data-testid='sidebar-add-menu-new-agent'
-                            onMouseEnter={() => setSubmenu(null)}
-                            onClick={() => {
-                                setMenuOpen(false);
-                                toNewAgent();
-                            }}
-                        />
-                    )}
                     <ComposerSubmenu
                         label={newChatLabel}
                         icon={<MessagePlusOutlineIcon/>}
@@ -207,6 +193,20 @@ const SidebarAddMenu = () => {
                             </PopoverMenuGroup>
                         </PopoverMenuScroll>
                     </ComposerSubmenu>
+                    {mayCreate && (
+                        <MenuItem
+                            role='menuitem'
+                            label={intl.formatMessage({defaultMessage: 'Create new agent'})}
+                            leadingElement={true}
+                            leadingVisual={menuIcon(<PlusIcon/>)}
+                            data-testid='sidebar-add-menu-new-agent'
+                            onMouseEnter={() => setSubmenu(null)}
+                            onClick={() => {
+                                setMenuOpen(false);
+                                toNewAgent();
+                            }}
+                        />
+                    )}
                 </PopoverMenuGroup>
             </PopoverMenu>
         </Dropdown>
