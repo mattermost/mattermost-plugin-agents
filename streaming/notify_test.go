@@ -277,6 +277,47 @@ func TestShutdownCancelsStreamsAndNotifiesRequesters(t *testing.T) {
 	}
 }
 
+func TestNewPostDuringShutdownNotifiesRequester(t *testing.T) {
+	const channelID = "channel-id"
+	const userID = "user-id"
+	tests := []struct {
+		name  string
+		newDM bool
+	}{
+		{name: "new post"},
+		{name: "new DM", newDM: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &fakeStreamingClient{channels: map[string]*model.Channel{channelID: {Id: channelID, Type: model.ChannelTypeOpen}}}
+			notifier := newRecordingNotifier(client, true)
+			service := NewMMPostStreamService(client, i18n.Init())
+			service.SetNotifier(notifier)
+			require.True(t, service.Shutdown(time.Second))
+
+			post := &model.Post{Id: model.NewId(), ChannelId: channelID}
+			stream := &llm.TextStreamResult{Stream: make(chan llm.TextStreamEvent)}
+			var err error
+			if tc.newDM {
+				err = service.StreamToNewDM(context.Background(), "bot-id", stream, userID, post, "")
+			} else {
+				err = service.StreamToNewPost(context.Background(), "bot-id", userID, stream, post, "")
+			}
+			require.ErrorIs(t, err, ErrShuttingDown)
+
+			require.Len(t, client.createdPosts, 1)
+			require.True(t, client.createdPosts[0].HasDeferredNotification())
+			calls := notifier.snapshot()
+			require.Len(t, calls, 1, "the created deferred post is not left without a notification")
+			assert.Equal(t, post.Id, calls[0].end.PostID)
+			assert.Equal(t, userID, calls[0].end.RequesterID)
+			assert.Equal(t, notifications.OutcomeCancelled, calls[0].end.Outcome)
+			assert.True(t, calls[0].end.PostDeferred)
+			assert.Equal(t, notifications.DeliveryRequesterOnly, notifications.Decide(calls[0].end))
+		})
+	}
+}
+
 func TestShutdownTimesOut(t *testing.T) {
 	tests := []struct {
 		name     string

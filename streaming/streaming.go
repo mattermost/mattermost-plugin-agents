@@ -230,10 +230,26 @@ func (p *MMPostStreamService) streamToCreatedPost(ctx context.Context, botID str
 		return err
 	}
 
-	ctx, err := p.GetStreamingContext(ctx, post.Id)
+	streamCtx, err := p.GetStreamingContext(ctx, post.Id)
 	if err != nil {
+		// The post exists with its notifications deferred, so the run must
+		// still end for the requester.
+		if p.notifier != nil {
+			outcome := notifications.OutcomeErrored
+			if errors.Is(err, ErrShuttingDown) {
+				outcome = notifications.OutcomeCancelled
+			}
+			p.notifier.Notify(telemetry.DetachContext(ctx), notifications.StreamEnd{
+				PostID:       post.Id,
+				ChannelID:    post.ChannelId,
+				RequesterID:  userID,
+				Outcome:      outcome,
+				PostDeferred: post.HasDeferredNotification(),
+			})
+		}
 		return err
 	}
+	ctx = streamCtx
 
 	go func() {
 		defer p.FinishStreaming(post.Id)
