@@ -37,6 +37,10 @@ interface Shown {
     key: string;
     rank: number;
     outgoing: Outgoing | null;
+
+    // False for the first frames after a change: the new view mounts (its first render and layout
+    // are the heavy part) while it waits off-screen, and the slide starts once that has painted.
+    started: boolean;
 }
 
 // Shows one view and, when `viewKey` changes, keeps the previous one mounted (as it last rendered)
@@ -44,7 +48,7 @@ interface Shown {
 // from the left under the old one leaving to the right. The outgoing view is inert and unmounts
 // when its exit ends. With reduced motion, or no previous view, the views just swap.
 const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) => {
-    const [shown, setShown] = useState<Shown>({key: viewKey, rank, outgoing: null});
+    const [shown, setShown] = useState<Shown>({key: viewKey, rank, outgoing: null, started: true});
 
     // The previous render's children, which become the outgoing view when the key changes.
     const lastChildren = useRef<React.ReactNode>(children);
@@ -61,29 +65,56 @@ const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) =>
         } else if (rank < shown.rank) {
             direction = 'back';
         }
+        const animate = !prefersReducedMotion();
         setShown({
             key: viewKey,
             rank,
-            outgoing: prefersReducedMotion() ? null : {key: shown.key, node: lastChildren.current, direction},
+            outgoing: animate ? {key: shown.key, node: lastChildren.current, direction} : null,
+            started: !animate,
         });
     }
 
     const outgoing = shown.outgoing;
+    const started = shown.started;
+
+    // Starts the slide two frames after the change, once the new view has mounted and painted, so
+    // its mounting work does not land in the middle of the motion.
     useEffect(() => {
-        if (!outgoing) {
+        if (!outgoing || started) {
+            return () => null;
+        }
+        let second = 0;
+        const first = requestAnimationFrame(() => {
+            second = requestAnimationFrame(() => setShown((current) => ({...current, started: true})));
+        });
+        return () => {
+            cancelAnimationFrame(first);
+            cancelAnimationFrame(second);
+        };
+    }, [outgoing, started]);
+
+    // Unmounts the outgoing view once its exit is over.
+    useEffect(() => {
+        if (!outgoing || !started) {
             return () => null;
         }
         const timer = setTimeout(() => setShown((current) => ({...current, outgoing: null})), EXIT_UNMOUNT_MS);
         return () => clearTimeout(timer);
-    }, [outgoing]);
+    }, [outgoing, started]);
 
     const direction = outgoing?.direction ?? 'none';
+
+    // 'enter-wait' until the slide starts, 'enter' while it runs, 'idle' once the old view is gone.
+    let enteringState = 'idle';
+    if (outgoing) {
+        enteringState = started ? 'enter' : 'enter-wait';
+    }
     return (
         <Stage>
             {outgoing && (
                 <Layer
                     key={outgoing.key}
-                    data-state='exit'
+                    data-state={started ? 'exit' : 'exit-wait'}
                     data-direction={direction}
                     data-testid='rhs-view-exiting'
                     aria-hidden={true}
@@ -94,7 +125,7 @@ const RHSViewTransition = ({viewKey, rank, children}: RHSViewTransitionProps) =>
             )}
             <Layer
                 key={viewKey}
-                data-state={outgoing ? 'enter' : 'idle'}
+                data-state={enteringState}
                 data-direction={direction}
             >
                 {children}
@@ -159,13 +190,42 @@ const Layer = styled.div`
     flex-direction: column;
     background: var(--center-channel-bg);
 
-    &[data-state='exit'] {
+    /* While moving, each view is its own compositing layer, so the slide runs on the compositor while
+       the main thread is busy with the new view, and its scrollbars are hidden (kept in layout, so
+       nothing reflows). At rest neither applies: both would make the layer the containing block of
+       any fixed-position descendant. */
+    &:not([data-state='idle']) {
+        will-change: transform;
+        contain: layout style;
+    }
+
+    &:not([data-state='idle']) * {
+        scrollbar-color: transparent transparent;
+    }
+
+    &[data-state='exit'],
+    &[data-state='exit-wait'] {
         z-index: 0;
         pointer-events: none;
     }
 
-    &[data-state='enter'] {
+    &[data-state='enter'],
+    &[data-state='enter-wait'] {
         z-index: 1;
+    }
+
+    /* Waiting to start: the entering view sits where its slide begins, out of sight. */
+    &[data-state='enter-wait'][data-direction='forward'] {
+        transform: translateX(100%);
+    }
+
+    &[data-state='enter-wait'][data-direction='back'] {
+        opacity: 0;
+        transform: translateX(-${SHIFT});
+    }
+
+    &[data-state='enter-wait'][data-direction='none'] {
+        opacity: 0;
     }
 
     &[data-state='enter'][data-direction='forward'] {
@@ -178,9 +238,14 @@ const Layer = styled.div`
     }
 
     /* Back: the old view leaves to the right, over the one returning from the left. */
-    &[data-state='enter'][data-direction='back'] {
+    &[data-state='enter'][data-direction='back'],
+    &[data-state='enter-wait'][data-direction='back'] {
         z-index: 0;
         ${motion(slideInFromLeft, 'var(--ease-entrance)')}
+    }
+
+    &[data-state='exit-wait'][data-direction='back'] {
+        z-index: 1;
     }
 
     &[data-state='exit'][data-direction='back'] {

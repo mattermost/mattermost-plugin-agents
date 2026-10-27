@@ -65,7 +65,16 @@ describe('RHSViewTransition', () => {
         rerenderTo(rerender, to[0], to[1]);
 
         expect(exiting()?.getAttribute('data-direction')).toBe(direction);
-        expect(screen.getByLabelText(`${to[0]} draft`).closest('[data-state]')?.getAttribute('data-state')).toBe('enter');
+
+        // The new view mounts and waits where its slide starts; two frames later the slide runs.
+        const entering = () => screen.getByLabelText(`${to[0]} draft`).closest('[data-state]');
+        expect(entering()?.getAttribute('data-state')).toBe('enter-wait');
+        expect(exiting()?.getAttribute('data-state')).toBe('exit-wait');
+        act(() => {
+            jest.advanceTimersByTime(40);
+        });
+        expect(entering()?.getAttribute('data-state')).toBe('enter');
+        expect(exiting()?.getAttribute('data-state')).toBe('exit');
     });
 
     test('the outgoing view stays mounted with its state, inert, and goes when the exit is over', () => {
@@ -80,6 +89,10 @@ describe('RHSViewTransition', () => {
         expect(exiting()?.hasAttribute('inert')).toBe(true);
         expect(screen.getByLabelText('thread:a draft')).toBeTruthy();
 
+        // The slide starts two frames in, and the exit unmounts after it.
+        act(() => {
+            jest.advanceTimersByTime(50);
+        });
         act(() => {
             jest.advanceTimersByTime(400);
         });
@@ -97,6 +110,10 @@ describe('RHSViewTransition', () => {
         expect(exiting()?.getAttribute('data-direction')).toBe('back');
         expect(screen.getAllByLabelText(/draft/).length).toBe(2);
 
+        // The slide starts two frames in, and the exit unmounts after it.
+        act(() => {
+            jest.advanceTimersByTime(50);
+        });
         act(() => {
             jest.advanceTimersByTime(400);
         });

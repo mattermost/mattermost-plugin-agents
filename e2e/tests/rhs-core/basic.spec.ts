@@ -164,9 +164,11 @@ test.describe('Chat History', () => {
     // Click on the first history item
     await aiPlugin.clickChatHistoryItem(0);
 
-    // Verify we can see the conversation content we created
-    await expect(page.getByText('Test conversation')).toBeVisible();
-    await expect(page.getByText(responseTestText)).toBeVisible();
+    // Verify we can see the conversation content we created (in the opened chat: the history view
+    // is still sliding away for a moment and has the same message as its preview).
+    const openedChat = page.getByTestId('rhs-thread');
+    await expect(openedChat.getByText('Test conversation')).toBeVisible();
+    await expect(openedChat.getByText(responseTestText)).toBeVisible();
   });
 
   test('back button in the header opens the chat history', async ({ page }) => {

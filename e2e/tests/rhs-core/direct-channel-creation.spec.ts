@@ -102,8 +102,8 @@ test.describe('Direct Channel Creation', () => {
     await openAIMock.addCompletionMock(responseTest);
     await aiPlugin.sendMessage('Testing existing channel');
 
-    // Should see a response
-    await expect(page.getByText(responseTestText)).toBeVisible({ timeout: 10000 });
+    // Should see a response (in the chat's posts; the generated chat title in the header can repeat it)
+    await expect(aiPlugin.getRhsContainer().getByTestId('posttext').getByText(responseTestText)).toBeVisible({ timeout: 10000 });
 
     // Verify no channel creation was requested
     expect(channelCreationRequested).toBe(false);
