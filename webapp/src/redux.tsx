@@ -23,6 +23,7 @@ export async function setupRedux(registry: any, store: WebappStore) {
         callsPostButtonClickedTranscription,
         bots,
         selectedPostId,
+        newChatRequest,
         allowUnsafeLinks,
         htmlArtifactsEnabled,
         customPrompts,
@@ -89,6 +90,17 @@ function htmlArtifactsEnabled(state = false, action: any) {
     switch (action.type) {
     case 'SET_HTML_ARTIFACTS_ENABLED':
         return action.htmlArtifactsEnabled;
+    default:
+        return state;
+    }
+}
+
+// Bumped when the RHS should show a fresh new-chat tab (e.g. the agent was switched in the
+// RHS header title, which lives outside the RHS body that owns the tab state).
+function newChatRequest(state = 0, action: any) {
+    switch (action.type) {
+    case 'AI_RHS_NEW_CHAT':
+        return state + 1;
     default:
         return state;
     }

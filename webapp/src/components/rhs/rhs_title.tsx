@@ -1,7 +1,8 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState} from 'react';
+import React, {useCallback, useState} from 'react';
+import {useDispatch} from 'react-redux';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
@@ -36,6 +37,18 @@ const AgentAvatar = ({bot}: {bot: LLMBot}) => (
 const RHSTitle = () => {
     const intl = useIntl();
     const {bots, activeBot, setActiveBot} = useBotlist();
+    const dispatch = useDispatch();
+
+    // Switching agents behaves like starting a new chat with the new agent (leave the open
+    // thread and show the new-chat tab); choosing the current agent changes nothing.
+    const switchAgent = useCallback((bot: LLMBot | null) => {
+        if (!bot || bot.id === activeBot?.id) {
+            return;
+        }
+        setActiveBot(bot);
+        dispatch({type: 'SELECT_AI_POST', postId: ''});
+        dispatch({type: 'AI_RHS_NEW_CHAT'});
+    }, [activeBot?.id, setActiveBot, dispatch]);
     const [open, setOpen] = useState(false);
     const menu = useMenuTransition(open);
 
@@ -100,7 +113,7 @@ const RHSTitle = () => {
                     <BotMenuContent
                         bots={bots}
                         activeBot={activeBot}
-                        setActiveBot={setActiveBot}
+                        setActiveBot={switchAgent}
                         itemRole='menuitem'
                     />
                 </BotDropdownMenu>

@@ -73,7 +73,10 @@ jest.mock('./rhs_header', () => {
 
     return {
         __esModule: true,
-        default: () => ReactActual.createElement('div', {'data-testid': 'rhs-header'}),
+        default: (props: {setCurrentTab: (tab: string) => void}) => ReactActual.createElement('button', {
+            'data-testid': 'rhs-header',
+            onClick: () => props.setCurrentTab('threads'),
+        }),
     };
 });
 
@@ -185,6 +188,31 @@ describe('RHS', () => {
             await Promise.resolve();
         });
         warn.mockRestore();
+    });
+
+    test('a new-chat request from the header title returns to the new-chat tab, but not on first render', async () => {
+        mockGetAIThreads.mockResolvedValue([]);
+        const state = {
+            ...baseState,
+            'plugins-mattermost-ai': {selectedPostId: '', newChatRequest: 0},
+        };
+        mockUseSelector.mockImplementation((selector) => selector(state));
+
+        const {rerender} = renderRHS();
+        expect(screen.getByTestId('rhs-new-tab')).toBeTruthy();
+
+        // Leave the new-chat tab for the history tab.
+        fireEvent.click(screen.getByTestId('rhs-header'));
+        await waitFor(() => expect(screen.queryByTestId('rhs-new-tab')).toBeNull());
+
+        // Unrelated re-render with the same request counter: stays on the history tab.
+        rerender(<Rhs/>);
+        expect(screen.queryByTestId('rhs-new-tab')).toBeNull();
+
+        // The agent was switched in the header: back to a fresh new chat.
+        state['plugins-mattermost-ai'] = {selectedPostId: '', newChatRequest: 1};
+        rerender(<Rhs/>);
+        await waitFor(() => expect(screen.getByTestId('rhs-new-tab')).toBeTruthy());
     });
 
     test('logs generic read marker rejections', async () => {

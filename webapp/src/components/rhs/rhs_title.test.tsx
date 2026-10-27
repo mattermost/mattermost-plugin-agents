@@ -44,6 +44,8 @@ const makeBot = (id: string, displayName: string) => ({
 });
 
 // A reducer that applies the preference the title writes, so the title re-renders.
+const dispatched: Array<{type: string; postId?: string}> = [];
+
 const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string) => {
     const initial = {
         [pluginKey]: {bots},
@@ -53,6 +55,7 @@ const makeStore = (bots: ReturnType<typeof makeBot>[] | null, selected: string) 
         },
     };
     const reducer = (state: any = initial, action: any) => {
+        dispatched.push(action);
         if (action.type === 'RECEIVED_PREFERENCES') {
             const pref = action.data[0];
             return {...state, entities: {...state.entities, preferences: {myPreferences: {[preferenceKey]: {value: pref.value}}}}};
@@ -74,7 +77,10 @@ describe('RHSTitle', () => {
     beforeEach(() => {
         mockSavePreferences.mockReset();
         mockSavePreferences.mockResolvedValue(true);
+        dispatched.length = 0;
     });
+
+    const rhsActions = () => dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_NEW_CHAT');
 
     test.each([
         ['bots still loading', null],
@@ -116,6 +122,30 @@ describe('RHSTitle', () => {
 
         expect(mockSavePreferences).toHaveBeenCalledWith('me', [expect.objectContaining({name: PREFERENCE_NAME_SELECTED_AGENT, value: 'b'})]);
         expect(screen.getByTestId('bot-selector-rhs').textContent).toBe('Beta');
+        expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('false');
+    });
+
+    test('switching to another agent behaves like starting a new chat with it', () => {
+        renderTitle(two, 'a');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Alpha, choose agent'}));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Beta'}));
+
+        expect(mockSavePreferences).toHaveBeenCalledTimes(1);
+        expect(rhsActions()).toEqual([
+            {type: 'SELECT_AI_POST', postId: ''},
+            {type: 'AI_RHS_NEW_CHAT'},
+        ]);
+    });
+
+    test('choosing the current agent changes nothing and just closes the menu', () => {
+        renderTitle(two, 'a');
+
+        fireEvent.click(screen.getByRole('button', {name: 'Alpha, choose agent'}));
+        fireEvent.click(screen.getByRole('menuitem', {name: 'Alpha'}));
+
+        expect(mockSavePreferences).not.toHaveBeenCalled();
+        expect(rhsActions()).toEqual([]);
         expect(screen.getByTestId('bot-selector-rhs').getAttribute('aria-expanded')).toBe('false');
     });
 

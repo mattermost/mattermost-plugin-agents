@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
@@ -52,6 +52,17 @@ export default function RHS() {
     const dispatch = useDispatch();
     const [currentTab, setCurrentTab] = useState('new');
     const selectedPostId = useSelector((state: any) => state['plugins-' + manifest.id].selectedPostId);
+
+    // The header title (rendered by the host, outside this component) asks for a fresh new chat
+    // when the agent is switched: show the new-chat tab. Not on the first render.
+    const newChatRequest = useSelector((state: any) => state['plugins-' + manifest.id].newChatRequest ?? 0);
+    const lastNewChatRequest = useRef(newChatRequest);
+    useEffect(() => {
+        if (newChatRequest !== lastNewChatRequest.current) {
+            lastNewChatRequest.current = newChatRequest;
+            setCurrentTab('new');
+        }
+    }, [newChatRequest]);
 
     // The selected thread's root, once the store has it (the ThreadViewer loads it).
     const selectedRoot = useSelector<GlobalState, {channel_id: string; user_id: string} | null>((state) => (
