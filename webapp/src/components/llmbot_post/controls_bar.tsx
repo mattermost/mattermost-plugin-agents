@@ -2,13 +2,14 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
-import {FormattedMessage} from 'react-intl';
+import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {CloseIcon, RefreshIcon, SendIcon} from '@mattermost/compass-icons/components';
 
 import {Button} from '@mattermost/compass-ui/components/button';
 import {Icon} from '@mattermost/compass-ui/components/icon';
+import {IconButton} from '@mattermost/compass-ui/components/icon-button';
 
 interface ControlsBarComponentProps {
     showStopGeneratingButton: boolean;
@@ -27,6 +28,9 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
     onPostSummary,
     onRegenerate,
 }) => {
+    const intl = useIntl();
+    const regenerateLabel = intl.formatMessage({defaultMessage: 'Regenerate'});
+
     return (
         <ControlsBar>
             {showStopGeneratingButton && (
@@ -52,15 +56,14 @@ export const ControlsBarComponent: React.FC<ControlsBarComponentProps> = ({
                 </Button>
             )}
             {showRegenerate && (
-                <Button
-                    emphasis='tertiary'
+                <IconButton
                     size='x-small'
-                    leadingIcon={<Icon glyph={<RefreshIcon/>}/>}
+                    icon={<Icon glyph={<RefreshIcon/>}/>}
+                    aria-label={regenerateLabel}
+                    title={regenerateLabel}
                     data-testid='regenerate-button'
                     onClick={onRegenerate}
-                >
-                    <FormattedMessage defaultMessage='Regenerate'/>
-                </Button>
+                />
             )}
         </ControlsBar>
     );
