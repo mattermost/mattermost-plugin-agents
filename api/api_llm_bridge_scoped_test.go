@@ -4,10 +4,15 @@
 package api
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -58,6 +63,8 @@ type scopedBridgeCatalog struct {
 	*mcp.ClientManager
 	scopedRequests   int
 	unscopedRequests int
+	// tools, when set, replaces the single default tool.
+	tools []llm.Tool
 }
 
 func (p *scopedBridgeCatalog) GetToolsWithSelection(_ context.Context, req mcp.CatalogRequest, _ mcp.ToolSelection) ([]llm.Tool, *mcp.Errors) {
@@ -65,6 +72,9 @@ func (p *scopedBridgeCatalog) GetToolsWithSelection(_ context.Context, req mcp.C
 		p.scopedRequests++
 	} else {
 		p.unscopedRequests++
+	}
+	if p.tools != nil {
+		return p.tools, nil
 	}
 	return []llm.Tool{bridgeMCPTool("jira", "get_issue", scopedBridgeOrigin)}, nil
 }
@@ -191,6 +201,129 @@ func TestBridgeScopedAgentCompletion(t *testing.T) {
 				assert.Equal(t, minter.minted, minter.revoked, "the session ends with the request")
 			} else {
 				assert.Empty(t, minter.minted)
+			}
+		})
+	}
+}
+
+// A scoped Bridge run whose session is revoked while it executes a tool runs
+// nothing further unasked: the next allowlisted call is handed back to the
+// caller, whether the response is streamed or not.
+func TestBridgeScopedRunStopsAutoRunningWhenRevoked(t *testing.T) {
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = io.Discard
+
+	respondStream := func(a *API, c *gin.Context, plan *bridgeCompletionPlan) {
+		a.streamLLMResponse(c, plan.bot.LLM(), plan.bot.GetConfig().EffectiveMaxToolTurns(), plan.request, plan.shouldExecute, plan.opts...)
+	}
+	respondNoStream := func(a *API, c *gin.Context, plan *bridgeCompletionPlan) {
+		a.handleNonStreamingLLMResponse(c, plan.bot.LLM(), plan.bot.GetConfig().EffectiveMaxToolTurns(), plan.request, plan.shouldExecute, plan.opts...)
+	}
+
+	tests := []struct {
+		name         string
+		respond      func(*API, *gin.Context, *bridgeCompletionPlan)
+		wantReturned bool
+		subType      string
+	}{
+		{name: "streaming", respond: respondStream, wantReturned: true, subType: llm.SubTypeStreaming},
+		{name: "non-streaming", respond: respondNoStream, subType: llm.SubTypeNoStream},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := SetupTestEnvironment(t)
+			defer e.Cleanup(t)
+
+			channel := &model.Channel{Id: model.NewId(), TeamId: model.NewId(), Type: model.ChannelTypeOpen}
+			e.mockAPI.On("GetServerVersion").Return(scopedsession.MinServerVersion).Maybe()
+			e.mockAPI.On("GetChannel", channel.Id).Return(channel, nil).Maybe()
+			e.mockAPI.On("GetTeam", mock.Anything).Return(&model.Team{Id: channel.TeamId}, nil).Maybe()
+			e.mockAPI.On("HasPermissionToChannel", testUserID, mock.Anything, mock.Anything).Return(true).Maybe()
+			e.mockAPI.On("KVGet", mock.Anything).Return(nil, nil).Maybe()
+
+			manager := mcp.NewClientManager(mcp.Config{IdleTimeoutMinutes: 30}, e.client.Log, e.client, nil, nil, http.DefaultClient, nil, mcp.RemoteMCPAlwaysAllowed)
+			t.Cleanup(manager.Close)
+			manager.SetScopedSessions(&scopedBridgeMinter{})
+
+			var firstRuns, secondRuns atomic.Int32
+			first := bridgeMCPTool("jira", "get_issue", scopedBridgeOrigin)
+			first.Resolver = func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				firstRuns.Add(1)
+				manager.RevokeScopedSessionsWhere(func(*mcp.ScopedRun) bool { return true })
+				return "issue", nil
+			}
+			second := bridgeMCPTool("jira", "get_comments", scopedBridgeOrigin)
+			second.Resolver = func(context.Context, *llm.Context, llm.ToolArgumentGetter) (string, error) {
+				secondRuns.Add(1)
+				return "comments", nil
+			}
+			catalog := &scopedBridgeCatalog{ClientManager: manager, tools: []llm.Tool{first, second}}
+			e.api.contextBuilder = llmcontext.NewLLMContextBuilder(e.client, &testLLMContextToolProvider{}, catalog, scopedBridgeConfig{channelToolCalling: true})
+
+			e.setupTestBot(llm.BotConfig{
+				Name:                  "testbot",
+				DisplayName:           "Test Bot",
+				UserAccessLevel:       llm.UserAccessLevelAll,
+				ChannelAccessLevel:    llm.ChannelAccessLevelAll,
+				UseServiceAccountAuth: true,
+				ScopedChannelMode:     true,
+				EnabledMCPTools: []llm.EnabledMCPTool{
+					{ServerOrigin: scopedBridgeOrigin, ToolName: "get_issue"},
+					{ServerOrigin: scopedBridgeOrigin, ToolName: "get_comments"},
+				},
+			})
+			fakeLLM := NewFakeLLM("")
+			fakeLLM.StreamEventSequence = [][]llm.TextStreamEvent{
+				{{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{{ID: "call-1", Name: "jira__get_issue", Arguments: json.RawMessage(`{}`)}}}, {Type: llm.EventTypeEnd}},
+				{{Type: llm.EventTypeToolCalls, Value: []llm.ToolCall{{ID: "call-2", Name: "jira__get_comments", Arguments: json.RawMessage(`{}`)}}}, {Type: llm.EventTypeEnd}},
+				{{Type: llm.EventTypeText, Value: "done"}, {Type: llm.EventTypeEnd}},
+			}
+			for _, bot := range e.bots.GetAllBots() {
+				bot.SetLLMForTest(fakeLLM)
+			}
+
+			plan, status, err := e.api.prepareAgentBridgeCompletion(context.Background(), testBotUserID, bridgeclient.CompletionRequest{
+				Posts:        []bridgeclient.Post{{Role: "user", Message: "Find the issue and its comments"}},
+				UserID:       testUserID,
+				ChannelID:    channel.Id,
+				AllowedTools: []string{"jira__get_issue", "jira__get_comments"},
+			}, llm.OperationBridgeAgent, tt.subType)
+			require.NoError(t, err, "status %d", status)
+			t.Cleanup(plan.request.Context.ReleaseScopedSession)
+
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			tt.respond(e.api, c, plan)
+
+			assert.EqualValues(t, 1, firstRuns.Load())
+			assert.Zero(t, secondRuns.Load(), "a call after the revocation never runs")
+
+			var returned []llm.ToolCall
+			scanner := bufio.NewScanner(strings.NewReader(recorder.Body.String()))
+			for scanner.Scan() {
+				payload, ok := strings.CutPrefix(scanner.Text(), "data: ")
+				if !ok {
+					continue
+				}
+				var event struct {
+					Type  llm.EventType
+					Value json.RawMessage
+				}
+				require.NoError(t, json.Unmarshal([]byte(payload), &event))
+				if event.Type != llm.EventTypeToolCalls {
+					continue
+				}
+				var calls []llm.ToolCall
+				require.NoError(t, json.Unmarshal(event.Value, &calls))
+				for _, call := range calls {
+					if call.ID == "call-2" && !call.WouldAutoExecute {
+						returned = append(returned, call)
+					}
+				}
+			}
+			if tt.wantReturned {
+				assert.Len(t, returned, 1, "the call is handed back to the caller")
 			}
 		})
 	}
