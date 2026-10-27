@@ -165,7 +165,7 @@ const Main = styled.div`
     display: flex;
     align-items: flex-start;
     gap: var(--spacing-m);
-    padding: var(--spacing-m);
+    padding: var(--spacing-m) var(--spacing-m) calc(var(--spacing-m) + var(--spacing-xxxxs));
     border-radius: var(--radius-m);
     cursor: pointer;
 
