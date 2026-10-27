@@ -10,6 +10,12 @@ import {prefersReducedMotion} from '../llmbot_post/motion';
 // finishes before it unmounts. The duration itself comes from the token in CSS.
 const EXIT_UNMOUNT_MS = 350;
 
+// elevation-2 casts straight down (0 4px 6px), so on the vertical edge of a panel sliding sideways it
+// is almost invisible, and the pane clips the part below. The panel gets the token and, as well, the
+// same shadow cast sideways from its left edge onto the view underneath (the token's color: no
+// token for a sideways cast).
+const SLIDING_SHADOW = 'var(--elevation-2), -4px 0 6px 0 rgba(0, 0, 0, 0.12)';
+
 // How far the view underneath shifts while the new one slides over it. No compass token for a
 // share of the pane's width.
 const SHIFT = '30%';
@@ -246,7 +252,7 @@ const Layer = styled.div`
 
     &[data-state='enter'][data-direction='forward'] {
         ${motion(slideInFromRight, 'var(--ease-entrance)')}
-        box-shadow: var(--elevation-2);
+        box-shadow: ${SLIDING_SHADOW};
     }
 
     &[data-state='exit'][data-direction='forward'] {
@@ -267,7 +273,7 @@ const Layer = styled.div`
     &[data-state='exit'][data-direction='back'] {
         z-index: 1;
         ${motion(slideOutToRight, 'var(--ease-exit)')}
-        box-shadow: var(--elevation-2);
+        box-shadow: ${SLIDING_SHADOW};
     }
 
     &[data-state='enter'][data-direction='none'] {

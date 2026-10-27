@@ -6,7 +6,6 @@ import {useDispatch, useSelector} from 'react-redux';
 import {FormattedMessage, useIntl} from 'react-intl';
 import styled from 'styled-components';
 import ArrowLeftIcon from '@mattermost/compass-icons/components/arrow-left';
-import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
@@ -19,6 +18,7 @@ import aiIcon from '../../../../assets/bot_icon.png';
 import {useBotlist, type LLMBot} from '@/bots';
 import {getProfilePictureUrl, getUserMCPTools} from '@/client';
 import AgentChatNameMenu from '@/components/agents/agent_chat_name_menu';
+import ChatTitleDropdown from '@/components/agents/chat_title_dropdown';
 import {useAgentsRoute} from '@/components/agents/use_agents_route';
 import {useComposerToolPreferences} from '@/components/agent_chat/use_composer_tool_preferences';
 import manifest from '@/manifest';
@@ -28,9 +28,6 @@ import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread
 
 import ContextUsageIndicator from './context_usage_indicator';
 import ToolProviderPopover, {type UserMCPServerInfo} from './tool_provider_popover';
-
-// No compass token for the translucent hover fill (the agent chat header's name button uses the same).
-const HOVER_PERCENT = '8%';
 
 const AgentAvatar = ({bot}: {bot: LLMBot}) => (
     <UserAvatar
@@ -170,21 +167,13 @@ const RHSTitle = () => {
                 onArchived={startNewChat}
                 onViewAll={toAll}
                 renderTrigger={({ariaLabel, label, expanded, onClick}) => (
-                    <TitleButton
-                        type='button'
-                        aria-label={ariaLabel}
-                        title={label}
-                        aria-haspopup='menu'
-                        aria-expanded={expanded}
-                        data-testid='bot-selector-rhs'
+                    <ChatTitleDropdown
+                        label={label}
+                        ariaLabel={ariaLabel}
+                        expanded={expanded}
                         onClick={onClick}
-                    >
-                        <Name>{label}</Name>
-                        <Icon
-                            glyph={<ChevronDownIcon/>}
-                            size='16'
-                        />
-                    </TitleButton>
+                        testId='bot-selector-rhs'
+                    />
                 )}
             />
             {end}
@@ -251,35 +240,6 @@ const Name = styled.span`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-`;
-
-const TitleButton = styled.button`
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-    margin: 0;
-    padding: 0 var(--spacing-xxxs) 0 var(--spacing-xxs);
-    border: none;
-    border-radius: var(--radius-s);
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    text-align: left;
-
-    &:hover,
-    &[aria-expanded='true'] {
-        background: color-mix(in srgb, var(--center-channel-color) ${HOVER_PERCENT}, transparent);
-    }
-
-    &:focus-visible {
-        outline: var(--spacing-xxxxs) solid var(--focus-ring-color);
-        outline-offset: var(--spacing-xxxxs);
-    }
-
-    svg {
-        flex-shrink: 0;
-    }
 `;
 
 export default RHSTitle;

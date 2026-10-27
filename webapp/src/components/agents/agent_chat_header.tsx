@@ -4,7 +4,6 @@
 import React, {useEffect, useState} from 'react';
 import {useIntl} from 'react-intl';
 import styled from 'styled-components';
-import ChevronDownIcon from '@mattermost/compass-icons/components/chevron-down';
 import PlusIcon from '@mattermost/compass-icons/components/plus';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
@@ -16,14 +15,8 @@ import type {LLMBot} from '@/bots';
 import ToolProviderPopover, {type UserMCPServerInfo} from '@/components/rhs/tool_provider_popover';
 
 import AgentChatNameMenu from './agent_chat_name_menu';
+import ChatTitleDropdown from './chat_title_dropdown';
 import {useAgentsRoute} from './use_agents_route';
-
-// No compass token for the prototype's translucent hover fill (rgba(center-channel-color-rgb, 0.08)).
-const HOVER_PERCENT = '8%';
-
-// Caps the name button so a long chat title never pushes the tools button and the new-chat button
-// off the bar. No compass token for a width of this size.
-const TITLE_MAX_WIDTH = 'min(100%, 40rem)';
 
 interface AgentChatHeaderProps {
     bot: LLMBot;
@@ -75,21 +68,14 @@ const AgentChatHeader = ({bot, rootId, onOpenSettings, onNewChat, onArchived}: A
                     onViewAll={toAll}
                     onArchived={onArchived}
                     renderTrigger={({ariaLabel, label, expanded, onClick}) => (
-                        <TitleButton
-                            type='button'
-                            aria-label={ariaLabel}
-                            title={label}
-                            aria-haspopup='menu'
-                            aria-expanded={expanded}
-                            data-testid='agent-chat-menu-button'
+                        <ChatTitleDropdown
+                            label={label}
+                            ariaLabel={ariaLabel}
+                            expanded={expanded}
                             onClick={onClick}
-                        >
-                            <Name>{label}</Name>
-                            <Icon
-                                glyph={<ChevronDownIcon/>}
-                                size='16'
-                            />
-                        </TitleButton>
+                            testId='agent-chat-menu-button'
+                            heading={true}
+                        />
                     )}
                 />
             </Title>
@@ -142,44 +128,6 @@ const Title = styled.div`
     align-items: center;
     gap: var(--spacing-xs);
     padding-inline: var(--spacing-xs);
-`;
-
-const TitleButton = styled.button`
-    display: inline-flex;
-    max-width: ${TITLE_MAX_WIDTH};
-    align-items: center;
-    min-width: 0;
-    margin: 0;
-    padding: 0 var(--spacing-xxxs) 0 var(--spacing-xxs);
-    border: none;
-    border-radius: var(--radius-s);
-    background: transparent;
-    color: var(--center-channel-color);
-    cursor: pointer;
-    text-align: left;
-
-    &:hover,
-    &[aria-expanded='true'] {
-        background: color-mix(in srgb, var(--center-channel-color) ${HOVER_PERCENT}, transparent);
-    }
-
-    &:focus-visible {
-        outline: var(--spacing-xxxxs) solid var(--focus-ring-color);
-        outline-offset: var(--spacing-xxxxs);
-    }
-`;
-
-const Name = styled.h1`
-    min-width: 0;
-    margin: 0;
-    overflow: hidden;
-    font-family: var(--font-family-heading);
-    font-size: var(--font-size-200);
-    font-weight: var(--font-weight-semibold);
-    line-height: var(--line-height-200);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--center-channel-color);
 `;
 
 const Actions = styled.div`
