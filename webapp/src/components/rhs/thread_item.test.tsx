@@ -10,20 +10,68 @@ jest.mock('@/mm_webapp', () => ({
     Timestamp: () => null,
 }));
 
-describe('ThreadItem', () => {
-    test.each(['Enter', ' '])('opens the thread from the keyboard with %p', (key) => {
-        const onClick = jest.fn();
-        render(
-            <ThreadItem
-                postTitle='Quarterly planning'
-                turnCount={3}
-                lastActivityDate={0}
-                label='Agents'
-                onClick={onClick}
-            />,
-        );
+jest.mock('react-intl', () => ({
+    useIntl: () => ({
+        formatMessage: ({defaultMessage}: {defaultMessage: string}, values?: {count: number}) => (
+            values ? defaultMessage.replace(/\{count, plural, one \{(.*?)\} other \{(.*?)\}\}/, (_m, one, other) => (values.count === 1 ? one : other).replace('#', String(values.count))) : defaultMessage
+        ),
+    }),
+}));
 
-        const item = screen.getByRole('button', {name: /Quarterly planning/});
+const renderItem = (props: Partial<React.ComponentProps<typeof ThreadItem>> = {}) => {
+    const onClick = jest.fn();
+    render(
+        <ThreadItem
+            preview='Can you give me some survival tips'
+            authorName='Systems Administrator'
+            authorAvatarUrl='/users/me/image'
+            agentName='Wilson'
+            agentAvatarUrl='/users/bot/image'
+            lastActivityDate={0}
+            replyCount={1}
+            onClick={onClick}
+            {...props}
+        />,
+    );
+    return onClick;
+};
+
+describe('ThreadItem', () => {
+    test('shows the author, the agent, the first message and the reply count', () => {
+        renderItem();
+
+        expect(screen.getByText('Systems Administrator')).toBeTruthy();
+        expect(screen.getByText('Wilson')).toBeTruthy();
+        expect(screen.getByText('Can you give me some survival tips')).toBeTruthy();
+        expect(screen.getByText('1 reply')).toBeTruthy();
+    });
+
+    test.each([
+        {replyCount: 0, text: '0 replies'},
+        {replyCount: 4, text: '4 replies'},
+    ])('pluralizes $replyCount replies', ({replyCount, text}) => {
+        renderItem({replyCount});
+
+        expect(screen.getByText(text)).toBeTruthy();
+    });
+
+    test('omits the reply count until it is known', () => {
+        // eslint-disable-next-line no-undefined -- the prop is absent until the root post loads
+        renderItem({replyCount: undefined});
+
+        expect(screen.queryByText(/repl/)).toBeNull();
+    });
+
+    test('falls back to a generic label for an empty message', () => {
+        renderItem({preview: '  '});
+
+        expect(screen.getByText('Conversation with Agents')).toBeTruthy();
+    });
+
+    test.each(['Enter', ' '])('opens the thread from the keyboard with %p', (key) => {
+        const onClick = renderItem();
+
+        const item = screen.getByRole('button', {name: /survival tips/});
         item.focus();
         expect(document.activeElement).toBe(item);
 

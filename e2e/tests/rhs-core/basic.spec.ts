@@ -186,6 +186,15 @@ test.describe('Chat History', () => {
     // Should show threads list with content
     await expect(aiPlugin.threadsListContainer).toBeVisible();
     await expect(aiPlugin.threadsListContainer.locator('div').first()).toBeVisible();
+
+    // Each chat reads like an item of the Threads list: its first message and the reply count.
+    const item = aiPlugin.threadsListContainer.getByRole('button').filter({ hasText: 'Test for history button' });
+    await expect(item).toHaveCount(1);
+    await expect(item).toContainText(/1 reply/);
+
+    // The history has the generic title, and Back is not offered there.
+    await expect(page.getByTestId('rhs-title')).toContainText('Agents');
+    await expect(aiPlugin.chatHistoryButton).toHaveCount(0);
   });
 });
 

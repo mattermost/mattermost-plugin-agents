@@ -2,82 +2,61 @@
 // See LICENSE.txt for license information.
 
 import React from 'react';
+import {useIntl} from 'react-intl';
 import styled from 'styled-components';
 
 import {Tag} from '@mattermost/compass-ui/components/tag';
+import {UserAvatar} from '@mattermost/compass-ui/components/user-avatar';
 
 import {Timestamp} from '@/mm_webapp';
 
-const ThreadItemContainer = styled.div`
-    padding: 16px;
-    cursor: pointer;
-    border-bottom: 1px solid rgba(var(--center-channel-color-rgb), 0.12)
-`;
+// No compass token for the translucent hover fill (the Agents chat header's name button uses the same).
+const HOVER_PERCENT = '8%';
 
-const Title = styled.div`
-    color: var(--center-channel-color);
-    display: flex;
-    align-items: center;
-    margin-bottom: 4px;
-    justify-content: space-between;
-`;
-
-const TitleText = styled.div`
-    font-size: 14px;
-    font-weight: 600;
-    text-overflow: ellipsis;
-    overflow: hidden;
-    white-space: nowrap;
-`;
-
-const TurnCount = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-weight: 600;
-`;
-
-const LastActivityDate = styled.div`
-    color: rgba(var(--center-channel-color-rgb), 0.64);
-    font-size: 12px;
-    font-weight: 400;
-    white-space: nowrap;
-    margin-left: 13px;
-`;
-
-const Footer = styled.div`
-	display: flex;
-	flex-direction: row;
-	align-items: center;
-	gap: 10px;
-	margin-top: 12px;
-`;
+// Avatars overlap by a quarter of their width, as in the host's Threads list.
+const AVATAR_OVERLAP = 'calc(-1 * var(--spacing-xxs))';
 
 type Props = {
-    postTitle: string;
-    turnCount: number;
+
+    // The chat's first message; falls back to the chat title while it loads or if it is unavailable.
+    preview: string;
+    authorName: string;
+    authorAvatarUrl: string;
+    agentName: string;
+    agentAvatarUrl: string;
     lastActivityDate: number;
-    label: string;
+
+    // Absent until the root post is loaded.
+    replyCount?: number;
     onClick: () => void;
 }
 
-const DefaultTitle = 'Conversation with Agents';
-
+// A chat in the history, laid out like an item of the host's Threads list: author, agent tag and
+// time above the first message, then the participants and the reply count.
 export default function ThreadItem(props: Props) {
-    const turnText = props.turnCount === 1 ? '1 message' : `${props.turnCount} messages`;
+    const intl = useIntl();
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             props.onClick();
         }
     };
+    const preview = props.preview.trim() || intl.formatMessage({defaultMessage: 'Conversation with Agents'});
     return (
         <ThreadItemContainer
             role='button'
             tabIndex={0}
+            aria-label={`${props.authorName}, ${props.agentName}: ${preview}`}
             onClick={props.onClick}
             onKeyDown={handleKeyDown}
         >
-            <Title>
-                <TitleText>{props.postTitle || DefaultTitle}</TitleText>
+            <Heading>
+                <Author>{props.authorName}</Author>
+                <Tag
+                    label={props.agentName}
+                    type='default'
+                    size='x-small'
+                />
                 <LastActivityDate>
                     <Timestamp // Matches the timestap format in the threads view
                         value={props.lastActivityDate}
@@ -86,15 +65,110 @@ export default function ThreadItem(props: Props) {
                         day={'numeric'}
                     />
                 </LastActivityDate>
-            </Title>
+            </Heading>
+            <Preview>{preview}</Preview>
             <Footer>
-                <Tag
-                    label={props.label}
-                    type='default'
-                    size='x-small'
-                />
-                <TurnCount>{turnText}</TurnCount>
+                <Avatars aria-hidden='true'>
+                    <UserAvatar
+                        src={props.authorAvatarUrl}
+                        alt=''
+                        name={props.authorName}
+                        size='24'
+                    />
+                    <OverlappedAvatar>
+                        <UserAvatar
+                            src={props.agentAvatarUrl}
+                            alt=''
+                            name={props.agentName}
+                            size='24'
+                        />
+                    </OverlappedAvatar>
+                </Avatars>
+                {typeof props.replyCount === 'number' && (
+                    <Replies>
+                        {intl.formatMessage({defaultMessage: '{count, plural, one {# reply} other {# replies}}'}, {count: props.replyCount})}
+                    </Replies>
+                )}
             </Footer>
         </ThreadItemContainer>
     );
 }
+
+const ThreadItemContainer = styled.div`
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-m) var(--spacing-l);
+    cursor: pointer;
+    border-bottom: var(--border-default);
+
+    &:hover {
+        background: color-mix(in srgb, var(--center-channel-color) ${HOVER_PERCENT}, transparent);
+    }
+
+    &:focus-visible {
+        outline: var(--spacing-xxxxs) solid var(--focus-ring-color);
+        outline-offset: calc(-1 * var(--spacing-xxxxs));
+    }
+`;
+
+const Heading = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    min-width: 0;
+`;
+
+const Author = styled.span`
+    min-width: 0;
+    overflow: hidden;
+    color: var(--center-channel-color);
+    font-size: var(--font-size-100);
+    font-weight: var(--font-weight-semibold);
+    line-height: var(--line-height-100);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+`;
+
+const LastActivityDate = styled.span`
+    flex: 0 0 auto;
+    margin-inline-start: auto;
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
+    white-space: nowrap;
+`;
+
+// Two lines of the first message, as in the host's Threads list.
+const Preview = styled.div`
+    display: -webkit-box;
+    overflow: hidden;
+    color: var(--center-channel-color);
+    font-size: var(--font-size-100);
+    line-height: var(--line-height-100);
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+`;
+
+const Footer = styled.div`
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+`;
+
+const Avatars = styled.span`
+    display: inline-flex;
+    align-items: center;
+`;
+
+const OverlappedAvatar = styled.span`
+    display: inline-flex;
+    margin-inline-start: ${AVATAR_OVERLAP};
+`;
+
+const Replies = styled.span`
+    color: rgba(var(--center-channel-color-rgb), 0.64);
+    font-size: var(--font-size-75);
+    line-height: var(--line-height-75);
+`;

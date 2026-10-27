@@ -13,6 +13,7 @@ const mockGetUserMCPTools = jest.fn();
 const mockGetUserToolPreferences = jest.fn();
 const mockUpdateRead = jest.fn();
 const mockCreatePost = jest.fn();
+const mockGetPostsByIds = jest.fn();
 
 jest.mock('@/client', () => ({
     getAIThreads: () => mockGetAIThreads(),
@@ -20,6 +21,8 @@ jest.mock('@/client', () => ({
     getUserToolPreferences: () => mockGetUserToolPreferences(),
     createPost: (...args: unknown[]) => mockCreatePost(...args),
     getProfilesByIds: () => Promise.resolve([]),
+    getPostsByIds: (ids: string[]) => mockGetPostsByIds(ids),
+    getProfilePictureUrl: (id: string) => `/users/${id}/image`,
     updateRead: (userId: string, teamId: string, postId: string, timestamp: number) => (
         mockUpdateRead(userId, teamId, postId, timestamp)
     ),
@@ -68,18 +71,6 @@ jest.mock('@/mm_webapp', () => {
     };
 });
 
-jest.mock('./rhs_header', () => {
-    const ReactActual = jest.requireActual<typeof import('react')>('react');
-
-    return {
-        __esModule: true,
-        default: (props: {setCurrentTab: (tab: string) => void}) => ReactActual.createElement('button', {
-            'data-testid': 'rhs-header',
-            onClick: () => props.setCurrentTab('threads'),
-        }),
-    };
-});
-
 jest.mock('./rhs_new_tab', () => {
     const ReactActual = jest.requireActual<typeof import('react')>('react');
 
@@ -94,7 +85,7 @@ jest.mock('./thread_item', () => {
 
     return {
         __esModule: true,
-        default: () => ReactActual.createElement('div', {'data-testid': 'rhs-thread-item'}),
+        default: (props: {preview: string; replyCount?: number}) => ReactActual.createElement('div', {'data-testid': 'rhs-thread-item'}, `${props.preview}|${props.replyCount ?? 'none'}`),
     };
 });
 
@@ -120,6 +111,7 @@ const baseState = {
     entities: {
         users: {
             currentUserId: 'user-id',
+            profiles: {'user-id': {id: 'user-id', username: 'me', first_name: 'Me', last_name: 'Tester', last_picture_update: 0}},
         },
         teams: {
             currentTeamId: 'team-id',
@@ -190,7 +182,7 @@ describe('RHS', () => {
         warn.mockRestore();
     });
 
-    test('the pane follows the tab shared with the header title, and the header changes it through the store', async () => {
+    test('the pane follows the tab shared with the header title', async () => {
         mockGetAIThreads.mockResolvedValue([]);
         const state = {
             ...baseState,
@@ -201,10 +193,7 @@ describe('RHS', () => {
         const {rerender} = renderRHS();
         expect(screen.getByTestId('rhs-new-tab')).toBeTruthy();
 
-        // The header asks for the history tab; the store (not local state) owns the answer.
-        fireEvent.click(screen.getByTestId('rhs-header'));
-        expect(mockDispatch).toHaveBeenCalledWith({type: 'AI_RHS_SET_TAB', tab: 'threads'});
-
+        // The header title changes the tab in the store.
         state['plugins-mattermost-ai'] = {selectedPostId: '', rhsTab: 'threads'};
         rerender(<Rhs/>);
         await waitFor(() => expect(screen.getByTestId('rhs-threads-list')).toBeTruthy());
@@ -214,6 +203,34 @@ describe('RHS', () => {
         state['plugins-mattermost-ai'] = {selectedPostId: 'post-id', rhsTab: 'threads'};
         rerender(<Rhs/>);
         expect(screen.getByTestId('rhs-thread-viewer')).toBeTruthy();
+    });
+
+    test.each([
+        {
+            name: 'shows the first message and reply count once the root posts load',
+            posts: () => Promise.resolve([{id: 'root1', message: 'First message', reply_count: 2}]),
+            expected: ['First message|2', 'Title two|none'],
+        },
+        {
+            name: 'keeps the chat titles when the root posts cannot be loaded',
+            posts: () => Promise.reject(new Error('boom')),
+            expected: ['Title one|none', 'Title two|none'],
+        },
+    ])('chat history $name', async ({posts, expected}) => {
+        const errorLog = jest.spyOn(console, 'error').mockImplementation(() => null);
+        mockGetAIThreads.mockResolvedValue([
+            {id: 'c1', bot_id: 'bot-id', root_post_id: 'root1', title: 'Title one', turn_count: 3, update_at: 1},
+            {id: 'c2', bot_id: 'bot-id', root_post_id: 'root2', title: 'Title two', turn_count: 1, update_at: 2},
+        ]);
+        mockGetPostsByIds.mockImplementation(posts);
+        const state = {...baseState, 'plugins-mattermost-ai': {selectedPostId: '', rhsTab: 'threads'}};
+        mockUseSelector.mockImplementation((selector) => selector(state));
+
+        renderRHS();
+
+        await waitFor(() => expect(screen.getAllByTestId('rhs-thread-item').map((el) => el.textContent)).toEqual(expected));
+        expect(mockGetPostsByIds).toHaveBeenCalledWith(['root1', 'root2']);
+        errorLog.mockRestore();
     });
 
     test('logs generic read marker rejections', async () => {

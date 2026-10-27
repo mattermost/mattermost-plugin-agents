@@ -30,6 +30,15 @@ jest.mock('./tool_provider_popover', () => ({
     default: () => <button type='button'>{'Tools'}</button>,
 }));
 
+jest.mock('@/hooks/use_conversation_id_for_thread', () => ({
+    useConversationIdForThread: (rootId: string) => (rootId ? 'conv1' : ''),
+}));
+
+jest.mock('./context_usage_indicator', () => ({
+    __esModule: true,
+    default: ({conversationId}: {conversationId: string}) => <span data-testid='context-usage'>{conversationId}</span>,
+}));
+
 jest.mock('react-intl', () => {
     const actual = jest.requireActual('react-intl');
     const intl = {
@@ -187,12 +196,35 @@ describe('RHSTitle', () => {
             expect(toolsButton() !== null).toBe(tools);
         });
 
+        test.each([
+            {name: 'new chat', rhs: {}, newChat: false, ring: false},
+            {name: 'an open thread', rhs: {selectedPostId: 'root1'}, newChat: true, ring: true},
+            {name: 'the chat history', rhs: {rhsTab: 'threads'}, newChat: true, ring: false},
+        ])('New chat button and context ring on $name: newChat=$newChat, ring=$ring', ({rhs, newChat, ring}) => {
+            renderTitle(two, 'a', rhs);
+
+            expect(screen.queryByTestId('new-chat') !== null).toBe(newChat);
+            expect(screen.queryByTestId('context-usage') !== null).toBe(ring);
+        });
+
+        test('New chat leaves the open chat for a fresh one', () => {
+            renderTitle(two, 'a', {selectedPostId: 'root1'});
+
+            fireEvent.click(screen.getByTestId('new-chat'));
+
+            expect(dispatched.filter((a) => a.type === 'SELECT_AI_POST' || a.type === 'AI_RHS_SET_TAB')).toEqual([
+                {type: 'SELECT_AI_POST', postId: ''},
+                {type: 'AI_RHS_SET_TAB', tab: 'new'},
+            ]);
+        });
+
         test('the chat history has the generic Agents title: no agent menu, no Back, no tools', () => {
             renderTitle(two, 'a', {rhsTab: 'threads'});
 
             expect(screen.getByText('Agents')).not.toBeNull();
             expect(screen.queryByRole('button', {name: /choose agent/})).toBeNull();
             expect(screen.queryByText('Alpha')).toBeNull();
+            expect(screen.queryByText('Chat history')).toBeNull();
         });
 
         test('Back leaves the open chat and shows the chat history', () => {

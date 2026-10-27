@@ -643,6 +643,12 @@ export function getProfilePictureUrl(userId: string, lastIconUpdate: number) {
     return Client4.getProfilePictureUrl(userId, lastIconUpdate);
 }
 
+// The root posts of chats for the history list's previews (message and reply count). The server
+// only returns the posts the user may read.
+export function getPostsByIds(postIds: string[]) {
+    return Client4.getPostsByIds(postIds);
+}
+
 export async function getBotProfilePictureUrl(username: string) {
     const user = await Client4.getUserByUsername(username);
     if (!user || user.id === '') {

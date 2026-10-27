@@ -6,23 +6,21 @@ import {useDispatch, useSelector} from 'react-redux';
 import styled from 'styled-components';
 
 import {GlobalState} from '@mattermost/types/store';
+import type {UserProfile} from '@mattermost/types/users';
 
 import manifest from '@/manifest';
 import type {RHSTab} from '@/redux';
 
-import {getAIThreads, updateRead} from '@/client';
+import {getAIThreads, getPostsByIds, getProfilePictureUrl, updateRead} from '@/client';
 
 import {useBotlist} from '@/bots';
 
 import type {AIThread} from '@/types/ai_thread';
 
-import {useConversationIdForThread} from '@/hooks/use_conversation_id_for_thread';
-
 import AgentChatDropZone from '../agent_chat/agent_chat_drop_zone';
 import AgentChatThreadView from '../agent_chat/agent_chat_thread_view';
 
 import ThreadItem from './thread_item';
-import RHSHeader from './rhs_header';
 
 import RHSNewTab from './rhs_new_tab';
 
@@ -45,6 +43,13 @@ const RhsContainer = styled.div`
     flex-direction: column;
     min-height: 0;
 `;
+
+type ChatPreview = {message: string; replyCount: number};
+
+// The chats are the user's own, so the author is always the current user.
+const chatAuthorName = (user?: UserProfile) => (
+    `${user?.first_name ?? ''} ${user?.last_name ?? ''}`.trim() || user?.username || ''
+);
 
 const twentyFourHoursInMS = 24 * 60 * 60 * 1000;
 
@@ -73,6 +78,11 @@ export default function RHS() {
 
     const [threads, setThreads] = useState<AIThread[] | null>(null);
 
+    // The chats' first messages and reply counts, loaded after the list. Until they arrive (or if
+    // they cannot be loaded) the items show the chat title.
+    const [previews, setPreviews] = useState<Record<string, ChatPreview>>({});
+    const currentUser = useSelector<GlobalState, UserProfile | undefined>((state) => state.entities.users.profiles[currentUserId]);
+
     const markSelectedThreadRead = useCallback((postId: string) => {
         updateRead(currentUserId, currentTeamId, postId, Date.now() + twentyFourHoursInMS).catch((error) => {
             if (isMissingThreadMembershipError(error)) {
@@ -85,8 +95,28 @@ export default function RHS() {
     }, [currentTeamId, currentUserId]);
 
     useEffect(() => {
+        // Responses of a superseded request (the tab was left, or opened again) are dropped.
+        let superseded = false;
         const fetchThreads = async () => {
-            setThreads(await getAIThreads());
+            const list: AIThread[] = await getAIThreads();
+            if (superseded) {
+                return;
+            }
+            setThreads(list);
+
+            const rootIds = list.map((t) => t.root_post_id).filter((id): id is string => Boolean(id));
+            if (rootIds.length === 0) {
+                setPreviews({});
+                return;
+            }
+            try {
+                const posts = await getPostsByIds(rootIds);
+                if (!superseded) {
+                    setPreviews(Object.fromEntries(posts.map((post) => [post.id, {message: post.message, replyCount: post.reply_count}])));
+                }
+            } catch (error) {
+                console.error('Failed to load chat history previews:', error); // eslint-disable-line no-console
+            }
         };
         if (currentTab === 'threads') {
             fetchThreads();
@@ -95,6 +125,8 @@ export default function RHS() {
             markSelectedThreadRead(selectedPostId);
         }
         return () => {
+            superseded = true;
+
             // Sometimes we are too fast for the server, so try again on unmount/switch.
             if (selectedPostId) {
                 markSelectedThreadRead(selectedPostId);
@@ -107,7 +139,6 @@ export default function RHS() {
     }, [dispatch]);
 
     const {bots, activeBot} = useBotlist();
-    const activeConversationId = useConversationIdForThread(selectedPostId);
 
     // No bots available - hide the RHS entirely
     if (bots && bots.length === 0) {
@@ -147,10 +178,13 @@ export default function RHS() {
                     {navigableThreads.map((p) => (
                         <ThreadItem
                             key={p.id}
-                            postTitle={p.title}
-                            turnCount={p.turn_count}
+                            preview={previews[p.root_post_id!]?.message || p.title}
+                            replyCount={previews[p.root_post_id!]?.replyCount}
+                            authorName={chatAuthorName(currentUser)}
+                            authorAvatarUrl={getProfilePictureUrl(currentUserId, currentUser?.last_picture_update ?? 0)}
+                            agentName={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
+                            agentAvatarUrl={getProfilePictureUrl(p.bot_id, bots.find((bot) => bot.id === p.bot_id)?.lastIconUpdate ?? 0)}
                             lastActivityDate={p.update_at}
-                            label={bots.find((bot) => bot.id === p.bot_id)?.displayName ?? ''}
                             onClick={() => selectPost(p.root_post_id!)}
                         />))}
                 </ThreadsList>
@@ -172,12 +206,6 @@ export default function RHS() {
         <RhsContainer
             data-testid='mattermost-ai-rhs'
         >
-            <RHSHeader
-                currentTab={currentTab}
-                setCurrentTab={setCurrentTab}
-                selectPost={selectPost}
-                activeConversationId={activeConversationId}
-            />
             {dropZone ? (
                 <AgentChatDropZone testId='rhs-file-drop-zone'>{content}</AgentChatDropZone>
             ) : content}
