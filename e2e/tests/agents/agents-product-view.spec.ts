@@ -9,7 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 
-import {test, expect, type Page} from '@playwright/test';
+import {test, expect, type Locator, type Page} from '@playwright/test';
 
 import {AIMockContainer, RunAIMockSidecar} from 'helpers/aimock-container';
 import {buildTextResponse, buildTitleFixture} from 'helpers/aimock-fixtures';
@@ -31,11 +31,21 @@ const SIDEBAR_ARCHIVE_PROMPT = 'product-view-sidebar-archive-002';
 const EMPTY_TITLE_PROMPT = 'product-view-empty-title-003';
 const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
+const STOP_PROMPT = 'product-view-stop-005';
+const STOP_TAIL = 'and that is where the slow reply finally ends.';
 
 const replyFixtures = (prompts: string[]) => prompts.flatMap((prompt) => buildTextResponse({userMessage: prompt, content: `Reply to ${prompt}.`}).fixtures);
 const baseFixtures = () => [
     ...buildTextResponse({userMessage: FIRST_PROMPT, content: FIRST_REPLY, title: THREAD_TITLE}).fixtures,
     ...replyFixtures([ENTER_PROMPT, SIDEBAR_ARCHIVE_PROMPT, ATTACH_PROMPT]),
+
+    // Streams slowly enough to be stopped mid-way.
+    {
+        match: {userMessage: STOP_PROMPT},
+        response: {content: `A slow reply that streams a couple of characters at a time, long enough to stop part way through, ${STOP_TAIL}`},
+        chunkSize: 2,
+        streamingProfile: {ttft: 300, tps: 6, jitter: 0},
+    },
 ];
 
 // Rename/archive responses seen during the run, written next to the screenshots.
@@ -85,6 +95,32 @@ const newChatComposer = (page: Page) => page.getByTestId('agent-chat-new-compose
 
 // The plugin's pill reply composer under the thread (the host reply box is hidden).
 const replyComposer = (page: Page) => page.getByTestId('agent-chat-thread').getByRole('textbox', {name: `Reply to ${botDisplayName}`});
+
+// The pill's text metrics: one 20px line plus 10px block padding = 40px, the
+// height of the "+" and send buttons.
+const LINE_PX = 20;
+const ONE_LINE_PX = 40;
+
+// Expanded (multi-line), the text box is inset by --spacing-xs on every side.
+const EXPANDED_INSET_PX = 8;
+const expandedHeight = (lines: number) => (lines * LINE_PX) + (2 * EXPANDED_INSET_PX);
+
+// The box shows its whole first line (placeholder or text, ascenders and
+// descenders): one line tall, nothing scrolled or clipped, a line box at least
+// as tall as the font, centered on the send button.
+async function expectWholeFirstLine(textbox: Locator): Promise<void> {
+    await expect.poll(() => textbox.evaluate((el) => {
+        const style = getComputedStyle(el);
+        const box = el.getBoundingClientRect();
+        const send = el.closest('[data-testid$="-composer"]')?.querySelector('button[aria-label="Send message"]')?.getBoundingClientRect();
+        return {
+            height: box.height,
+            clipped: el.scrollHeight > el.clientHeight,
+            lineFitsFont: parseFloat(style.lineHeight) >= parseFloat(style.fontSize),
+            centerOffset: send ? Math.round(Math.abs((box.top + (box.height / 2)) - (send.top + (send.height / 2)))) : -1,
+        };
+    })).toEqual({height: ONE_LINE_PX, clipped: false, lineFitsFont: true, centerOffset: 0});
+}
 
 async function openAgentsFromSwitcher(page: Page): Promise<void> {
     await page.getByRole('button', {name: 'Open product menu'}).click();
@@ -160,6 +196,10 @@ test.describe('Agents product view', () => {
 
         const composer = newChatComposer(page);
         await expect(composer.getByRole('textbox')).toBeEnabled({timeout: 30000});
+
+        // The empty box shows its whole placeholder line beside "+" and send.
+        await expect(composer.getByRole('textbox')).toHaveAttribute('placeholder', `Message ${botDisplayName}`);
+        await expectWholeFirstLine(composer.getByRole('textbox'));
         await expect(page.getByRole('region', {name: `Chat with ${botDisplayName}`}).getByRole('progressbar')).toHaveCount(0);
         await expect(page.getByText('Setting up chat…')).toHaveCount(0);
 
@@ -627,6 +667,122 @@ test.describe('Agents product view', () => {
         // Cleared and focused, ready for the next reply.
         await expect(reply).toHaveValue('');
         await expect(reply).toBeFocused();
+    });
+
+    test('the reply composer autocompletes @mentions and :emoji:, and Enter sends once the list is closed', async ({page}) => {
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+
+        const thread = page.getByTestId('agent-chat-thread');
+        const reply = replyComposer(page);
+        const suggestions = thread.locator('#suggestionList');
+        await expect(reply).toBeEnabled({timeout: 30000});
+        await expectWholeFirstLine(reply);
+
+        // "@" opens the mention list; Enter picks the user instead of sending.
+        await reply.pressSequentially(`mention @${AIMOCK_BOT_NAME.slice(0, 3)}`);
+        await expect(suggestions.getByText(`@${AIMOCK_BOT_NAME}`).first()).toBeVisible({timeout: 15000});
+        await reply.press('Enter');
+        await expect(reply).toHaveValue(`mention @${AIMOCK_BOT_NAME} `);
+        await expect(suggestions).toHaveCount(0);
+
+        // ":smi" offers emoji the same way.
+        await reply.pressSequentially(':smi');
+        await expect(suggestions).toBeVisible({timeout: 15000});
+        await reply.press('Enter');
+        // The host inserts the emoji itself (or its :name: where it can't).
+        await expect(reply).toHaveValue(new RegExp(`^mention @${AIMOCK_BOT_NAME} (?!:smi )\\S+ $`, 'u'));
+        await expect(suggestions).toHaveCount(0);
+
+        // With the list closed, Enter sends.
+        await reply.press('Enter');
+        await expect(thread.getByTestId('post-message-text').filter({hasText: `mention @${AIMOCK_BOT_NAME}`})).toBeVisible({timeout: 30000});
+        await expect(reply).toHaveValue('');
+        await expectWholeFirstLine(reply);
+    });
+
+    test('the composer grows with multi-line text up to its cap', async ({page}) => {
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+        const textbox = newChatComposer(page).getByRole('textbox');
+        await expect(textbox).toBeEnabled({timeout: 30000});
+        await expectWholeFirstLine(textbox);
+
+        const height = () => textbox.evaluate((el) => el.getBoundingClientRect().height);
+
+        // The pill (the "+", text and send row) rounds its corners by half its
+        // single-line height, and keeps that radius as it grows.
+        const pill = () => textbox.evaluate((el) => {
+            const shell = el.closest('[data-testid="agent-chat-new-composer"]')!.querySelector('button[aria-label="Send message"]')!.parentElement!;
+            return {height: shell.getBoundingClientRect().height, radius: parseFloat(getComputedStyle(shell).borderTopLeftRadius)};
+        });
+        const single = await pill();
+        expect(single.radius).toBe(single.height / 2);
+
+        await textbox.fill('one\ntwo\nthree');
+        await expect.poll(height).toBe(expandedHeight(3));
+        expect((await pill()).radius).toBe(single.radius);
+
+        // Expanded: the text spans the pill's full inner width, "+" and send
+        // sit on the row below it.
+        const layout = () => textbox.evaluate((el) => {
+            const shell = el.closest('[data-testid="agent-chat-composer-pill"]') as HTMLElement;
+            const style = getComputedStyle(shell);
+            const inner = shell.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+            const text = el.getBoundingClientRect();
+            const buttons = ['Attach files', 'Send message'].map((name) => shell.querySelector(`button[aria-label="${name}"]`)!.getBoundingClientRect());
+            const textStyle = getComputedStyle(el);
+            return {
+                expanded: shell.dataset.expanded,
+                padding: [textStyle.paddingTop, textStyle.paddingRight, textStyle.paddingBottom, textStyle.paddingLeft].join(' '),
+                fullWidth: Math.round(text.width) === Math.round(inner),
+                buttonsBelow: buttons.every((b) => b.top >= text.bottom),
+            };
+        });
+        await expect.poll(layout).toEqual({expanded: 'true', padding: `${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px`, fullWidth: true, buttonsBelow: true});
+
+        // One long line expands as soon as it wraps between "+" and send.
+        await textbox.fill('word '.repeat(60).trim());
+        await expect.poll(layout).toEqual({expanded: 'true', padding: `${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px ${EXPANDED_INSET_PX}px`, fullWidth: true, buttonsBelow: true});
+
+        // Capped at eight lines; the rest scrolls.
+        await textbox.fill(Array.from({length: 12}, (_v, i) => `line ${i}`).join('\n'));
+        await expect.poll(height).toBe(expandedHeight(8));
+        await textbox.fill('');
+        await expectWholeFirstLine(textbox);
+        expect((await layout()).expanded).toBe('false');
+    });
+
+    test('while the agent replies, the composer\'s send button is Stop and stops it', async ({page}) => {
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}/${rootId}`, {waitUntil: 'domcontentloaded'});
+
+        const thread = page.getByTestId('agent-chat-thread');
+        const composer = thread.getByTestId('agent-chat-reply-composer');
+        const reply = replyComposer(page);
+        await expect(reply).toBeEnabled({timeout: 30000});
+        await reply.fill(STOP_PROMPT);
+        await reply.press('Enter');
+
+        const stop = composer.getByRole('button', {name: 'Stop generating'});
+        await expect(stop).toBeVisible({timeout: 30000});
+
+        // Round, the "+" button's size; the post leaves Stop to the composer.
+        const box = await stop.boundingBox();
+        expect(box?.width).toBe(40);
+        expect(box?.height).toBe(40);
+        expect(await stop.evaluate((el) => getComputedStyle(el).borderTopLeftRadius)).not.toBe('0px');
+
+        // The standard (neutral) icon button, not Send's primary fill.
+        await expect(stop).not.toHaveAttribute('data-emphasis', 'primary');
+        await expect(stop).not.toHaveAttribute('aria-pressed', /.*/);
+        await expect(thread.getByTestId('llm-bot-post').getByTestId('stop-generating-button')).toHaveCount(0);
+
+        await stop.click();
+        await expect(composer.getByRole('button', {name: 'Send message'})).toBeVisible({timeout: 15000});
+        const stoppedPost = thread.getByTestId('llm-bot-post').last();
+        await expect(stoppedPost.getByTestId('llm-bot-generation-stopped')).toBeVisible({timeout: 15000});
+        await expect(stoppedPost).not.toContainText(STOP_TAIL);
     });
 
     test('a file attached with the "+" picker uploads and goes out with the first message', async ({page}) => {
