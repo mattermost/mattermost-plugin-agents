@@ -3,7 +3,7 @@ import { chooseCompassOption } from './compass-select';
 
 /**
  * AgentPageHelper — Page object for the agent listing page and config view.
- * The listing page is a full-page overlay at /plug/mattermost-ai/agents.
+ * The listing page is a full-page overlay at /plug/mattermost-ai/agents/all.
  */
 export class AgentPageHelper {
     readonly page: Page;
@@ -28,9 +28,9 @@ export class AgentPageHelper {
 
     // --- Navigation ---
 
-    /** Navigate to the agents listing page */
+    /** Navigate to the agents listing page (/agents/all; bare /agents now opens a new chat) */
     async navigateToAgents(baseUrl: string): Promise<void> {
-        await this.page.goto(`${baseUrl}/plug/mattermost-ai/agents`);
+        await this.page.goto(`${baseUrl}/plug/mattermost-ai/agents/all`);
         await this.page.waitForLoadState('domcontentloaded');
         // Neutral ready: shell (heading + tabs/search) and agents fetch finished — not only the create button
         // (e.g. users without manage permission might differ in future).
@@ -41,10 +41,9 @@ export class AgentPageHelper {
 
     // --- Listing Page Locators ---
 
-    /** Mattermost's global header also renders a screen-reader-only "Agents" h1 once the product loads. */
+    /** The listing's own title. The global header and the product sidebar also render an "Agents" heading, so scope to <main>. */
     getListingHeading(): Locator {
-        return this.page.getByRole('heading', { name: 'Agents', exact: true })
-            .and(this.page.locator(':not(#global-header *)'));
+        return this.page.getByRole('main').getByRole('heading', { name: 'Agents', exact: true });
     }
 
     getCreateButton(): Locator {
@@ -56,15 +55,15 @@ export class AgentPageHelper {
     }
 
     getAllAgentsTab(): Locator {
-        return this.page.getByText('All agents');
+        return this.page.getByRole('tab', { name: 'All agents' });
     }
 
     getYourAgentsTab(): Locator {
-        return this.page.getByText('Your agents');
+        return this.page.getByRole('tab', { name: 'Your agents' });
     }
 
     getAgentRowByName(displayName: string): Locator {
-        return this.page.getByText(displayName, {exact: true}).first();
+        return this.page.getByRole('main').getByText(displayName, {exact: true}).first();
     }
 
     // --- Agent Row Actions ---
@@ -80,9 +79,7 @@ export class AgentPageHelper {
     }
 
     async openAgentActions(displayName: string): Promise<void> {
-        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
-            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
-        );
+        const rowScope = this.getAgentRowButton(displayName);
         await rowScope.getByRole('button', { name: 'Agent actions' }).click();
     }
 
@@ -91,9 +88,7 @@ export class AgentPageHelper {
      * global "Edit" controls elsewhere in the Mattermost product shell.
      */
     async clickEditAction(displayName: string): Promise<void> {
-        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
-            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
-        );
+        const rowScope = this.getAgentRowButton(displayName);
         await rowScope.getByRole('button', { name: 'Edit', exact: true }).click();
     }
 
@@ -102,17 +97,13 @@ export class AgentPageHelper {
      * global "Delete" controls elsewhere in the Mattermost product shell.
      */
     async clickDeleteAction(displayName: string): Promise<void> {
-        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
-            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
-        );
+        const rowScope = this.getAgentRowButton(displayName);
         await rowScope.getByRole('button', { name: 'Delete', exact: true }).click();
     }
 
     /** Click Export in the agent row actions menu (opens the menu first). */
     async clickExportAction(displayName: string): Promise<void> {
-        const rowScope = this.page.getByText(displayName, { exact: true }).locator(
-            'xpath=ancestor::div[.//button[@aria-label="Agent actions"]][1]',
-        );
+        const rowScope = this.getAgentRowButton(displayName);
         await rowScope.getByRole('button', { name: 'Export', exact: true }).click();
     }
 

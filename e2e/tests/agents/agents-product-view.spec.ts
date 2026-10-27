@@ -410,15 +410,14 @@ test.describe('Agents product view', () => {
         await trigger.click();
         await expect(trigger).toHaveAttribute('aria-expanded', 'true');
         const nameMenu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
-        // A regular user cannot edit the agent, so no Agent settings.
-        await expect(nameMenu.getByRole('menuitem')).toHaveText(['New chat', 'Rename chat', 'Archive chat', 'View all agents']);
+        // The menu lists this agent's chats first, then the chat actions. A regular user cannot edit the agent, so no Agent settings.
+        await expect(nameMenu.getByRole('menuitem')).toHaveText([THREAD_TITLE, 'New chat', 'Rename chat', 'Archive chat', 'View all agents']);
         await page.keyboard.press('Escape');
         await expect(nameMenu).toHaveCount(0);
 
-        // The actions menu lists this agent's chats (the open one marked) and the chat actions.
-        const actions = page.getByTestId('agent-chat-actions-button');
-        await actions.click();
-        const menu = page.getByRole('menu', {name: 'Chat actions'});
+        // The same menu lists this agent's chats (the open one marked) above the chat actions.
+        await trigger.click();
+        const menu = page.getByRole('menu', {name: `${THREAD_TITLE}, ${botDisplayName} options`});
         await expect(menu.getByRole('menuitem', {name: THREAD_TITLE, exact: true})).toHaveAttribute('aria-current', 'true');
         await expect(menu.getByRole('menuitem', {name: 'Rename chat'})).toBeEnabled();
 
@@ -434,17 +433,18 @@ test.describe('Agents product view', () => {
         await expect(sidebar(page).getByRole('button', {name: RENAMED_TITLE, exact: true})).toBeVisible({timeout: 15000});
         await expect(header.getByRole('heading', {level: 1, name: RENAMED_TITLE, exact: true})).toBeVisible();
 
-        // New chat from the actions menu.
-        await actions.click();
-        await page.getByRole('menu', {name: 'Chat actions'}).getByRole('menuitem', {name: 'New chat'}).first().click();
+        // New chat from the header's new-chat button.
+        await page.getByTestId('agent-chat-new-chat-button').click();
         await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
 
         // The new-chat state shows the agent name and has no chat to rename or archive.
         await expect(header.getByRole('heading', {level: 1, name: botDisplayName})).toBeVisible();
-        await actions.click();
-        const newMenu = page.getByRole('menu', {name: 'Chat actions'});
-        await expect(newMenu.getByRole('menuitem', {name: 'Rename chat'})).toBeDisabled();
-        await expect(newMenu.getByRole('menuitem', {name: 'Archive chat'})).toBeDisabled();
+        await expect(page.getByTestId('agent-chat-new-chat-button')).toBeDisabled();
+        await trigger.click();
+        const newMenu = page.getByRole('menu', {name: `${botDisplayName} options`});
+        await expect(newMenu.getByRole('menuitem', {name: 'View all agents'})).toBeVisible();
+        await expect(newMenu.getByRole('menuitem', {name: 'Rename chat'})).toHaveCount(0);
+        await expect(newMenu.getByRole('menuitem', {name: 'Archive chat'})).toHaveCount(0);
         await page.keyboard.press('Escape');
     });
 
@@ -841,8 +841,8 @@ test.describe('Agents product view', () => {
 
         // Archive it from the header once the agent's reply (which carries the conversation id) is in.
         const chat = page.getByRole('region', {name: `Chat with ${botDisplayName}`});
-        const trigger = page.getByTestId('agent-chat-actions-button');
-        const menu = page.getByRole('menu', {name: 'Chat actions'});
+        const trigger = page.getByTestId('agent-chat-menu-button');
+        const menu = page.getByRole('menu', {name: /options$/});
         await expect.poll(async () => {
             await trigger.click();
             await expect(menu.getByRole('menuitem', {name: 'Archive chat'})).toBeVisible();

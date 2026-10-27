@@ -242,7 +242,7 @@ test.describe.serial('System Console Aimock Live Service Full Flow', () => {
 
         await systemConsole.waitForBotsPanel();
 
-        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents`);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/all`);
         await page.waitForLoadState('domcontentloaded');
         const agentPage = new AgentPageHelper(page);
         await agentPage.getCreateButton().waitFor({state: 'visible', timeout: 15000});
