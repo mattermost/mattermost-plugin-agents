@@ -152,7 +152,7 @@ function makeAgent(id: string): UserAgent {
 }
 
 function renderList() {
-    return render(<AgentsList/>);
+    return render(<AgentsList onStartChat={jest.fn()}/>);
 }
 
 beforeEach(() => {

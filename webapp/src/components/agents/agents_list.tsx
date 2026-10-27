@@ -32,7 +32,11 @@ import {useAgentFilePicker} from './use_agent_file_picker';
 
 type Tab = 'all' | 'yours';
 
-const AgentsList = () => {
+type AgentsListProps = {
+    onStartChat: (botUserId: string) => void;
+}
+
+const AgentsList = ({onStartChat}: AgentsListProps) => {
     const intl = useIntl();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const hasManageOthersAgent = useSelector((state: GlobalState) =>
@@ -357,6 +361,7 @@ const AgentsList = () => {
                                     services={services}
                                     servicesLoaded={servicesLoaded}
                                     canManage={userCanManageAgent(agent)}
+                                    onStartChat={onStartChat}
                                     onEdit={handleEdit}
                                     onDelete={handleDeleteRequest}
                                     onExport={handleExportAgent}

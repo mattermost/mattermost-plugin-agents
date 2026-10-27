@@ -60,7 +60,7 @@ const AgentsLanding = ({nav}: AgentsLandingProps) => {
                     description={intl.formatMessage({defaultMessage: 'Choose an agent below to start a chat. A system admin can set the default agent in the plugin settings.'})}
                 />
             </NoticeWrapper>
-            <AgentsList/>
+            <AgentsList onStartChat={nav.toChat}/>
         </>
     );
 };

@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useState, useCallback} from 'react';
+import React, {useState, useCallback, useRef} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {
@@ -24,14 +24,16 @@ type Props = {
     services: ServiceInfo[];
     servicesLoaded: boolean;
     canManage: boolean;
+    onStartChat: (botUserId: string) => void;
     onEdit: (agent: UserAgent) => void;
     onDelete: (agent: UserAgent) => void;
     onExport: (agent: UserAgent) => void;
 }
 
 const AgentRow = (props: Props) => {
-    const {agent, services, servicesLoaded, canManage, onEdit, onDelete, onExport} = props;
+    const {agent, services, servicesLoaded, canManage, onStartChat, onEdit, onDelete, onExport} = props;
     const [menuOpen, setMenuOpen] = useState(false);
+    const actionsRef = useRef<HTMLDivElement>(null);
     const intl = useIntl();
 
     const avatarUrl = getProfilePictureUrl(agent.botUserID ?? '', 0);
@@ -75,41 +77,53 @@ const AgentRow = (props: Props) => {
         onExport(agent);
     }, [agent, onExport]);
 
-    const handleRowActivate = useCallback(() => {
-        if (!canManage || menuOpen) {
+    // The chat route is keyed by the bot user id; without one there is nothing
+    // safe to navigate to, so the row is not actionable.
+    const botUserId = agent.botUserID || '';
+    const actionable = botUserId !== '';
+    const agentLabel = agent.displayName || agent.name;
+    const unavailableId = `agent-row-unavailable-${agent.id}`;
+
+    const handleRowActivate = useCallback((e: React.MouseEvent) => {
+        // Clicks inside the actions menu bubble here; they never start a chat.
+        if (!actionable || menuOpen || actionsRef.current?.contains(e.target as Node)) {
             return;
         }
-        onEdit(agent);
-    }, [canManage, menuOpen, agent, onEdit]);
+        onStartChat(botUserId);
+    }, [actionable, menuOpen, botUserId, onStartChat]);
 
     const handleRowKeyDown = useCallback(
         (e: React.KeyboardEvent) => {
             // Keys pressed on nested controls (badge triggers, the actions menu) bubble here too.
-            if (!canManage || menuOpen || e.target !== e.currentTarget) {
+            if (!actionable || menuOpen || e.target !== e.currentTarget) {
                 return;
             }
             if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                onEdit(agent);
+                onStartChat(botUserId);
             }
         },
-        [canManage, menuOpen, agent, onEdit],
+        [actionable, menuOpen, botUserId, onStartChat],
     );
 
     return (
         <RowContainer
-            $clickable={canManage}
-            {...(canManage ? {
-                onClick: handleRowActivate,
-                onKeyDown: handleRowKeyDown,
-                role: 'button',
-                tabIndex: 0,
-                'aria-label': intl.formatMessage(
-                    {defaultMessage: 'Edit agent {name}'},
-                    {name: agent.displayName || agent.name},
-                ),
-            } : {})}
+            $clickable={actionable}
+            onClick={handleRowActivate}
+            onKeyDown={handleRowKeyDown}
+            role='button'
+            tabIndex={0}
+            {...(actionable ? {} : {'aria-disabled': true, 'aria-describedby': unavailableId})}
+            aria-label={intl.formatMessage(
+                {defaultMessage: 'Start a new chat with {name}'},
+                {name: agentLabel},
+            )}
         >
+            {!actionable && (
+                <VisuallyHidden id={unavailableId}>
+                    <FormattedMessage defaultMessage='This agent has no bot account, so a chat cannot be started.'/>
+                </VisuallyHidden>
+            )}
             <RowMain>
                 <Avatar
                     src={avatarUrl}
@@ -131,26 +145,11 @@ const AgentRow = (props: Props) => {
                             />
                         </WithTooltip>
                     )}
-                    {!canManage && (
-                        <WithTooltip
-                            title={
-                                <FormattedMessage
-                                    defaultMessage='Mention @{username} in a channel or direct message to chat with this agent.'
-                                    values={{username: agent.name}}
-                                />
-                            }
-                        >
-                            <Tag
-                                tabIndex={0}
-                                label={<FormattedMessage defaultMessage='Read only'/>}
-                            />
-                        </WithTooltip>
-                    )}
                     {mcpBadge}
                 </BadgesColumn>
             </RowMain>
             {canManage && (
-                <ActionsColumn>
+                <ActionsColumn ref={actionsRef}>
                     <DotMenu
                         icon={<DotsHorizontalIcon/>}
                         title={intl.formatMessage({defaultMessage: 'Agent actions'})}
@@ -214,13 +213,9 @@ const RowContainer = styled.div<{$clickable: boolean}>`
         background: rgba(var(--center-channel-color-rgb), 0.04);
     }
 
-    ${({$clickable}) =>
-        $clickable &&
-        `
-        &:focus-visible {
-            box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
-        }
-    `}
+    &:focus-visible {
+        box-shadow: inset 0 0 0 2px rgba(var(--button-bg-rgb, 28, 88, 217), 0.4);
+    }
 `;
 
 const RowMain = styled.div`
@@ -277,6 +272,15 @@ const BadgesColumn = styled.div`
 
 const ActionsColumn = styled.div`
     flex-shrink: 0;
+`;
+
+const VisuallyHidden = styled.span`
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
 `;
 
 export default AgentRow;

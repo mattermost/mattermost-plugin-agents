@@ -19,7 +19,7 @@ export type ContentRenderers = Record<AgentsView, (route: AgentsRoute & AgentsNa
 
 export const defaultContentRenderers: ContentRenderers = {
     landing: (route) => <AgentsLanding nav={route}/>,
-    all: () => <AgentsList/>,
+    all: (route) => <AgentsList onStartChat={route.toChat}/>,
     prompts: () => <CustomPromptsPage/>,
     chat: (route) => (
         <AgentChatPage

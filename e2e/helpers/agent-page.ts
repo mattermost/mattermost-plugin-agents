@@ -69,8 +69,14 @@ export class AgentPageHelper {
 
     // --- Agent Row Actions ---
 
+    /** The row itself: its primary action starts a new chat with the agent (editing lives in the actions menu). */
+    getAgentRowButton(displayName: string): Locator {
+        return this.page.getByRole('button', { name: `Start a new chat with ${displayName}`, exact: true });
+    }
+
+    /** Click the row's primary action, which opens a new chat with that agent. */
     async clickAgentRow(displayName: string): Promise<void> {
-        await this.getAgentRowByName(displayName).click();
+        await this.getAgentRowButton(displayName).click();
     }
 
     async openAgentActions(displayName: string): Promise<void> {
