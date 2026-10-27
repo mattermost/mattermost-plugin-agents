@@ -17,6 +17,9 @@ import {css} from 'styled-components';
 //     `.post__header`, `.badges-wrapper` (holds `.post__time`), `.post-message__text`
 //                         header, time and text inside the body column
 //     components/post/user_profile.tsx: `.col__name`, the author name and bot tag in the header
+// - components/dynamic_virtualized_list/index.tsx: `.innerList`, the div inside the scroller that
+//     holds the rows (each wrapped in `.item_measurer`, list_item.tsx); capped and centered here
+//     for the product view's column. Its inline style only sets a top padding.
 // - components/root_post_divider/root_post_divider.tsx: `.root-post__divider`,
 //     the "N replies" line rendered in the root post's row (thread_viewer_row.tsx)
 // - components/post_view/date_separator/date_separator.tsx renders
@@ -54,6 +57,11 @@ import {css} from 'styled-components';
 //     (`.post-image__columns`, single image `.file-view--single`),
 //     post_view/message_attachments (`.attachment`), and post_view/post_body_additional_content
 //     embeds (`.post__embed-container`, `.PostAttachmentOpenGraph`).
+
+// The host thread viewer's scroll container (components/dynamic_virtualized_list renders its
+// `id` on the outer overflow-y: auto element; virtualized_thread_viewer.tsx passes this one).
+// Read-only: the plugin only measures it and scrolls it to the bottom.
+export const THREAD_SCROLLER_SELECTOR = '#threadViewerScrollContainer';
 
 // Width of the chat column (messages and composers), from the prototype's
 // AgentChat.module.scss (`agent-chat__messages-list` / `__composer`: 800px).
@@ -112,12 +120,36 @@ interface HostThreadChatStylesOptions {
 // Not a compass value: it matches host markup the plugin does not own.
 const HOST_POST_INLINE_PADDING = '1.5em 0.5em';
 
-// Center the column the prototype uses; the scroller stays full width.
+// The chat column's side padding, shared with the composer under the messages (the thread view
+// pads its composer area the same), so the message content and the composer line up.
+export const CHAT_COLUMN_PADDING = 'var(--spacing-xxl)';
+
+// Center the column the prototype uses, inset by --spacing-m (12px) on each side and padded like the
+// composer under it. The cap and padding are on the host list's inner wrapper (`.innerList`, which
+// holds the rows), so the scroller, and with it the scrollbar, stays full width. The rows
+// (`.item_measurer`) fill its content box, so the posts' and separators' own side padding (1.5em /
+// 0.5em) is removed. The scroller reserves its scrollbar gutter on both sides (see below). &&& outranks the host's `.post` padding and the separator rule below.
 const centeredColumn = (maxWidth: string) => css`
-    .post,
-    .Separator {
+    /*
+     * A classic scrollbar takes width from the scroller's content area, which would pull the column
+     * off the composer's center (the composer is centered in the whole pane). Reserving the gutter
+     * on both sides keeps the column centered; overlay scrollbars take no space either way.
+     */
+    ${THREAD_SCROLLER_SELECTOR} {
+        scrollbar-gutter: stable both-edges;
+    }
+
+    .innerList {
+        box-sizing: border-box;
+        width: calc(100% - 2 * var(--spacing-m));
         max-width: ${maxWidth};
         margin-inline: auto;
+        padding-inline: ${CHAT_COLUMN_PADDING};
+    }
+
+    &&& .post,
+    &&& .Separator {
+        padding-inline: 0;
     }
 `;
 
@@ -160,10 +192,15 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         margin-bottom: var(--spacing-xxl);
     }
 
-    .post .post__content {
+    /*
+     * The host pads the row (0 8px 0 5px, a table layout's gutters), which would shift the posts
+     * off the column's center: the content fills it exactly. &&& outranks the host's rule.
+     */
+    &&& .post .post__content {
         display: flex;
         align-items: flex-start;
         gap: var(--spacing-xs);
+        padding: 0;
     }
 
     /* No avatars: neither the agent's nor the user's. */
@@ -191,7 +228,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
         position: relative;
         flex: 1 1 auto;
         min-width: 0;
-        padding: var(--spacing-m) var(--spacing-l);
+        padding: var(--spacing-xs) var(--spacing-l);
         border-radius: 0 var(--radius-xl) var(--radius-xl) var(--radius-xl);
         background: transparent;
         transition: background var(--duration-quick) var(--ease-transition);
@@ -284,7 +321,7 @@ export const hostThreadChatStyles = ({columnMaxWidth}: HostThreadChatStylesOptio
     .post.current--user ${BUBBLE} {
         flex: 0 1 auto;
         max-width: 100%;
-        padding: var(--spacing-m) var(--spacing-l);
+        padding: var(--spacing-xs) var(--spacing-l);
 
         /* Room for the time under the bubble, and before the agent's reply. */
         margin-bottom: calc(${CONTROLS_BAR_HEIGHT} + ${CONTROLS_BAR_GAP});

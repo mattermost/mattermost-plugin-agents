@@ -6,7 +6,7 @@ import {useIntl} from 'react-intl';
 import {useDispatch, useSelector} from 'react-redux';
 import styled, {css} from 'styled-components';
 import SendOutlineIcon from '@mattermost/compass-icons/components/send-outline';
-import SquareIcon from '@mattermost/compass-icons/components/square';
+import RecordSquareOutlineIcon from '@mattermost/compass-icons/components/record-square-outline';
 
 import {Icon} from '@mattermost/compass-ui/components/icon';
 import {IconButton} from '@mattermost/compass-ui/components/icon-button';
@@ -645,7 +645,7 @@ const AgentChatComposer = ({channelId, agentName, rootId = '', onCreated, bot, l
                     <StopButton
                         size='small'
                         rounded={true}
-                        icon={<Icon glyph={<SquareIcon/>}/>}
+                        icon={<Icon glyph={<RecordSquareOutlineIcon/>}/>}
                         aria-label={intl.formatMessage({defaultMessage: 'Stop generating'})}
                         data-testid='stop-generating-button'
                         loading={stopping}
@@ -929,7 +929,7 @@ const SendButton = styled(IconButton)`
 
     &&&&:disabled {
         --icon-button-fg: rgba(var(--center-channel-color-rgb), 0.32);
-        background-color: rgba(var(--center-channel-color-rgb), 0.08);
+        background-color: transparent;
         color: rgba(var(--center-channel-color-rgb), 0.32);
         opacity: 1;
     }

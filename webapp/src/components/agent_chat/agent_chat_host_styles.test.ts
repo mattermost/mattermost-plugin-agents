@@ -9,7 +9,7 @@ import {
     composerTextStyles,
     hostTextboxPillStyles,
 } from './agent_chat_composer_host_styles';
-import {CHAT_CONTENT_MAX_WIDTH, HUG_MAX_FRACTION, hostThreadChatStyles} from './agent_chat_host_styles';
+import {CHAT_COLUMN_PADDING, CHAT_CONTENT_MAX_WIDTH, HUG_MAX_FRACTION, hostThreadChatStyles} from './agent_chat_host_styles';
 
 // jsdom never applies stylesheets, so check the generated rules instead.
 const cssText = (value: unknown): string => {
@@ -46,10 +46,25 @@ describe('hostThreadChatStyles', () => {
         // Posts and separators share one column where there is a cap, and the full width otherwise.
         const column = `max-width: ${CHAT_CONTENT_MAX_WIDTH}`;
         if (capped) {
-            expect(ruleFor(text, '.post')).toContain(column);
-            expect(ruleFor(text, '.Separator')).toContain(column);
+            // A classic scrollbar must not pull the column off the composer's center.
+            expect(ruleFor(text, '#threadViewerScrollContainer')).toContain('scrollbar-gutter: stable both-edges');
+
+            // The cap and centering are on the list's inner wrapper, not on each row.
+            expect(ruleFor(text, '.innerList')).toContain(column);
+            expect(ruleFor(text, '.post')).toBeNull();
+
+            // The column is inset by 12px (--spacing-m) on each side.
+            expect(ruleFor(text, '.innerList')).toContain('width: calc(100% - 2 * var(--spacing-m))');
+
+            // The wrapper's side padding is the composer's (agent_chat_thread_view.tsx), so they line up;
+            // the rows fill its content box with no padding of their own.
+            expect(ruleFor(text, '.innerList')).toContain(`padding-inline: ${CHAT_COLUMN_PADDING}`);
+            expect(ruleFor(text, '&&& .post')).toContain('padding-inline: 0');
+            expect(ruleFor(text, '&&& .Separator')).toContain('padding-inline: 0');
         } else {
             expect(text).not.toContain(column);
+            expect(text).not.toContain('scrollbar-gutter');
+            expect(text).not.toContain('2 * var(--spacing-m)');
         }
     });
 });
@@ -140,7 +155,7 @@ describe('hostThreadChatStyles message look', () => {
 
     test('the agent\'s reply keeps the bubble shape, tinted only on hover, and hides its header except the toolbar', () => {
         const rule = ruleFor(text, '.post .post__content > .post__img + div');
-        expect(rule).toContain('padding: var(--spacing-m) var(--spacing-l)');
+        expect(rule).toContain('padding: var(--spacing-xs) var(--spacing-l)');
         expect(rule).toContain('background: transparent');
         expect(ruleFor(text, '.post .post__content > .post__img + div:hover')).toContain('background: rgba(var(--center-channel-color-rgb), 0.08)');
         expect(ruleFor(text, '.post:not(.current--user) .post__header > :not(.post-menu)')).toContain('display: none !important');
@@ -154,5 +169,13 @@ describe('hostThreadChatStyles message look', () => {
         const time = ruleFor(text, '.post.current--user .post__header .badges-wrapper');
         expect(time).toContain('position: absolute');
         expect(time).toContain('top: calc(100% + var(--spacing-xxxxs))');
+    });
+});
+
+describe('hostThreadChatStyles post content', () => {
+    test('the host\'s side padding on the post content is removed so posts sit centered', () => {
+        const text = cssText(hostThreadChatStyles());
+
+        expect(ruleFor(text, '&&& .post .post__content')).toContain('padding: 0');
     });
 });

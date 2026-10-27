@@ -33,6 +33,11 @@ const ATTACH_PROMPT = 'product-view-attach-004';
 const ATTACH_FILE = 'product-view-attachment.txt';
 const STOP_PROMPT = 'product-view-stop-005';
 const STOP_TAIL = 'and that is where the slow reply finally ends.';
+const BUSY_PROMPT = 'product-view-busy-007';
+const BUSY_TAIL = 'and that is the end of the busy reply.';
+const JUMP_PROMPT = 'product-view-jump-006';
+const JUMP_PARAGRAPHS = Array.from({length: 30}, (_, i) => `Paragraph ${i + 1} of the long reply, which is only here to make the chat scroll while it streams in.`);
+const JUMP_LAST = JUMP_PARAGRAPHS[JUMP_PARAGRAPHS.length - 1];
 
 const replyFixtures = (prompts: string[]) => prompts.flatMap((prompt) => buildTextResponse({userMessage: prompt, content: `Reply to ${prompt}.`}).fixtures);
 const baseFixtures = () => [
@@ -45,6 +50,22 @@ const baseFixtures = () => [
         response: {content: `A slow reply that streams a couple of characters at a time, long enough to stop part way through, ${STOP_TAIL}`},
         chunkSize: 2,
         streamingProfile: {ttft: 300, tps: 6, jitter: 0},
+    },
+
+    // Slow enough to leave the chat while it streams.
+    {
+        match: {userMessage: BUSY_PROMPT},
+        response: {content: `A reply that keeps the agent busy for a few seconds while the user looks at another chat, ${BUSY_TAIL}`},
+        chunkSize: 2,
+        streamingProfile: {ttft: 300, tps: 8, jitter: 0},
+    },
+
+    // Long enough to need scrolling, slow enough to scroll up while it streams.
+    {
+        match: {userMessage: JUMP_PROMPT},
+        response: {content: JUMP_PARAGRAPHS.join('\n\n')},
+        chunkSize: 20,
+        streamingProfile: {ttft: 300, tps: 20, jitter: 0},
     },
 ];
 
@@ -360,6 +381,11 @@ test.describe('Agents product view', () => {
         expect(agent.postWidth).toBeLessThanOrEqual(800);
         const composerBox = (await thread.getByTestId('agent-chat-reply-composer').boundingBox())!;
         expect(composerBox.width).toBeLessThanOrEqual(800);
+
+        // The composer and the messages share one column: the message content (bubble row) and the pill have the same edges.
+        const contentBox = (await replyPost.locator('.post__content').boundingBox())!;
+        expect(Math.abs(contentBox.x - composerBox.x)).toBeLessThanOrEqual(1);
+        expect(Math.abs(contentBox.width - composerBox.width)).toBeLessThanOrEqual(1);
 
         // The host reply box is replaced, not shown alongside.
         await expect(thread.getByTestId('comment-create')).toBeHidden();
@@ -889,6 +915,72 @@ test.describe('Agents product view', () => {
         // The draft is cleared, so going back to a new chat starts empty.
         await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
         await expect(newChatComposer(page).getByRole('textbox')).toHaveValue('', {timeout: 30000});
+    });
+
+    test('scrolled up while the agent answers, a jump button appears above the composer and scrolls back down', async ({page}) => {
+        test.setTimeout(120000);
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+        const textbox = newChatComposer(page).getByRole('textbox');
+        await expect(textbox).toBeEnabled({timeout: 30000});
+        await textbox.fill(JUMP_PROMPT);
+        await textbox.press('Enter');
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+
+        const thread = page.getByTestId('agent-chat-thread');
+        const scroller = thread.locator('#threadViewerScrollContainer');
+        const jump = thread.getByTestId('jump-to-latest');
+        const distance = () => scroller.evaluate((el) => el.scrollHeight - el.scrollTop - el.clientHeight);
+
+        // Once the reply has outgrown the view, scroll to the top while it is still streaming.
+        await expect.poll(() => scroller.evaluate((el) => el.scrollHeight - el.clientHeight), {timeout: 30000}).toBeGreaterThan(300);
+        await scroller.evaluate((el) => {
+            el.scrollTop = 0;
+        });
+        await expect(jump).toHaveAttribute('data-visible', 'true');
+        await expect(jump.getByRole('button', {name: new RegExp(`${botDisplayName} is responding`)})).toBeVisible();
+        await expect(jump).not.toContainText('responding');
+
+        // It floats above the composer, not over it.
+        const jumpBox = (await jump.boundingBox())!;
+        const composerBox = (await thread.getByTestId('agent-chat-reply-composer').boundingBox())!;
+        expect(jumpBox.y + jumpBox.height).toBeLessThanOrEqual(composerBox.y);
+
+        // One click goes to the newest text and the button leaves.
+        await jump.getByRole('button').click();
+        await expect.poll(distance, {timeout: 10000}).toBeLessThan(120);
+        await expect(jump).toHaveAttribute('data-visible', 'false');
+
+        // Let the reply finish so later tests start from an idle agent.
+        await expect(thread.getByText(JUMP_LAST)).toBeVisible({timeout: 60000});
+    });
+
+    test('a chat whose agent is answering shows an indicator in the sidebar while it is not open', async ({page}) => {
+        test.setTimeout(120000);
+        await login(page);
+        await page.goto(`${mattermost.url()}/plug/mattermost-ai/agents/chat/${botUserId}`, {waitUntil: 'domcontentloaded'});
+        const textbox = newChatComposer(page).getByRole('textbox');
+        await expect(textbox).toBeEnabled({timeout: 30000});
+        await textbox.fill(BUSY_PROMPT);
+        await textbox.press('Enter');
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}/[a-z0-9]{26}$`), {timeout: 15000});
+        const busyUrl = page.url();
+
+        // Open: the chat itself is in view, so its row shows nothing.
+        const indicator = sidebar(page).getByTestId('thread-generating');
+        await expect(indicator).toHaveCount(0);
+
+        // Leave for a new chat while the reply is still streaming: the busy chat's row shows it.
+        await sidebar(page).getByRole('button', {name: `New chat with ${botDisplayName}`}).click();
+        await expect(page).toHaveURL(new RegExp(`/agents/chat/${botUserId}$`));
+        await expect(indicator).toHaveCount(1);
+
+        // It goes when the reply has finished.
+        await expect(indicator).toHaveCount(0, {timeout: 60000});
+
+        // Coming back shows the finished reply.
+        await page.goto(busyUrl, {waitUntil: 'domcontentloaded'});
+        await expect(page.getByTestId('agent-chat-thread').getByText(BUSY_TAIL)).toBeVisible({timeout: 30000});
     });
 
     test.describe('sidebar "+" menu', () => {
