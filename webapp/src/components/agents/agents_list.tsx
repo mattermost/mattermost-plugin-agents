@@ -1,7 +1,7 @@
 // Copyright (c) 2023-present Mattermost, Inc. All Rights Reserved.
 // See LICENSE.txt for license information.
 
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import styled from 'styled-components';
 import {FormattedMessage, useIntl} from 'react-intl';
 import {useSelector} from 'react-redux';
@@ -24,7 +24,7 @@ import {downloadAgentExport} from '@/utils/agent_export';
 import {AgentExportDocument, UserAgent, ServiceInfo} from '@/types/agents';
 import {LicenseLevel, useAgentLimit, useLicenseLevel, useLicenseLevelName} from '@/license';
 
-import {canManageAgent} from './agent_access';
+import {canCreateAgent, canManageAgent} from './agent_access';
 import AgentRow from './agent_row';
 import DeleteAgentDialog from './delete_agent_dialog';
 import AgentConfigView from './agent_config_view';
@@ -34,9 +34,15 @@ type Tab = 'all' | 'yours';
 
 type AgentsListProps = {
     onStartChat: (botUserId: string) => void;
+
+    // The route asks for the create flow (/agents/all/new). Closing it, or being
+    // refused (no permission, plan limit), reports through onCloseCreate so the
+    // route returns to the plain list.
+    openCreate?: boolean;
+    onCloseCreate?: () => void;
 }
 
-const AgentsList = ({onStartChat}: AgentsListProps) => {
+const AgentsList = ({onStartChat, openCreate = false, onCloseCreate}: AgentsListProps) => {
     const intl = useIntl();
     const currentUserId = useSelector<GlobalState, string>((state) => state.entities.users.currentUserId);
     const hasManageOthersAgent = useSelector((state: GlobalState) =>
@@ -45,7 +51,7 @@ const AgentsList = ({onStartChat}: AgentsListProps) => {
         userHasSystemPermission(state, currentUserId, 'manage_own_agent'));
     const hasManageSystem = useSelector((state: GlobalState) =>
         userHasSystemPermission(state, currentUserId, 'manage_system'));
-    const userCanCreateAgent = hasManageOwnAgent || hasManageSystem;
+    const userCanCreateAgent = canCreateAgent({hasManageOwnAgent, hasManageSystem});
 
     // Mirrors api.canConfigureAgentServices. Users without these permissions
     // browse read-only; requesting /services would 403 and wrongly flag every agent.
@@ -153,6 +159,36 @@ const AgentsList = ({onStartChat}: AgentsListProps) => {
         setViewOpen(true);
     }, [createButtonDisabled]);
 
+    // Route-driven create (sidebar "New agent"): opens once the agent count is known so the
+    // plan limit applies, and is refused when the user may not create. Closing the view
+    // (or leaving the route) clears the route flag again.
+    const openedByRoute = useRef(false);
+    const createHandled = useRef(false);
+    useEffect(() => {
+        if (!openCreate) {
+            createHandled.current = false;
+            if (openedByRoute.current) {
+                openedByRoute.current = false;
+                setViewOpen(false);
+                setEditingAgent(null);
+                setImportedDocument(null);
+            }
+            return;
+        }
+        if (loading || viewOpen || createHandled.current) {
+            return;
+        }
+        createHandled.current = true;
+        if (!userCanCreateAgent || createQuotaReached) {
+            onCloseCreate?.();
+            return;
+        }
+        openedByRoute.current = true;
+        setEditingAgent(null);
+        setViewMode('create');
+        setViewOpen(true);
+    }, [openCreate, loading, viewOpen, userCanCreateAgent, createQuotaReached, onCloseCreate]);
+
     const handleImportedDocument = useCallback((doc: AgentExportDocument) => {
         setActionError('');
         setImportedDocument(doc);
@@ -167,14 +203,22 @@ const AgentsList = ({onStartChat}: AgentsListProps) => {
         setViewOpen(false);
         setEditingAgent(null);
         setImportedDocument(null);
-    }, []);
+        if (openedByRoute.current) {
+            openedByRoute.current = false;
+            onCloseCreate?.();
+        }
+    }, [onCloseCreate]);
 
     const handleViewSaved = useCallback(() => {
         setViewOpen(false);
         setEditingAgent(null);
         setImportedDocument(null);
+        if (openedByRoute.current) {
+            openedByRoute.current = false;
+            onCloseCreate?.();
+        }
         fetchAgents();
-    }, [fetchAgents]);
+    }, [fetchAgents, onCloseCreate]);
 
     // Filter agents based on active tab and search query
     const userCanManageAgent = useCallback((a: UserAgent) => (

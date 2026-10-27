@@ -19,3 +19,9 @@ export const canManageAgent = (agent: UserAgent, currentUserId: string, {hasMana
     // Migrated legacy bots have no creator; system admins had full control via System Console.
     return Boolean(!agent.creatorID && hasManageSystem);
 };
+
+// Whether the current user may create agents (the All agents "Create agent" button
+// and the sidebar's "New agent" item share this rule).
+export const canCreateAgent = ({hasManageOwnAgent, hasManageSystem}: {hasManageOwnAgent: boolean; hasManageSystem: boolean}): boolean => (
+    hasManageOwnAgent || hasManageSystem
+);

@@ -73,6 +73,22 @@ describe('AgentsPage', () => {
         expect(screen.getByText('chat bot1')).toBeTruthy();
     });
 
+    test('the create route renders the all view with the create flag, the plain route without', () => {
+        const history = makeHistory(`${AGENTS_ROUTE}/all/new`);
+        window.WebappUtils = {browserHistory: history} as any;
+        const renderers: ContentRenderers = {
+            landing: () => null,
+            all: (r) => <div>{r.create ? 'create open' : 'plain list'}</div>,
+            prompts: () => null,
+            chat: () => null,
+        };
+        renderPage(renderers);
+        expect(screen.getByText('create open')).toBeTruthy();
+
+        act(() => history.push(`${AGENTS_ROUTE}/all`));
+        expect(screen.getByText('plain list')).toBeTruthy();
+    });
+
     test('renders the agents list for the all view by default', () => {
         window.WebappUtils = {browserHistory: makeHistory(`${AGENTS_ROUTE}/all`)} as any;
         renderPage();

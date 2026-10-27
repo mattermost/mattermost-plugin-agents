@@ -14,10 +14,20 @@ export interface AgentsRoute {
     view: AgentsView;
     botId?: string;
     rootId?: string;
+
+    // 'all' only: the All agents view with the create-agent flow open.
+    create?: boolean;
 }
 
 export interface AgentsNavigation {
     toAll: () => void;
+
+    // The All agents view with the create-agent flow open.
+    toNewAgent: () => void;
+
+    // Leaves the create flow for the plain All agents view, replacing the create
+    // entry so Back does not reopen it.
+    closeNewAgent: () => void;
     toPrompts: () => void;
     toChat: (botId: string, rootId?: string) => void;
 }
@@ -28,6 +38,7 @@ export interface AgentsNavigation {
 interface HostHistory {
     location?: {pathname: string};
     push: (path: string) => void;
+    replace?: (path: string) => void;
     listen?: (listener: () => void) => (() => void) | void;
 }
 
@@ -63,6 +74,9 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
     if (segments[0] === 'all' && segments.length === 1) {
         return {view: 'all'};
     }
+    if (segments[0] === 'all' && segments[1] === 'new' && segments.length === 2) {
+        return {view: 'all', create: true};
+    }
     if (segments[0] === 'prompts' && segments.length === 1) {
         return {view: 'prompts'};
     }
@@ -77,6 +91,7 @@ export const parseAgentsRoute = (pathname: string | undefined): AgentsRoute => {
 };
 
 export const ALL_AGENTS_PATH = `${AGENTS_ROUTE}/all`;
+export const NEW_AGENT_PATH = `${AGENTS_ROUTE}/all/new`;
 export const PROMPTS_PATH = `${AGENTS_ROUTE}/prompts`;
 
 export const buildChatPath = (botId: string, rootId?: string): string => {
@@ -94,7 +109,7 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
         const sync = () => {
             const next = readRoute();
             setRoute((prev) => (
-                prev.view === next.view && prev.botId === next.botId && prev.rootId === next.rootId ? prev : next
+                prev.view === next.view && prev.botId === next.botId && prev.rootId === next.rootId && prev.create === next.create ? prev : next
             ));
         };
         sync();
@@ -110,11 +125,22 @@ export const useAgentsRoute = (): AgentsRoute & AgentsNavigation => {
         getHistory()?.push(path);
     }, []);
 
+    const replace = useCallback((path: string) => {
+        const history = getHistory();
+        if (history?.replace) {
+            history.replace(path);
+        } else {
+            history?.push(path);
+        }
+    }, []);
+
     const nav = useMemo<AgentsNavigation>(() => ({
         toAll: () => push(ALL_AGENTS_PATH),
+        toNewAgent: () => push(NEW_AGENT_PATH),
+        closeNewAgent: () => replace(ALL_AGENTS_PATH),
         toPrompts: () => push(PROMPTS_PATH),
         toChat: (botId, rootId) => push(buildChatPath(botId, rootId)),
-    }), [push]);
+    }), [push, replace]);
 
     return {...route, ...nav};
 };

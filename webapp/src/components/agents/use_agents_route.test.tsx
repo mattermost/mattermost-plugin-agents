@@ -5,9 +5,15 @@ import {act, renderHook} from '@testing-library/react';
 
 import {AGENTS_ROUTE, buildChatPath, parseAgentsRoute, useAgentsRoute} from './use_agents_route';
 
-const makeHistory = (initial: string) => {
+const makeHistory = (initial: string, withReplace = false) => {
     const listeners = new Set<() => void>();
     const history = {
+        ...(withReplace && {
+            replace: jest.fn((path: string) => {
+                history.location = {pathname: path};
+                listeners.forEach((l) => l());
+            }),
+        }),
         location: {pathname: initial},
         push: jest.fn((path: string) => {
             history.location = {pathname: path};
@@ -28,6 +34,9 @@ describe('parseAgentsRoute', () => {
         {path: `${AGENTS_ROUTE}/`, expected: {view: 'landing'}},
         {path: `${AGENTS_ROUTE}/all`, expected: {view: 'all'}},
         {path: `${AGENTS_ROUTE}/all/extra`, expected: {view: 'all'}},
+        {path: `${AGENTS_ROUTE}/all/new`, expected: {view: 'all', create: true}},
+        {path: `${AGENTS_ROUTE}/all/new/`, expected: {view: 'all', create: true}},
+        {path: `${AGENTS_ROUTE}/all/new/more`, expected: {view: 'all'}},
         {path: `${AGENTS_ROUTE}/chat/bot%201`, expected: {view: 'chat', botId: 'bot 1'}},
         {path: `${AGENTS_ROUTE}/prompts`, expected: {view: 'prompts'}},
         {path: `${AGENTS_ROUTE}/chat/bot1`, expected: {view: 'chat', botId: 'bot1'}},
@@ -81,6 +90,29 @@ describe('useAgentsRoute', () => {
             `${AGENTS_ROUTE}/all`,
         ]);
         expect(result.current.view).toBe('all');
+    });
+
+    test('toNewAgent pushes the create route, closeNewAgent replaces it with the list', () => {
+        const history = makeHistory(AGENTS_ROUTE, true);
+        window.WebappUtils = {browserHistory: history} as any;
+
+        const {result} = renderHook(() => useAgentsRoute());
+        act(() => result.current.toNewAgent());
+        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all/new`);
+        expect(result.current).toMatchObject({view: 'all', create: true});
+
+        act(() => result.current.closeNewAgent());
+        expect(history.replace).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all`);
+        expect(history.push).toHaveBeenCalledTimes(1);
+        expect(result.current.create).toBeUndefined();
+    });
+
+    test('closeNewAgent falls back to push when the history has no replace', () => {
+        const history = makeHistory(`${AGENTS_ROUTE}/all/new`);
+        window.WebappUtils = {browserHistory: history} as any;
+        const {result} = renderHook(() => useAgentsRoute());
+        act(() => result.current.closeNewAgent());
+        expect(history.push).toHaveBeenCalledWith(`${AGENTS_ROUTE}/all`);
     });
 
     test('opens on the landing at the product root', () => {

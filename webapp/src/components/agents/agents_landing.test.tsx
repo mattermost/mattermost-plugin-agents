@@ -22,7 +22,7 @@ jest.mock('react-intl', () => {
 
 const bot = (id: string, isDefault?: boolean) => ({id, displayName: id, isDefault});
 
-const nav = {toAll: jest.fn(), toPrompts: jest.fn(), toChat: jest.fn()};
+const nav = {toAll: jest.fn(), toNewAgent: jest.fn(), closeNewAgent: jest.fn(), toPrompts: jest.fn(), toChat: jest.fn()};
 
 describe('resolveDefaultAgent', () => {
     test.each([

@@ -19,6 +19,7 @@ import {onAgentThreadsRefreshRequested, subscribeToAllPostUpdates} from '@/webso
 
 import AgentThreadsList from './agent_threads_list';
 import FindAgentsButton from './find_agents_button';
+import SidebarAddMenu from './sidebar_add_menu';
 import {useAgentsRoute, type AgentsView} from './use_agents_route';
 
 interface ProductSidebarProps {
@@ -109,6 +110,7 @@ const ProductSidebar = ({activeView, onSelectAll, onSelectPrompts, children}: Pr
         <Aside aria-label={title}>
             <Header>
                 <ProductName>{title}</ProductName>
+                {hasStore && <SidebarAddMenu/>}
             </Header>
             {hasStore && (
                 <FindAgentsRow>
@@ -158,12 +160,15 @@ const FindAgentsRow = styled.div`
 
 const Header = styled.div`
     display: flex;
+    justify-content: space-between;
+    gap: var(--spacing-xs);
     flex: 0 0 auto;
     align-items: center;
     padding: calc(var(--spacing-m) + var(--spacing-xxxxs)) var(--spacing-l);
 `;
 
 const ProductName = styled.h2`
+    min-width: 0;
     margin: 0;
     padding: var(--spacing-xxxxs) var(--spacing-xs);
     overflow: hidden;

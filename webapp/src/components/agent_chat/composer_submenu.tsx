@@ -25,6 +25,10 @@ export interface ComposerSubmenuProps {
     menuLabel: string;
     open: boolean;
 
+    // Which way the child grows from the parent row: 'up' (default, for menus
+    // opening above their trigger, like the composer's) or 'down'.
+    grow?: 'up' | 'down';
+
     // Keyboard opens move focus into the child menu; hover leaves it on the row.
     focusOnOpen: boolean;
     onOpen: (focus: boolean) => void;
@@ -40,7 +44,7 @@ export interface ComposerSubmenuProps {
 // Escape close it again. The child renders inside the parent menu's floating
 // element (not a second portal), so the parent's outside-click dismissal and
 // focus trap treat it as part of the menu.
-const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, focusOnOpen, onOpen, onClose, children, ...rest}: ComposerSubmenuProps) => {
+const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open, grow = 'up', focusOnOpen, onOpen, onClose, children, ...rest}: ComposerSubmenuProps) => {
     const menuId = `composer-submenu-${useId().replace(/:/g, '')}`;
     const rowRef = useRef<HTMLButtonElement>(null);
     const anchorRef = useRef<HTMLDivElement>(null);
@@ -48,10 +52,10 @@ const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open
 
     // Which side of the parent the child opens on: right and growing upward
     // (the composer sits at the bottom), flipped where that leaves the viewport.
-    const [side, setSide] = useState<{x: 'right' | 'left'; y: 'up' | 'down'}>({x: 'right', y: 'up'});
+    const [side, setSide] = useState<{x: 'right' | 'left'; y: 'up' | 'down'}>({x: 'right', y: grow});
     useLayoutEffect(() => {
         if (!open) {
-            setSide({x: 'right', y: 'up'});
+            setSide({x: 'right', y: grow});
             return;
         }
         const rect = anchorRef.current?.getBoundingClientRect();
@@ -62,7 +66,7 @@ const ComposerSubmenu = ({label, icon, secondaryLabel, disabled, menuLabel, open
             x: prev.x === 'right' && rect.right > window.innerWidth ? 'left' : prev.x,
             y: prev.y === 'up' && rect.top < 0 ? 'down' : prev.y,
         }));
-    }, [open]);
+    }, [open, grow]);
 
     useEffect(() => {
         if (open && focusOnOpen) {
