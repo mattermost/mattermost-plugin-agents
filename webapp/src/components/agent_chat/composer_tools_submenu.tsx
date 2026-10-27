@@ -3,11 +3,13 @@
 
 import React, {useEffect} from 'react';
 import {useIntl} from 'react-intl';
+import styled from 'styled-components';
 import HammerIcon from '@mattermost/compass-icons/components/hammer';
 import RefreshIcon from '@mattermost/compass-icons/components/refresh';
 
 import {MenuItem} from '@mattermost/compass-ui/components/menu-item';
 import {PopoverMenuDivider, PopoverMenuGroup} from '@mattermost/compass-ui/components/popover-menu';
+import {Switch} from '@mattermost/compass-ui/components/switch';
 
 import type {LLMBot} from '@/bots';
 import {useToolProviders} from '@/components/rhs/tool_provider_popover';
@@ -114,7 +116,17 @@ const ComposerToolsSubmenu = ({bot, open, focusOnOpen, onOpen, onClose, onError}
                                     {...(unavailable ? {secondaryLabel: intl.formatMessage({defaultMessage: 'Unavailable'})} : {})}
                                     secondaryLabelPosition='inline'
                                     leadingElement={false}
-                                    trailingElement={enabled}
+                                    trailingElement={true}
+                                    trailingVisual={(
+                                        <RowSwitch
+                                            size='small'
+                                            checked={enabled}
+                                            disabled={unavailable}
+                                            readOnly={true}
+                                            tabIndex={-1}
+                                            aria-hidden={true}
+                                        />
+                                    )}
                                     disabled={unavailable}
                                     onClick={async () => {
                                         const saved = await toggle(server.serverOrigin, !enabled);
@@ -177,3 +189,14 @@ const ComposerToolsSubmenu = ({bot, open, focusOnOpen, onOpen, onClose, onError}
 };
 
 export default ComposerToolsSubmenu;
+
+// The menu row is the control (role=menuitemcheckbox, aria-checked, click toggles); the switch on
+// the right only shows its state, so it is out of the tab order and does not take pointer events.
+const RowSwitch = styled(Switch)`
+    && {
+        width: auto;
+        flex-shrink: 0;
+        align-self: center;
+        pointer-events: none;
+    }
+`;

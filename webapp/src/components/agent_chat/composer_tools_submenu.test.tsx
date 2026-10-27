@@ -84,6 +84,23 @@ describe('ComposerPlusMenu Tools', () => {
         expect(checkbox(menu, 'Jira').getAttribute('aria-checked')).toBe('false');
     });
 
+    test('each provider row shows a switch on the right that mirrors its state and is not separately focusable', async () => {
+        renderMenu();
+        const menu = await openSubmenu('Tools');
+        await waitFor(() => expect(checkbox(menu, 'GitHub').getAttribute('aria-checked')).toBe('true'));
+
+        const switchFor = (name: string) => checkbox(menu, name).querySelector<HTMLInputElement>('input[type=checkbox]');
+        expect(switchFor('GitHub')?.checked).toBe(true);
+        expect(switchFor('Jira')?.checked).toBe(false);
+        expect(switchFor('GitHub')?.getAttribute('tabindex')).toBe('-1');
+        expect(switchFor('GitHub')?.getAttribute('aria-hidden')).toBe('true');
+
+        // The switch follows the row when it is toggled.
+        mockClient.updateUserToolPreferences.mockResolvedValue({disabled_servers: []});
+        fireEvent.click(checkbox(menu, 'Jira'));
+        await waitFor(() => expect(switchFor('Jira')?.checked).toBe(true));
+    });
+
     test('toggling saves the preference and keeps the menu open', async () => {
         mockClient.updateUserToolPreferences.mockResolvedValue({disabled_servers: []});
         renderMenu();
