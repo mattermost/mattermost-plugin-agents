@@ -22,6 +22,7 @@ const (
 	ServerKindRemote   = "remote"
 	ServerKindEmbedded = "embedded"
 	ServerKindPlugin   = "plugin"
+	ServerKindBuiltin  = "builtin"
 )
 
 // CatalogRequest identifies whose MCP tool catalog to build. GetTools
@@ -113,13 +114,15 @@ func (r CatalogRequest) remoteKey() clientKey {
 }
 
 // ServerKind reports the wire kind for an MCP server origin: remote, embedded,
-// or plugin. An empty origin maps to remote; built-in (non-MCP) tools never
-// reach the wire response this feeds.
+// plugin, or builtin for the allowlist origin of the plugin's own tools. An
+// empty origin maps to remote.
 func ServerKind(origin string) string {
 	origin = llm.NormalizeMCPServerOrigin(origin)
 	switch {
 	case origin == EmbeddedClientKey:
 		return ServerKindEmbedded
+	case origin == llm.BuiltinToolsOrigin:
+		return ServerKindBuiltin
 	case strings.HasPrefix(origin, "plugin://"):
 		return ServerKindPlugin
 	default:

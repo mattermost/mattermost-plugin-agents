@@ -34,7 +34,7 @@ export type UserMCPToolInfo = {
     enabled: boolean;
     policy: MCPToolPolicy;
 };
-export type MCPServerKind = 'remote' | 'embedded' | 'plugin';
+export type MCPServerKind = 'remote' | 'embedded' | 'plugin' | 'builtin';
 
 export type UserMCPServerInfo = {
     name: string;

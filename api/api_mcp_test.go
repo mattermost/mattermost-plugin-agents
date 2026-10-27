@@ -795,7 +795,7 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Equal(t, []string{testUserID}, mcpMock.getServiceAccountInvokerCalls)
 		require.Empty(t, mcpMock.getContexts)
 
-		require.Len(t, response.Servers, 2)
+		require.Len(t, response.Servers, 3)
 		require.Equal(t, "n8n", response.Servers[0].Name)
 		require.Equal(t, mcp.ServerKindRemote, response.Servers[0].Kind)
 		require.True(t, response.Servers[0].Authenticated)
@@ -812,6 +812,29 @@ func TestHandleGetUserMCPToolsServiceAccountCatalog(t *testing.T) {
 		require.Empty(t, response.Servers[1].AuthURL)
 		require.False(t, response.Servers[1].ServiceAccountConfigured)
 		require.Empty(t, response.Servers[1].Tools)
+
+		builtin := response.Servers[2]
+		require.Equal(t, llm.BuiltinToolsOrigin, builtin.ServerOrigin)
+		require.Equal(t, mcp.ServerKindBuiltin, builtin.Kind)
+		var builtinTools []string
+		for _, tool := range builtin.Tools {
+			builtinTools = append(builtinTools, tool.Name)
+		}
+		require.ElementsMatch(t, []string{"WebSearch", "WebSearchFetchSource"}, builtinTools)
+	})
+
+	t.Run("the user catalog does not list built-in tools", func(t *testing.T) {
+		e := SetupTestEnvironment(t)
+		defer e.Cleanup(t)
+
+		e.api.mcpClientManager = &mockMCPClientManager{}
+		e.config.mcpConfig = mcp.Config{Enabled: true}
+
+		response, status := requestUserMCPTools(t, e.api, "")
+		require.Equal(t, http.StatusOK, status)
+		for _, server := range response.Servers {
+			require.NotEqual(t, llm.BuiltinToolsOrigin, server.ServerOrigin)
+		}
 	})
 
 	t.Run("rejects catalog=service_account without manage access", func(t *testing.T) {

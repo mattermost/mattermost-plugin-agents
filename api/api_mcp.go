@@ -16,6 +16,7 @@ import (
 	"github.com/mattermost/mattermost-plugin-agents/v2/enterprise"
 	"github.com/mattermost/mattermost-plugin-agents/v2/llm"
 	"github.com/mattermost/mattermost-plugin-agents/v2/mcp"
+	"github.com/mattermost/mattermost-plugin-agents/v2/mmtools"
 	"github.com/mattermost/mattermost/server/public/model"
 )
 
@@ -239,7 +240,37 @@ func (a *API) buildUserMCPToolsResponse(userID string, access mcp.CatalogAccess,
 		))
 	}
 
+	if serviceAccount {
+		servers = append(servers, builtinToolsServerInfo())
+	}
+
 	return UserMCPToolsResponse{Servers: servers}
+}
+
+// builtinToolsServerInfo lists the built-in tools an agent's allowlist can
+// name. It is only part of the service-account catalog, the one agents with
+// scoped channel mode use, and which names each of its tools.
+func builtinToolsServerInfo() UserMCPServerInfo {
+	return UserMCPServerInfo{
+		Name:          "Built-in tools",
+		ServerOrigin:  llm.BuiltinToolsOrigin,
+		Kind:          mcp.ServerKindBuiltin,
+		Authenticated: true,
+		Tools: []UserMCPToolInfo{
+			{
+				Name:        mmtools.WebSearchToolName,
+				Description: "Search the web with the provider set in the plugin settings.",
+				Enabled:     true,
+				Policy:      mcp.ToolPolicyAsk,
+			},
+			{
+				Name:        mmtools.WebSearchSourceToolName,
+				Description: "Read the text of a page returned by a web search.",
+				Enabled:     true,
+				Policy:      mcp.ToolPolicyAsk,
+			},
+		},
+	}
 }
 
 func (a *API) buildUserMCPServerInfo(

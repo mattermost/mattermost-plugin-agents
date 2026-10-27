@@ -41,7 +41,7 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                         <FormattedMessage defaultMessage='Run tools in channels without asking'/>
                     </CheckboxTitle>
                     <CheckboxHint>
-                        <FormattedMessage defaultMessage="In channels, this agent's tools run without asking and their results are shared in the thread without a Share step. Mattermost tools read through a short-lived session for the agent's own account; tools that change data in Mattermost and tools from other plugins are not used. External MCP tools run with the service account and can do whatever the tools you pick allow there. Built-in web search and URL fetch also run without asking whenever web search is turned on in the plugin settings. Direct messages are not affected."/>
+                        <FormattedMessage defaultMessage="In channels, this agent's tools run without asking and their results are shared in the thread without a Share step. Mattermost tools read through a short-lived session for the agent's own account; tools that change data in Mattermost and tools from other plugins are not used. External MCP tools run with the service account and can do whatever the tools you pick allow there. Built-in web search and URL fetch are used only when picked under Built-in tools. Direct messages are not affected."/>
                     </CheckboxHint>
                 </CheckboxText>
             </Checkbox>
@@ -73,7 +73,7 @@ const ScopedChannelModeSection = ({scopedChannelMode, scopedExtraChannelIds, aut
                 <>
                     <SectionNotice
                         type='info'
-                        title={<FormattedMessage defaultMessage="Without asking, this agent can read the channel it's used in, all public channels on teams anyone can join, and the channels below, and run the external MCP tools picked below. Channel tool calling must also be turned on in the plugin settings."/>}
+                        title={<FormattedMessage defaultMessage="Without asking, this agent can read the channel it's used in, all public channels on teams anyone can join, and the channels below, and run the tools picked below, including external MCP tools and built-in web search. Channel tool calling must also be turned on in the plugin settings."/>}
                     />
                     <ExtraChannels>
                         <ExtraChannelsLabel>

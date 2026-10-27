@@ -39,6 +39,11 @@ const (
 	// WebSearchCountKey is the key used to track the number of searches executed
 	WebSearchCountKey = "mm_web_search_count"
 
+	// WebSearchToolName and WebSearchSourceToolName are the built-in tool
+	// names an agent's allowlist names to opt a scoped channel turn in.
+	WebSearchToolName       = "WebSearch"
+	WebSearchSourceToolName = "WebSearchFetchSource"
+
 	minQueryLength       = 3
 	maxWebSearches       = 3
 	maxDownloadSize      = 30 * 1024 * 1024 // 30MB limit for source fetching
@@ -108,7 +113,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	}
 
 	service.tool = &llm.Tool{
-		Name:        "WebSearch",
+		Name:        WebSearchToolName,
 		Description: WebSearchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchToolArgs](),
 		Resolver:    service.resolve,
@@ -116,7 +121,7 @@ func NewWebSearchService(cfgGetter func() *config.Config, logger WebSearchLog, h
 	}
 
 	service.sourceTool = &llm.Tool{
-		Name:        "WebSearchFetchSource",
+		Name:        WebSearchSourceToolName,
 		Description: WebSearchSourceFetchDescription,
 		Schema:      llm.NewJSONSchemaFromStruct[WebSearchSourceArgs](),
 		Resolver:    nil,

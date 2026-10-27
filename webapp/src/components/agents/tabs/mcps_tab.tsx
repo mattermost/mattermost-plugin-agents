@@ -541,7 +541,7 @@ const McpsTab = (props: Props) => {
                                         <ServerName>{server.name}</ServerName>
                                         <ServerMeta>
                                             {metaDetail}
-                                            {serverStatusBadge(status)}
+                                            {server.kind !== 'builtin' && serverStatusBadge(status)}
                                         </ServerMeta>
                                     </ServerInfo>
                                 </ServerHeaderButton>
@@ -570,6 +570,11 @@ const McpsTab = (props: Props) => {
                                     role='region'
                                     aria-label={server.name}
                                 >
+                                    {server.kind === 'builtin' && (
+                                        <EmptyToolsNotice>
+                                            <FormattedMessage defaultMessage='These apply to agents that run tools in channels without asking: they use web search only if picked here, and web search must also be turned on in the plugin settings. Other agents and direct messages follow the plugin settings.'/>
+                                        </EmptyToolsNotice>
+                                    )}
                                     {adminEnabledTools.length === 0 && emptyToolsNotice(status, {
                                         wildcardOn,
                                         useServiceAccountAuth,
