@@ -39,6 +39,9 @@ export const AgentChatSurfaceContext = createContext<AgentChatSurface>({
 export const AGENT_CHAT_SURFACE: AgentChatSurface = {
     composerHandlesStop: true,
     showThinkingIndicator: true,
-    smoothStreaming: true,
+
+    // Off for now: the paced, fading reveal looked janky in the agent chats. The implementation
+    // (use_smooth_text.ts, streaming_markdown.tsx) stays; turn this back on once it is smooth.
+    smoothStreaming: false,
     hugShortBubbles: true,
 };

@@ -1679,6 +1679,9 @@ describe('LLMBotPost thinking indicator', () => {
     });
 });
 
+// Smooth streaming is off by default in the agent chat surface; these tests opt in.
+const SMOOTH_SURFACE = {...AGENT_CHAT_SURFACE, smoothStreaming: true};
+
 describe('LLMBotPost smooth streaming', () => {
     let listener: PostUpdateHandler | undefined;
     const longText = Array.from({length: 120}, (_, i) => `word${i}`).join(' ');
@@ -1696,7 +1699,7 @@ describe('LLMBotPost smooth streaming', () => {
         );
         return render(
             <IntlProvider locale='en'>
-                {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                {wrap ? <AgentChatSurfaceContext.Provider value={SMOOTH_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
             </IntlProvider>,
         );
     }
@@ -1756,7 +1759,7 @@ describe('LLMBotPost smooth streaming', () => {
         mockUseConversation.mockReturnValue({conversation: makeConversation([]), loading: false, error: null});
         render(
             <IntlProvider locale='en'>
-                <AgentChatSurfaceContext.Provider value={{...AGENT_CHAT_SURFACE, composerHandlesStop: false}}>
+                <AgentChatSurfaceContext.Provider value={{...SMOOTH_SURFACE, composerHandlesStop: false}}>
                     <LLMBotPost
                         post={makePost()}
                         websocketRegister={(_postID, _listenerID, handler) => {
@@ -1811,7 +1814,7 @@ describe('LLMBotPost bubble fit', () => {
                 <div className='post__content'>
                     <div className='post__img'/>
                     <div>
-                        {wrap ? <AgentChatSurfaceContext.Provider value={AGENT_CHAT_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
+                        {wrap ? <AgentChatSurfaceContext.Provider value={SMOOTH_SURFACE}>{post}</AgentChatSurfaceContext.Provider> : post}
                     </div>
                 </div>
             </IntlProvider>,
