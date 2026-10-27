@@ -679,3 +679,41 @@ func TestScopedRunLapsed(t *testing.T) {
 		})
 	}
 }
+
+func TestScopedCatalogPreviewMirrorsWebSearchOptIn(t *testing.T) {
+	tests := []struct {
+		name     string
+		named    []string
+		expected []string
+	}{
+		{name: "not named"},
+		{name: "named", named: []string{"WebSearch"}, expected: []string{"WebSearch"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			minter := &recordingScopedMinter{}
+			provider := newScopedCatalogProvider(t, minter, scopedTestMCPCatalog())
+			builder, _ := newScopedTestBuilder(t, defaultScopedTestEnv(), newWebSearchToolProvider(t), provider)
+			cfg := scopedTestBotConfig()
+			for _, name := range tt.named {
+				cfg.EnabledMCPTools = append(cfg.EnabledMCPTools, llm.EnabledMCPTool{ServerOrigin: llm.BuiltinToolsOrigin, ToolName: name})
+			}
+			bot := newScopedTestBot(cfg)
+			channel := &model.Channel{Id: model.NewId(), TeamId: "team-id", Type: model.ChannelTypeOpen}
+
+			llmContext := builder.BuildLLMContextUserRequest(bot, &model.User{Id: model.NewId()}, channel,
+				builder.WithLLMContextScopedCatalogPreview(bot),
+				builder.WithLLMContextTools(stdcontext.Background(), bot),
+			)
+
+			var got []string
+			for _, name := range toolNames(llmContext.Tools) {
+				if name == "WebSearch" || name == "WebSearchFetchSource" {
+					got = append(got, name)
+				}
+			}
+			assert.ElementsMatch(t, tt.expected, got)
+			assert.Empty(t, minter.userIDs, "a preview never mints a session")
+		})
+	}
+}

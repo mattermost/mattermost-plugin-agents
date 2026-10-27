@@ -135,6 +135,10 @@ type ToolCatalogContext struct {
 	// session for the agent's bot. It only takes effect when the agent's
 	// scoped channel mode is active in the Context's channel.
 	ScopedTurn *ScopedTurn
+
+	// ScopedPreview marks a catalog built only to show what a scoped turn
+	// would carry: no session is minted and no tool runs.
+	ScopedPreview bool
 }
 
 // ScopedTurn identifies the channel-triggered run a scoped session is minted
