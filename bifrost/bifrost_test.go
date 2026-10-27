@@ -2458,8 +2458,8 @@ func testAccount(entries ...*providerAccount) *multiProviderAccount {
 // customAccount is a fallback registered as a custom provider slot.
 func customAccount(base schemas.ModelProvider, serviceID string) *providerAccount {
 	return &providerAccount{
-		ProviderSettings: ProviderSettings{Provider: base},
-		name:             customProviderName(base, serviceID),
+		Provider: base,
+		name:     customProviderName(base, serviceID),
 	}
 }
 

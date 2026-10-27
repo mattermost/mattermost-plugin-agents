@@ -456,8 +456,8 @@ func TestHopReasoningFollowsTheModelsMessagesAPI(t *testing.T) {
 				reasoningEnabled: tt.reasoningEnabled,
 				reasoningEffort:  tt.effort,
 				account: testAccount(
-					&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.Anthropic}},
-					&providerAccount{ProviderSettings: ProviderSettings{Provider: tt.provider}},
+					&providerAccount{Provider: schemas.Anthropic},
+					&providerAccount{Provider: tt.provider},
 				),
 			}
 			cfg := llm.LanguageModelConfig{Model: tt.model, MaxGeneratedTokens: 16000}
@@ -483,7 +483,7 @@ func TestApplyHopRequestLeavesSharedRequestIntact(t *testing.T) {
 		reasoningEffort:  "xhigh",
 		reasoningEnabled: true,
 		account: testAccount(
-			&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.Anthropic}},
+			&providerAccount{Provider: schemas.Anthropic},
 			customAccount(schemas.Anthropic, "svc2"),
 		),
 	}

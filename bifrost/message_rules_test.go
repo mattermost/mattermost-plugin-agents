@@ -15,10 +15,10 @@ import (
 // rest.
 func TestMessageRulesFor(t *testing.T) {
 	b := &LLM{account: testAccount(
-		&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.OpenAI}},
-		&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.Vertex}},
-		&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.Azure}},
-		&providerAccount{ProviderSettings: ProviderSettings{Provider: schemas.Bedrock}},
+		&providerAccount{Provider: schemas.OpenAI},
+		&providerAccount{Provider: schemas.Vertex},
+		&providerAccount{Provider: schemas.Azure},
+		&providerAccount{Provider: schemas.Bedrock},
 		customAccount(schemas.Anthropic, "svc2"),
 	)}
 

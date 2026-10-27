@@ -336,18 +336,16 @@ func TestProviderServices(t *testing.T) {
 			var fallbacks []FallbackEntry
 			for i, provider := range tt.fallbacks {
 				fallbacks = append(fallbacks, FallbackEntry{
-					ProviderSettings: ProviderSettings{Provider: provider, APIKey: "fallback-key", DefaultModel: "test-model"},
-					ID:               fmt.Sprintf("fallback-%d", i),
+					Provider: provider, APIKey: "fallback-key", DefaultModel: "test-model",
+					ID: fmt.Sprintf("fallback-%d", i),
 				})
 			}
 			llmClient, err := New(Config{
-				ProviderSettings: ProviderSettings{
-					Provider:         tt.provider,
-					APIKey:           "test-key",
-					DefaultModel:     "test-model",
-					StreamingTimeout: 10 * time.Second,
-				},
-				Fallbacks: fallbacks,
+				Provider:         tt.provider,
+				APIKey:           "test-key",
+				DefaultModel:     "test-model",
+				StreamingTimeout: 10 * time.Second,
+				Fallbacks:        fallbacks,
 			})
 			require.NoError(t, err)
 			defer llmClient.Shutdown()
