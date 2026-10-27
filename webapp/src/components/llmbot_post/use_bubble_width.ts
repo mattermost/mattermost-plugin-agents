@@ -103,7 +103,7 @@ function px(value: string): number {
 // Right edge of the widest text line under `root`, from its left edge. Text
 // line boxes are measured (not element boxes, which span the column), so the
 // result is the natural width as long as lines do not wrap.
-function textExtent(root: Element, left: number): number {
+function textExtent(root: Element, left: number, skip?: string): number {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     if (typeof range.getBoundingClientRect !== 'function') {
@@ -112,6 +112,9 @@ function textExtent(root: Element, left: number): number {
     let right = left;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
         if (!node.nodeValue || node.nodeValue.trim() === '') {
+            continue;
+        }
+        if (skip && node.parentElement?.closest(skip)) {
             continue;
         }
         range.selectNodeContents(node);
@@ -123,16 +126,11 @@ function textExtent(root: Element, left: number): number {
     return right - left;
 }
 
+// The header's text (name, tag, time) from its left edge. Child BOXES are not measured: the
+// host's badges wrapper is a flex item that can stretch to the right edge of the row, which
+// would make every header look as wide as the row. The hover toolbar's text is skipped.
 function headerExtent(header: Element): number {
-    const left = header.getBoundingClientRect().left;
-    let right = left;
-    for (const child of Array.from(header.children)) {
-        if (child.matches(BUBBLE_TOOLBAR_SELECTOR)) {
-            continue;
-        }
-        right = Math.max(right, child.getBoundingClientRect().right);
-    }
-    return right - left;
+    return textExtent(header, header.getBoundingClientRect().left, BUBBLE_TOOLBAR_SELECTOR);
 }
 
 /** Reads the host bubble around `wrapper`; never writes to host DOM. */

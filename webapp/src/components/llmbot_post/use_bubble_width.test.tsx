@@ -189,3 +189,39 @@ describe('measureBubble wide content', () => {
         row.remove();
     });
 });
+
+describe('measureBubble header width', () => {
+    const rect = (right: number) => ({left: 0, right, width: right, top: 0, bottom: 0, height: 0, x: 0, y: 0, toJSON: () => ({})});
+    const proto = Range.prototype as unknown as {getBoundingClientRect?: () => unknown};
+    const original = proto.getBoundingClientRect;
+
+    beforeEach(() => {
+        // jsdom has no layout: give each text range a width of 8px per character.
+        proto.getBoundingClientRect = function eightPxPerCharacter(this: Range) {
+            return rect(this.toString().length * 8);
+        };
+    });
+
+    afterEach(() => {
+        proto.getBoundingClientRect = original;
+    });
+
+    // The host's badges wrapper is a flex item that can stretch to the row's right edge; the
+    // header's width must come from its text, not from that box.
+    test('uses the header text, not a stretched child box, and ignores the hover toolbar', () => {
+        const row = document.createElement('div');
+        row.className = 'post__content';
+        row.innerHTML = '<div class="post__img"></div><div>' +
+            '<div class="post__header"><span>Agent</span><div class="badges-wrapper"><span>BOT</span></div><div class="post-menu">a very long toolbar tooltip label</div></div>' +
+            '<div id="wrapper"><p>Hi</p></div></div>';
+        document.body.appendChild(row);
+        const wrapper = row.querySelector<HTMLElement>('#wrapper')!;
+        const bubble = wrapper.parentElement!;
+        row.querySelector<HTMLElement>('.badges-wrapper')!.getBoundingClientRect = () => rect(1000) as DOMRect;
+
+        const metrics = measureBubble(wrapper, bubble);
+
+        expect(metrics?.header).toBe('Agent'.length * 8);
+        row.remove();
+    });
+});
