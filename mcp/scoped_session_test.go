@@ -128,8 +128,11 @@ func TestScopedCatalog(t *testing.T) {
 		RequesterID:     requesterID,
 		ChannelID:       channelID,
 		ExtraChannelIDs: []string{extraChannelID, channelID, "not-an-id"},
+		EnabledTools:    []llm.EnabledMCPTool{{ServerOrigin: EmbeddedClientKey, ToolName: "read_channel"}},
 	})
 	require.NoError(t, err)
+	assert.Equal(t, []llm.EnabledMCPTool{{ServerOrigin: EmbeddedClientKey, ToolName: "read_channel"}}, run.EnabledTools(),
+		"the run records the allowlist it was started with")
 
 	require.Len(t, minter.created, 1)
 	minted := minter.created[0]
