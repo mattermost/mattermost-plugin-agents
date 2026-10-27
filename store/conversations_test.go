@@ -630,6 +630,144 @@ func TestGetConversationSummariesForUser(t *testing.T) {
 	}
 }
 
+func TestGetConversationSummariesForUserLastActivity(t *testing.T) {
+	type convSpec struct {
+		key       string
+		user      string // "self" or "other"
+		id        string // optional fixed ID, for tie-break cases
+		updatedAt int64
+		turns     []int64 // CreatedAt of each turn
+		archived  bool
+	}
+	type wantRow struct {
+		key       string
+		updatedAt int64
+	}
+
+	// Fixed IDs ordered lexically so the tie-break expectation is explicit.
+	lowID := "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	highID := "zzzzzzzzzzzzzzzzzzzzzzzzzz"
+
+	tests := []struct {
+		name   string
+		convs  []convSpec
+		limit  int
+		offset int
+		want   []wantRow
+	}{
+		{
+			name: "a newer turn moves an older conversation first and reports the turn time",
+			convs: []convSpec{
+				{key: "A", user: "self", updatedAt: 1000, turns: []int64{1000, 5000}},
+				{key: "B", user: "self", updatedAt: 3000},
+			},
+			limit: 60,
+			want:  []wantRow{{"A", 5000}, {"B", 3000}},
+		},
+		{
+			name: "a conversation without turns reports its own UpdatedAt",
+			convs: []convSpec{
+				{key: "A", user: "self", updatedAt: 4000},
+				{key: "B", user: "self", updatedAt: 1000, turns: []int64{2000}},
+			},
+			limit: 60,
+			want:  []wantRow{{"A", 4000}, {"B", 2000}},
+		},
+		{
+			name: "a turn older than UpdatedAt does not lower it",
+			convs: []convSpec{
+				{key: "A", user: "self", updatedAt: 3000, turns: []int64{100, 200}},
+				{key: "B", user: "self", updatedAt: 2000, turns: []int64{2500}},
+			},
+			limit: 60,
+			want:  []wantRow{{"A", 3000}, {"B", 2500}},
+		},
+		{
+			name: "ties on last activity are ordered by ID",
+			convs: []convSpec{
+				{key: "high", user: "self", id: highID, updatedAt: 1000, turns: []int64{3000}},
+				{key: "low", user: "self", id: lowID, updatedAt: 3000},
+			},
+			limit: 60,
+			want:  []wantRow{{"low", 3000}, {"high", 3000}},
+		},
+		{
+			name: "another user's conversations never appear even with newer turns",
+			convs: []convSpec{
+				{key: "continued", user: "self", updatedAt: 1000, turns: []int64{7000}},
+				{key: "untouched", user: "self", updatedAt: 2000},
+				{key: "theirs", user: "other", updatedAt: 1000, turns: []int64{9000}},
+			},
+			limit: 60,
+			want:  []wantRow{{"continued", 7000}, {"untouched", 2000}},
+		},
+		{
+			name: "archived conversations are excluded even with newer turns",
+			convs: []convSpec{
+				{key: "continued", user: "self", updatedAt: 1000, turns: []int64{7000}},
+				{key: "untouched", user: "self", updatedAt: 2000},
+				{key: "archived", user: "self", updatedAt: 1000, turns: []int64{9000}, archived: true},
+			},
+			limit: 60,
+			want:  []wantRow{{"continued", 7000}, {"untouched", 2000}},
+		},
+		{
+			name: "limit and offset apply after ordering by last activity",
+			convs: []convSpec{
+				{key: "A", user: "self", updatedAt: 5000},
+				{key: "B", user: "self", updatedAt: 4000},
+				{key: "C", user: "self", updatedAt: 1000, turns: []int64{6000}},
+				{key: "D", user: "self", updatedAt: 3000},
+			},
+			limit:  2,
+			offset: 1,
+			want:   []wantRow{{"A", 5000}, {"B", 4000}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := setupTestStore(t)
+			require.NoError(t, s.RunMigrations())
+
+			users := map[string]string{"self": model.NewId(), "other": model.NewId()}
+			keyByID := map[string]string{}
+			for _, spec := range tt.convs {
+				conv := makeConversation(func(c *Conversation) {
+					if spec.id != "" {
+						c.ID = spec.id
+					}
+					c.UserID = users[spec.user]
+					c.Title = spec.key
+					c.CreatedAt = spec.updatedAt
+					c.UpdatedAt = spec.updatedAt
+				})
+				require.NoError(t, s.CreateConversation(conv))
+				keyByID[conv.ID] = spec.key
+				for i, createdAt := range spec.turns {
+					require.NoError(t, s.CreateTurn(makeTurn(conv.ID, i+1, func(turn *Turn) {
+						turn.CreatedAt = createdAt
+					})))
+				}
+				if spec.archived {
+					// Set DeleteAt directly so archiving does not bump UpdatedAt past the turns.
+					_, err := s.db.Exec("UPDATE LLM_Conversations SET DeleteAt = $1 WHERE ID = $2", spec.updatedAt, conv.ID)
+					require.NoError(t, err)
+				}
+			}
+
+			summaries, err := s.GetConversationSummariesForUser(users["self"], tt.limit, tt.offset)
+			require.NoError(t, err)
+
+			got := make([]wantRow, len(summaries))
+			for i, summary := range summaries {
+				got[i] = wantRow{keyByID[summary.ID], summary.UpdatedAt}
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestCleanupDeletedConversations(t *testing.T) {
 	tests := []struct {
 		name     string

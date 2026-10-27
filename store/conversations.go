@@ -234,6 +234,11 @@ func (s *Store) SoftDeleteConversation(id string, deleteAt int64) error {
 
 // ConversationSummary is a lightweight view of a conversation with its turn count,
 // used for listing conversations in the RHS threads panel.
+//
+// UpdatedAt is the conversation's last activity: the later of the conversation
+// row's UpdatedAt and the CreatedAt of its newest turn. Adding a turn does not
+// touch LLM_Conversations.UpdatedAt, so the row value alone would sort a chat
+// continued today by when it was last renamed or created.
 type ConversationSummary struct {
 	ID         string  `json:"id"           db:"id"`
 	UserID     string  `json:"user_id"      db:"userid"`
@@ -245,8 +250,15 @@ type ConversationSummary struct {
 	UpdatedAt  int64   `json:"updated_at"   db:"updatedat"`
 }
 
-// GetConversationSummariesForUser returns conversations for a user ordered by UpdatedAt DESC,
-// including a turn count per conversation. Only non-deleted conversations are returned.
+// conversationLastActivityExpr is a conversation's last activity within a query
+// that LEFT JOINs LLM_Turns t onto LLM_Conversations c and groups by conversation.
+// The store targets PostgreSQL only, which provides GREATEST.
+const conversationLastActivityExpr = "GREATEST(c.UpdatedAt, COALESCE(MAX(t.CreatedAt), 0))"
+
+// GetConversationSummariesForUser returns a user's conversations ordered by last
+// activity (see ConversationSummary.UpdatedAt) descending, with ID as a
+// deterministic tie-breaker, including a turn count per conversation. Only
+// non-deleted (non-archived) conversations are returned.
 func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int) ([]ConversationSummary, error) {
 	if limit < 0 {
 		limit = 0
@@ -264,14 +276,14 @@ func (s *Store) GetConversationSummariesForUser(userID string, limit, offset int
 			"c.RootPostID",
 			"c.Title",
 			"COUNT(t.ID) AS TurnCount",
-			"c.UpdatedAt",
+			conversationLastActivityExpr+" AS UpdatedAt",
 		).
 		From("LLM_Conversations c").
 		LeftJoin("LLM_Turns t ON t.ConversationID = c.ID").
 		Where(sq.Eq{"c.UserID": userID}).
 		Where(sq.Eq{"c.DeleteAt": 0}).
 		GroupBy("c.ID", "c.UserID", "c.BotID", "c.ChannelID", "c.RootPostID", "c.Title", "c.UpdatedAt").
-		OrderBy("c.UpdatedAt DESC").
+		OrderBy(conversationLastActivityExpr+" DESC", "c.ID ASC").
 		Limit(uint64(limit)).   // #nosec G115 -- guarded above
 		Offset(uint64(offset)), // #nosec G115 -- guarded above
 		"get conversation summaries"); err != nil {

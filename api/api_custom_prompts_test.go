@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -31,7 +32,10 @@ import (
 
 var rootDSN = "postgres://mmuser:mostest@localhost:5432/postgres?sslmode=disable"
 
-func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+// setupPostgresTestStore creates a throwaway database on the local PostgreSQL
+// (PG_ROOT_DSN overrides the root DSN), runs the plugin migrations, and drops
+// the database on cleanup. The test is skipped when PostgreSQL is unavailable.
+func setupPostgresTestStore(t *testing.T, dbPrefix string) (*sqlx.DB, *store.Store) {
 	t.Helper()
 
 	if dsn := os.Getenv("PG_ROOT_DSN"); dsn != "" {
@@ -44,12 +48,14 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	}
 	defer rootDB.Close()
 
-	dbName := fmt.Sprintf("customprompts_api_test_%d", model.GetMillis())
+	dbName := fmt.Sprintf("%s_%d", dbPrefix, model.GetMillis())
 	_, err = rootDB.Exec("CREATE DATABASE " + dbName)
 	require.NoError(t, err)
 
-	testDSN := fmt.Sprintf("postgres://mmuser:mostest@localhost:5432/%s?sslmode=disable", dbName)
-	db, err := sqlx.Connect("postgres", testDSN)
+	testURL, err := url.Parse(rootDSN)
+	require.NoError(t, err)
+	testURL.Path = "/" + dbName
+	db, err := sqlx.Connect("postgres", testURL.String())
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -63,8 +69,15 @@ func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customp
 	})
 
 	s := store.New(db)
-	err = s.RunMigrations()
-	require.NoError(t, err)
+	require.NoError(t, s.RunMigrations())
+
+	return db, s
+}
+
+func setupCustomPromptsTestEnvironment(t *testing.T) (*TestEnvironment, *customprompts.Store) {
+	t.Helper()
+
+	db, _ := setupPostgresTestStore(t, "customprompts_api_test")
 
 	dbClient := mmapi.NewTestDBClient(db)
 	cpStore := customprompts.NewStore(dbClient)
